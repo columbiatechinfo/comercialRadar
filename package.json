@@ -1,0 +1,31 @@
+{
+  "name": "comercial-radar",
+  "version": "1.0.0",
+  "description": "Captura automatizada de pontos comerciais via Google Maps",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "capture": "ts-node src/capture.ts",
+    "install-browsers": "playwright install chromium"
+  },
+  "dependencies": {
+    "@playwright/test": "^1.44.0",
+    "axios": "^1.7.2",
+    "chalk": "^4.1.2",
+    "dotenv": "^16.4.5",
+    "ora": "^5.4.1",
+    "playwright": "^1.44.0",
+    "playwright-extra": "^4.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "readline-sync": "^1.4.10",
+    "sharp": "^0.33.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/readline-sync": "^1.4.8",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.4.5"
+  }
+}

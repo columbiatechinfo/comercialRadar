@@ -1,0 +1,129 @@
+{
+  "name": "ComercialRadar - Captura de Mapas",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 6 * * 1-5"
+            }
+          ]
+        }
+      },
+      "id": "node-schedule",
+      "name": "Agendamento (Seg-Sex 06h)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Configuração da sessão de captura\nconst sessionName = `captura_${new Date().toISOString().slice(0,16).replace(/[T:]/g,'_')}`;\nconst config = {\n  mode: 'search',         // 'search' | 'manual'\n  query: 'Teresina, Piauí, Brasil',  // usado quando mode='search'\n  // bbox manual (usado quando mode='manual'):\n  // north: -5.08, south: -5.12, east: -42.78, west: -42.82,\n  zoomLevel: 17,\n  delayBetweenTiles: 600,\n  tileOverlapPercent: 10,\n  sessionName\n};\nreturn [{ json: config }];"
+      },
+      "id": "node-config",
+      "name": "Configurar Sessão",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "command": "=cd /d \"C:\\Users\\ceo\\Documents\\Sistemas\\comercialRadar\" && npx ts-node src/capture-n8n.ts \"{{$json.query}}\" {{$json.zoomLevel}} {{$json.delayBetweenTiles}} {{$json.sessionName}}"
+      },
+      "id": "node-capture",
+      "name": "Executar Captura",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const output = $input.first().json.stdout || '';\nconst success = output.includes('Captura concluída');\nconst failMatch = output.match(/Falhos: (\\d+)/);\nconst okMatch = output.match(/Sucesso: (\\d+)/);\nreturn [{\n  json: {\n    success,\n    completedTiles: okMatch ? parseInt(okMatch[1]) : 0,\n    failedTiles: failMatch ? parseInt(failMatch[1]) : 0,\n    rawOutput: output.slice(-500)\n  }\n}];"
+      },
+      "id": "node-parse",
+      "name": "Parsear Resultado",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {},
+          "conditions": [
+            {
+              "id": "cond-success",
+              "leftValue": "={{$json.success}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ]
+        }
+      },
+      "id": "node-if",
+      "name": "Verificar Sucesso",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const data = $input.first().json;\nconsole.log(`✅ Captura concluída! Tiles: ${data.completedTiles} OK, ${data.failedTiles} falhos`);\nreturn [{ json: { status: 'success', ...data } }];"
+      },
+      "id": "node-success",
+      "name": "Log Sucesso",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 200]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const data = $input.first().json;\nconsole.error(`❌ Captura falhou! Output: ${data.rawOutput}`);\nreturn [{ json: { status: 'error', ...data } }];"
+      },
+      "id": "node-error",
+      "name": "Log Erro",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 400]
+    }
+  ],
+  "connections": {
+    "Agendamento (Seg-Sex 06h)": {
+      "main": [[{ "node": "Configurar Sessão", "type": "main", "index": 0 }]]
+    },
+    "Configurar Sessão": {
+      "main": [[{ "node": "Executar Captura", "type": "main", "index": 0 }]]
+    },
+    "Executar Captura": {
+      "main": [[{ "node": "Parsear Resultado", "type": "main", "index": 0 }]]
+    },
+    "Parsear Resultado": {
+      "main": [[{ "node": "Verificar Sucesso", "type": "main", "index": 0 }]]
+    },
+    "Verificar Sucesso": {
+      "main": [
+        [{ "node": "Log Sucesso", "type": "main", "index": 0 }],
+        [{ "node": "Log Erro", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": ["mapas", "captura", "comercialRadar"],
+  "pinData": {}
+}
