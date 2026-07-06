@@ -223,11 +223,14 @@ Ao rodar Python via Bash tool, prefixar `PYTHONUTF8=1`.
 ## 3. Banco de dados (PostgreSQL, gerenciado por Prisma)
 
 - DB `comercialradar` em `localhost:5432`. Schema em `prisma/schema.prisma`.
-- **Tabelas nossas:** `pois` (principal) + derivadas 1:N: `images_urls`, `comentarios`, `horario_funcionamento`
-  (cada uma referencia `poi_id`, `onDelete: Cascade`).
-- ⚠️ **O DB é COMPARTILHADO** com outro projeto do usuário ("Radar de Produtos"), que tem as tabelas
-  `radar_oportunidades` e `radar_runs` — **NÃO são nossas, não mexer**. Elas causam *drift* no Prisma.
-  → **NUNCA rodar `prisma migrate dev`** (ele quer `reset` = apaga TUDO). Para mudar schema:
+- **Banco EXCLUSIVO deste projeto** — verificado: as únicas tabelas são as nossas (`pois` +
+  derivadas 1:N `images_urls`, `comentarios`, `horario_funcionamento`, `streetview_imgs`; cada
+  derivada referencia `poi_id`, `onDelete: Cascade`) + `_prisma_migrations`. Os outros projetos
+  do usuário têm bancos PRÓPRIOS (ex.: `saletopsellers`, `hubplanner`) — nada é misturado.
+  > Correção 03/07/2026: versões antigas desta doc diziam que o banco era "compartilhado com
+  > `radar_*`". **Não é** — não existe nenhuma tabela `radar_*` aqui. Anotação legada, removida.
+- → **NUNCA rodar `prisma migrate dev`**: ele faz `reset` e **apagaria todos os dados deste
+  projeto**. Para mudar schema use a via não-destrutiva:
   1. `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` via psycopg2 (não-destrutivo),
   2. refletir a coluna em `prisma/schema.prisma`,
   3. `npx prisma generate` (regenera o client, sem migrar).

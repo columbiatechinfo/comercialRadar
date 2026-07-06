@@ -177,8 +177,8 @@ Tabela principal **`pois`** (1 linha por ponto) + derivadas 1:N:
 | `horario_funcionamento` | horários por dia |
 | `streetview_imgs` | fachada (bytes) + **data do panorama** + pano_id |
 
-> ⚠️ O banco é **compartilhado** com outro projeto (tabelas `radar_*` — não são deste projeto).
-> **Nunca rode `prisma migrate dev`** (ele quer `reset` = apaga tudo). Para mudar schema: `ALTER TABLE … ADD COLUMN IF NOT EXISTS` via SQL + refletir no `schema.prisma` + `npx prisma generate`.
+> ⚠️ Banco **exclusivo** deste projeto (os outros projetos têm bancos próprios).
+> **Nunca rode `prisma migrate dev`** — ele faz `reset` e apaga os dados. Para mudar schema: `ALTER TABLE … ADD COLUMN IF NOT EXISTS` via SQL + refletir no `schema.prisma` + `npx prisma generate`.
 
 **Migrar para outro PC** (leva as imagens junto): use `pg_dump -Fc` das tabelas do projeto, não DBF (DBF não guarda imagens).
 
