@@ -1,0 +1,46 @@
+node_modules
+.venv/
+__pycache__/
+*.pyc
+
+# Segredos — NUNCA commitar
+.env
+
+# Cache de proxies (contém credenciais)
+.proxy_cache.json
+Webshare_100_proxies.txt
+
+# Diretórios de sessão persistente do Playwright (v2)
+.browser_profiles/
+
+# Saídas grandes de captura
+capturas/
+buscas_grid/
+
+# Frontend web — dados de trabalho (planilhas do cliente, polígonos, saídas de mineração)
+uploads/
+areas/
+mineracao/
+
+# Imagens capturadas do Street View (pesado — ~0,5 GB; ficam no banco/local)
+streetview/
+
+# Cache de malhas territoriais do IBGE (regeradas sob demanda)
+malhas/
+
+# Saídas geradas (mapa HTML pesado, dumps do banco)
+mapa_pois.html
+*.dump
+*.sql
+
+# Dados de teste / clientes
+teste_*.xlsx
+teste_*.json
+*_db.json
+
+# Scratchpad e temporários
+scratchpad/
+*.tmp
+
+# Config local do Claude Code
+.claude/

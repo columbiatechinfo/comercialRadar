@@ -194,3 +194,110 @@ npm install
 pip install opencv-python numpy easyocr playwright --break-system-packages
 playwright install chromium
 ```
+
+**Python (v2 otimizada — etapas 3-4):**
+```
+pip install scikit-learn playwright-stealth python-dotenv aiohttp
+```
+
+---
+
+# Versão v2 otimizada (Camada 2 — coleta rica)
+
+`search_pois_v2.py` e `recover_pois_v2.py` substituem as etapas 3 e 4 com
+otimização agressiva de banda (~70% menos) e prolongamento da vida útil dos
+IPs. Os arquivos v1 (`search_pois.py`, `recover_pois.py`) seguem intactos como
+backup. **O schema de saída é idêntico** — o resto do pipeline (incl.
+`enrich_pois.py`) continua funcionando sem alteração.
+
+## O que muda em relação ao v1
+
+| Aspecto              | v1                         | v2                                        |
+|----------------------|----------------------------|-------------------------------------------|
+| Paralelismo          | 10 abas, browser único     | 10 workers, browser persistente por lote  |
+| Trabalho por unidade | POI solto                  | Lote de 8-15 POIs geograficamente vizinhos |
+| Proxies              | ponte local (instável)     | proxy nativo Playwright, 1 IP estático/lote |
+| Banda                | ~6-10 MB/POI               | < 4 MB/POI (alvo); ~2-3 MB típico         |
+| Bloqueio de recursos | nenhum                     | CSS/font/media/telemetria/avatars         |
+| Humanização          | delay fixo curto           | cadência 5-15s + pausas longas + stealth  |
+| Regionalização       | nenhuma                    | DBSCAN (eps≈300m) agrupa por bairro        |
+| recover              | Google Places API (paga)   | scraping puro (sem custo de API)           |
+
+## Como configurar o `.env`
+
+Copie `.env.example` para `.env` e preencha:
+```
+WEBSHARE_API_KEY=sua_chave_aqui
+```
+A chave fica no Webshare Dashboard → API → Keys. O `.env` está no `.gitignore`
+e **nunca** deve ser commitado. Sem a chave, o pool cai para o cache local e
+depois para `Webshare_100_proxies.txt` (fallback gracioso).
+
+## Comandos
+
+```
+py search_pois_v2.py capturas/<sessao>/session.json --workers 10
+py recover_pois_v2.py capturas/<sessao>/session.json --workers 10
+```
+
+Opções do search v2:
+```
+--workers 10     workers paralelos (máx. 10, calibrado p/ o hardware)
+--max-dist 100   distância máxima (m) para match válido
+--limit 30       processa só os N primeiros POIs (teste de aceitação)
+```
+
+## Arquitetura (módulos novos)
+
+```
+config.py              constantes + loader .env + listas de fingerprint
+proxy_pool.py          carrega 100 IPs via API Webshare, cooldown, 1 IP/lote
+spatial_clustering.py  DBSCAN espacial → lotes coesos de 8-15 POIs
+human_browser.py       contexto Playwright humanizado + stealth + route block
+user_agents.json       20+ user-agents reais (fingerprint diverso)
+camada1_serp_TODO.py   stub da Camada 1 (validação SERP barata) — não implementada
+```
+
+Fluxo de cada worker: pega lote da fila → adquire 1 IP estático → abre browser
+persistente com fingerprint coeso → processa os 8-15 POIs sequencialmente
+(cadência humanizada, mesmo cache de JS do Maps) → fecha tudo, descarta cookies,
+libera o IP → pega o próximo lote com IP/fingerprint novos.
+
+## Quando usar v1 vs v2
+
+- **v2**: padrão para qualquer coleta de média/grande escala. Economiza banda,
+  distribui carga entre 100 IPs, comportamento humanizado.
+- **v1**: fallback rápido sem proxies para volumes pequenos, ou se a API
+  Webshare estiver indisponível e você quiser conexão direta.
+
+## Métricas emitidas ao final
+
+```
+📦 POIs processados   total de POIs visitados
+📡 Banda total        soma de response sizes interceptados (MB)
+📉 Banda por POI      MB/POI médio (alvo < 4)
+🔥 IPs queimados      IPs que entraram em cooldown (CAPTCHA/429)
+🚫 Lotes com CAPTCHA  nº de lotes abortados + taxa
+⏱  Tempo total        duração da coleta
+```
+
+## Estratégia de fotos
+
+A galeria **não é baixada via proxy**. O scraper extrai apenas as URLs
+(`lh3.googleusercontent.com/...`) e salva no JSON. O download das imagens é
+uma etapa separada, feita direto do IP do servidor (a CDN do Google é leve e
+não exige proxy) — economiza banda cara do plano residencial.
+
+## Troubleshooting
+
+| Sintoma                              | Causa / solução                                             |
+|--------------------------------------|-------------------------------------------------------------|
+| `WEBSHARE_API_KEY ausente no .env`   | Crie o `.env` a partir do `.env.example` e cole a chave.    |
+| `Nenhuma fonte de proxies`           | Sem chave, sem cache e sem `Webshare_100_proxies.txt`. Forneça ao menos um. |
+| `🚫 CAPTCHA no lote`                  | IP entrou em cooldown 2h automaticamente; o lote é re-enfileirado com outro IP. Se frequente, baixe `--workers` ou aumente os delays em `config.py`. |
+| Banda > 4 MB/POI                     | Verifique se o route blocking está ativo (layer="maps"); avatars/telemetria devem ser abortados. |
+| Lentidão                             | IPs estáticos são US-based; latência maior até o Google. Normal. Os delays humanizados também somam tempo (proposital). |
+| Incoerência geo (IP US + locale BR)  | Esperado com o plano atual (IPs US). `locale=pt-BR` é mantido p/ resultados em português. Para coerência total seria preciso plano de IPs BR. |
+
+> **Nota:** `recover_pois_v2.py` usa scraping puro (sem Places API). Se você
+> precisa do enriquecimento via API paga, use `enrich_pois.py` (etapa separada).

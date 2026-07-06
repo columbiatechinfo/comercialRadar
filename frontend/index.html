@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ComercialRadar</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📡</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header id="topbar">
+  <div class="brand">
+    <div class="brand-icon">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+        <circle cx="12" cy="12" r="2.2" fill="currentColor" stroke="none"/>
+        <path d="M12 12 L18.5 5.5"/>
+        <path d="M7.2 7.2a6.8 6.8 0 1 0 9.6 0"/>
+        <path d="M4.4 4.4a10.7 10.7 0 1 0 15.2 0"/>
+      </svg>
+    </div>
+    <div class="brand-name">Comercial<b>Radar</b></div>
+  </div>
+
+  <nav class="modes" id="modes">
+    <button class="mode active" data-mode="planilha">
+      <span class="mode-ico">📄</span> Importar planilha
+    </button>
+    <button class="mode" data-mode="mineracao">
+      <span class="mode-ico">⛏️</span> Mineração de área
+    </button>
+    <button class="mode" data-mode="enriquecimento">
+      <span class="mode-ico">💎</span> Enriquecimento
+    </button>
+  </nav>
+
+  <div class="top-right">
+    <div class="db-badge" id="db-badge" title="POIs válidos no banco">
+      <span class="dot"></span><span id="db-count">—</span> no banco
+    </div>
+    <div class="ws-badge" id="ws-badge" title="Conexão em tempo real">
+      <span class="dot"></span> tempo real
+    </div>
+  </div>
+</header>
+
+<div id="map"></div>
+
+<!-- Busca flutuante sobre o mapa (overlay ao focar + autocomplete ao vivo) -->
+<div id="busca-overlay" class="hidden"></div>
+<div id="busca-wrap">
+  <div id="busca-box">
+    <svg class="busca-ico" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+    <input id="busca-input" type="text" autocomplete="off" spellcheck="false"
+           placeholder="Buscar por nome, endereço ou categoria…">
+    <button id="busca-clear" class="hidden" title="Limpar">✕</button>
+  </div>
+  <div id="busca-results"></div>
+</div>
+
+<!-- Painel de controle (esquerda) -->
+<aside id="painel" class="card">
+  <!-- PASSO 1: Área -->
+  <section class="p-sec">
+    <div class="p-title"><span class="p-step">1</span> Área de trabalho</div>
+    <div class="p-body">
+      <div class="row">
+        <button class="btn" id="btn-desenhar">✏️ Desenhar área</button>
+        <button class="btn ghost" id="btn-apagar-area" title="Remover polígono">🗑️</button>
+      </div>
+      <div class="hint" id="area-status">Nenhuma área definida — desenhe o polígono no mapa.</div>
+      <button class="btn danger sm" id="btn-limpar-fora">🧹 Limpar banco fora da área</button>
+    </div>
+  </section>
+
+  <!-- PASSO 2: modo planilha -->
+  <section class="p-sec" id="sec-planilha">
+    <div class="p-title"><span class="p-step">2</span> Planilha de POIs</div>
+    <div class="p-body">
+      <div class="row">
+        <a class="btn ghost" href="/api/template" download>⬇️ Baixar modelo</a>
+        <button class="btn" id="btn-importar">📁 Importar…</button>
+        <input type="file" id="file-input" accept=".xlsx,.csv" hidden>
+      </div>
+      <div class="hint" id="file-status">Nenhum arquivo importado.</div>
+      <details class="opts">
+        <summary>Opções avançadas</summary>
+        <label class="opt"><input type="checkbox" id="op-recuperar" checked> Recuperação IA (vizinhos + OpenAI + Gemini)</label>
+        <label class="opt"><input type="checkbox" id="op-retry"> Reprocessar só as falhas (retry-failed)</label>
+        <label class="opt"><input type="checkbox" id="op-gemini"> Resíduo direto pro Gemini (sem browser)</label>
+        <label class="opt"><input type="checkbox" id="op-proxy" checked> Usar proxies (Webshare)</label>
+        <label class="opt inline">Workers <input type="number" id="op-workers" min="1" max="10" value="10"></label>
+        <label class="opt inline">Cidade <input type="text" id="op-cidade" placeholder="opcional"></label>
+      </details>
+    </div>
+  </section>
+
+  <!-- PASSO 2: modo mineração -->
+  <section class="p-sec hidden" id="sec-mineracao">
+    <div class="p-title"><span class="p-step">2</span> Mineração</div>
+    <div class="p-body">
+      <label class="opt inline">Nome da sessão <input type="text" id="op-sessao" placeholder="ex.: parnaiba_centro"></label>
+      <label class="opt inline">Passo da grade
+        <select id="op-step">
+          <option value="120">120 m (denso)</option>
+          <option value="150" selected>150 m (padrão)</option>
+          <option value="220">220 m (rápido)</option>
+          <option value="300">300 m (amplo)</option>
+        </select>
+      </label>
+      <label class="opt"><input type="checkbox" id="op-details"> Coleta profunda — telefone, horários e reviews <small>(Place Details, pago)</small></label>
+      <div class="hint">Varre toda a área do polígono e traz <b>tudo que existir</b> de comércio/serviço.</div>
+    </div>
+  </section>
+
+  <!-- PASSO 2: modo enriquecimento (CASCATA) -->
+  <section class="p-sec hidden" id="sec-enriquecimento">
+    <div class="p-title"><span class="p-step">2</span> Enriquecimento em cascata</div>
+    <div class="p-body">
+      <div class="hint">Cada POI com dado pobre passa por <b>todos</b> os métodos, em sequência, até completar:</div>
+      <div class="cascata">
+        <div class="casc-step"><span class="casc-n">1</span><div><b>🔗 Maps</b><br><small>abre no painel do Maps: fotos, reviews, telefone, horário</small></div></div>
+        <div class="casc-arrow">↓ ainda pobre</div>
+        <div class="casc-step"><span class="casc-n">2</span><div><b>🌐 Web</b><br><small>Yahoo + Instagram/iFood + IA barata + CNPJ/sócios na Receita</small></div></div>
+        <div class="casc-arrow">↓ localizado</div>
+        <div class="casc-step"><span class="casc-n">3</span><div><b>📸 Street View</b><br><small>foto da fachada de cada ponto</small></div></div>
+      </div>
+      <details class="opts">
+        <summary>Opções</summary>
+        <label class="opt"><input type="checkbox" id="enr-maps" checked> Fase 1 — Maps</label>
+        <label class="opt"><input type="checkbox" id="enr-web" checked> Fase 2 — Web + Receita</label>
+        <label class="opt"><input type="checkbox" id="enr-sv" checked> Fase 3 — Street View</label>
+        <label class="opt"><input type="checkbox" id="enr-proxy" checked> Usar proxies</label>
+        <label class="opt inline">Workers <input type="number" id="op-enr-workers" min="1" max="10" value="6"></label>
+      </details>
+      <div class="hint">Custo estimado para Parnaíba: <b>~R$ 4</b> (quase tudo é grátis).</div>
+
+      <div class="casc-sep">Passo final (à parte)</div>
+      <button class="btn-outline" id="btn-baixar-imgs">📥 Baixar imagens para o banco</button>
+      <div class="hint">Salva os bytes de todas as fotos + Street View no banco, com a data
+        de cada imagem (EXIF / data do panorama). Rode <b>depois</b> de enriquecer. ~1,6 GB.</div>
+    </div>
+  </section>
+
+  <!-- PASSO 3: execução -->
+  <section class="p-sec">
+    <div class="p-title"><span class="p-step">3</span> Execução</div>
+    <div class="p-body">
+      <button class="btn primary big" id="btn-iniciar">▶ Iniciar processo</button>
+      <button class="btn danger big hidden" id="btn-parar">■ Parar processo</button>
+      <div class="hint" id="job-status-txt"></div>
+    </div>
+  </section>
+</aside>
+
+<!-- Cards de progresso (direita) -->
+<aside id="stats">
+  <div class="stats-title">⚡ Processo atual</div>
+  <div class="stat-card wide" id="card-progresso">
+    <div class="stat-top"><span class="stat-label">Processados</span><span class="stat-val" id="st-proc">0</span></div>
+    <div class="bar"><div class="bar-fill" id="st-bar"></div></div>
+    <div class="stat-sub" id="st-total-sub">aguardando processo…</div>
+  </div>
+  <div class="stat-card c-green"><div class="stat-ico">✅</div><div><div class="stat-val" id="st-validos">0</div><div class="stat-label">Encontrados</div></div></div>
+  <div class="stat-card c-blue"><div class="stat-ico">🤖</div><div><div class="stat-val" id="st-recup">0</div><div class="stat-label">Recuperados (IA)</div></div></div>
+  <div class="stat-card c-purple"><div class="stat-ico">🔎</div><div><div class="stat-val" id="st-desc">0</div><div class="stat-label">Descobertos</div></div></div>
+  <div class="stat-card c-orange"><div class="stat-ico">🚧</div><div><div class="stat-val" id="st-fora">0</div><div class="stat-label">Fora da área</div></div></div>
+  <div class="stat-card c-gray"><div class="stat-ico">❓</div><div><div class="stat-val" id="st-semmatch">0</div><div class="stat-label">Sem match</div></div></div>
+  <div class="stat-card c-teal"><div class="stat-ico">🗄️</div><div><div class="stat-val" id="st-ingeridos">0</div><div class="stat-label">Gravados no banco</div></div></div>
+
+  <div class="stats-title">🗄️ Dados do banco</div>
+  <div class="stat-card wide db-card">
+    <div class="stat-top"><span class="stat-label">POIs válidos</span><span class="stat-val" id="db-validos">—</span></div>
+    <div class="db-rows">
+      <div><span>📞 Com telefone</span><b id="db-tel">—</b></div>
+      <div><span>🏢 Com CNPJ</span><b id="db-cnpj">—</b></div>
+      <div><span>📸 Street View</span><b id="db-sv">—</b></div>
+      <div><span>📷 Fotos</span><b id="db-fotos">—</b></div>
+      <div><span>💬 Avaliações</span><b id="db-coments">—</b></div>
+    </div>
+  </div>
+</aside>
+
+<!-- Filtros por origem do dado -->
+<div id="filtros"></div>
+
+<!-- Console de logs -->
+<div id="log-panel" class="collapsed">
+  <div id="log-head"><span>📜 Log do processo</span><span id="log-toggle">▲</span></div>
+  <pre id="log-body"></pre>
+</div>
+
+<!-- Modal de POI -->
+<div id="modal-overlay" class="hidden">
+  <div id="modal-card"></div>
+</div>
+
+<!-- Confirmação genérica -->
+<div id="confirm-overlay" class="hidden">
+  <div id="confirm-card" class="card">
+    <div id="confirm-title"></div>
+    <div id="confirm-text"></div>
+    <div class="row right">
+      <button class="btn ghost" id="confirm-no">Cancelar</button>
+      <button class="btn danger" id="confirm-yes">Confirmar</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast-root"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+<script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

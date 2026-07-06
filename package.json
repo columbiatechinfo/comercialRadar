@@ -8,7 +8,8 @@
     "start": "node dist/index.js",
     "dev": "ts-node src/index.ts",
     "capture": "ts-node src/capture.ts",
-    "install-browsers": "playwright install chromium"
+    "install-browsers": "playwright install chromium",
+    "ingest": "ts-node src/ingest.ts"
   },
   "dependencies": {
     "@playwright/test": "^1.44.0",
@@ -23,8 +24,10 @@
     "sharp": "^0.33.4"
   },
   "devDependencies": {
+    "@prisma/client": "^6.19.3",
     "@types/node": "^20.14.0",
     "@types/readline-sync": "^1.4.8",
+    "prisma": "^6.19.3",
     "ts-node": "^10.9.2",
     "typescript": "^5.4.5"
   }

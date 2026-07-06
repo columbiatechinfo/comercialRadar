@@ -1,160 +1,272 @@
+<div align="center">
+
 # 🗺️ ComercialRadar
 
-Captura automatizada de screenshots do Google Maps em resolução 4K (3840×2160),
-cobrindo toda uma área geográfica (cidade, bairro, região) com todos os pontos
-comerciais (POIs) visíveis.
+**Plataforma de mapeamento e enriquecimento de pontos comerciais (POIs)**
+_Descobre, valida e enriquece estabelecimentos com dados do Google Maps, mineração web e Receita Federal — tudo num mapa interativo em tempo real._
+
+<br>
+
+![Python](https://img.shields.io/badge/Python-3.10-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-WebSocket-009688?logo=fastapi&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Prisma%206-4169E1?logo=postgresql&logoColor=white)
+![Playwright](https://img.shields.io/badge/Playwright-stealth-2EAD33?logo=playwright&logoColor=white)
+![Leaflet](https://img.shields.io/badge/Leaflet-OpenStreetMap-199900?logo=leaflet&logoColor=white)
+
+</div>
 
 ---
 
-## 📁 Estrutura do projeto
+## 📌 O que é
+
+O ComercialRadar recebe uma **planilha de estabelecimentos** (ou minera uma **área desenhada no mapa**) e produz uma base rica de POIs geolocalizados, com **fotos, avaliações, horários, telefone, site, Instagram, CNPJ e quadro de sócios** — exibidos num frontend de mapa no padrão Google Maps/Waze, alimentado em **tempo real via WebSocket**.
+
+Foi construído para levantamentos comerciais de campo (ex.: base de clientes potenciais de um município inteiro) onde a planilha de origem é **incompleta ou com endereços errados**, e a meta é obter o dado **correto e verificável** da forma mais barata possível.
+
+---
+
+## ✨ Principais recursos
+
+| | Recurso |
+|---|---|
+| 🗺️ | **Mapa interativo** (Leaflet + OSM) com markers estilizados por categoria, clusters, modal rico e **divisas municipais do IBGE** |
+| ✏️ | **Área de trabalho por polígono** — desenhe os limites; pontos fora são rejeitados e o banco pode ser limpo pela área |
+| 📄 | **Fluxo por planilha** — importa `.xlsx`/`.csv`, casa cada linha com o lugar real no Maps |
+| ⛏️ | **Mineração de área** — varre uma região do mapa e descobre todos os POIs úteis |
+| 💎 | **Enriquecimento em cascata** — cada POI pobre passa por **Maps → Web → Street View** até completar |
+| 🏢 | **Dados empresariais** — CNPJ, razão social, CNAE, situação cadastral e **sócios**, validados na Receita Federal |
+| 📸 | **Street View** — captura a fachada de cada ponto e guarda a **data do panorama** |
+| 🔎 | **Busca flutuante** com autocomplete ao vivo, e **filtros por origem e atributo** (com CNPJ, sem telefone, etc.) |
+| 📥 | **Imagens no banco** — baixa os bytes de todas as fotos + a **data EXIF** de cada uma |
+| ⚡ | **Tempo real** — markers e cards atualizam via WebSocket conforme o backend processa |
+
+---
+
+## 🏗️ Arquitetura
 
 ```
-comercialRadar/
-├── src/
-│   ├── index.ts          # CLI interativo (modo principal)
-│   ├── capture.ts        # Motor de captura Playwright
-│   ├── capture-n8n.ts    # Versão headless para o n8n
-│   ├── geo.ts            # Busca de limites e cálculo de grid
-│   ├── retry-failed.ts   # Reprocessa tiles falhos
-│   └── types.ts          # Tipos TypeScript
-├── capturas/             # Imagens geradas ficam aqui
-│   └── <nome-sessao>/
-│       ├── session.json  # Progresso e metadados
-│       └── tile_r000_c000_-5.09000_-42.80000.png
-├── n8n-workflow.json     # Workflow para importar no n8n
-├── setup.ps1             # Instalação automática Windows
-├── package.json
-└── tsconfig.json
+                    ┌──────────────────── FRONTEND (mapa) ────────────────────┐
+                    │  Leaflet + OSM · busca · filtros · modal · WebSocket     │
+                    └───────────────┬─────────────────────────▲───────────────┘
+                                    │ REST /api + /ws          │ eventos (poi/progresso/log)
+                    ┌───────────────▼─────────────────────────┴───────────────┐
+                    │              server.py  (FastAPI + jobs)                 │
+                    │  dispara subprocessos · watcher ingere · transmite       │
+                    └───────────────┬──────────────────────────────────────────┘
+        ┌───────────────────────────┼───────────────────────────────────────────┐
+        ▼                           ▼                           ▼                 ▼
+ search_from_sheet.py        minerar_area.py           enriquecer_tudo.py   baixar_imagens.py
+ (planilha → Maps)           (polígono → Maps)         (cascata pós)        (imagens+datas→banco)
+        │                           │                           │
+        └──────────────┬────────────┴───────────────────────────┘
+                       ▼
+              PostgreSQL (Prisma 6)  ·  pois + images_urls + comentarios
+              + horario_funcionamento + streetview_imgs
 ```
 
+### Os fluxos
+
+**A · Coleta por planilha** (`search_from_sheet.py`)
+Casa cada linha da planilha com o lugar real no Maps (fill robusto, proxy estático, fingerprint), com **portões de distância** (evita homônimos distantes) e **filtro de UF**. Cadeia de recuperação em 4 camadas para quem não casa direto: vizinhos "próximo daqui" → decisor OpenAI → localizador Gemini → descoberta de leads.
+
+**B · Mineração de área** (`minerar_area.py`)
+Varre a bounding box de um polígono em grade e coleta todos os estabelecimentos, respeitando o gate da área.
+
+**C · Enriquecimento em cascata** (`enriquecer_tudo.py`)
+Para cada POI com dado pobre (falta telefone/endereço/categoria):
+1. **🔗 Maps** — reabre o painel oficial (fotos, reviews, telefone, horário, endereço estruturado)
+2. **🌐 Web** — busca no Yahoo → Instagram/iFood/sites → IA barata só para estruturar → **CNPJ + sócios na Receita Federal**
+3. **📸 Street View** — foto da fachada + data do panorama
+
+**D · Imagens para o banco** (`baixar_imagens.py`)
+Passo final: baixa os bytes de todas as fotos (com a **data EXIF**) e dos Street Views (com a **data do panorama** via API de metadados) para dentro do PostgreSQL.
+
 ---
 
-## 🚀 Instalação (primeira vez)
+## 🧰 Stack
 
-### Pré-requisito
-- **Node.js 18+** — https://nodejs.org
+- **Backend:** Python 3.10 · FastAPI + WebSocket · Playwright (+ stealth) · aiohttp · psycopg2 · Pillow
+- **IA:** OpenAI `gpt-4o-mini` (decisor/estruturador) · Google `gemini-2.5-pro`/`flash` (localizador)
+- **Dados abertos:** BrasilAPI / minhareceita.org (Receita Federal) · malhas IBGE · Google Street View metadata
+- **Banco:** PostgreSQL gerenciado por **Prisma 6** (⚠️ Prisma 7 quebra — usar 6)
+- **Frontend:** HTML/CSS/JS puro · Leaflet + OpenStreetMap + markercluster
+- **Proxies:** Webshare (100 IPs estáticos, cooldown automático)
 
-### Instalar tudo automaticamente
-Abra o PowerShell como administrador na pasta do projeto e execute:
+---
 
-```powershell
-PowerShell -ExecutionPolicy Bypass -File setup.ps1
+## 🚀 Setup
+
+### Pré-requisitos
+- Python 3.10, Node.js (para Prisma/ts-node), PostgreSQL local
+- Contas: Webshare (proxies), OpenAI, Google AI Studio (Gemini)
+
+### Instalação
+```bash
+# 1. Ambiente Python
+python -m venv .venv
+.venv\Scripts\pip install playwright playwright-stealth opencv-python numpy easyocr \
+    scikit-learn openpyxl aiohttp python-dotenv psycopg2-binary openai Pillow fastapi uvicorn
+.venv\Scripts\playwright install chromium
+
+# 2. Node / Prisma
+npm install
+npx prisma generate          # NUNCA use `prisma migrate dev` (ver Avisos)
+
+# 3. Configurar segredos
+copy .env.example .env        # preencha as chaves
 ```
 
-O script vai:
-1. Verificar Node.js
-2. Instalar o **n8n** globalmente
-3. Instalar dependências npm do projeto
-4. Baixar o **Chromium** (Playwright)
-5. Criar atalhos na Área de Trabalho
-
----
-
-## 🖥️ Uso — Modo Script Direto (mais simples)
-
-```cmd
-cd C:\Users\ceo\Documents\Sistemas\comercialRadar
-npx ts-node src/index.ts
-```
-
-Ou clique no atalho **"ComercialRadar - Captura"** criado na Área de Trabalho.
-
-O script vai perguntar:
-1. **Busca automática** (digita "Teresina, Piauí") ou **coordenadas manuais**
-2. Nível de zoom (padrão: 17)
-3. Delay entre tiles
-4. Nome da sessão
-
----
-
-## 🤖 Uso — Modo n8n (agendamento automático)
-
-### Iniciar o n8n
-```cmd
-n8n start
-```
-Ou clique no atalho **"ComercialRadar - n8n"** na Área de Trabalho.
-
-### Abrir interface
-http://localhost:5678
-
-### Importar o workflow
-1. Menu lateral → **Workflows**
-2. Botão **Import from file**
-3. Selecione `n8n-workflow.json`
-4. Edite o node **"Configurar Sessão"** e ajuste a query da cidade
-5. Ative o workflow (toggle no topo)
-
-O workflow executa automaticamente de Segunda a Sexta às 06h.
-
----
-
-## 🔁 Reprocessar tiles falhos
-
-Se a captura foi interrompida ou alguns tiles falharam:
-
-```cmd
-npx ts-node src/retry-failed.ts capturas\<nome-sessao>\session.json
-```
-
----
-
-## ⚙️ Configurações importantes
-
-### Nível de Zoom
-| Zoom | Visão                          | POIs visíveis |
-|------|--------------------------------|---------------|
-| 15   | Cidade inteira (mais área)     | Não           |
-| 16   | Bairros                        | Poucos        |
-| **17** | **Ruas (recomendado)**       | **✔ Sim**     |
-| 18   | Quarteirões (mais detalhado)   | ✔ Sim         |
-| 19   | Edifícios                      | ✔ Muitos      |
-
-### Delay entre tiles
-- `300ms` — Rápido, risco maior de bloqueio pelo Google
-- `600ms` — Balanceado (padrão)
-- `1000ms+` — Mais seguro para áreas grandes
-
----
-
-## 📊 Exemplo: Teresina-PI completa
-
-- Zoom 17, overlap 10%, delay 600ms
-- Estimativa: ~800–1200 tiles
-- Tempo: ~2–3 horas
-- Espaço em disco: ~3–5 GB
-
----
-
-## 🗂️ Arquivo session.json
-
-Salvo dentro de cada pasta de sessão:
-
-```json
-{
-  "sessionName": "teresina_2024_01",
-  "startedAt": "2024-01-15T06:00:00.000Z",
-  "totalTiles": 950,
-  "completedTiles": 948,
-  "failedTiles": [...],
-  "status": "completed",
-  "config": { ... }
-}
+### `.env`
+```ini
+WEBSHARE_API_KEY=...
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=...          # se tiver '@', no DATABASE_URL vira %40
+POSTGRES_DB=comercialradar
+DATABASE_URL="postgresql://postgres:<senha>@localhost:5432/comercialradar?schema=public"
+OPENAI_API_KEY=...             # opcional (fallback p/ Gemini flash)
+OPENAI_MODEL=gpt-4o-mini
+GEMINI_API_KEY=...
+GEMINI_MODEL=gemini-2.5-pro
+MAPS_API_KEY=...               # só para a data do Street View (endpoint grátis)
 ```
 
 ---
 
-## ❓ Problemas comuns
+## 🖥️ Uso
 
-**"Chromium não encontrado"**
-```cmd
-npx playwright install chromium
+### Interface web (recomendado)
+```bash
+.venv\Scripts\python server.py
+```
+Abra **http://localhost:8765**. No cabeçalho, escolha o modo:
+- **📄 Importar planilha** — baixe o modelo, importe seu `.xlsx`, **desenhe a área** (passo 1) e inicie.
+- **⛏️ Mineração de área** — desenhe o polígono e minere.
+- **💎 Enriquecimento** — cascata Maps→Web→Street View + botão **📥 Baixar imagens**.
+
+Os markers e cards atualizam em tempo real conforme o processamento avança.
+
+### Linha de comando (processos longos)
+> Runs longos sobrevivem melhor no terminal do que em background. Sempre prefixe `PYTHONUTF8=1` no Git Bash.
+```bash
+# coleta por planilha (Maps + recuperação + ingest + mapa)
+.venv\Scripts\python search_from_sheet.py "planilha.xlsx" --workers 10 --recuperar --ingest
+
+# enriquecimento em cascata (idempotente; retomável)
+.venv\Scripts\python enriquecer_tudo.py --area areas\area_atual.json --workers 4
+
+# só a fase web (Yahoo + Receita)
+.venv\Scripts\python enriquecer_tudo.py --area areas\area_atual.json --pular-maps --pular-streetview
+
+# baixar todas as imagens (bytes+datas) para o banco — rodar por ÚLTIMO
+.venv\Scripts\python baixar_imagens.py --workers 8
 ```
 
-**"Muitos tiles bloqueados pelo Google"**
-Aumente o delay para 1500ms e reduza o zoom para 16.
+---
 
-**"Erro ao buscar cidade"**
-A busca usa a API Nominatim (OpenStreetMap). Tente ser mais específico:
-- ❌ `Teresina`
-- ✅ `Teresina, Piauí, Brasil`
+## 🗄️ Banco de dados
+
+Tabela principal **`pois`** (1 linha por ponto) + derivadas 1:N:
+
+| Tabela | Conteúdo |
+|---|---|
+| `pois` | dados escalares: nome, endereço (+ `endereco_fonte`), telefone, categoria, avaliação, **cnpj, razao_social, cnae, socios, situacao_cadastral**, instagram, streetview_path… |
+| `images_urls` | fotos do Maps (url + **bytes** + **data EXIF**) |
+| `comentarios` | avaliações escritas |
+| `horario_funcionamento` | horários por dia |
+| `streetview_imgs` | fachada (bytes) + **data do panorama** + pano_id |
+
+> ⚠️ O banco é **compartilhado** com outro projeto (tabelas `radar_*` — não são deste projeto).
+> **Nunca rode `prisma migrate dev`** (ele quer `reset` = apaga tudo). Para mudar schema: `ALTER TABLE … ADD COLUMN IF NOT EXISTS` via SQL + refletir no `schema.prisma` + `npx prisma generate`.
+
+**Migrar para outro PC** (leva as imagens junto): use `pg_dump -Fc` das tabelas do projeto, não DBF (DBF não guarda imagens).
+
+---
+
+## 🧩 Estrutura de arquivos
+
+```
+server.py                FastAPI + WebSocket + orquestração de jobs
+frontend/                mapa (index.html, app.js, style.css)
+search_from_sheet.py     fluxo A: planilha → Maps (+ 4 camadas de recuperação)
+minerar_area.py          fluxo B: polígono → Maps
+enriquecer_tudo.py       cascata Maps→Web→StreetView (por POI carente)
+enriquecer_maps.py       reabre maps_url p/ dados oficiais do painel
+minerar_web.py           resíduo → Yahoo + pré-filtro + IA barata + Receita
+streetview_capture.py    print da fachada por POI
+baixar_imagens.py        imagens (bytes) + datas → banco
+realtime_ingest.py       ingestão psycopg2 (merge não-destrutivo, gate de área)
+gemini_localizador.py    Gemini + grounding   ·   ai_decisor.py  OpenAI
+human_browser.py         sessão Playwright stealth + proxy + route blocking
+proxy_pool.py            pool Webshare (cooldown/cache)   ·   area_utils.py  gate polígono
+prisma/schema.prisma     schema   ·   src/ingest.ts  ingestão em lote (Prisma)
+DOCUMENTACAO.md          documentação técnica completa (fonte única de verdade)
+```
+
+---
+
+## 🛠️ A jornada — problemas enfrentados e como resolvemos
+
+Este projeto passou por várias iterações de depuração. Os principais aprendizados:
+
+<details>
+<summary><b>1. Dispersão geográfica de POIs</b></summary>
+
+Nomes iguais a lugares famosos ("Tóquio", "K2") faziam o Maps/Gemini retornar o lugar distante.
+**Solução:** portões de distância (match 20 km, candidatos 20 km, Gemini 40 km) + guard de coordenada no ingestor + a run é UF-scoped. Saneamento por polígono municipal do IBGE.
+</details>
+
+<details>
+<summary><b>2. Candidatos legados sem portão inflando recuperados/descobertos</b></summary>
+
+O JSON acumulava candidatos coletados antes do portão existir (dist_m de milhares de km), e a IA/descoberta os aceitava.
+**Solução:** filtro `_cands_confiaveis` (≤20 km) antes da IA e da descoberta + revalidação.
+</details>
+
+<details>
+<summary><b>3. Contadores do painel inflados / barra 100% falsa</b></summary>
+
+O watcher recontava o arquivo inteiro e re-ingeria os já gravados.
+**Solução:** baseline (delta do job) + dedup por place_id + progresso vindo do log.
+</details>
+
+<details>
+<summary><b>4. Gemini flash fraco e caro no resíduo</b></summary>
+
+`gemini-2.5-flash` devolvia endereço/telefone null; o pro custava ~US$37/cidade.
+**Solução:** mineração web própria (Yahoo — Google dá CAPTCHA, Bing serve resultado-isca) + pré-filtro por regex + IA só para estruturar + Receita Federal. **~US$0,001/POI.**
+</details>
+
+<details>
+<summary><b>5. Ingestor apagando fotos e dupla ingestão</b></summary>
+
+Reingerir um POI com `fotos=[]` apagava as fotos; rodar standalone não gravava (dependia do watcher).
+**Solução:** **merge não-destrutivo** (dado novo vazio nunca apaga o antigo) + ingestão direta com flag `--sem-ingest` para o modo web.
+</details>
+
+<details>
+<summary><b>6. Endereço da web sobrescrevendo o do Maps</b></summary>
+
+A fase Web (que não abre o Maps) gravava endereço errado por cima do endereço estruturado do Maps.
+**Solução:** prioridade Maps > Web + coluna `endereco_fonte` + passada de conferência que reabre o `maps_url`.
+</details>
+
+<details>
+<summary><b>7. Extração frágil por seletores absolutos</b></summary>
+
+Seletores CSS (`data-item-id`) renderizam tarde e quebram.
+**Solução:** busca por **padrão no texto** ("Ctrl+F") — telefone/site por regex, resiliente a timing e layout.
+</details>
+
+---
+
+## 📄 Documentação
+
+Detalhes técnicos completos (seletores do Maps aprendidos, flags, armadilhas, estado do dataset) em **[`DOCUMENTACAO.md`](DOCUMENTACAO.md)** — a fonte única de verdade do projeto.
+
+---
+
+<div align="center">
+<sub>Columbia Tech · ComercialRadar</sub>
+</div>

@@ -1,0 +1,120 @@
+// ComercialRadar — schema do banco (PostgreSQL, gerenciado por Prisma)
+// Tabela principal: pois. Derivadas (1:N): images_urls, comentarios, horario_funcionamento.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Poi {
+  id              Int      @id @default(autoincrement())
+  fonte           String   // "planilha" | "pipeline"
+  nome            String
+  categoria       String?
+  endereco        String?
+  telefone        String?
+  website         String?
+  avaliacao       String?
+  totalAvaliacoes Int?     @map("total_avaliacoes")
+  plusCode        String?  @map("plus_code")
+  statusHorario   String?  @map("status_horario")
+  latOrigem       Float?   @map("lat_origem")
+  lngOrigem       Float?   @map("lng_origem")
+  mapsLat         Float?   @map("maps_lat")
+  mapsLng         Float?   @map("maps_lng")
+  mapsUrl         String?  @map("maps_url")
+  placeId         String?  @map("place_id")
+  status          String?
+  distanciaM      Float?   @map("distancia_m")
+  similaridade    Float?
+  matchValido     Boolean? @map("match_valido")
+  ocrTexto        String?  @map("ocr_texto")
+  nomeOriginal    String?  @map("nome_original")      // nome fornecido na planilha
+  enderecoOriginal String? @map("endereco_original")  // endereço fornecido na planilha
+  precoMedio      String?  @map("preco_medio")
+  fonteDado       String?  @map("fonte_dado")          // maps | gemini | web
+  iaResposta      String?  @map("ia_resposta")  @db.Text  // resposta bruta da IA (consulta posterior)
+  cnpj            String?  @db.VarChar(20)              // Receita Federal (BrasilAPI)
+  razaoSocial     String?  @map("razao_social") @db.Text
+  nomeFantasia    String?  @map("nome_fantasia") @db.Text
+  naturezaJuridica String? @map("natureza_juridica") @db.Text
+  cnae            String?  @db.Text                     // código + descrição
+  situacaoCadastral String? @map("situacao_cadastral") @db.Text
+  socios          String?  @db.Text                     // QSA (JSON string)
+  instagram       String?  @db.Text
+  email           String?  @db.Text
+  resumoAvaliacoes String? @map("resumo_avaliacoes") @db.Text
+  streetviewPath  String?  @map("streetview_path") @db.Text
+  fontesWeb       String?  @map("fontes_web") @db.Text  // URLs consultadas na mineração web
+  enderecoFonte   String?  @map("endereco_fonte") @db.VarChar(12)  // maps | web | gemini | planilha
+  sessao          String?
+  criadoEm        DateTime @default(now()) @map("criado_em")
+
+  imagens     ImageUrl[]
+  comentarios Comentario[]
+  horarios    HorarioFuncionamento[]
+  streetviews StreetviewImg[]
+
+  @@index([placeId])
+  @@index([fonte])
+  @@map("pois")
+}
+
+model ImageUrl {
+  id          Int     @id @default(autoincrement())
+  poiId       Int     @map("poi_id")
+  url         String  @db.Text
+  ordem       Int?
+  dados       Bytes?                              // bytes da imagem (baixar_imagens.py)
+  dataImagem  String? @map("data_imagem") @db.VarChar(10)  // data EXIF (YYYY-MM-DD)
+  bytesTam    Int?    @map("bytes_tam")
+  contentType String? @map("content_type") @db.VarChar(40)
+  poi         Poi     @relation(fields: [poiId], references: [id], onDelete: Cascade)
+
+  @@index([poiId])
+  @@map("images_urls")
+}
+
+model StreetviewImg {
+  id          Int      @id @default(autoincrement())
+  poiId       Int      @map("poi_id")
+  dados       Bytes?                              // bytes do print da fachada
+  dataCaptura String?  @map("data_captura") @db.VarChar(7)  // data do panorama (YYYY-MM)
+  panoId      String?  @map("pano_id") @db.VarChar(40)
+  bytesTam    Int?     @map("bytes_tam")
+  lat         Float?
+  lng         Float?
+  criadoEm    DateTime @default(now()) @map("criado_em")
+  poi         Poi      @relation(fields: [poiId], references: [id], onDelete: Cascade)
+
+  @@index([poiId])
+  @@map("streetview_imgs")
+}
+
+model Comentario {
+  id        Int     @id @default(autoincrement())
+  poiId     Int     @map("poi_id")
+  autor     String?
+  nota      Float?
+  texto     String? @db.Text
+  data      String?
+  poi       Poi     @relation(fields: [poiId], references: [id], onDelete: Cascade)
+
+  @@index([poiId])
+  @@map("comentarios")
+}
+
+model HorarioFuncionamento {
+  id      Int     @id @default(autoincrement())
+  poiId   Int     @map("poi_id")
+  dia     String
+  horario String?
+  poi     Poi     @relation(fields: [poiId], references: [id], onDelete: Cascade)
+
+  @@index([poiId])
+  @@map("horario_funcionamento")
+}
