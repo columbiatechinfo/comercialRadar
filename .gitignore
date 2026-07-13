@@ -32,6 +32,10 @@ malhas/
 mapa_pois.html
 *.dump
 *.sql
+*.backup
+*.tar
+# Backups do banco (bem pesados — DB tem os bytes das imagens)
+backups_bd/
 
 # Dados de teste / clientes
 teste_*.xlsx

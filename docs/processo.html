@@ -142,16 +142,21 @@ fuzzy em código, ramo por pergunta isolada ao mesmo modelo. Nada é reprovado s
 </div>
 
 <h2><span class="num">D</span> O que o frontend mostra agora</h2>
+<p class="lead"><b>Seleção por município, por clique.</b> Por padrão <b>nada vem selecionado</b>: o mapa
+abre na malha (divisas IBGE) e nenhum POI aparece. Você <b>clica no polígono</b> de um município →
+ele é realçado, o mapa dá zoom, os POIs surgem e todo o painel/filtros preenchem <b>só com os dados
+daquele município</b>. Clicar de novo (ou no ✕ do badge) desmarca.</p>
 <div class="two">
   <div class="panel"><h3>🎛️ Filtros da IA (rodapé do mapa)</h3>
     <ul>
       <li><b>✅ Aprovados / ❌ Reprovados</b> — seleção única, colore e filtra os marcadores.</li>
       <li><b>⭐ Recomendar visita</b> — só os aprovados com sinal de vida recente.</li>
       <li><b>🔍 Revisar manual</b> — os 31 de coordenada não-distinguível.</li>
-      <li>Combinam com os filtros de origem (Maps/Web/…) e atributo (CNPJ/telefone/foto).</li>
+      <li>Combinam com origem (Maps/Web/…) e atributo (CNPJ/telefone/foto); contagens por município.</li>
     </ul></div>
   <div class="panel"><h3>🗂️ Dossiê de cada ponto (modal)</h3>
     <ul>
+      <li><b>#id do banco</b> ao lado do nome (clique copia) — cruza o ponto com a linha do banco.</li>
       <li>Selo de <b>veredito</b> + motivo, e ⭐ quando recomendado (com a evidência de recência).</li>
       <li>Ramo visto, tipo de construção, porte e <b>nº de funcionários</b> estimado.</li>
       <li><b>Galeria 360°</b> — fachada + giro + panoramas, servidos do banco (<span class="inl">/api/sv/…</span>).</li>

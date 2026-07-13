@@ -487,13 +487,26 @@ As imagens do giro 360° ficam em `streetview_imgs.angulo` (facade|g90|g180|g270
 ```
 
 ### Frontend (estágio 05) — o que a análise adiciona
+- **Seleção por MUNICÍPIO (por padrão nada vem selecionado)**: o mapa abre enquadrado na
+  malha (divisas IBGE) e **nenhum POI aparece**. O usuário **clica no polígono** de um
+  município → aquele município é realçado, o mapa dá zoom, os POIs surgem e o painel +
+  filtros preenchem só com os dados dele. Clicar de novo (ou no ✕ do badge) desmarca.
 - **Filtros no rodapé do mapa**: ✅ Aprovados / ❌ Reprovados (seleção única) + ⭐ Recomendar
-  visita + 🔍 Revisar manual. Combinam com origem e atributo.
+  visita + 🔍 Revisar manual. Combinam com origem e atributo; contagens por município.
 - **Marcadores**: anel de veredito + estrela dourada nos recomendados.
-- **Modal**: selo de veredito + motivo, ramo/construção/porte/funcionários, galeria 360°
-  (servida do banco em `/api/sv/{poi_id}/{angulo}`) e o lead quando reprovado.
-- **APIs**: `/api/pois` traz veredito/recomendação; `/api/pois/{id}` traz o bloco `ia`;
-  `/api/stats` traz aprovados/reprovados/recomendar; `/api/sv/{id}/{angulo}` serve as imagens.
+- **Modal**: `#id` do banco ao lado do nome (clique copia — facilita cruzar com o banco),
+  selo de veredito + motivo, ramo/construção/porte/funcionários, galeria 360° (servida do
+  banco em `/api/sv/{poi_id}/{angulo}`) e o lead quando reprovado.
+- **APIs**: `/api/pois` traz veredito/recomendação/**cidade**; `/api/pois/{id}` traz o bloco
+  `ia`; `/api/stats?cidade=` filtra por município; `/api/sv/{id}/{angulo}` serve as imagens.
+- **Boot do server**: `on_event`→`lifespan` (sem DeprecationWarning) + banner claro com a URL
+  e `log_level=info` — o terminal mostra `✅ ComercialRadar no ar → http://127.0.0.1:8765`.
+
+### recomendar_visita — de onde vem
+Calculado no `descrever_imagens.py` (`_recomendar_visita`): fica **true** só se **aprovado
+E** houver **sinal de vida recente** — comentário com data sem "ano", foto com EXIF, ou
+street view dentro de **12 meses** (`RECENCIA_MESES`). Aprovado sem sinal recente → `false`
+com motivo "aprovado, mas sem sinal de vida nos últimos 12 meses".
 
 ### Resultado da 1ª execução completa (Parnaíba-PI)
 4.313 POIs · **1.843 aprovados** · 2.234 reprovados · **893 recomendar visita** · 973 leads ·
