@@ -430,4 +430,71 @@ ai_decisor.py (OpenAI)  gemini_localizador.py (Gemini)  gerar_mapa_html.py
 src/ingest.ts (Prisma)  prisma/schema.prisma  user_agents.json  camada1_serp_TODO.py (stub)
 areas/area_atual.json (polígono)  uploads/ (planilhas)  mineracao/ (saídas do minerador)
 .env (segredos)  mapa_pois.html (saída legado)  PIPELINE.md (doc pipeline)  DOCUMENTACAO.md (este)
+descrever_imagens.py (análise IA)  docs/processo.html (mapa visual do fluxo)
 ```
+
+## 12. Análise visual por IA (`descrever_imagens.py`) — estágio 04
+
+**Mapa visual do fluxo completo: [`docs/processo.html`](docs/processo.html)** (abra no navegador).
+
+Último estágio da esteira: um modelo multimodal local (Ollama **qwen2.5vl:7b**, 100% GPU no
+servidor remoto) olha as imagens de cada POI e dá um **veredito** — o dado bate com o que a
+imagem mostra? A análise vai para a tabela `analise_ia` (1:1 com o POI).
+
+### Arquitetura: percepção cega + julgamento isolado
+1. **Percepção 100% cega** — o modelo recebe SÓ as imagens (fachada + fotos do Maps), sem
+   nenhum dado do cadastro (senão "papagaia" nome/categoria). Devolve JSON: `cenario`,
+   `ramo_visto`, `nome_visto` (lido às cegas), `estabelecimentos[]` (todos os letreiros do
+   prédio, térreo + andares), `porte`, `funcionarios_estimados`, `atividade_real`.
+2. **Decisão em código** (`_decidir`) — casa a percepção com o cadastro:
+   - **nome** por fuzzy (`_nome_bate`) contra TODOS os letreiros lidos → resgata co-localizado.
+   - **ramo** por família (`_mesmo_ramo`): atalho textual + pergunta ISOLADA ao mesmo modelo.
+   - área aberta → `sem_estabelecimento`; vago → `ponto_vago`; residência → `residencia_sem_comercio`.
+3. **2ª olhada** (`_analisar_poi`) — se ia reprovar, reanalisa **foto a foto** só as fotos do
+   próprio ponto (interior/produto revela o negócio). Uma por vez (evita foto-ruído).
+4. **Protocolo 360°** (modo `--incremental`) — regra de ouro: só reprova depois de girar o
+   panorama (base + 90/180/270) e capturar 2 panoramas deslocados (±15 m).
+5. **Recomendar visita** (`_recomendar_visita`) — aprovado + sinal de vida recente
+   (comentário/foto/street view ≤ 12 meses) → `recomendar_visita = true`.
+
+### Regras de calibração (validadas em 46 casos com o cliente, 0 falso-positivo)
+- **Multi-loja**: casa nome contra qualquer letreiro (clínica sobre farmácia, loja no andar).
+- **Família de ramo**: armazém≈supermercado≈atacarejo; empadaria≈padaria≈restaurante; óculos⇒ótica.
+- **Essência da categoria**: tira prefixo genérico ("Comércio varejista de plantas" → "plantas").
+- **Stopword de nome**: tipo de negócio (escola/igreja/posto) não casa nome sozinho.
+- **CP10**: foto de interior vale mais que a fachada quando divergem.
+- **Dicas de dedução**: prateleiras=mercado, altar/crucifixo=igreja, piscina+crianças=natação.
+- **Porte físico**: funcionários pela dimensão (galpão 15-50, não "2 a 4").
+- **Contexto**: fotos do Maps ~1900 tokens; só 2 cabem em `num_ctx=4096` → 2ª olhada é foto a foto.
+- **num_ctx fixo 4096**: pedir ctx diferente força reload e trava o Ollama (bug de 06/07/2026).
+
+### Tabela `analise_ia` (colunas principais)
+`veredito` (aprovado|reprovado), `motivo` (ok|atividade_divergente|imagem_insuficiente|
+residencia_sem_comercio|sem_estabelecimento|ponto_vago), `equivalencia`, `atividade_real`,
+`porte`, `pessoas_estimadas` (nº funcionários), `tipo_construcao` (loja_terrea|casa|predio|
+area_aberta|galpao), `outro_estabelecimento` (lead), `recomendar_visita`, `recomendacao_motivo`,
+`resposta_json` (rastro bruto da percepção, com `_percepcao` e marcador `_360`), `n_imagens`.
+As imagens do giro 360° ficam em `streetview_imgs.angulo` (facade|g90|g180|g270|p1|p2).
+
+### Comandos
+```bash
+# Passe 1 — direto (rápido, ~5h), rescata pela 2ª olhada nas fotos do Maps:
+.venv\Scripts\python descrever_imagens.py --refazer --workers 3
+# Passe 2 — giro 360° só nos reprovados que ainda não passaram:
+.venv\Scripts\python descrever_imagens.py --so-reprovados --incremental --extras 2
+# Reprocessar POIs específicos:
+.venv\Scripts\python descrever_imagens.py --ids 31910,155747 --refazer
+```
+
+### Frontend (estágio 05) — o que a análise adiciona
+- **Filtros no rodapé do mapa**: ✅ Aprovados / ❌ Reprovados (seleção única) + ⭐ Recomendar
+  visita + 🔍 Revisar manual. Combinam com origem e atributo.
+- **Marcadores**: anel de veredito + estrela dourada nos recomendados.
+- **Modal**: selo de veredito + motivo, ramo/construção/porte/funcionários, galeria 360°
+  (servida do banco em `/api/sv/{poi_id}/{angulo}`) e o lead quando reprovado.
+- **APIs**: `/api/pois` traz veredito/recomendação; `/api/pois/{id}` traz o bloco `ia`;
+  `/api/stats` traz aprovados/reprovados/recomendar; `/api/sv/{id}/{angulo}` serve as imagens.
+
+### Resultado da 1ª execução completa (Parnaíba-PI)
+4.313 POIs · **1.843 aprovados** · 2.234 reprovados · **893 recomendar visita** · 973 leads ·
+31 para revisão manual. A calibração levou os aprovados de 1.323 → 1.843 (+39%) sem falso-positivo.

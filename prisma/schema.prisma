@@ -51,6 +51,12 @@ model Poi {
   streetviewPath  String?  @map("streetview_path") @db.Text
   fontesWeb       String?  @map("fontes_web") @db.Text  // URLs consultadas na mineração web
   enderecoFonte   String?  @map("endereco_fonte") @db.VarChar(12)  // maps | web | gemini | planilha
+  cidade          String?                                          // extraída do endereço na ingestão
+  uf              String?  @db.VarChar(2)
+  coordCompartilhada Boolean? @default(false) @map("coord_compartilhada") // coord idêntica a outro POI (imprecisa/co-localizado)
+  coordGrupo      Int?     @map("coord_grupo")                     // nº de POIs no mesmo ponto
+  revisarManual   Boolean? @default(false) @map("revisar_manual")  // coord não-distinguível → precisa olho humano
+  revisarMotivo   String?  @map("revisar_motivo") @db.Text
   sessao          String?
   criadoEm        DateTime @default(now()) @map("criado_em")
 
@@ -58,6 +64,7 @@ model Poi {
   comentarios Comentario[]
   horarios    HorarioFuncionamento[]
   streetviews StreetviewImg[]
+  analise     AnaliseIa?
 
   @@index([placeId])
   @@index([fonte])
@@ -88,11 +95,37 @@ model StreetviewImg {
   bytesTam    Int?     @map("bytes_tam")
   lat         Float?
   lng         Float?
+  angulo      String?  @db.VarChar(12)  // facade | g90 | g180 | g270 | p1 | p2 (protocolo 360)
   criadoEm    DateTime @default(now()) @map("criado_em")
   poi         Poi      @relation(fields: [poiId], references: [id], onDelete: Cascade)
 
   @@index([poiId])
   @@map("streetview_imgs")
+}
+
+// Análise visual por IA (descrever_imagens.py) — 1:1 com o POI
+model AnaliseIa {
+  poiId              Int      @id @map("poi_id")
+  confere            Boolean?                          // atividade dos dados bate com as imagens?
+  equivalencia       String?  @db.Text
+  porte              String?                           // micro | pequeno | medio | grande
+  pessoasEstimadas   String?  @map("pessoas_estimadas")
+  atividadeReal      String?  @map("atividade_real") @db.Text
+  veredito           String?                           // aprovado | reprovado
+  vereditoMotivo     String?  @map("veredito_motivo") @db.Text
+  motivo             String?                           // ok | ponto_vago | atividade_divergente | ...
+  outroEstabelecimento String? @map("outro_estabelecimento") @db.Text  // lead descoberto na imagem
+  tipoConstrucao     String?  @map("tipo_construcao")  // casa | loja_terrea | predio | galpao | area_aberta
+  recomendarVisita   Boolean? @map("recomendar_visita")           // aprovado + sinal de vida recente
+  recomendacaoMotivo String?  @map("recomendacao_motivo") @db.Text
+  respostaJson       Json?    @map("resposta_json")               // rastro bruto da percepção
+  modelo             String?
+  imagemFonte        String?  @map("imagem_fonte")
+  nImagens           Int?     @map("n_imagens")
+  criadoEm           DateTime @default(now()) @map("criado_em")
+  poi                Poi      @relation(fields: [poiId], references: [id], onDelete: Cascade)
+
+  @@map("analise_ia")
 }
 
 model Comentario {

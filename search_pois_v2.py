@@ -193,6 +193,7 @@ async def selecionar_melhor_card(sess, nome_ocr, orig_lat, orig_lng):
     count = await cards.count()
     melhor_card = None
     melhor_score = -1.0
+    melhor_coord = None      # coord do !3d!4d do href do card (ponto REAL do place)
 
     for i in range(min(count, 8)):
         card = cards.nth(i)
@@ -210,11 +211,13 @@ async def selecionar_melhor_card(sess, nome_ocr, orig_lat, orig_lng):
 
             sim = similaridade(nome_ocr, nome_card)
             dist_card = 9999.0
+            coord_card = None
             try:
                 href = await card.locator('a[href*="/maps/place/"]').first.get_attribute("href", timeout=800)
                 m = re.search(r"!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)", href or "")
                 if m:
-                    dist_card = haversine(orig_lat, orig_lng, float(m.group(1)), float(m.group(2)))
+                    coord_card = (float(m.group(1)), float(m.group(2)))
+                    dist_card = haversine(orig_lat, orig_lng, *coord_card)
             except Exception:
                 pass
 
@@ -224,6 +227,7 @@ async def selecionar_melhor_card(sess, nome_ocr, orig_lat, orig_lng):
             if score > melhor_score and sim >= config.SIM_CARD_MIN:
                 melhor_score = score
                 melhor_card = card
+                melhor_coord = coord_card
         except Exception:
             continue
 
@@ -239,7 +243,11 @@ async def selecionar_melhor_card(sess, nome_ocr, orig_lat, orig_lng):
     try:
         await page.locator("h1.DUwDvf").first.wait_for(state="visible", timeout=config.WAIT_PAINEL_MS)
         await sess.explore_panel()
-        return await extract_panel(page)
+        poi = await extract_panel(page)
+        # a coord da URL pode ser o CENTRO da lista, não o place; prioriza a do card.
+        if poi and melhor_coord:
+            poi["maps_lat"], poi["maps_lng"] = melhor_coord
+        return poi
     except Exception:
         return None
 

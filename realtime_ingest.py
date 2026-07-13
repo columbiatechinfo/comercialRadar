@@ -12,6 +12,7 @@ Também expõe utilidades usadas pelo server.py (limpeza fora da área, consulta
 """
 
 import os
+import re
 import json
 import threading
 
@@ -56,6 +57,21 @@ def _s(v):
     if v is None or v == "":
         return None
     return str(v)
+
+
+_RE_CIDADE_UF = re.compile(r",\s*([^,\-–]+?)\s*-\s*([A-Z]{2})\s*(?:,|$)")
+
+
+def _cidade_uf(*enderecos):
+    """Extrai (cidade, uf) do padrão brasileiro '..., Cidade - UF, CEP'.
+    Preenchido automaticamente em toda ingestão (colunas pois.cidade/uf)."""
+    for e in enderecos:
+        if not e:
+            continue
+        m = _RE_CIDADE_UF.search(str(e))
+        if m:
+            return m.group(1).strip()[:80], m.group(2)
+    return None, None
 
 
 def _horarios(h):
@@ -117,7 +133,7 @@ def ingerir_registro(r: dict, poligono=None, conn=None) -> tuple:
                           "resumo_avaliacoes", "streetview_path", "fontes_web",
                           "telefone", "website", "categoria", "status_horario",
                           "avaliacao", "total_avaliacoes", "preco_medio", "plus_code",
-                          "endereco", "endereco_fonte")
+                          "endereco", "endereco_fonte", "cidade", "uf")
                 cur.execute(f"SELECT {', '.join(_MERGE)} FROM pois WHERE id = %s", (ids[0],))
                 antigo = cur.fetchone()
                 if antigo:
@@ -157,9 +173,9 @@ def ingerir_registro(r: dict, poligono=None, conn=None) -> tuple:
                        nome_original, endereco_original, preco_medio, fonte_dado, ia_resposta,
                        cnpj, razao_social, nome_fantasia, natureza_juridica, cnae,
                        situacao_cadastral, socios, instagram, email, resumo_avaliacoes,
-                       streetview_path, fontes_web, endereco_fonte)
+                       streetview_path, fontes_web, endereco_fonte, cidade, uf)
                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                           %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                           %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                    RETURNING id""",
                 (
                     r.get("fonte") or "desconhecido", _s(r.get("sessao")), str(r["nome"]),
@@ -179,6 +195,9 @@ def ingerir_registro(r: dict, poligono=None, conn=None) -> tuple:
                     _s(r.get("email")), _s(r.get("resumo_avaliacoes")),
                     _s(r.get("streetview_path")), _s(r.get("fontes_web")),
                     _s(r.get("endereco_fonte")),
+                    # cidade/uf: usa o que o merge preservou ou extrai do endereço
+                    _s(r.get("cidade")) or _cidade_uf(r.get("endereco"), r.get("endereco_planilha"))[0],
+                    _s(r.get("uf")) or _cidade_uf(r.get("endereco"), r.get("endereco_planilha"))[1],
                 ),
             )
             poi_id = cur.fetchone()[0]

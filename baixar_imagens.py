@@ -178,8 +178,8 @@ def fase_streetview(workers: int, limit: int):
             data, pano = _sv_metadata(lat, lng) if lat is not None else (None, None)
             c = _conn()
             with c, c.cursor() as cur:
-                cur.execute("""INSERT INTO streetview_imgs (poi_id, dados, data_captura, pano_id, bytes_tam, lat, lng)
-                               VALUES (%s,%s,%s,%s,%s,%s,%s)""",
+                cur.execute("""INSERT INTO streetview_imgs (poi_id, dados, data_captura, pano_id, bytes_tam, lat, lng, angulo)
+                               VALUES (%s,%s,%s,%s,%s,%s,%s,'facade')""",
                             (poi_id,
                              psycopg2.Binary(raw) if (raw and True) else raw,
                              data, pano, len(raw) if raw else None, lat, lng))

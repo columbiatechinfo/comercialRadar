@@ -37,7 +37,7 @@ from datetime import datetime
 from collections import Counter
 
 from fastapi import FastAPI, UploadFile, File, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
+from fastapi.responses import FileResponse, StreamingResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 import config  # .env + UTF-8
@@ -471,13 +471,17 @@ def listar_pois():
                        (p.cnpj IS NOT NULL) AS tem_cnpj, p.situacao_cadastral, p.endereco_fonte,
                        (p.telefone IS NOT NULL) AS tem_tel,
                        (p.streetview_path IS NOT NULL AND p.streetview_path <> 'NA') AS tem_sv,
-                       EXISTS (SELECT 1 FROM images_urls i WHERE i.poi_id = p.id) AS tem_foto
+                       EXISTS (SELECT 1 FROM images_urls i WHERE i.poi_id = p.id) AS tem_foto,
+                       a.veredito, a.motivo, a.recomendar_visita, a.tipo_construcao,
+                       COALESCE(p.revisar_manual, false) AS revisar_manual
                 FROM pois p
+                LEFT JOIN analise_ia a ON a.poi_id = p.id
                 WHERE p.match_valido IS NOT FALSE
                   AND COALESCE(p.maps_lat, p.lat_origem) IS NOT NULL""")
             cols = ["id", "nome", "categoria", "endereco", "telefone", "avaliacao",
                     "total_avaliacoes", "fonte", "fonte_dado", "status", "lat", "lng",
-                    "tem_cnpj", "situacao_cadastral", "endereco_fonte", "tem_tel", "tem_sv", "tem_foto"]
+                    "tem_cnpj", "situacao_cadastral", "endereco_fonte", "tem_tel", "tem_sv", "tem_foto",
+                    "veredito", "motivo", "recomendar_visita", "tipo_construcao", "revisar_manual"]
             return {"pois": [dict(zip(cols, row)) for row in cur.fetchall()]}
     finally:
         conn.close()
@@ -517,7 +521,48 @@ def detalhe_poi(poi_id: int):
             poi["comentarios"] = [{"autor": a, "nota": n, "texto": t, "data": d} for a, n, t, d in cur.fetchall()]
             cur.execute("SELECT dia, horario FROM horario_funcionamento WHERE poi_id=%s ORDER BY id", (poi_id,))
             poi["horarios"] = [{"dia": d, "horario": h} for d, h in cur.fetchall()]
+
+            # Análise visual por IA (descrever_imagens.py) — veredito + evidências
+            cur.execute("""SELECT veredito, motivo, veredito_motivo, equivalencia, confere,
+                                  porte, pessoas_estimadas, atividade_real, tipo_construcao,
+                                  outro_estabelecimento, recomendar_visita, recomendacao_motivo,
+                                  n_imagens, resposta_json
+                           FROM analise_ia WHERE poi_id=%s""", (poi_id,))
+            a = cur.fetchone()
+            if a:
+                acols = ["veredito", "motivo", "veredito_motivo", "equivalencia", "confere",
+                         "porte", "pessoas_estimadas", "atividade_real", "tipo_construcao",
+                         "outro_estabelecimento", "recomendar_visita", "recomendacao_motivo",
+                         "n_imagens", "resposta_json"]
+                ia = dict(zip(acols, a))
+                perc = (ia.pop("resposta_json") or {})
+                perc = perc.get("_percepcao", {}) if isinstance(perc, dict) else {}
+                ia["ramo_visto"] = perc.get("ramo_visto")
+                ia["nome_visto"] = perc.get("nome_visto")
+                # todos os ângulos do street view (fachada + giro 360 + panoramas)
+                cur.execute("""SELECT angulo FROM streetview_imgs
+                               WHERE poi_id=%s AND angulo IS NOT NULL ORDER BY id""", (poi_id,))
+                ia["angulos_sv"] = [r[0] for r in cur.fetchall()]
+                poi["ia"] = ia
             return poi
+    finally:
+        conn.close()
+
+
+@app.get("/api/sv/{poi_id}/{angulo}")
+def sv_img(poi_id: int, angulo: str):
+    """Serve a imagem do Street View (fachada/giro 360/panorama) direto do banco."""
+    conn = realtime_ingest.conectar()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""SELECT dados FROM streetview_imgs
+                           WHERE poi_id=%s AND angulo=%s AND dados IS NOT NULL
+                           ORDER BY id DESC LIMIT 1""", (poi_id, angulo))
+            r = cur.fetchone()
+            if not r or not r[0]:
+                return JSONResponse({"erro": "sem imagem"}, status_code=404)
+            return Response(content=bytes(r[0]), media_type="image/jpeg",
+                            headers={"Cache-Control": "public, max-age=86400"})
     finally:
         conn.close()
 
@@ -539,9 +584,18 @@ def stats():
             fotos = cur.fetchone()[0]
             cur.execute("SELECT COUNT(*) FROM comentarios")
             comentarios = cur.fetchone()[0]
+            # análise por IA
+            cur.execute("SELECT veredito, COUNT(*) FROM analise_ia GROUP BY veredito")
+            por_veredito = {v or "?": n for v, n in cur.fetchall()}
+            cur.execute("SELECT COUNT(*) FROM analise_ia WHERE recomendar_visita")
+            recomendar = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(*) FROM analise_ia")
+            analisados = cur.fetchone()[0]
             return {"validos": validos, "por_status": por_status, "por_fonte": por_fonte,
                     "fotos": fotos, "comentarios": comentarios,
-                    "com_telefone": com_tel, "com_cnpj": com_cnpj, "com_streetview": com_sv}
+                    "com_telefone": com_tel, "com_cnpj": com_cnpj, "com_streetview": com_sv,
+                    "analisados": analisados, "aprovados": por_veredito.get("aprovado", 0),
+                    "reprovados": por_veredito.get("reprovado", 0), "recomendar_visita": recomendar}
     finally:
         conn.close()
 

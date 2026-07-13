@@ -14,6 +14,8 @@ USO:
   .venv\\Scripts\\python streetview_capture.py [--workers 3] [--limit N] [--refazer]
 """
 
+import re
+import math
 import time
 import asyncio
 import argparse
@@ -29,6 +31,18 @@ SV_DIR = BASE / "streetview"
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
 
+# Depois que o pano carrega, a URL vira /@CAM_LAT,CAM_LNG,3a,... (posição da câmera).
+_RE_CAM = re.compile(r"/@(-?\d+\.\d+),(-?\d+\.\d+),3a")
+
+
+def _bearing(lat1, lng1, lat2, lng2) -> float:
+    """Ângulo (0-360°, N=0) da câmera (1) em direção ao estabelecimento (2)."""
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dl = math.radians(lng2 - lng1)
+    y = math.sin(dl) * math.cos(p2)
+    x = math.cos(p1) * math.sin(p2) - math.sin(p1) * math.cos(p2) * math.cos(dl)
+    return (math.degrees(math.atan2(y, x)) + 360) % 360
+
 CONSENT_COOKIES = [
     {"name": "CONSENT", "value": "YES+cb.20220419-08-p0.pt+FX+410",
      "domain": ".google.com", "path": "/"},
@@ -37,18 +51,25 @@ CONSENT_COOKIES = [
 ]
 
 
-def carregar_alvos(limit: int, refazer: bool) -> list:
+def carregar_alvos(limit: int, refazer: bool, ids: list = None) -> list:
     conn = realtime_ingest.conectar()
     try:
         with conn.cursor() as cur:
-            filtro = "" if refazer else "AND (streetview_path IS NULL OR streetview_path = '')"
-            cur.execute(f"""
-                SELECT id, nome, COALESCE(maps_lat, lat_origem), COALESCE(maps_lng, lng_origem)
-                FROM pois
-                WHERE match_valido IS NOT FALSE
-                  AND COALESCE(maps_lat, lat_origem) IS NOT NULL
-                  {filtro}
-                ORDER BY id""")
+            if ids:
+                cur.execute("""
+                    SELECT id, nome, COALESCE(maps_lat, lat_origem), COALESCE(maps_lng, lng_origem)
+                    FROM pois
+                    WHERE id = ANY(%s) AND COALESCE(maps_lat, lat_origem) IS NOT NULL
+                    ORDER BY id""", (ids,))
+            else:
+                filtro = "" if refazer else "AND (streetview_path IS NULL OR streetview_path = '')"
+                cur.execute(f"""
+                    SELECT id, nome, COALESCE(maps_lat, lat_origem), COALESCE(maps_lng, lng_origem)
+                    FROM pois
+                    WHERE match_valido IS NOT FALSE
+                      AND COALESCE(maps_lat, lat_origem) IS NOT NULL
+                      {filtro}
+                    ORDER BY id""")
             alvos = [{"id": i, "nome": n, "lat": la, "lng": lo} for i, n, la, lo in cur.fetchall()]
             return alvos[:limit] if limit > 0 else alvos
     finally:
@@ -60,22 +81,38 @@ def _gravar_path(poi_id: int, path: str, conn):
         cur.execute("UPDATE pois SET streetview_path = %s WHERE id = %s", (path, poi_id))
 
 
+async def _achar_pano(page, lat, lng, heading=None) -> tuple | None:
+    """Abre o pano na coordenada (com heading opcional). Retorna (cam_lat, cam_lng)
+    lidos da URL, ou None se não houver pano."""
+    q = (f"https://www.google.com/maps/@?api=1&map_action=pano"
+         f"&viewpoint={lat},{lng}&hl=pt-BR")
+    if heading is not None:
+        q += f"&heading={heading:.0f}&pitch=5&fov=80"
+    await page.goto(q, wait_until="domcontentloaded", timeout=30000)
+    # o pano real redireciona para /maps/@cam_lat,cam_lng,3a,...  ('3a,' = panorama)
+    fim = time.time() + 12
+    while time.time() < fim:
+        m = _RE_CAM.search(page.url)
+        if m:
+            return float(m.group(1)), float(m.group(2))
+        await page.wait_for_timeout(400)
+    return None
+
+
 async def _capturar(page, alvo: dict) -> str | None:
-    """Abre o pano na coordenada. Retorna nome do arquivo salvo, 'NA' se sem pano."""
-    url = (f"https://www.google.com/maps/@?api=1&map_action=pano"
-           f"&viewpoint={alvo['lat']},{alvo['lng']}&hl=pt-BR")
+    """Captura o pano ENCARANDO a fachada (heading câmera→estabelecimento).
+    Retorna nome do arquivo salvo, 'NA' se sem pano."""
+    lat, lng = alvo["lat"], alvo["lng"]
     try:
-        await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-        # o pano real redireciona para /maps/@lat,lng,3a,75y,...  ('3a,' = panorama)
-        fim = time.time() + 12
-        tem_pano = False
-        while time.time() < fim:
-            if "3a," in page.url:
-                tem_pano = True
-                break
-            await page.wait_for_timeout(400)
-        if not tem_pano:
+        # 1) abre sem heading só para descobrir a posição da câmera (o pano)
+        cam = await _achar_pano(page, lat, lng, None)
+        if not cam:
             return "NA"
+        # 2) calcula o ângulo câmera→estabelecimento e reabre encarando a fachada
+        heading = _bearing(cam[0], cam[1], lat, lng)
+        cam2 = await _achar_pano(page, lat, lng, heading)
+        if not cam2:  # fallback: fica com a vista padrão já carregada
+            await _achar_pano(page, lat, lng, None)
         await page.wait_for_timeout(2500)  # tiles do panorama carregarem
         arq = f"{alvo['id']}.jpg"
         await page.screenshot(path=str(SV_DIR / arq), type="jpeg", quality=72,
@@ -115,9 +152,9 @@ async def worker(wid, fila: asyncio.Queue, ctx, counter, total, lock):
             pass
 
 
-async def run(workers: int, limit: int, refazer: bool):
+async def run(workers: int, limit: int, refazer: bool, ids: list = None):
     SV_DIR.mkdir(exist_ok=True)
-    alvos = carregar_alvos(limit, refazer)
+    alvos = carregar_alvos(limit, refazer, ids)
     total = len(alvos)
     print(f"📸 Street View: {total} POIs para capturar | workers: {workers}", flush=True)
     if not total:
@@ -154,8 +191,10 @@ def main():
     p.add_argument("--workers", type=int, default=3)
     p.add_argument("--limit", type=int, default=0)
     p.add_argument("--refazer", action="store_true", help="Recaptura mesmo quem já tem print")
+    p.add_argument("--ids", default="", help="POIs específicos, ex: 1644,31861")
     a = p.parse_args()
-    asyncio.run(run(a.workers, a.limit, a.refazer))
+    ids = [int(x) for x in a.ids.split(",") if x.strip()] if a.ids else []
+    asyncio.run(run(a.workers, a.limit, a.refazer, ids))
 
 
 if __name__ == "__main__":

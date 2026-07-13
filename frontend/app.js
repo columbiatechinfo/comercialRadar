@@ -43,10 +43,14 @@ function catInfo(cat, fonte) {
 
 function makeIcon(poi, novo) {
   const k = catInfo(poi.categoria, poi.fonte);
+  const ver = poi.veredito === "aprovado" ? "v-ok"
+            : poi.veredito === "reprovado" ? "v-no" : "";
+  const rec = poi.recomendar_visita ? " rec" : "";
   return L.divIcon({
     className: "pin-wrap",
-    html: `<div class="pin ${novo ? "novo" : ""}" style="--c:${k.cor}">
+    html: `<div class="pin ${novo ? "novo" : ""} ${ver}${rec}" style="--c:${k.cor}">
              <div class="pin-head">${k.emo}</div><div class="pin-tail"></div>
+             ${poi.recomendar_visita ? '<div class="pin-star">★</div>' : ""}
            </div>`,
     iconSize: [34, 43], iconAnchor: [17, 43],
   });
@@ -91,6 +95,11 @@ const ATRIBUTOS = [
 ];
 const atributosAtivos = new Set(); // vazio = não filtra por atributo
 
+/* Filtros por ANÁLISE DA IA (descrever_imagens): veredito é seleção única
+   (aprovado XOR reprovado, ou todos); recomendar/revisar narram em AND. */
+let vereditoFiltro = null;         // null | 'aprovado' | 'reprovado'
+const flagsIA = new Set();         // 'recomendar' | 'revisar'
+
 function origemDe(p) {
   if (p.fonte === "pipeline") return "outros";
   for (const o of ORIGENS) if (o.teste(p)) return o.key;
@@ -103,7 +112,11 @@ function passaAtributos(p) {
 }
 
 function visivel(p) {
-  return filtrosAtivos.has(origemDe(p)) && passaAtributos(p);
+  if (!filtrosAtivos.has(origemDe(p)) || !passaAtributos(p)) return false;
+  if (vereditoFiltro && p.veredito !== vereditoFiltro) return false;
+  if (flagsIA.has("recomendar") && !p.recomendar_visita) return false;
+  if (flagsIA.has("revisar") && !p.revisar_manual) return false;
+  return true;
 }
 
 function _criarMarker(poi, novo) {
@@ -170,6 +183,20 @@ function renderChips() {
              </button>`;
   }
   html += `<button class="fchip sep ${malhaVisivel ? "on" : ""}" data-k="_malha" style="--c:#475569">🗺️ Divisas</button>`;
+  // linha de ANÁLISE DA IA (veredito + recomendação)
+  const pois = [...allPois.values()];
+  const cAp = pois.filter((p) => p.veredito === "aprovado").length;
+  const cRp = pois.filter((p) => p.veredito === "reprovado").length;
+  const cRec = pois.filter((p) => p.recomendar_visita).length;
+  const cRev = pois.filter((p) => p.revisar_manual).length;
+  if (cAp || cRp) {
+    html += '</div><div class="frow frow-ia">';
+    html += `<span class="ia-tag">🤖 IA</span>`;
+    html += `<button class="fchip ia ${vereditoFiltro === "aprovado" ? "on" : ""}" data-v="aprovado" style="--c:#1f7a4d">✅ Aprovados <span class="n">${cAp.toLocaleString("pt-BR")}</span></button>`;
+    html += `<button class="fchip ia ${vereditoFiltro === "reprovado" ? "on" : ""}" data-v="reprovado" style="--c:#c0392b">❌ Reprovados <span class="n">${cRp.toLocaleString("pt-BR")}</span></button>`;
+    html += `<button class="fchip ia ${flagsIA.has("recomendar") ? "on" : ""}" data-f="recomendar" style="--c:#b8860b">⭐ Recomendar visita <span class="n">${cRec.toLocaleString("pt-BR")}</span></button>`;
+    if (cRev) html += `<button class="fchip ia ${flagsIA.has("revisar") ? "on" : ""}" data-f="revisar" style="--c:#e8710a">🔍 Revisar manual <span class="n">${cRev}</span></button>`;
+  }
   html += '</div><div class="frow frow-attr">';
   for (const a of ATRIBUTOS) {
     const on = atributosAtivos.has(a.key);
@@ -190,6 +217,19 @@ function renderChips() {
     b.onclick = () => {
       const a = b.dataset.a;
       if (atributosAtivos.has(a)) atributosAtivos.delete(a); else atributosAtivos.add(a);
+      aplicarFiltro();
+    };
+  });
+  box.querySelectorAll(".fchip[data-v]").forEach((b) => {
+    b.onclick = () => {
+      vereditoFiltro = vereditoFiltro === b.dataset.v ? null : b.dataset.v;
+      aplicarFiltro();
+    };
+  });
+  box.querySelectorAll(".fchip[data-f]").forEach((b) => {
+    b.onclick = () => {
+      const f = b.dataset.f;
+      if (flagsIA.has(f)) flagsIA.delete(f); else flagsIA.add(f);
       aplicarFiltro();
     };
   });
@@ -297,6 +337,40 @@ async function abrirPoi(poiLeve) {
   if (poi.email) html += `<div class="m-row"><span class="ico">✉️</span><a href="mailto:${esc(poi.email.split(",")[0].trim())}">${esc(poi.email.slice(0, 48))}</a></div>`;
   if (poi.preco_medio) html += `<div class="m-row"><span class="ico">💰</span><span>Preço médio: ${esc(poi.preco_medio)}</span></div>`;
   html += `</div>`;
+
+  // 🤖 Análise visual por IA (descrever_imagens.py)
+  if (poi.ia) {
+    const a = poi.ia;
+    const ap = String(a.veredito || "").startsWith("aprov");
+    const MOT = { ok: "Confere com o cadastro", atividade_divergente: "Atividade diverge do cadastro",
+      imagem_insuficiente: "Imagem insuficiente", residencia_sem_comercio: "Residência sem comércio",
+      sem_estabelecimento: "Sem estabelecimento (área aberta)", ponto_vago: "Ponto comercial vago" };
+    const CONSTR = { loja_terrea: "Loja térrea", casa: "Casa", predio: "Prédio",
+      area_aberta: "Área aberta", galpao: "Galpão" };
+    const ROT = { facade: "Fachada", g90: "Giro 90°", g180: "Giro 180°", g270: "Giro 270°", p1: "Panorama A", p2: "Panorama B" };
+    html += `<div class="m-sec-title">🤖 Análise visual (IA)</div>`;
+    html += `<div class="m-ia ${ap ? "ap" : "rp"}">`;
+    html += `<div class="ia-top"><span class="ia-badge ${ap ? "ap" : "rp"}">${ap ? "✅ Aprovado" : "❌ Reprovado"}</span>`;
+    html += `<span class="ia-mot">${esc(MOT[a.motivo] || a.motivo || "")}</span>`;
+    if (a.recomendar_visita) html += `<span class="ia-star" title="${esc(a.recomendacao_motivo || "")}">⭐ Recomendar visita</span>`;
+    html += `</div>`;
+    if (a.atividade_real) html += `<div class="ia-line"><b>O que funciona ali:</b> ${esc(a.atividade_real)}</div>`;
+    const meta = [];
+    if (a.ramo_visto) meta.push(`Ramo visto: <b>${esc(a.ramo_visto)}</b>`);
+    if (a.tipo_construcao) meta.push(`Construção: <b>${esc(CONSTR[a.tipo_construcao] || a.tipo_construcao)}</b>`);
+    if (a.porte) meta.push(`Porte: <b>${esc(a.porte)}</b>`);
+    if (a.pessoas_estimadas) meta.push(`Funcionários: <b>${esc(a.pessoas_estimadas)}</b>`);
+    if (meta.length) html += `<div class="ia-meta">${meta.join(" · ")}</div>`;
+    if (!ap && a.outro_estabelecimento)
+      html += `<div class="ia-lead">🎯 Outro estabelecimento visto na imagem: <b>${esc(a.outro_estabelecimento)}</b></div>`;
+    const angs = a.angulos_sv || [];
+    if (angs.length) {
+      html += `<div class="ia-360">` + angs.map((g) =>
+        `<figure><img src="/api/sv/${poi.id}/${esc(g)}" loading="lazy" onerror="this.closest('figure').remove()"><figcaption>${ROT[g] || g}</figcaption></figure>`).join("") + `</div>`;
+    }
+    html += `</div>`;
+  }
+
   if (poi.resumo_avaliacoes) html += `<div class="m-origem" style="background:#e8f0fe;color:#174ea6"><b>O que dizem:</b> ${esc(poi.resumo_avaliacoes)}</div>`;
 
   // Dados empresariais (Receita Federal / mineração web)
@@ -576,6 +650,13 @@ async function carregarStats() {
     $("db-fotos").textContent = fmt(s.fotos);
     $("db-coments").textContent = fmt(s.comentarios);
     $("db-count").textContent = fmt(s.validos);
+    if ($("db-analisados")) {
+      const pctA = (v) => s.analisados ? ` (${Math.round(100 * (v || 0) / s.analisados)}%)` : "";
+      $("db-analisados").textContent = fmt(s.analisados);
+      $("db-aprov").textContent = fmt(s.aprovados) + pctA(s.aprovados);
+      $("db-reprov").textContent = fmt(s.reprovados) + pctA(s.reprovados);
+      $("db-rec").textContent = fmt(s.recomendar_visita);
+    }
     dbCountLocal = s.validos;
   } catch { /* banco indisponível — mantém o último valor */ }
 }

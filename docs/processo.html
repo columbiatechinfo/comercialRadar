@@ -1,0 +1,175 @@
+<title>ComercialRadar — Mapa do processo</title>
+<style>
+:root{
+  --bg:#eef1f6; --card:#fff; --ink:#141922; --mut:#5a6472; --line:#dde3ec; --line2:#e9edf3;
+  --ac:#0e7490; --acbg:#dff1f5;
+  --s1:#1a73e8; --s2:#8b5cf6; --s3:#e8710a; --s4:#0e9f6e; --s5:#d6408b;
+  --ok:#0f7a44; --okbg:#e4f4ec; --no:#c0392b; --nobg:#fbeae7; --warn:#a8700f; --warnbg:#f7edd6;
+  --mono:'SF Mono',ui-monospace,Menlo,Consolas,monospace;
+}
+@media(prefers-color-scheme:dark){:root{
+  --bg:#0d1014; --card:#161b22; --ink:#e6ebf1; --mut:#93a0b1; --line:#252c36; --line2:#1e242c;
+  --ac:#38bdf8; --acbg:#0e2a37;
+  --s1:#5b9bf3; --s2:#a78bfa; --s3:#f59e42; --s4:#3ddb9a; --s5:#ec6aa6;
+  --ok:#4cc38a; --okbg:#123024; --no:#e08571; --nobg:#331b17; --warn:#dcb04a; --warnbg:#33280f;
+}}
+:root[data-theme=dark]{
+  --bg:#0d1014; --card:#161b22; --ink:#e6ebf1; --mut:#93a0b1; --line:#252c36; --line2:#1e242c;
+  --ac:#38bdf8; --acbg:#0e2a37; --s1:#5b9bf3; --s2:#a78bfa; --s3:#f59e42; --s4:#3ddb9a; --s5:#ec6aa6;
+  --ok:#4cc38a; --okbg:#123024; --no:#e08571; --nobg:#331b17; --warn:#dcb04a; --warnbg:#33280f;
+}
+:root[data-theme=light]{
+  --bg:#eef1f6; --card:#fff; --ink:#141922; --mut:#5a6472; --line:#dde3ec; --line2:#e9edf3;
+  --ac:#0e7490; --acbg:#dff1f5; --s1:#1a73e8; --s2:#8b5cf6; --s3:#e8710a; --s4:#0e9f6e; --s5:#d6408b;
+  --ok:#0f7a44; --okbg:#e4f4ec; --no:#c0392b; --nobg:#fbeae7; --warn:#a8700f; --warnbg:#f7edd6;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.6 ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.wrap{max-width:1120px;margin:0 auto;padding:34px 20px 80px}
+header.top h1{font-size:1.7rem;letter-spacing:-.02em;margin:0 0 6px;text-wrap:balance}
+header.top p{color:var(--mut);margin:0 0 4px;max-width:80ch}
+.kpis{display:flex;flex-wrap:wrap;gap:10px;margin:20px 0 8px}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:11px 16px;min-width:120px}
+.kpi b{display:block;font:800 1.4rem/1 ui-sans-serif;letter-spacing:-.02em}
+.kpi span{font-size:.76rem;color:var(--mut);text-transform:uppercase;letter-spacing:.04em}
+.kpi.ok b{color:var(--ok)} .kpi.star b{color:var(--warn)}
+h2{font-size:1.15rem;margin:38px 0 4px;letter-spacing:-.01em;display:flex;align-items:center;gap:10px}
+h2 .num{font:800 .8rem/1 var(--mono);color:#fff;background:var(--ac);border-radius:6px;padding:5px 8px}
+.lead{color:var(--mut);margin:0 0 18px;max-width:82ch}
+/* pipeline macro */
+.pipe{display:grid;grid-template-columns:repeat(5,1fr);gap:0;margin:8px 0 6px}
+.stage{position:relative;background:var(--card);border:1px solid var(--line);padding:14px 14px 16px;border-left-width:4px}
+.stage:first-child{border-radius:12px 0 0 12px}.stage:last-child{border-radius:0 12px 12px 0}
+.stage:not(:last-child){border-right:none}
+.stage .st-n{font:800 .7rem/1 var(--mono);color:var(--mut)}
+.stage h3{font-size:.98rem;margin:5px 0 6px}
+.stage p{font-size:.8rem;color:var(--mut);margin:0}
+.stage code{font-family:var(--mono);font-size:.74rem;color:var(--ink);background:var(--line2);padding:1px 5px;border-radius:4px}
+.stage .arrow{position:absolute;right:-11px;top:50%;transform:translateY(-50%);z-index:2;width:22px;height:22px;
+  background:var(--card);border:1px solid var(--line);border-radius:50%;display:grid;place-items:center;color:var(--mut);font-size:12px}
+.stage:last-child .arrow{display:none}
+.s-1{border-left-color:var(--s1)} .s-2{border-left-color:var(--s2)} .s-3{border-left-color:var(--s3)}
+.s-4{border-left-color:var(--s4)} .s-5{border-left-color:var(--s5)}
+@media(max-width:820px){.pipe{grid-template-columns:1fr}.stage{border-radius:0!important;border-right:1px solid var(--line)!important;border-left-width:4px}
+  .stage:first-child{border-radius:12px 12px 0 0}.stage:last-child{border-radius:0 0 12px 12px}.stage .arrow{display:none}}
+/* fluxo IA vertical */
+.flow{display:flex;flex-direction:column;gap:0;margin:6px 0;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--card)}
+.node{display:flex;gap:14px;padding:15px 18px;border-bottom:1px solid var(--line2);align-items:flex-start}
+.node:last-child{border-bottom:none}
+.node .ico{flex-shrink:0;width:34px;height:34px;border-radius:9px;display:grid;place-items:center;font-size:17px;background:var(--acbg);color:var(--ac)}
+.node .bd{flex:1;min-width:0}
+.node h4{margin:0 0 3px;font-size:.96rem}
+.node p{margin:0;font-size:.85rem;color:var(--mut)}
+.node p b{color:var(--ink)}
+.node code,.inl{font-family:var(--mono);font-size:.78rem;background:var(--line2);padding:1px 5px;border-radius:4px}
+.branch{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.pill{font-size:.74rem;font-weight:650;padding:3px 9px;border-radius:999px;border:1px solid var(--line)}
+.pill.ok{background:var(--okbg);color:var(--ok)} .pill.no{background:var(--nobg);color:var(--no)} .pill.w{background:var(--warnbg);color:var(--warn)}
+.node.dec .ico{background:var(--warnbg);color:var(--warn)}
+.node.ver .ico{background:var(--okbg);color:var(--ok)}
+/* grid de regras */
+.rules{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:10px;margin-top:6px}
+.rule{background:var(--card);border:1px solid var(--line);border-radius:11px;padding:13px 15px}
+.rule .rt{font-weight:700;font-size:.9rem;margin-bottom:3px;display:flex;gap:7px;align-items:baseline}
+.rule .rt .tag{font:700 .66rem/1 var(--mono);color:var(--ac);background:var(--acbg);padding:3px 6px;border-radius:5px}
+.rule p{margin:0;font-size:.82rem;color:var(--mut)}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:14px}@media(max-width:720px){.two{grid-template-columns:1fr}}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:13px;padding:16px 18px}
+.panel h3{margin:0 0 10px;font-size:.98rem}
+.panel ul{margin:0;padding-left:18px}.panel li{margin:5px 0;font-size:.88rem}
+.cmd{background:#0f1620;color:#d6e2f0;border-radius:10px;padding:12px 14px;font-family:var(--mono);font-size:.8rem;overflow-x:auto;line-height:1.7}
+.cmd .c{color:#7ee3b8}.cmd .d{color:#7f8ea3}
+.foot{color:var(--mut);font-size:.8rem;margin-top:40px;border-top:1px solid var(--line);padding-top:16px}
+a{color:var(--ac)}
+</style>
+<div class="wrap">
+<header class="top">
+  <h1>ComercialRadar — mapa do processo</h1>
+  <p>Da planilha bruta ao mapa interativo com veredito visual por IA. Pipeline de mineração + enriquecimento
+  em cascata + análise de imagem calibrada, rodando um modelo multimodal local (Qwen2.5-VL na GPU).</p>
+  <div class="kpis">
+    <div class="kpi"><b class="mono">4.313</b><span>POIs no banco</span></div>
+    <div class="kpi ok"><b class="mono">1.843</b><span>Aprovados pela IA</span></div>
+    <div class="kpi"><b class="mono">2.234</b><span>Reprovados</span></div>
+    <div class="kpi star"><b class="mono">893</b><span>Recomendar visita</span></div>
+    <div class="kpi"><b class="mono">973</b><span>Leads (vizinho visto)</span></div>
+  </div>
+</header>
+
+<h2><span class="num">A</span> Fluxo macro — 5 estágios</h2>
+<p class="lead">Cada POI atravessa a esteira da esquerda pra direita. Tudo é idempotente e retomável; o banco (PostgreSQL)
+é a fonte única de verdade em cada passo.</p>
+<div class="pipe">
+  <div class="stage s-1"><div class="st-n">01</div><h3>🗺️ Coleta</h3><p>Planilha ou mineração de área varrem o Google Maps e ingerem POIs válidos.<br><code>search_from_sheet.py</code> · <code>minerar_area.py</code><div class="arrow">→</div></p></div>
+  <div class="stage s-2"><div class="st-n">02</div><h3>💎 Enriquecimento</h3><p>Cascata: Maps → Web+Receita → Street View. Completa telefone, CNPJ, fotos, fachada.<br><code>enriquecer_tudo.py</code><div class="arrow">→</div></p></div>
+  <div class="stage s-3"><div class="st-n">03</div><h3>📥 Imagens no banco</h3><p>Bytes de todas as fotos + Street View gravados com data (EXIF/panorama).<br><code>baixar_imagens.py</code><div class="arrow">→</div></p></div>
+  <div class="stage s-4"><div class="st-n">04</div><h3>🤖 Análise IA</h3><p>Visão multimodal dá o veredito: aprova/reprova, porte, funcionários, recomendar visita.<br><code>descrever_imagens.py</code><div class="arrow">→</div></p></div>
+  <div class="stage s-5"><div class="st-n">05</div><h3>📡 Frontend</h3><p>Mapa Leaflet com filtros de veredito/recomendação e o dossiê visual de cada ponto.<br><code>server.py</code> + <code>frontend/</code></p></div>
+</div>
+
+<h2><span class="num">B</span> Dentro do estágio 04 — a Análise IA calibrada</h2>
+<p class="lead">O coração do projeto. Arquitetura de <b>percepção cega + julgamento isolado</b>: o modelo descreve as imagens
+sem ver nenhum dado do cadastro (pra não "papaguear"), e o casamento com o cadastro acontece depois — nome por
+fuzzy em código, ramo por pergunta isolada ao mesmo modelo. Nada é reprovado sem antes olhar 360°.</p>
+<div class="flow">
+  <div class="node"><div class="ico">📸</div><div class="bd"><h4>1 · Captura da fachada</h4>
+    <p>Street View com <b>heading corrigido</b> apontando pro POI (não pra rua). Máscara cobre os overlays do Google (endereço/minimapa) que a IA lia como placa.</p></div></div>
+  <div class="node"><div class="ico">👁️</div><div class="bd"><h4>2 · Percepção 100% cega</h4>
+    <p>O modelo recebe <b>só as imagens</b> (fachada + fotos do Maps) e devolve JSON: cenário, <span class="inl">ramo_visto</span>, <span class="inl">nome_visto</span> (lido às cegas), lista de <b>todos os estabelecimentos</b> do prédio (térreo + andares), porte e nº de <b>funcionários</b> estimado pelo tamanho físico.</p></div></div>
+  <div class="node dec"><div class="ico">⚖️</div><div class="bd"><h4>3 · Decisão (em código)</h4>
+    <p>Casa a percepção com o cadastro: <b>nome</b> por fuzzy contra <b>todos</b> os letreiros lidos; <b>ramo</b> por família de negócio (atalho textual + pergunta isolada ao modelo). Área aberta/vago/residência têm saída própria.</p>
+    <div class="branch"><span class="pill ok">nome casa → aprovado</span><span class="pill ok">ramo casa → aprovado</span><span class="pill no">diverge → segue ↓</span></div></div></div>
+  <div class="node"><div class="ico">🔁</div><div class="bd"><h4>4 · 2ª olhada (resgate)</h4>
+    <p>Se ia reprovar, reanalisa <b>foto a foto</b> só as imagens do próprio ponto (interior/produtos revelam o negócio que a fachada escondeu). Uma foto por vez, pra foto-ruído não contaminar a leitura.</p></div></div>
+  <div class="node"><div class="ico">🌐</div><div class="bd"><h4>5 · Protocolo 360° (regra de ouro)</h4>
+    <p>Ainda reprovado? Gira o panorama (base + 90/180/270) e captura 2 panoramas deslocados (±15 m). Só então o veredito de reprovação vale. <b>Nada é descartado sem o giro completo.</b></p></div></div>
+  <div class="node ver"><div class="ico">✅</div><div class="bd"><h4>6 · Veredito + recomendar visita</h4>
+    <p>Grava veredito, motivo, porte, funcionários, tipo de construção e o <span class="inl">lead</span> (vizinho visto). Se aprovado <b>e</b> há sinal de vida recente (comentário/foto/street view ≤ 12 meses) → <b>⭐ recomendar visita</b>.</p></div></div>
+</div>
+
+<h2><span class="num">C</span> Regras de calibração (validadas em 46 casos, 0 falso-positivo)</h2>
+<p class="lead">Cada regra saiu de um erro real observado com o cliente e foi confirmada em teste antes de rodar a cidade.</p>
+<div class="rules">
+  <div class="rule"><div class="rt"><span class="tag">CEGA</span> Percepção sem cadastro</div><p>O modelo nunca vê nome/categoria — senão copia o cadastro e mascara divergências. O casamento é etapa separada.</p></div>
+  <div class="rule"><div class="rt"><span class="tag">MULTI</span> Prédio multi-loja</div><p>Lista todos os letreiros (térreo + andares). Casa o nome contra qualquer um → resgata clínica sobre farmácia, loja no 1º andar.</p></div>
+  <div class="rule"><div class="rt"><span class="tag">FAMÍLIA</span> Ramo por família</div><p>armazém ≈ supermercado ≈ atacarejo; empadaria ≈ padaria ≈ restaurante; óculos ⇒ ótica. Atalho textual + juízo isolado.</p></div>
+  <div class="rule"><div class="rt"><span class="tag">2-LOOK</span> Foto a foto</div><p>Fotos do Maps são prints verticais (~1900 tokens); só cabem 2 no contexto. Avaliar isolado evita foto-ruído (pizza + deck de chalé).</p></div>
+  <div class="rule"><div class="rt"><span class="tag">CP10</span> Interior manda</div><p>Foto de interior/produto vale mais que a fachada quando divergem: prateleiras cheias = mercado; altar/crucifixo = igreja.</p></div>
+  <div class="rule"><div class="rt"><span class="tag">ESSÊNCIA</span> Categoria específica</div><p>Tira o prefixo genérico de CNAE ("Comércio varejista de plantas" → "plantas e flores") pra não casar qualquer varejo.</p></div>
+  <div class="rule"><div class="rt"><span class="tag">STOP</span> Nome distintivo</div><p>Palavra de tipo (escola, igreja, posto) não casa nome sozinha — exige token distintivo. "Escola Mística" ≠ "Escola Náutica".</p></div>
+  <div class="rule"><div class="rt"><span class="tag">PORTE</span> Funcionários reais</div><p>Estima pela dimensão física: galpão/supermercado 15-50, não "2 a 4". Distingue funcionários de clientes.</p></div>
+</div>
+
+<h2><span class="num">D</span> O que o frontend mostra agora</h2>
+<div class="two">
+  <div class="panel"><h3>🎛️ Filtros da IA (rodapé do mapa)</h3>
+    <ul>
+      <li><b>✅ Aprovados / ❌ Reprovados</b> — seleção única, colore e filtra os marcadores.</li>
+      <li><b>⭐ Recomendar visita</b> — só os aprovados com sinal de vida recente.</li>
+      <li><b>🔍 Revisar manual</b> — os 31 de coordenada não-distinguível.</li>
+      <li>Combinam com os filtros de origem (Maps/Web/…) e atributo (CNPJ/telefone/foto).</li>
+    </ul></div>
+  <div class="panel"><h3>🗂️ Dossiê de cada ponto (modal)</h3>
+    <ul>
+      <li>Selo de <b>veredito</b> + motivo, e ⭐ quando recomendado (com a evidência de recência).</li>
+      <li>Ramo visto, tipo de construção, porte e <b>nº de funcionários</b> estimado.</li>
+      <li><b>Galeria 360°</b> — fachada + giro + panoramas, servidos do banco (<span class="inl">/api/sv/…</span>).</li>
+      <li>Lead: o outro estabelecimento visto na imagem, quando reprovado.</li>
+    </ul></div>
+</div>
+
+<h2><span class="num">E</span> Como rodar (a esteira completa)</h2>
+<div class="cmd">
+<span class="d"># 1-3. Coleta → enriquecimento → imagens (pela interface web ou CLI)</span><br>
+.venv\Scripts\python <span class="c">server.py</span>   <span class="d"># abre o mapa em localhost:8765</span><br><br>
+<span class="d"># 4. Análise IA — passe 1 (direto, ~5h) rescata pela 2ª olhada nas fotos do Maps</span><br>
+.venv\Scripts\python <span class="c">descrever_imagens.py</span> --refazer --workers 3<br><br>
+<span class="d"># 4b. Passe 2 — giro 360° só nos reprovados restantes</span><br>
+.venv\Scripts\python <span class="c">descrever_imagens.py</span> --so-reprovados --incremental --extras 2
+</div>
+
+<p class="foot">Fonte única de verdade: <span class="mono">DOCUMENTACAO.md</span> na raiz. Modelo roda 100% na GPU do servidor
+remoto (Ollama). Toda a análise é gravada na tabela <span class="mono">analise_ia</span> (1:1 com o POI) — nenhum dado
+fica só em JSON. Gerado ao concluir a execução completa de Parnaíba-PI.</p>
+</div>
