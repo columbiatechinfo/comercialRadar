@@ -56,7 +56,17 @@ PYTHON = str(BASE / ".venv" / "Scripts" / "python.exe")
 for d in (UPLOADS, AREAS, MINERACAO, MALHAS):
     d.mkdir(exist_ok=True)
 
-app = FastAPI(title="ComercialRadar")
+
+from contextlib import asynccontextmanager
+
+
+@asynccontextmanager
+async def _lifespan(_app):
+    manager.loop = asyncio.get_running_loop()   # captura o event loop p/ broadcast WS
+    yield
+
+
+app = FastAPI(title="ComercialRadar", lifespan=_lifespan)
 
 # ──────────────────────────────────────────────────────────────────────────
 # WebSocket — broadcast de eventos pro frontend
@@ -96,11 +106,6 @@ class WSManager:
 
 
 manager = WSManager()
-
-
-@app.on_event("startup")
-async def _captura_loop():
-    manager.loop = asyncio.get_running_loop()
 
 
 @app.websocket("/ws")
@@ -852,4 +857,6 @@ app.mount("/streetview", StaticFiles(directory=str(SV_DIR)), name="streetview")
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8765, log_level="warning")
+    print("\n  ✅ ComercialRadar no ar  →  http://127.0.0.1:8765")
+    print("     deixe esta janela aberta · Ctrl+C para parar\n", flush=True)
+    uvicorn.run(app, host="127.0.0.1", port=8765, log_level="info")
