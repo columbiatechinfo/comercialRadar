@@ -384,6 +384,10 @@ button { font-family: inherit; }
 .m-fotos img { height: 100%; min-width: 46%; object-fit: cover; scroll-snap-align: start; flex: 1; }
 .m-head { padding: 17px 20px 5px; display: flex; justify-content: space-between; gap: 10px; }
 .m-nome { font-size: 20px; font-weight: 800; letter-spacing: -.4px; line-height: 1.25; }
+.m-id { font: 700 12px/1 ui-monospace, "SF Mono", Menlo, monospace; color: var(--ink-2);
+  background: #f1f3f4; border-radius: 6px; padding: 3px 7px; vertical-align: middle;
+  margin-left: 6px; cursor: pointer; white-space: nowrap; }
+.m-id:hover { background: #e2e6ea; }
 .m-close {
   border: 0; background: #f1f3f4; color: var(--ink-2); width: 32px; height: 32px;
   border-radius: 50%; cursor: pointer; font-size: 15px; flex-shrink: 0;

@@ -367,8 +367,9 @@ async function abrirPoi(poiLeve) {
   } else if (sv) {
     html += `<div class="m-fotos"><img src="${sv}" loading="lazy" title="Street View (fachada)" style="min-width:100%"></div>`;
   }
-  html += `<div class="m-head"><div class="m-nome">${esc(poi.nome)}</div>
-           <button class="m-close" onclick="fecharModal()">✕</button></div>`;
+  html += `<div class="m-head"><div class="m-nome">${esc(poi.nome)}` +
+          (poi.id != null ? ` <span class="m-id" title="ID no banco (clique para copiar)" onclick="navigator.clipboard&&navigator.clipboard.writeText('${poi.id}')">#${poi.id}</span>` : "") +
+          `</div><button class="m-close" onclick="fecharModal()">✕</button></div>`;
   html += `<div class="m-meta">`;
   if (poi.categoria) html += `<span class="chip" style="background:${k.cor}1a;color:${k.cor}">${k.emo} ${esc(poi.categoria)}</span>`;
   if (poi.status) html += `<span class="chip st-${esc(poi.status)}">${esc(STATUS_LABEL[poi.status] || poi.status)}</span>`;
