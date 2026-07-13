@@ -100,6 +100,17 @@ const atributosAtivos = new Set(); // vazio = não filtra por atributo
 let vereditoFiltro = null;         // null | 'aprovado' | 'reprovado'
 const flagsIA = new Set();         // 'recomendar' | 'revisar'
 
+/* Seleção de MUNICÍPIO: nada por padrão. O usuário clica no polígono do município
+   no mapa; só então os POIs e as informações daquele município aparecem. */
+let municipioSel = null;           // nome normalizado (ex.: 'parnaiba') | null = nada
+let municipioNome = null;          // nome de exibição (ex.: 'Parnaíba')
+let municipioLayer = null;         // polígono selecionado (realce/limpeza)
+const _normCidade = (s) => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").trim().toLowerCase();
+function poisBase() {              // POIs do município selecionado (base dos filtros e contagens)
+  if (!municipioSel) return [];
+  return [...allPois.values()].filter((p) => _normCidade(p.cidade) === municipioSel);
+}
+
 function origemDe(p) {
   if (p.fonte === "pipeline") return "outros";
   for (const o of ORIGENS) if (o.teste(p)) return o.key;
@@ -112,6 +123,7 @@ function passaAtributos(p) {
 }
 
 function visivel(p) {
+  if (!municipioSel || _normCidade(p.cidade) !== municipioSel) return false; // só o município selecionado
   if (!filtrosAtivos.has(origemDe(p)) || !passaAtributos(p)) return false;
   if (vereditoFiltro && p.veredito !== vereditoFiltro) return false;
   if (flagsIA.has("recomendar") && !p.recomendar_visita) return false;
@@ -150,12 +162,8 @@ async function carregarPois(fit = false) {
     const { pois } = await r.json();
     cluster.clearLayers(); markers.clear(); allPois.clear();
     pois.forEach((p) => { if (p.id != null && p.lat != null) allPois.set(p.id, p); });
-    aplicarFiltro();
-    $("db-count").textContent = pois.length.toLocaleString("pt-BR");
-    if (fit && pois.length) {
-      const pts = pois.filter((p) => p.lat != null).map((p) => [p.lat, p.lng]);
-      if (pts.length) map.fitBounds(L.latLngBounds(pts).pad(0.08), { maxZoom: 14 });
-    }
+    aplicarFiltro();          // nada aparece até um município ser selecionado (visivel gateia)
+    atualizarBannerMunicipio();
   } catch { toast("Falha ao carregar POIs do banco", "err"); }
 }
 
@@ -163,12 +171,13 @@ async function carregarPois(fit = false) {
    Chips de filtro por origem (rodapé do mapa) + toggle de divisas
 ──────────────────────────────────────────────────────────── */
 function renderChips() {
+  const base = poisBase();                 // POIs do município selecionado (ou [] se nenhum)
   const counts = {};
-  for (const poi of allPois.values()) counts[origemDe(poi)] = (counts[origemDe(poi)] || 0) + 1;
+  for (const poi of base) counts[origemDe(poi)] = (counts[origemDe(poi)] || 0) + 1;
   // contagem por atributo respeita o filtro de ORIGEM atual (mostra o que sobraria)
   const attrCounts = {};
   for (const a of ATRIBUTOS) attrCounts[a.key] = 0;
-  for (const poi of allPois.values()) {
+  for (const poi of base) {
     if (!filtrosAtivos.has(origemDe(poi))) continue;
     for (const a of ATRIBUTOS) if (a.teste(poi)) attrCounts[a.key]++;
   }
@@ -183,8 +192,8 @@ function renderChips() {
              </button>`;
   }
   html += `<button class="fchip sep ${malhaVisivel ? "on" : ""}" data-k="_malha" style="--c:#475569">🗺️ Divisas</button>`;
-  // linha de ANÁLISE DA IA (veredito + recomendação)
-  const pois = [...allPois.values()];
+  // linha de ANÁLISE DA IA (veredito + recomendação) — base = município selecionado
+  const pois = base;
   const cAp = pois.filter((p) => p.veredito === "aprovado").length;
   const cRp = pois.filter((p) => p.veredito === "reprovado").length;
   const cRec = pois.filter((p) => p.recomendar_visita).length;
@@ -251,13 +260,56 @@ async function carregarMalha() {
       style: MALHA_STYLE,
       onEachFeature: (f, l) => {
         l.bindTooltip(f.properties?.nome || "", { sticky: true, direction: "top", className: "muni-tip" });
-        l.on("mouseover", () => l.setStyle({ weight: 2.4, color: "#334155", fillOpacity: 0.08 }));
-        l.on("mouseout", () => malhaLayer.resetStyle(l));
+        l.on("mouseover", () => { if (l !== municipioLayer) l.setStyle({ weight: 2.4, color: "#334155", fillOpacity: 0.08 }); });
+        l.on("mouseout", () => { if (l !== municipioLayer) malhaLayer.resetStyle(l); });
+        l.on("click", () => selecionarMunicipio(f.properties?.nome, l));
       },
     });
     if (malhaVisivel) malhaLayer.addTo(map);
+    // sem área/município: enquadra na malha (não nos POIs, que só aparecem ao clicar)
+    if (!areaLayer && !municipioSel) {
+      try { map.fitBounds(malhaLayer.getBounds().pad(0.05)); } catch { /* ok */ }
+    }
     renderChips();
   } catch { /* IBGE fora do ar — segue sem a malha */ }
+}
+
+/* Seleção de município por clique no polígono da malha */
+const MUNI_STYLE_SEL = { color: "#0e7490", weight: 3, opacity: 1, fillColor: "#0e7490", fillOpacity: 0.07 };
+
+function selecionarMunicipio(nome, layer) {
+  const norm = _normCidade(nome);
+  if (!norm) return;
+  if (municipioSel === norm) return limparMunicipio();   // clicar de novo desmarca
+  if (municipioLayer && malhaLayer) malhaLayer.resetStyle(municipioLayer);
+  municipioSel = norm; municipioNome = nome; municipioLayer = layer;
+  layer.setStyle(MUNI_STYLE_SEL); layer.bringToFront();
+  aplicarFiltro();
+  try { map.fitBounds(layer.getBounds().pad(0.12), { maxZoom: 15 }); } catch { /* ok */ }
+  carregarStats();
+  atualizarBannerMunicipio();
+}
+
+window.limparMunicipio = function () {
+  if (municipioLayer && malhaLayer) malhaLayer.resetStyle(municipioLayer);
+  municipioSel = null; municipioNome = null; municipioLayer = null;
+  aplicarFiltro();
+  carregarStats();
+  atualizarBannerMunicipio();
+};
+
+function atualizarBannerMunicipio() {
+  const badge = document.getElementById("db-badge");
+  if (!badge) return;
+  if (municipioSel) {
+    const n = poisBase().length;
+    badge.classList.add("sel");
+    badge.innerHTML = `<span class="dot"></span>📍 <b>${esc(municipioNome)}</b> · <span id="db-count">${n.toLocaleString("pt-BR")}</span> POIs`
+      + ` <button class="muni-x" title="Limpar seleção" onclick="limparMunicipio()">✕</button>`;
+  } else {
+    badge.classList.remove("sel");
+    badge.innerHTML = `<span class="dot"></span>Clique num <b>município</b> no mapa`;
+  }
 }
 
 function toggleMalha() {
@@ -639,9 +691,15 @@ function setVal(id, v) {
 /* Cards "Dados do banco" (separados do processo em tempo real) */
 let statsTimer = null;
 async function carregarStats() {
+  const fmt = (v) => (v || 0).toLocaleString("pt-BR");
+  if (!municipioNome) { // nada selecionado → painel em branco até clicar num município
+    ["db-validos", "db-tel", "db-cnpj", "db-sv", "db-fotos", "db-coments",
+     "db-analisados", "db-aprov", "db-reprov", "db-rec"].forEach((id) => { if ($(id)) $(id).textContent = "—"; });
+    dbCountLocal = 0;
+    return;
+  }
   try {
-    const s = await (await fetch("/api/stats")).json();
-    const fmt = (v) => (v || 0).toLocaleString("pt-BR");
+    const s = await (await fetch("/api/stats?cidade=" + encodeURIComponent(municipioNome))).json();
     const pct = (v) => s.validos ? ` (${Math.round(100 * (v || 0) / s.validos)}%)` : "";
     $("db-validos").textContent = fmt(s.validos);
     $("db-tel").textContent = fmt(s.com_telefone) + pct(s.com_telefone);
@@ -649,7 +707,6 @@ async function carregarStats() {
     $("db-sv").textContent = fmt(s.com_streetview) + pct(s.com_streetview);
     $("db-fotos").textContent = fmt(s.fotos);
     $("db-coments").textContent = fmt(s.comentarios);
-    $("db-count").textContent = fmt(s.validos);
     if ($("db-analisados")) {
       const pctA = (v) => s.analisados ? ` (${Math.round(100 * (v || 0) / s.analisados)}%)` : "";
       $("db-analisados").textContent = fmt(s.analisados);
@@ -657,6 +714,7 @@ async function carregarStats() {
       $("db-reprov").textContent = fmt(s.reprovados) + pctA(s.reprovados);
       $("db-rec").textContent = fmt(s.recomendar_visita);
     }
+    if ($("db-count")) $("db-count").textContent = fmt(s.validos);
     dbCountLocal = s.validos;
   } catch { /* banco indisponível — mantém o último valor */ }
 }
@@ -882,11 +940,12 @@ $("btn-baixar-imgs").onclick = async () => {
 ──────────────────────────────────────────────────────────── */
 (async function boot() {
   await carregarArea();
-  await carregarPois(!areaLayer); // sem área salva, enquadra nos POIs
-  dbCountLocal = allPois.size;
-  carregarStats();
-  carregarMalha(); // divisas municipais (IBGE) — assíncrono, não trava o boot
+  await carregarPois();            // carrega todos em allPois; nada aparece até clicar num município
+  carregarStats();                 // painel em branco até selecionar
+  carregarMalha();                 // divisas municipais (IBGE) — enquadra na malha; clique seleciona
+  atualizarBannerMunicipio();      // badge "clique num município"
   conectarWS();
   try { aplicarJob(await (await fetch("/api/jobs/atual")).json()); } catch { /* ok */ }
   atualizarBotoes();
+  toast("Clique num município no mapa para ver os dados 🗺️", "ok");
 })();

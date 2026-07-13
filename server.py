@@ -473,7 +473,7 @@ def listar_pois():
                        (p.streetview_path IS NOT NULL AND p.streetview_path <> 'NA') AS tem_sv,
                        EXISTS (SELECT 1 FROM images_urls i WHERE i.poi_id = p.id) AS tem_foto,
                        a.veredito, a.motivo, a.recomendar_visita, a.tipo_construcao,
-                       COALESCE(p.revisar_manual, false) AS revisar_manual
+                       COALESCE(p.revisar_manual, false) AS revisar_manual, p.cidade
                 FROM pois p
                 LEFT JOIN analise_ia a ON a.poi_id = p.id
                 WHERE p.match_valido IS NOT FALSE
@@ -481,7 +481,7 @@ def listar_pois():
             cols = ["id", "nome", "categoria", "endereco", "telefone", "avaliacao",
                     "total_avaliacoes", "fonte", "fonte_dado", "status", "lat", "lng",
                     "tem_cnpj", "situacao_cadastral", "endereco_fonte", "tem_tel", "tem_sv", "tem_foto",
-                    "veredito", "motivo", "recomendar_visita", "tipo_construcao", "revisar_manual"]
+                    "veredito", "motivo", "recomendar_visita", "tipo_construcao", "revisar_manual", "cidade"]
             return {"pois": [dict(zip(cols, row)) for row in cur.fetchall()]}
     finally:
         conn.close()
@@ -568,31 +568,38 @@ def sv_img(poi_id: int, angulo: str):
 
 
 @app.get("/api/stats")
-def stats():
+def stats(cidade: str = ""):
+    """Estatísticas do banco. Com ?cidade= filtra por município (casa com pois.cidade,
+    case-insensitive) — o mapa seleciona um município por clique no polígono."""
+    cidade = (cidade or "").strip()
+    wp = "lower(cidade) = lower(%s)" if cidade else "TRUE"      # filtro em pois
+    wj = "lower(p.cidade) = lower(%s)" if cidade else "TRUE"    # filtro em join com p
+    pc = [cidade] if cidade else []
     conn = realtime_ingest.conectar()
     try:
         with conn.cursor() as cur:
-            cur.execute("""SELECT status, COUNT(*) FROM pois GROUP BY status""")
+            cur.execute(f"SELECT status, COUNT(*) FROM pois WHERE {wp} GROUP BY status", pc)
             por_status = {s or "?": n for s, n in cur.fetchall()}
-            cur.execute("""SELECT fonte, COUNT(*) FROM pois GROUP BY fonte""")
+            cur.execute(f"SELECT fonte, COUNT(*) FROM pois WHERE {wp} GROUP BY fonte", pc)
             por_fonte = {s or "?": n for s, n in cur.fetchall()}
-            cur.execute("""SELECT COUNT(*), COUNT(telefone), COUNT(cnpj),
+            cur.execute(f"""SELECT COUNT(*), COUNT(telefone), COUNT(cnpj),
                            COUNT(CASE WHEN streetview_path IS NOT NULL AND streetview_path<>'NA' THEN 1 END)
-                           FROM pois WHERE match_valido IS NOT FALSE""")
+                           FROM pois WHERE match_valido IS NOT FALSE AND {wp}""", pc)
             validos, com_tel, com_cnpj, com_sv = cur.fetchone()
-            cur.execute("SELECT COUNT(*) FROM images_urls")
+            cur.execute(f"SELECT COUNT(*) FROM images_urls i JOIN pois p ON p.id=i.poi_id WHERE {wj}", pc)
             fotos = cur.fetchone()[0]
-            cur.execute("SELECT COUNT(*) FROM comentarios")
+            cur.execute(f"SELECT COUNT(*) FROM comentarios c JOIN pois p ON p.id=c.poi_id WHERE {wj}", pc)
             comentarios = cur.fetchone()[0]
-            # análise por IA
-            cur.execute("SELECT veredito, COUNT(*) FROM analise_ia GROUP BY veredito")
+            cur.execute(f"""SELECT a.veredito, COUNT(*) FROM analise_ia a
+                            JOIN pois p ON p.id=a.poi_id WHERE {wj} GROUP BY a.veredito""", pc)
             por_veredito = {v or "?": n for v, n in cur.fetchall()}
-            cur.execute("SELECT COUNT(*) FROM analise_ia WHERE recomendar_visita")
+            cur.execute(f"""SELECT COUNT(*) FROM analise_ia a JOIN pois p ON p.id=a.poi_id
+                            WHERE a.recomendar_visita AND {wj}""", pc)
             recomendar = cur.fetchone()[0]
-            cur.execute("SELECT COUNT(*) FROM analise_ia")
+            cur.execute(f"SELECT COUNT(*) FROM analise_ia a JOIN pois p ON p.id=a.poi_id WHERE {wj}", pc)
             analisados = cur.fetchone()[0]
             return {"validos": validos, "por_status": por_status, "por_fonte": por_fonte,
-                    "fotos": fotos, "comentarios": comentarios,
+                    "cidade": cidade or None, "fotos": fotos, "comentarios": comentarios,
                     "com_telefone": com_tel, "com_cnpj": com_cnpj, "com_streetview": com_sv,
                     "analisados": analisados, "aprovados": por_veredito.get("aprovado", 0),
                     "reprovados": por_veredito.get("reprovado", 0), "recomendar_visita": recomendar}

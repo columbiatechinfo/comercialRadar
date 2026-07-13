@@ -59,6 +59,16 @@ button { font-family: inherit; }
   white-space: nowrap;
 }
 .db-badge .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--blue); }
+.db-badge { cursor: default; }
+.db-badge.sel { background: #dff1f5; color: #0b5566; }
+.db-badge.sel .dot { background: #0e7490; box-shadow: 0 0 0 3px rgba(14,116,144,.18); }
+.db-badge .muni-x {
+  margin-left: 3px; border: none; background: rgba(14,116,144,.15); color: #0e7490;
+  width: 18px; height: 18px; border-radius: 50%; font-size: 12px; cursor: pointer; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.db-badge .muni-x:hover { background: #0e7490; color: #fff; }
+.leaflet-interactive { cursor: pointer; }
 .ws-badge .dot { width: 8px; height: 8px; border-radius: 50%; background: #bdc1c6; transition: background .3s; }
 .ws-badge.on .dot { background: var(--green); box-shadow: 0 0 0 3px rgba(30,142,62,.18); }
 
