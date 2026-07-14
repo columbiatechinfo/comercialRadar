@@ -17,6 +17,7 @@ USO:
 import re
 import sys
 import ssl
+import time
 import argparse
 import urllib.request
 
@@ -78,15 +79,23 @@ INDICES = [
 ]
 
 
-def _propfind(url: str) -> list:
-    """Lista os hrefs (subpastas/arquivos) de um diretório WebDAV público."""
-    req = urllib.request.Request(url, method="PROPFIND",
-                                 headers={"Depth": "1", "User-Agent": bc.UA,
-                                          "Authorization": "Basic " + AUTH})
-    with urllib.request.urlopen(req, timeout=60, context=_SSL) as r:
-        xml = r.read().decode("utf-8", "ignore")
-    hrefs = re.findall(r"<d:href>([^<]+)</d:href>", xml, re.I)
-    return [urllib.parse.unquote(h) for h in hrefs]
+def _propfind(url: str, tentativas: int = 5) -> list:
+    """Lista os hrefs (subpastas/arquivos) de um diretório WebDAV público.
+    Com retry: um soluço de DNS/rede não deve derrubar a descoberta."""
+    for t in range(tentativas):
+        try:
+            req = urllib.request.Request(url, method="PROPFIND",
+                                         headers={"Depth": "1", "User-Agent": bc.UA,
+                                                  "Authorization": "Basic " + AUTH})
+            with urllib.request.urlopen(req, timeout=60, context=_SSL) as r:
+                xml = r.read().decode("utf-8", "ignore")
+            hrefs = re.findall(r"<d:href>([^<]+)</d:href>", xml, re.I)
+            return [urllib.parse.unquote(h) for h in hrefs]
+        except Exception as e:
+            if t == tentativas - 1:
+                raise
+            print(f"    (rede instável: {str(e)[:60]} — tentando de novo)", flush=True)
+            time.sleep(5 * (t + 1))
 
 
 def meses_disponiveis() -> list:
