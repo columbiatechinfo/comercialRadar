@@ -431,7 +431,47 @@ src/ingest.ts (Prisma)  prisma/schema.prisma  user_agents.json  camada1_serp_TOD
 areas/area_atual.json (polígono)  uploads/ (planilhas)  mineracao/ (saídas do minerador)
 .env (segredos)  mapa_pois.html (saída legado)  PIPELINE.md (doc pipeline)  DOCUMENTACAO.md (este)
 descrever_imagens.py (análise IA)  docs/processo.html (mapa visual do fluxo)
+base_comum.py  base_cnpj.py  base_cnefe.py  base_aneel.py (bases externas p/ enriquecer)
 ```
+
+## 13. Bases externas (módulos separados de extração) — `base_*.py`
+
+Módulos independentes que baixam **bases públicas oficiais completas** e gravam em
+**tabelas próprias** no mesmo banco `comercialradar` (nunca tocam em `pois`). Servirão
+FUTURAMENTE para enriquecer cada POI aprovado. Puramente ETL: baixa → **COPY direto**
+(sem parsear linha a linha — é o que aguenta dezenas de GB) → grava. Idempotente por
+arquivo (tabela `fonte_arquivos`; re-run pula o que já carregou).
+
+Motor comum: `base_comum.py` (download com retomada/Range, `copy_csv` via `copy_expert`,
+controle de carga). Ver [[ferramentas-separadas]] e [[bases-externas-fontes]].
+
+### 13.1 CNPJ — `base_cnpj.py` (Receita Federal)
+- Fonte: `arquivos.receitafederal.gov.br` — migrou p/ **Nextcloud/SERPRO+**. Acesso por
+  **WebDAV do share público** (token `YggdBLfdninEJX9`): `PROPFIND` lista meses e .zip,
+  `GET` autenticado baixa. Atualização mensal. CSV `;`, latin-1, sem header.
+- Tabelas: `rf_empresas`, `rf_estabelecimentos` (endereço+CNAE+situação — a chave do
+  cruzamento), `rf_socios`, `rf_simples`, e apoio `rf_cnaes/municipios/naturezas/
+  qualificacoes/paises/motivos`. Chave de junção: `cnpj_basico`.
+- Brasil inteiro: ~5 GB zipado, **~85 GB** descompactado. Rodar: `base_cnpj.py --recriar`
+  (1ª carga limpa), depois `base_cnpj.py` retoma; `--indices` cria os índices no fim.
+
+### 13.2 Residências/endereços — `base_cnefe.py` (IBGE, CNEFE Censo 2022)
+- Fonte: FTP IBGE, um zip por UF (`22_PI.zip`…) em `Arquivos_CNEFE/CSV/UF/`. HTTP direto.
+- **106,8 mi de endereços** com lat/lng, CEP, logradouro e ESPÉCIE (1=domicílio particular,
+  comércio, etc.). Tabela `ibge_cnefe` com colunas derivadas do cabeçalho do CSV.
+- Rodar: `base_cnefe.py` (Brasil) ou `--uf PI` (uma UF); `--recriar` limpa antes.
+
+### 13.3 Instalações de energia — `base_aneel.py` (ANEEL BDGD)
+- Fonte: portal CKAN `dadosabertos.aneel.gov.br` — unidades consumidoras georreferenciadas
+  UCBT (baixa tensão, o grosso), UCMT (média), UCAT (alta). Cada camada vira `aneel_<camada>`.
+- **ATENÇÃO:** o endpoint de download da ANEEL bloqueia bot com **302-loop de WAF** (cookie/
+  Referer não passam — precisa de browser). Baixe a camada no navegador e carregue com
+  `base_aneel.py --arquivo <caminho.csv|.zip>`. A carga automática (`base_aneel.py`) fica
+  pronta pra quando/onde o WAF não bloquear.
+
+> Escopo escolhido: **Brasil inteiro, base de CNPJ completa** (estabelecimentos + empresas +
+> sócios + Simples). Os testes de fumaça deixaram no banco só uma amostra (CNEFE-RR + 3
+> tabelas de apoio do CNPJ); a carga cheia é feita com `--recriar`.
 
 ## 12. Análise visual por IA (`descrever_imagens.py`) — estágio 04
 
