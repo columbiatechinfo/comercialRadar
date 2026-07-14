@@ -104,11 +104,26 @@ def copy_csv(conn, tabela: str, fobj, delimiter=";", header=False,
     sql = (f"COPY {tabela}{cols} FROM STDIN WITH (FORMAT csv, DELIMITER '{delimiter}', "
            f"QUOTE '{quote}', ENCODING '{encoding}'"
            + (", HEADER true" if header else "") + ")")
-    with conn.cursor() as cur:
-        cur.copy_expert(sql, fobj)          # rowcount = nº de linhas copiadas (sem scan)
-        n = cur.rowcount
-    conn.commit()
-    return n if (n is not None and n >= 0) else 0
+    try:
+        with conn.cursor() as cur:
+            cur.copy_expert(sql, _FiltraNul(fobj))   # tira NUL 0x00 (a RFB às vezes traz)
+            n = cur.rowcount                          # nº de linhas copiadas (sem scan)
+        conn.commit()
+        return n if (n is not None and n >= 0) else 0
+    except Exception:
+        conn.rollback()      # COPY é atômico: em erro, desfaz e libera a transação
+        raise
+
+
+class _FiltraNul:
+    """Remove bytes NUL (0x00) do stream — o COPY do Postgres os rejeita e a base da
+    RFB às vezes traz NUL solto no meio do CSV. Lê em blocos (copy_expert usa read(n))."""
+    def __init__(self, f):
+        self.f = f
+
+    def read(self, n=-1):
+        b = self.f.read(n)
+        return b.replace(b"\x00", b"") if (b and b"\x00" in b) else b
 
 
 def copy_de_zip(conn, tabela: str, zip_path: Path, **kw) -> int:
