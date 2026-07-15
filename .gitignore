@@ -48,3 +48,9 @@ scratchpad/
 
 # Config local do Claude Code
 .claude/
+
+# Pesos de modelos (baixados on-demand)
+*.pt
+
+# Galerias/artefatos gerados de telhados (base64 pesado, regeneráveis)
+exemplos/_telhados_*.html

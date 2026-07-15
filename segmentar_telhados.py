@@ -70,11 +70,17 @@ def _inv(gpx, gpy, z):
 
 def _tile(z, x, y):
     from PIL import Image
-    req = urllib.request.Request(GOOGLE.format(z=z, x=x, y=y), headers={"User-Agent": UA})
-    return Image.open(io.BytesIO(urllib.request.urlopen(req, timeout=40, context=_SSL).read())).convert("RGB")
+    ultimo = None
+    for _ in range(3):                     # tile do Google às vezes soluça; tenta de novo
+        try:
+            req = urllib.request.Request(GOOGLE.format(z=z, x=x, y=y), headers={"User-Agent": UA})
+            return Image.open(io.BytesIO(urllib.request.urlopen(req, timeout=40, context=_SSL).read())).convert("RGB")
+        except Exception as e:
+            ultimo = e
+    raise ultimo
 
 
-def mosaico(bbox, z):
+def mosaico(bbox, z, max_tiles=1600):
     """Costura os tiles Google que cobrem a bbox. Retorna (imagem, ox, oy) onde
     (ox,oy) é o pixel global do canto superior-esquerdo."""
     from PIL import Image
@@ -83,57 +89,67 @@ def mosaico(bbox, z):
     fx1, fy1 = _num(minlat, maxlng, z)     # canto inferior-direito
     tx0, ty0, tx1, ty1 = int(fx0), int(fy0), int(fx1), int(fy1)
     nx, ny = tx1 - tx0 + 1, ty1 - ty0 + 1
-    if nx * ny > 400:
-        sys.exit(f"bbox grande demais ({nx*ny} tiles z{z}). Comece por uma quadra menor.")
+    if nx * ny > max_tiles:
+        sys.exit(f"bbox grande demais ({nx*ny} tiles z{z}, teto {max_tiles}). Reduza a área.")
     mos = Image.new("RGB", (nx * 256, ny * 256))
+    total, feito, falhas = nx * ny, 0, 0
     for tx in range(tx0, tx1 + 1):
         for ty in range(ty0, ty1 + 1):
             try:
                 mos.paste(_tile(z, tx, ty), ((tx - tx0) * 256, (ty - ty0) * 256))
             except Exception:
-                pass
+                falhas += 1
+            feito += 1
+            if total > 60 and feito % 60 == 0:
+                print(f"    tiles {feito}/{total}", flush=True)
+    if falhas:
+        print(f"    ⚠️  {falhas} tiles falharam (ficam pretos)", flush=True)
     return mos, tx0 * 256, ty0 * 256
 
 
 # ── segmentação (FastSAM) ───────────────────────────────────────────────────────
-def segmentar(mos, device):
+def segmentar(arr, device):
     """FastSAM 'segment everything' -> lista de máscaras booleanas (numpy HxW)."""
     try:
         from ultralytics import FastSAM
     except ImportError:
         sys.exit("Falta o FastSAM. Rode:  .venv\\Scripts\\python -m pip install ultralytics")
-    import numpy as np
     model = FastSAM("FastSAM-s.pt")        # baixa na 1ª vez (~23MB)
-    arr = np.array(mos)
-    res = model(arr, device=device, retina_masks=True, imgsz=max(mos.size),
+    res = model(arr, device=device, retina_masks=True, imgsz=max(arr.shape[:2]),
                 conf=0.4, iou=0.9, verbose=False)
     if not res or res[0].masks is None:
         return []
     return [m.astype(bool) for m in res[0].masks.data.cpu().numpy()]
 
 
-def filtrar_telhados(masks, mpp):
-    """Fica só com máscaras com cara de telhado: área plausível + preenchimento alto
-    (exclui ruas/vegetação/quadras). mpp = metros por pixel."""
+def filtrar_telhados(masks, mpp, arr):
+    """Fica só com máscaras com cara de TELHADO: área plausível, forma compacta e
+    COR de telhado (laranja/cinza/branco) — corta vegetação (verde), sombra e ruas."""
     import numpy as np
     out = []
     for m in masks:
         ys, xs = np.where(m)
-        if len(xs) < 80:
+        if len(xs) < 120:
             continue
         area = len(xs) * mpp * mpp
-        if not (20 <= area <= 1500):        # casa ~40-300; corta ruído e quadras/ruas
+        if not (25 <= area <= 1500):        # casa ~40-300; corta ruído e quadras/ruas
             continue
         minx, maxx, miny, maxy = xs.min(), xs.max(), ys.min(), ys.max()
         bw, bh = maxx - minx + 1, maxy - miny + 1
         fill = len(xs) / (bw * bh)
-        if fill < 0.35:                     # forma espalhada = rua/pátio, não telhado
+        if fill < 0.45:                     # forma espalhada = pátio/rua/copa de árvore
             continue
-        ar = max(bw, bh) / max(1, min(bw, bh))
-        if ar > 6:                          # muito alongado = muro/rua
+        if max(bw, bh) / max(1, min(bw, bh)) > 5:   # muito alongado = muro/rua
             continue
-        out.append({"xs": xs, "ys": ys, "area": area, "cxp": xs.mean(), "cyp": ys.mean(),
-                    "minx": minx, "miny": miny, "maxx": maxx, "maxy": maxy})
+        reg = arr[ys, xs].astype("float32")
+        r, g, b = reg[:, 0].mean(), reg[:, 1].mean(), reg[:, 2].mean()
+        if g > r + 6 and g > b + 6:         # verde dominante = vegetação
+            continue
+        if (r + g + b) / 3 < 45:            # muito escuro = sombra/asfalto
+            continue
+        out.append({"xs": xs, "ys": ys, "area": float(area),
+                    "cxp": float(xs.mean()), "cyp": float(ys.mean()),
+                    "minx": int(minx), "miny": int(miny), "maxx": int(maxx), "maxy": int(maxy)})
     return out
 
 
@@ -196,12 +212,14 @@ def galeria(ref, cards):
 
 
 def run(bbox, ref, device):
+    import numpy as np
     print(f"🛰️  Segmentando telhados [{ref}] | Google z{Z} + FastSAM ({device})", flush=True)
     mos, ox, oy = mosaico(bbox, Z)
     print(f"  mosaico {mos.size[0]}x{mos.size[1]}px baixado; rodando FastSAM…", flush=True)
-    masks = segmentar(mos, device)
+    arr = np.array(mos)
+    masks = segmentar(arr, device)
     mpp = 156543.03 * math.cos(math.radians((bbox[0] + bbox[2]) / 2)) / 2 ** Z
-    telhados = filtrar_telhados(masks, mpp)
+    telhados = filtrar_telhados(masks, mpp, arr)
     print(f"  {len(masks)} máscaras → {len(telhados)} telhados após filtro", flush=True)
     if not telhados:
         print("  (nenhum telhado — ajuste a bbox ou os filtros)"); return
@@ -214,6 +232,7 @@ def run(bbox, ref, device):
     for idx, t in enumerate(telhados, 1):
         raw, tipo, just = _crop_classificar(mos, t, idx)
         lat, lng = _inv(ox + t["cxp"], oy + t["cyp"], Z)
+        lat, lng = float(lat), float(lng)
         resumo[tipo] = resumo.get(tipo, 0) + 1
         cards.append({"idx": idx, "area": t["area"], "tipo": tipo, "just": just, "raw": raw})
         with conn, conn.cursor() as cur:

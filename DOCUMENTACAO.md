@@ -432,6 +432,7 @@ areas/area_atual.json (polígono)  uploads/ (planilhas)  mineracao/ (saídas do 
 .env (segredos)  mapa_pois.html (saída legado)  PIPELINE.md (doc pipeline)  DOCUMENTACAO.md (este)
 descrever_imagens.py (análise IA)  docs/processo.html (mapa visual do fluxo)
 base_comum.py  base_cnpj.py  base_cnefe.py  base_aneel.py (bases externas p/ enriquecer)
+telhados_cv.py (identificador de telhados: Overture+CV+IA)  telhados_area.py  segmentar_telhados.py
 ```
 
 ## 13. Bases externas (módulos separados de extração) — `base_*.py`
@@ -551,3 +552,60 @@ com motivo "aprovado, mas sem sinal de vida nos últimos 12 meses".
 ### Resultado da 1ª execução completa (Parnaíba-PI)
 4.313 POIs · **1.843 aprovados** · 2.234 reprovados · **893 recomendar visita** · 973 leads ·
 31 para revisão manual. A calibração levou os aprovados de 1.323 → 1.843 (+39%) sem falso-positivo.
+
+## 14. Identificador de telhados por área — `telhados_cv.py`
+
+Conta **cada edificação** de uma área (bbox ou polígono), mede a **área (m²)** e infere o
+**tipo** (casa térrea / alto padrão / galpão-empresa / prédio). Serve para dimensionar
+densidade residencial/comercial ao redor de um POI. Grava na tabela **`telhados`** e gera
+uma **galeria HTML** de revisão em `exemplos/_telhados_<rotulo>.html`.
+
+### Duas fontes de DETECÇÃO (achar cada edificação)
+- **`overture` (padrão)** — footprints já extraídos por IA (**Google Open Buildings +
+  Microsoft**, via **Overture Maps**), lidos do GeoParquet público com **DuckDB** filtrando
+  só a bbox (reaproveita `telhados_area.puxar_overture`). Pega TODA edificação, inclusive
+  **laje cinza** que a cor não vê, e traz a **área geodésica** de cada uma. É "IA pronta":
+  nada roda na máquina/GPU local, **custo zero**.
+- **`cor` (fallback)** — nosso **CV clássico (OpenCV)** na imagem **Google z20** (~0,15 m/px):
+  máscara de cor da telha (**cerâmica** laranja / **laje** clara) → **watershed** que separa
+  casas **geminadas** usando o tamanho de lote como espaçamento de sementes → filtro de
+  **saturação** (`_pureza`) que corta falso-positivo em solo batido. Use onde o Overture é
+  grosseiro (cidades pequenas — foi o caso de Parnaíba, origem do módulo).
+
+### Classificação do TIPO (sempre pela nossa imagem)
+Overture não dá tipo (altura/andares vem nulo no BR). O tipo sai de `tipo_heuristico(r)`:
+- **cerâmica** < 350 m² → `casa_terrea`; ≥ 350 → `casa_alto_padrao`.
+- **laje/clara** < 160 m² → `casa_terrea` (casa de laje); grande + planta compacta +
+  **sombra longa** → `predio` (indício de multiandar; raro perto do equador); senão →
+  `galpao` (galpão/empresa térrea).
+- **`--ia`** (opcional): manda o recorte + **1 exemplo de referência de cada tipo** pro
+  **seu Ollama** (qwen2.5vl) "se balizar" — crops aéreos de 360px são leves, cabem 5 imagens
+  no contexto. Biblioteca em `exemplos/telhados/<tipo>/`, curada com `--exemplo tipo=ref:idx`.
+  Custo zero (roda no seu servidor). Ver [[percepcao-cega-julgamento-isolado]].
+
+### Funções principais
+- `detectar_overture(bbox, ox, oy, arr, mpp)` — footprints Overture → polígono/área/centro;
+  material amostrando a cor **dentro** do footprint (`_material_footprint`, erode p/ fugir do
+  descasamento footprint×tile).
+- `detectar(arr, mpp)` — CV: `_mascaras` (HSV) → `_instancias_ws` (watershed) na cerâmica +
+  contorno inteiro na clara; `_pureza`/`_sombra_ratio` filtram e medem.
+- `recorte` (crop 360px com retângulo amarelo), `galeria`, `curar_exemplo`, `run`.
+
+### Comandos
+```
+# área por polígono (4+ vértices), Overture (recomendado):
+python telhados_cv.py --poligono="-5.1279,-42.7981;-5.1259,-42.7940;-5.1320,-42.7914;-5.1346,-42.7954" --rotulo=area1
+python telhados_cv.py --bbox=-2.9165,-41.775,-2.9150,-41.772 --rotulo=quadra1   # por bbox
+python telhados_cv.py --bbox=... --fonte=cor        # nosso CV (fallback)
+python telhados_cv.py --bbox=... --ia               # refina tipo c/ exemplos (seu Ollama)
+python telhados_cv.py --exemplo casa_terrea=quadra1:7   # curar exemplo de referência
+```
+
+### Teste validado (Teresina-PI, polígono ~0,7 km²)
+Overture achou **603 edificações** no polígono vs 293 do CV por cor (que perdia o condomínio
+de laje cinza): **533 casas térreas · 6 alto padrão · 64 galpões/empresas · 93.114 m²**
+construídos. Tabela `telhados` (uma linha por edificação; `origem_tipo` = `overture+heuristica`).
+
+> Antecessores (mantidos): `telhados_area.py` (Overture cru, classifica por altura/`--visao`)
+> e `segmentar_telhados.py` (FastSAM — descartado, virava ruído). O `telhados_cv.py` é o
+> caminho recomendado.

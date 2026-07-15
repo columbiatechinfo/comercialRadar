@@ -105,21 +105,33 @@ def _mosaico(lat, lng, z):
     return mos, cx, cy, px, py
 
 
-def _crop_destacado(lat, lng, wkt="", num=None, z=17) -> bytes:
-    """Crop de satélite com o CONTORNO do telhado-alvo desenhado (amarelo) + nº opcional.
-    Assim a IA sabe exatamente qual edificação classificar (o resto é contexto)."""
+def _crop_destacado(lat, lng, wkt="", num=None, z=17, saida=340) -> bytes:
+    """Crop APERTADO no footprint (não no quarteirão) + zoom pra o telhado preencher o
+    quadro, com o CONTORNO amarelo do alvo. Margem pequena só pra dar contexto."""
     from PIL import ImageDraw
     mos, cx, cy, px, py = _mosaico(lat, lng, z)
-    d = ImageDraw.Draw(mos)
     pts = []
     for (vlng, vlat) in _wkt_coords(wkt):
         vfx, vfy = _num(vlat, vlng, z)
         pts.append(((vfx - (cx - 1)) * 256, (vfy - (cy - 1)) * 256))
-    if len(pts) >= 2:
-        d.line(pts + [pts[0]], fill=(255, 235, 0), width=3)   # contorno do telhado
+    if len(pts) >= 3:
+        xs = [p[0] for p in pts]; ys = [p[1] for p in pts]
+        bw, bh = max(xs) - min(xs), max(ys) - min(ys)
+        mg = max(max(bw, bh) * 0.45, 22)                      # margem: 45% do tamanho, mín 22px
+        cl, ct, cr, cb = min(xs) - mg, min(ys) - mg, max(xs) + mg, max(ys) + mg
+    else:
+        cl, ct, cr, cb = px - 45, py - 45, px + 45, py + 45   # fallback sem geometria
+    lado = max(cr - cl, cb - ct)                              # quadrado, centrado no footprint
+    mcx, mcy = (cl + cr) / 2, (ct + cb) / 2
+    cl, cr, ct, cb = mcx - lado / 2, mcx + lado / 2, mcy - lado / 2, mcy + lado / 2
+    crop = mos.crop((int(cl), int(ct), int(cr), int(cb))).resize((saida, saida))
+    sc = saida / (cr - cl)
+    d = ImageDraw.Draw(crop)
+    cp = [((mx - cl) * sc, (my - ct) * sc) for (mx, my) in pts]
+    if len(cp) >= 2:
+        d.line(cp + [cp[0]], fill=(255, 235, 0), width=3)     # contorno do telhado-alvo
     if num is not None:
-        d.text((px + 5, py - 16), str(num), fill=(255, 235, 0))
-    crop = mos.crop((px - 150, py - 150, px + 150, py + 150))
+        d.text((6, 6), f"#{num}", fill=(255, 235, 0))
     b = io.BytesIO(); crop.save(b, "JPEG", quality=88)
     return b.getvalue()
 
