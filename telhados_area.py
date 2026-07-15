@@ -42,11 +42,11 @@ MODELO_VISAO = "qwen2.5vl:7b"
 _SSL = ssl.create_default_context()
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0 Safari/537.36"
 
-PROMPT_AEREO = """Imagem de satélite (vista DE CIMA) de uma quadra urbana. Olhe a edificação \
-no CENTRO da imagem. Classifique se é um PRÉDIO (edifício de apartamentos, vários andares — \
-telhado grande, muitas vezes cinza/laje, com sombra longa projetada) ou uma CASA TÉRREA \
-(1 pavimento — telhado pequeno de cerâmica, sombra curta). Se for claramente comércio/galpão \
-térreo grande, use "casa_terrea" (é térreo). Responda SOMENTE JSON: \
+PROMPT_AEREO = """Imagem de satélite (vista DE CIMA). A edificação com o CONTORNO AMARELO \
+é o ALVO — classifique APENAS ela. É um PRÉDIO (edifício de vários andares/apartamentos — \
+telhado grande, sombra LONGA projetada no chão, laje) ou uma CASA TÉRREA (1 pavimento — \
+telhado pequeno de cerâmica, sombra curta)? Um galpão/mercado térreo grande, mesmo com \
+telhado amplo, é "casa_terrea" (é térreo — a sombra é curta). Responda SOMENTE JSON: \
 {"tipo": "predio" | "casa_terrea" | "incerto", "andares_estimados": 1, "justificativa": "1 frase"}"""
 
 DDL = """
@@ -76,26 +76,58 @@ def _tile(z, x, y):
     return Image.open(io.BytesIO(urllib.request.urlopen(req, timeout=60, context=_SSL).read())).convert("RGB")
 
 
-def _crop_aereo(lat, lng, z=17) -> bytes:
-    """Mosaico 3x3 de tiles Esri centrado na edificação → JPEG (bytes)."""
+import re as _re
+
+
+def _wkt_coords(wkt):
+    """1º anel de POLYGON/MULTIPOLYGON como [(lng, lat), ...]."""
+    m = _re.search(r"\(\(+\s*([^()]+)", wkt or "")
+    if not m:
+        return []
+    out = []
+    for par in m.group(1).split(","):
+        xy = par.split()
+        if len(xy) >= 2:
+            out.append((float(xy[0]), float(xy[1])))
+    return out
+
+
+def _mosaico(lat, lng, z):
+    from PIL import Image
     fx, fy = _num(lat, lng, z)
     cx, cy = int(fx), int(fy)
-    from PIL import Image
     mos = Image.new("RGB", (768, 768))
     for dx in (-1, 0, 1):
         for dy in (-1, 0, 1):
             mos.paste(_tile(z, cx + dx, cy + dy), ((dx + 1) * 256, (dy + 1) * 256))
     px = int((fx - cx) * 256) + 256
     py = int((fy - cy) * 256) + 256
-    crop = mos.crop((px - 170, py - 170, px + 170, py + 170))
-    b = io.BytesIO(); crop.save(b, "JPEG", quality=85)
+    return mos, cx, cy, px, py
+
+
+def _crop_destacado(lat, lng, wkt="", num=None, z=17) -> bytes:
+    """Crop de satélite com o CONTORNO do telhado-alvo desenhado (amarelo) + nº opcional.
+    Assim a IA sabe exatamente qual edificação classificar (o resto é contexto)."""
+    from PIL import ImageDraw
+    mos, cx, cy, px, py = _mosaico(lat, lng, z)
+    d = ImageDraw.Draw(mos)
+    pts = []
+    for (vlng, vlat) in _wkt_coords(wkt):
+        vfx, vfy = _num(vlat, vlng, z)
+        pts.append(((vfx - (cx - 1)) * 256, (vfy - (cy - 1)) * 256))
+    if len(pts) >= 2:
+        d.line(pts + [pts[0]], fill=(255, 235, 0), width=3)   # contorno do telhado
+    if num is not None:
+        d.text((px + 5, py - 16), str(num), fill=(255, 235, 0))
+    crop = mos.crop((px - 150, py - 150, px + 150, py + 150))
+    b = io.BytesIO(); crop.save(b, "JPEG", quality=88)
     return b.getvalue()
 
 
-def _tipo_por_visao(lat, lng) -> str:
-    """Baixa o crop aéreo e pergunta ao qwen2.5vl: prédio ou casa térrea?"""
+def _tipo_por_visao(lat, lng, wkt="") -> str:
+    """Crop com o telhado-alvo destacado e pergunta ao qwen2.5vl: prédio ou casa térrea?"""
     try:
-        b64 = base64.b64encode(_crop_aereo(lat, lng)).decode()
+        b64 = base64.b64encode(_crop_destacado(lat, lng, wkt)).decode()
         payload = json.dumps({"model": MODELO_VISAO, "prompt": PROMPT_AEREO, "images": [b64],
                               "stream": False, "format": "json",
                               "options": {"num_ctx": 4096, "temperature": 0, "num_predict": 120}}).encode()
@@ -154,8 +186,8 @@ def run(bbox, rotulo, release, visao=False, amostra=0):
     if visao:
         alvos = linhas[:amostra] if amostra else linhas
         print(f"  👁️ visão aérea (qwen2.5vl) em {len(alvos)} edificações…", flush=True)
-        for i, (bid, _h, _nf, _cl, _st, _a, clat, clng, _wkt) in enumerate(alvos, 1):
-            tipos_visao[bid] = _tipo_por_visao(clat, clng)
+        for i, (bid, _h, _nf, _cl, _st, _a, clat, clng, wkt) in enumerate(alvos, 1):
+            tipos_visao[bid] = _tipo_por_visao(clat, clng, wkt)
             if i % 25 == 0:
                 print(f"    {i}/{len(alvos)}", flush=True)
 
