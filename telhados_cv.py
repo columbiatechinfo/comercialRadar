@@ -1,7 +1,17 @@
 # -*- coding: utf-8 -*-
 """
-telhados_cv.py — Identificador de telhados: conta cada edificação de uma área, mede a
-área (m²) e infere o tipo (casa térrea / alto padrão / galpão-empresa / prédio).
+telhados_cv.py — Identificador de telhados: conta cada edificação de uma área, mede
+área (m²) e ALTURA (m/pavimentos) e infere o tipo em 4 categorias simples:
+casa_terrea | predio | galpao (empresa) | terreno_vazio.
+
+ALTURA/TIPO (analisar_e_tipar — calibrado com o cliente em Teresina):
+  • sombra projetada no chão (comprimento → metros; direção do sol detectada sozinha);
+  • fachada visível no z21 oblíquo (autocalibrada px→m pelos que mediram sombra) —
+    resolve bloco denso onde a sombra cai no telhado vizinho;
+  • grade de JANELAS pequenas na fachada (≥12 = prédio; casa tem 1-2, galpão parede lisa);
+  • FRISOS direcionais do telhado metálico (≥0.25 = galpão, veto);
+  • vizinhança: fragmento alto cercado por ≥2 prédios do mesmo telhado = prédio
+    (condomínio); resgate de altura pela mediana do grupo (raio 80m, sem percolar).
 
 DUAS FONTES DE DETECÇÃO (achar cada edificação):
   • overture (PADRÃO) — footprints já extraídos por IA (Google Open Buildings + Microsoft,
@@ -40,16 +50,17 @@ import urllib.request
 from pathlib import Path
 
 import realtime_ingest
-from segmentar_telhados import _num, _inv, mosaico, Z, GOOGLE, OLLAMA, MODELO  # geo/tiles já testados
+from segmentar_telhados import _num, _inv, mosaico, GOOGLE, OLLAMA, MODELO  # geo/tiles já testados
 
+Z = 21   # zoom Google padrão. z21 ~0,075 m/px = detalhe REAL (telha, caixa d'água, carro);
+         # z22 já é upscale (borra, 4x mais tiles). z20 era grosseiro demais p/ o tipo.
 BASE = Path(__file__).resolve().parent
 EXEMPLOS = BASE / "exemplos" / "telhados"          # exemplos/telhados/<tipo>/*.jpg
 
-# tipos que o identificador conhece (ordem = ordem que a IA vê os exemplos)
-TIPOS = ["casa_terrea", "casa_alto_padrao", "galpao", "predio"]
-ROTULO_PT = {"casa_terrea": "casa térrea", "casa_alto_padrao": "casa de alto padrão",
-             "galpao": "galpão / empresa", "predio": "prédio (multiandar)",
-             "laje": "laje/cobertura clara", "indeterminado": "indeterminado"}
+# 4 categorias, simples (decisão do cliente: sem "alto padrão")
+TIPOS = ["casa_terrea", "predio", "galpao", "terreno_vazio"]
+ROTULO_PT = {"casa_terrea": "casa térrea", "predio": "prédio", "galpao": "galpão / empresa",
+             "terreno_vazio": "terreno vazio", "indeterminado": "indeterminado"}
 
 DDL = """
 CREATE TABLE IF NOT EXISTS telhados (
@@ -58,6 +69,9 @@ CREATE TABLE IF NOT EXISTS telhados (
   largura_m double precision, comprimento_m double precision,
   tipo text, origem_tipo text, just text, criado_em timestamptz DEFAULT now()
 );
+ALTER TABLE telhados ADD COLUMN IF NOT EXISTS altura_m double precision;
+ALTER TABLE telhados ADD COLUMN IF NOT EXISTS andares int;
+ALTER TABLE telhados ADD COLUMN IF NOT EXISTS janelas int;
 CREATE INDEX IF NOT EXISTS ix_telhados_ref ON telhados (area_ref);
 """
 
@@ -272,19 +286,250 @@ def detectar_overture(bbox, ox, oy, arr, mpp, release=None):
     return roofs
 
 
-# ── classificação heurística (offline, determinística) ───────────────────────────
-def tipo_heuristico(r):
-    if r["material"] == "ceramica":
-        if r["area_m2"] < 350:
-            return "casa_terrea", "telha cerâmica no porte de um lote (1 pavimento)"
-        return "casa_alto_padrao", "telha cerâmica de grande porte (casarão/sobrado)"
-    # clara = laje/metálica. Laje PEQUENA (porte de lote) é casa de laje, não galpão.
-    if r["area_m2"] < 160:
-        return "casa_terrea", "casa de laje (telhado plano claro, porte de lote)"
-    # Prédio (multiandar) SÓ com indício de altura = sombra longa em planta compacta.
-    if r["sombra"] > 0.55 and r["aspect"] < 1.9 and r["area_m2"] >= 200:
-        return "predio", "planta compacta com sombra longa (indício de vários andares)"
-    return "galpao", "cobertura ampla clara e térrea (galpão ou empresa)"
+# ── altura + tipo: sombra, fachada, janelas, frisos e vizinhança ─────────────────
+# Calibrado em Teresina (amostra revisada pelo cliente): casas térreas 100%, prédios
+# de condomínio 28/28, galpões separados por textura. Ver DOCUMENTACAO.md §14.
+def analisar_e_tipar(roofs, arr, mpp):
+    """Anota cada telhado com altura_m/andares/janelas e decide o TIPO (4 categorias).
+    Física usada: sombra projetada no chão (altura), fachada visível no z21 oblíquo
+    (altura autocalibrada onde a sombra está tampada), grade de janelas (prédio),
+    frisos direcionais (galpão metálico), vizinhança de rótulo (condomínio)."""
+    import cv2
+    import numpy as np
+    H, W = arr.shape[:2]
+    lum = arr.mean(2)
+    Rr, Gg, Bb = arr[:, :, 0].astype(int), arr[:, :, 1].astype(int), arr[:, :, 2].astype(int)
+    verde_px = (Gg > Rr + 8) & (Gg > Bb + 8)
+    build = np.zeros((H, W), np.uint8)
+    for r in roofs:
+        cv2.fillPoly(build, [np.array(r["box"], np.int32)], 1)
+    shadow = ((lum < 75) & (~verde_px) & (build == 0)).astype(np.uint8)
+
+    # direção global da sombra (desloca a máscara de prédios e vê onde cai em sombra)
+    bf, sf = build.astype(np.float32), shadow.astype(np.float32)
+    best = (-1, 1.0, 0.0)
+    for ang in range(0, 360, 8):
+        for mag in (10, 18, 28):
+            dx, dy = mag * math.cos(math.radians(ang)), mag * math.sin(math.radians(ang))
+            ov = float((cv2.warpAffine(bf, np.float32([[1, 0, dx], [0, 1, dy]]), (W, H)) * sf).sum())
+            if ov > best[0]:
+                best = (ov, math.cos(math.radians(ang)), math.sin(math.radians(ang)))
+    ux, uy = best[1], best[2]
+
+    MAXK = 70
+
+    def _mask_local(r, pad):
+        poly = np.array(r["box"], np.int32)
+        x, y, w, h = cv2.boundingRect(poly)
+        x0, y0 = max(0, x - pad), max(0, y - pad)
+        x1, y1 = min(W, x + w + pad), min(H, y + h + pad)
+        m = np.zeros((y1 - y0, x1 - x0), np.uint8)
+        cv2.fillPoly(m, [poly - [x0, y0]], 1)
+        return m, x0, y0, x1, y1
+
+    def sombra_len(r):
+        """Sombra no chão (m). None = pé da sombra tampado pelo vizinho (não mede)."""
+        m, x0, y0, x1, y1 = _mask_local(r, MAXK + 4)
+        sh = shadow[y0:y1, x0:x1]; bd = build[y0:y1, x0:x1]
+        fr, ini_ocl, ini_n = [], 0, 0
+        for k in range(2, MAXK, 2):
+            sm = cv2.warpAffine(m, np.float32([[1, 0, ux * k], [0, 1, uy * k]]), (m.shape[1], m.shape[0]))
+            novo = (sm == 1) & (m == 0)
+            if novo.sum() < 15:
+                continue
+            livre = novo & (bd == 0)
+            if k <= 12:
+                ini_n += 1
+                if livre.sum() < max(15, novo.sum() * 0.30):
+                    ini_ocl += 1
+            if livre.sum() < max(15, novo.sum() * 0.25):
+                continue
+            fr.append((k, float(sh[livre].mean())))
+        if ini_n and ini_ocl / ini_n >= 0.5:
+            return None
+        run = 0
+        for k, f in fr:
+            if f >= 0.45:
+                run = k
+            elif k > run + 6:
+                break
+        return run * mpp
+
+    def fachada_px(r):
+        """Largura (px) da banda escura da FACHADA na borda do lado da sombra."""
+        m, x0, y0, x1, y1 = _mask_local(r, 36)
+        lu = lum[y0:y1, x0:x1]
+        core = cv2.erode(m, np.ones((9, 9), np.uint8), 2)
+        if core.sum() < 30:
+            core = m
+        ref = float(lu[core > 0].mean())
+        npx = 0
+        for k in range(1, 34):
+            smk = cv2.warpAffine(m, np.float32([[1, 0, -ux * k], [0, 1, -uy * k]]), (m.shape[1], m.shape[0]))
+            anel = (m == 1) & (smk == 0)
+            if k > 1:
+                sm2 = cv2.warpAffine(m, np.float32([[1, 0, -ux * (k - 1)], [0, 1, -uy * (k - 1)]]), (m.shape[1], m.shape[0]))
+                anel = anel & ~((m == 1) & (sm2 == 0))
+            if anel.sum() < 8:
+                break
+            if float(lu[anel].mean()) < ref - 22:
+                npx = k
+            elif k > npx + 3:
+                break
+        return npx
+
+    def janelas_fachada(r):
+        """Nº de janelas pequenas na fachada visível (grade de janelas = prédio)."""
+        m, x0, y0, x1, y1 = _mask_local(r, 40)
+        if m.shape[0] < 10 or m.shape[1] < 10:
+            return 0
+        kb = max(8, r["fach_px"] + 6)
+        smk = cv2.warpAffine(m, np.float32([[1, 0, -ux * kb], [0, 1, -uy * kb]]), (m.shape[1], m.shape[0]))
+        banda = cv2.dilate(((m == 1) & (smk == 0)).astype(np.uint8), np.ones((5, 5), np.uint8), 1)
+        if banda.sum() < 60:
+            return 0
+        lu = lum[y0:y1, x0:x1]
+        med = float(lu[banda > 0].mean()); sd = float(lu[banda > 0].std())
+        if sd < 6:
+            return 0
+        n = 0
+        for mm in (((lu > med + 0.9 * sd) & (banda > 0)), ((lu < med - 0.9 * sd) & (banda > 0))):
+            nc, _, stats, _ = cv2.connectedComponentsWithStats(mm.astype(np.uint8), 8)
+            for i in range(1, nc):
+                if 4 <= stats[i, cv2.CC_STAT_AREA] <= 160 and \
+                   stats[i, cv2.CC_STAT_WIDTH] <= 22 and stats[i, cv2.CC_STAT_HEIGHT] <= 22:
+                    n += 1
+        return n
+
+    def friso(r):
+        """Concentração direcional do gradiente no miolo: frisos metálicos ≥0.25."""
+        m, x0, y0, x1, y1 = _mask_local(r, 0)
+        if m.shape[0] < 8 or m.shape[1] < 8:
+            return 0.0
+        m = cv2.erode(m, np.ones((5, 5), np.uint8), 1)
+        lu = lum[y0:y1, x0:x1].astype(np.float32)
+        gx = cv2.Sobel(lu, cv2.CV_32F, 1, 0, 3); gy = cv2.Sobel(lu, cv2.CV_32F, 0, 1, 3)
+        mag = np.sqrt(gx * gx + gy * gy)
+        sel = (m > 0) & (mag > 25)
+        if sel.sum() < 40:
+            return 0.0
+        ang = (np.degrees(np.arctan2(gy[sel], gx[sel])) + 180) % 180
+        hist, _ = np.histogram(ang, bins=18, range=(0, 180), weights=mag[sel])
+        return float(hist.max() / max(1e-6, hist.sum()))
+
+    def cor_miolo(r):
+        m, x0, y0, x1, y1 = _mask_local(r, 0)
+        m = cv2.erode(m, np.ones((7, 7), np.uint8), 1)
+        px = arr[y0:y1, x0:x1][m > 0]
+        return px.mean(axis=0) if len(px) > 20 else np.array([0., 0., 0.])
+
+    def vazio(r):
+        """Footprint sem estrutura: chão batido/vegetação, sem fachada nem sombra."""
+        if r["altura_m"] >= 1.5 or r["fach_px"] >= 3:
+            return False
+        m, x0, y0, x1, y1 = _mask_local(r, 0)
+        px = arr[y0:y1, x0:x1][m > 0].astype("float32")
+        if len(px) < 40:
+            return False
+        rr, gg, bb = px[:, 0].mean(), px[:, 1].mean(), px[:, 2].mean()
+        verde = gg > rr + 6 and gg > bb + 6
+        solo = rr > gg > bb and rr - bb > 18 and rr > 110
+        return (verde or solo) and float(px.mean(axis=1).std()) < 14
+
+    # ── medições por telhado ──
+    for r in roofs:
+        r["somb_raw"] = sombra_len(r)
+        r["fach_px"] = fachada_px(r)
+        poly = np.array(r["box"], np.float32)
+        (_, (rw, rh), _) = cv2.minAreaRect(poly)
+        r["fill_rect"] = cv2.contourArea(poly) / max(1.0, rw * rh)
+        r["janelas"] = janelas_fachada(r)
+        r["friso"] = friso(r)
+
+    # autocalibração da fachada (px→m) pelos que mediram sombra alta
+    calib = [(r["fach_px"], r["somb_raw"]) for r in roofs
+             if r["somb_raw"] is not None and r["somb_raw"] >= 3.5 and r["fach_px"] >= 3]
+    escala = float(np.median([s / f for f, s in calib])) if len(calib) >= 3 else None
+
+    # fusão sombra+fachada
+    for r in roofs:
+        s = r["somb_raw"] if r["somb_raw"] is not None else 0.0
+        f = (r["fach_px"] * escala) if (escala and r["fach_px"] >= 3) else 0.0
+        r["altura_m"] = max(s, f)
+
+    # resgate pelo grupo: bloco cuja medição falhou herda dos ≥2 blocos altos ≤80m
+    seeds = [q for q in roofs if q["material"] == "clara" and q["altura_m"] >= 3.5
+             and q["area_m2"] >= 140]
+    for r in roofs:
+        if r["material"] != "clara" or r["altura_m"] >= 3.5 or not (60 <= r["area_m2"] <= 900):
+            continue
+        viz = [q["altura_m"] for q in seeds if q is not r
+               and math.hypot(q["cxp"] - r["cxp"], q["cyp"] - r["cyp"]) <= 80 / mpp]
+        if len(viz) >= 2:
+            r["altura_m"] = float(np.median(viz))
+            r["cluster_alto"] = True
+
+    # padrão de condomínio: grupo de blocos altos com porte de bloco
+    for r in roofs:
+        if r["material"] == "clara" and r["altura_m"] >= 3.5 and r["area_m2"] >= 60:
+            nviz = sum(1 for q in roofs
+                       if q is not r and q["material"] == "clara"
+                       and q["altura_m"] >= 3.5 and q["area_m2"] >= 140
+                       and math.hypot(q["cxp"] - r["cxp"], q["cyp"] - r["cyp"]) <= 120 / mpp)
+            if nviz >= 2:
+                r["cluster_alto"] = True
+
+    for r in roofs:
+        s = r["altura_m"]
+        r["andares"] = max(1, int(round(s / 3.0)) + (1 if s >= 2 else 0))
+
+    # ── tipo (4 categorias) ──
+    def tipo_de(r):
+        s, a = r["altura_m"], r["area_m2"]
+        if vazio(r):
+            return "terreno_vazio", "footprint sem estrutura (chão batido/vegetação)"
+        if r["material"] == "ceramica":
+            return "casa_terrea", "telha cerâmica (residência)"
+        if s >= 3.5:
+            if a < 60:
+                return "casa_terrea", "estrutura pequena (telheiro/anexo)"
+            if r["friso"] >= 0.25:
+                return "galpao", f"telhado metálico de frisos (~{s:.0f}m) — galpão/empresa"
+            if a > 900:
+                return "galpao", f"pavilhão alto de grande porte (~{s:.0f}m)"
+            if a <= 900 and r.get("cluster_alto") and r["fill_rect"] < 0.98:
+                return "predio", f"multiandar: ~{s:.0f}m ≈ {r['andares']} pav., {r['janelas']} janelas"
+            if 140 <= a and r["fill_rect"] < 0.96 and r["janelas"] >= 12:
+                return "predio", f"multiandar isolado: ~{s:.0f}m ≈ {r['andares']} pav., {r['janelas']} janelas"
+            if a >= 100:
+                return "galpao", f"construção alta retangular/lisa (~{s:.0f}m) — galpão/empresa"
+            return "casa_terrea", "estrutura pequena alta (anexo/caixa d'água)"
+        if a >= 160:
+            return "galpao", "laje/metálica ampla e térrea (galpão/empresa)"
+        return "casa_terrea", "laje pequena térrea (casa de laje)"
+
+    for r in roofs:
+        r["tipo"], r["just"] = tipo_de(r)
+
+    # 2ª passada: "galpão" alto de porte de bloco cercado por ≥2 prédios com o MESMO
+    # telhado (cor) é fragmento do condomínio → prédio.
+    preds = [q for q in roofs if q["tipo"] == "predio"]
+    for q in preds:
+        q["_cor"] = cor_miolo(q)
+    for r in roofs:
+        if r["tipo"] != "galpao" or r["altura_m"] < 3.5 or not (100 <= r["area_m2"] <= 900):
+            continue
+        if r["friso"] >= 0.25:
+            continue
+        viz = [q for q in preds
+               if math.hypot(q["cxp"] - r["cxp"], q["cyp"] - r["cyp"]) <= 80 / mpp]
+        if len(viz) < 2:
+            continue
+        cor_v = np.median(np.array([q["_cor"] for q in viz]), axis=0)
+        if float(np.abs(cor_miolo(r) - cor_v).mean()) <= 22:
+            r["tipo"] = "predio"
+            r["just"] = f"fragmento de bloco: {len(viz)} prédios vizinhos, telhado idêntico (~{r['altura_m']:.0f}m)"
+    return roofs
 
 
 # ── classificação por EXEMPLOS (opcional, --ia) ──────────────────────────────────
@@ -359,22 +604,25 @@ def galeria(ref, cards, usou_ia, fonte="cor"):
            ".sub{color:#96a0ac;margin:0 0 6px}.leg{display:flex;gap:14px;flex-wrap:wrap;color:#96a0ac;font-size:.82rem;margin:8px 0 18px}"
            ".grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px}"
            ".card{position:relative;background:#181c21;border:1px solid #282f37;border-radius:12px;overflow:hidden;border-top:4px solid #282f37}"
-           ".card.casa_terrea{border-top-color:#4cc38a}.card.casa_alto_padrao{border-top-color:#3aa0e0}"
-           ".card.predio{border-top-color:#e08571}.card.galpao{border-top-color:#dcb04a}.card.laje,.card.indeterminado,.card.erro{border-top-color:#7a828c}"
+           ".card.casa_terrea{border-top-color:#4cc38a}.card.terreno_vazio{border-top-color:#7a828c}"
+           ".card.predio{border-top-color:#e08571}.card.galpao{border-top-color:#dcb04a}.card.indeterminado,.card.erro{border-top-color:#7a828c}"
            ".card img{display:block;width:100%;height:220px;object-fit:cover}"
            ".n{position:absolute;top:6px;left:6px;background:#000b;color:#ffeb00;font:700 11px ui-monospace;padding:2px 7px;border-radius:6px}"
+           ".h{position:absolute;top:6px;right:6px;background:#000b;color:#7fd7ff;font:700 11px ui-monospace;padding:2px 7px;border-radius:6px}"
            "figcaption{padding:9px 11px}.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;gap:6px}"
            ".tipo{font-weight:700;font-size:.74rem;padding:3px 9px;border-radius:99px;background:#222831;color:#cfd6de}"
-           ".card.casa_terrea .tipo{background:#123024;color:#4cc38a}.card.casa_alto_padrao .tipo{background:#10283a;color:#3aa0e0}"
+           ".card.casa_terrea .tipo{background:#123024;color:#4cc38a}.card.terreno_vazio .tipo{background:#23272d;color:#9aa4af}"
            ".card.predio .tipo{background:#331b17;color:#e08571}.card.galpao .tipo{background:#33280f;color:#dcb04a}"
            ".area{font:600 .8rem ui-monospace;color:#96a0ac;white-space:nowrap}"
            ".dim{font:.72rem ui-monospace;color:#6b7480}.just{font-size:.78rem;color:#96a0ac;line-height:1.4;margin-top:3px}")
     figs = []
     for c in cards:
-        cls = c["tipo"] if c["tipo"] in ("casa_terrea", "casa_alto_padrao", "predio", "galpao") else "laje"
+        cls = c["tipo"] if c["tipo"] in TIPOS else "indeterminado"
         uri = "data:image/jpeg;base64," + base64.b64encode(c["raw"]).decode()
+        alt = c.get("altura", 0.0)
+        hlabel = f'{alt:.0f}m·{c.get("andares",1)}pav' if alt >= 1 else "térreo"
         figs.append(
-            f'<figure class="card {cls}"><span class="n">#{c["idx"]}</span><img src="{uri}">'
+            f'<figure class="card {cls}"><span class="n">#{c["idx"]}</span><span class="h">{hlabel}</span><img src="{uri}">'
             f'<figcaption><div class="top"><span class="tipo">{html.escape(ROTULO_PT.get(c["tipo"], c["tipo"]))}</span>'
             f'<span class="area">{c["area"]:.0f} m²</span></div>'
             f'<div class="dim">{c["larg"]:.0f}×{c["comp"]:.0f} m · {c["material"]}</div>'
@@ -385,9 +633,9 @@ def galeria(ref, cards, usou_ia, fonte="cor"):
     doc = (f'<title>Telhados — {html.escape(ref)}</title><style>{css}</style><div class="wrap">'
            f'<h1>Identificador de telhados ({det}{"+IA" if usou_ia else ""}) — {html.escape(ref)}</h1>'
            f'<p class="sub">{tot} edificações · 🏠 {n["casa_terrea"]} casas térreas · '
-           f'🏡 {n["casa_alto_padrao"]} alto padrão · 🏢 {n["predio"]} prédios · 🏭 {n["galpao"]} galpões</p>'
-           f'<div class="leg"><span>Contorno amarelo = o telhado medido.</span>'
-           f'<span>Detecção: {det}. {"Tipo refinado pela IA com exemplos." if usou_ia else "Tipo por heurística (material/área/forma/sombra)."}</span></div>'
+           f'🏢 {n["predio"]} prédios · 🏭 {n["galpao"]} galpões · ⬜ {n["terreno_vazio"]} terrenos vazios</p>'
+           f'<div class="leg"><span>Contorno amarelo = o telhado medido. Etiqueta azul = altura (m·pavimentos).</span>'
+           f'<span>Detecção: {det}. {"Tipo refinado pela IA com exemplos." if usou_ia else "Tipo por altura (sombra+fachada) + janelas + frisos + vizinhança."}</span></div>'
            f'<div class="grid">{"".join(figs)}</div></div>')
     out = BASE / "exemplos" / f"_telhados_{ref}.html"
     out.parent.mkdir(exist_ok=True)
@@ -455,8 +703,11 @@ def run(bbox, ref, usar_ia, fonte="overture", poligono=None, release=None):
         antes = len(roofs)
         roofs = [r for r in roofs if _dentro(r["lat"], r["lng"], poligono)]
         print(f"  {len(roofs)}/{antes} dentro do polígono", flush=True)
+    roofs = [r for r in roofs if r["area_m2"] >= 20]        # corta ruído de footprint
     if not roofs:
         print("  (nada detectado — confira a área/fonte)"); return
+    print("  medindo altura (sombra+fachada) e tipando…", flush=True)
+    analisar_e_tipar(roofs, arr, mpp)
     roofs.sort(key=lambda r: (r["cyp"], r["cxp"]))          # ordem de leitura
 
     exemplos = _carregar_exemplos() if usar_ia else {}
@@ -476,17 +727,19 @@ def run(bbox, ref, usar_ia, fonte="overture", poligono=None, release=None):
         if usar_ia:
             tipo, just = _classificar_ia(raw, exemplos)
         else:
-            tipo, just = tipo_heuristico(r)
-        origem = f"{fonte}+{'ia_exemplos' if usar_ia else 'heuristica'}"
+            tipo, just = r["tipo"], r["just"]              # de analisar_e_tipar
+        origem = f"{fonte}+{'ia_exemplos' if usar_ia else 'altura_v2'}"
         with conn, conn.cursor() as cur:
             cur.execute(
                 "INSERT INTO telhados (area_ref, idx, material, area_m2, centro_lat, centro_lng, "
-                "largura_m, comprimento_m, tipo, origem_tipo, just) "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                "largura_m, comprimento_m, tipo, origem_tipo, just, altura_m, andares, janelas) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (ref, idx, r["material"], float(r["area_m2"]), float(r["lat"]), float(r["lng"]),
-                 float(r["larg"]), float(r["comp"]), tipo, origem, just))
+                 float(r["larg"]), float(r["comp"]), tipo, origem, just,
+                 float(r.get("altura_m", 0.0)), int(r.get("andares", 1)), int(r.get("janelas", 0))))
         cards.append({"idx": idx, "area": r["area_m2"], "larg": r["larg"], "comp": r["comp"],
-                      "material": r["material"], "tipo": tipo, "just": just, "raw": raw})
+                      "material": r["material"], "tipo": tipo, "just": just, "raw": raw,
+                      "altura": r.get("altura_m", 0.0), "andares": r.get("andares", 1)})
         if usar_ia and idx % 20 == 0:
             print(f"    IA {idx}/{len(roofs)}", flush=True)
     conn.close()
@@ -494,8 +747,8 @@ def run(bbox, ref, usar_ia, fonte="overture", poligono=None, release=None):
     n = {t: sum(1 for c in cards if c["tipo"] == t) for t in TIPOS}
     area_tot = sum(c["area"] for c in cards)
     print("\n  === RESUMO ===")
-    print(f"  {len(cards)} edificações | 🏠 {n['casa_terrea']} térreas · 🏡 {n['casa_alto_padrao']} alto padrão · "
-          f"🏭 {n['galpao']} galpões/empresas · 🏢 {n['predio']} prédios")
+    print(f"  {len(cards)} edificações | 🏠 {n['casa_terrea']} casas térreas · 🏢 {n['predio']} prédios · "
+          f"🏭 {n['galpao']} galpões/empresas · ⬜ {n['terreno_vazio']} terrenos vazios")
     print(f"  Área construída: {area_tot:,.0f} m²")
     print(f"  Galeria: {out}", flush=True)
 
@@ -507,10 +760,12 @@ if __name__ == "__main__":
     p.add_argument("--rotulo", default="area", help="nome da área (chave em telhados)")
     p.add_argument("--fonte", default="overture", choices=["overture", "cor"],
                    help="detecção: overture (footprints de IA, padrão) | cor (nosso CV, fallback)")
+    p.add_argument("--zoom", type=int, default=Z, help=f"zoom Google (padrão {Z}; z21 nítido, z22 upscale)")
     p.add_argument("--release", help="release do Overture (padrão = o de telhados_area.py)")
     p.add_argument("--ia", action="store_true", help="refina o tipo com a IA + exemplos de referência")
     p.add_argument("--exemplo", help="curar exemplo: tipo=ref:idx (ex: casa_terrea=quadra1:7)")
     a = p.parse_args()
+    Z = a.zoom   # rebind global; as funções leem Z em tempo de chamada
     if a.exemplo:
         curar_exemplo(a.exemplo)
         sys.exit()

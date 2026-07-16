@@ -555,10 +555,10 @@ com motivo "aprovado, mas sem sinal de vida nos últimos 12 meses".
 
 ## 14. Identificador de telhados por área — `telhados_cv.py`
 
-Conta **cada edificação** de uma área (bbox ou polígono), mede a **área (m²)** e infere o
-**tipo** (casa térrea / alto padrão / galpão-empresa / prédio). Serve para dimensionar
-densidade residencial/comercial ao redor de um POI. Grava na tabela **`telhados`** e gera
-uma **galeria HTML** de revisão em `exemplos/_telhados_<rotulo>.html`.
+Conta **cada edificação** de uma área (bbox ou polígono), mede **área (m²)** e **ALTURA
+(m/pavimentos)** e classifica em **4 categorias simples** (decisão do cliente — sem
+"alto padrão"): `casa_terrea` | `predio` | `galpao` (empresa) | `terreno_vazio`.
+Grava na tabela **`telhados`** e gera **galeria HTML** em `exemplos/_telhados_<rotulo>.html`.
 
 ### Duas fontes de DETECÇÃO (achar cada edificação)
 - **`overture` (padrão)** — footprints já extraídos por IA (**Google Open Buildings +
@@ -566,46 +566,59 @@ uma **galeria HTML** de revisão em `exemplos/_telhados_<rotulo>.html`.
   só a bbox (reaproveita `telhados_area.puxar_overture`). Pega TODA edificação, inclusive
   **laje cinza** que a cor não vê, e traz a **área geodésica** de cada uma. É "IA pronta":
   nada roda na máquina/GPU local, **custo zero**.
-- **`cor` (fallback)** — nosso **CV clássico (OpenCV)** na imagem **Google z20** (~0,15 m/px):
-  máscara de cor da telha (**cerâmica** laranja / **laje** clara) → **watershed** que separa
-  casas **geminadas** usando o tamanho de lote como espaçamento de sementes → filtro de
-  **saturação** (`_pureza`) que corta falso-positivo em solo batido. Use onde o Overture é
+- **`cor` (fallback)** — nosso **CV clássico (OpenCV)** na imagem Google: máscara de cor da
+  telha (**cerâmica** laranja / **laje** clara) → **watershed** que separa casas
+  **geminadas** usando o tamanho de lote como espaçamento de sementes → filtro de
+  **saturação** (`_pureza`) contra falso-positivo em solo batido. Use onde o Overture é
   grosseiro (cidades pequenas — foi o caso de Parnaíba, origem do módulo).
 
-### Classificação do TIPO (sempre pela nossa imagem)
-Overture não dá tipo (altura/andares vem nulo no BR). O tipo sai de `tipo_heuristico(r)`:
-- **cerâmica** < 350 m² → `casa_terrea`; ≥ 350 → `casa_alto_padrao`.
-- **laje/clara** < 160 m² → `casa_terrea` (casa de laje); grande + planta compacta +
-  **sombra longa** → `predio` (indício de multiandar; raro perto do equador); senão →
-  `galpao` (galpão/empresa térrea).
-- **`--ia`** (opcional): manda o recorte + **1 exemplo de referência de cada tipo** pro
-  **seu Ollama** (qwen2.5vl) "se balizar" — crops aéreos de 360px são leves, cabem 5 imagens
-  no contexto. Biblioteca em `exemplos/telhados/<tipo>/`, curada com `--exemplo tipo=ref:idx`.
-  Custo zero (roda no seu servidor). Ver [[percepcao-cega-julgamento-isolado]].
+Imagem: **Google z21** (~0,075 m/px — detalhe real; z22 é upscale). `--zoom` configurável.
+
+### ALTURA + TIPO — `analisar_e_tipar(roofs, arr, mpp)` (o coração)
+Overture não dá altura no BR (0/165 na amostra; alturas da Microsoft: 0% no tile de
+Teresina — sondado e descartado). A altura sai da FÍSICA da própria imagem z21:
+1. **Sombra projetada no chão** — direção do sol detectada sozinha; footprint deslocado na
+   direção da sombra mede o comprimento → metros. Pixel sobre outro footprint é OCLUSO
+   (não conta contra); pé da sombra tampado → "não mede" (None).
+2. **Fachada visível** (z21 é levemente oblíquo) — banda escura na borda do lado da sombra;
+   **autocalibrada px→m** pelos prédios que mediram sombra. Resolve o denso.
+3. **Resgate pelo grupo** — bloco sem medição herda a mediana dos **≥2 blocos altos
+   (≥140 m²) a ≤80 m** (condomínio); semeado só por medidos, não percola.
+4. **Tipo**: cerâmica → casa; alto (≥3,5 m) → prédio se **planta recortada** (fill<0.96–0.98,
+   caixa de escada) + **grade de ≥12 JANELAS** na fachada OU grupo de blocos; **frisos
+   direcionais ≥0.25** (telhado metálico) = veto → galpão; >900 m² → galpão; 2ª passada:
+   "galpão" alto cercado por ≥2 prédios com telhado da MESMA COR = fragmento → prédio.
+5. `terreno_vazio`: footprint sem estrutura (chão batido/mato, sem sombra/fachada).
+
+Colunas novas na tabela: **`altura_m`, `andares`, `janelas`** (`origem_tipo=overture+altura_v2`).
+
+- **`--ia`** (opcional): recorte + 1 exemplo de referência por tipo no **seu Ollama**
+  (qwen2.5vl). Obs.: zero/few-shot puro COLAPSA no 7b (crava um rótulo só) — usar apenas
+  como refino com exemplos curados. Ver [[percepcao-cega-julgamento-isolado]].
 
 ### Funções principais
-- `detectar_overture(bbox, ox, oy, arr, mpp)` — footprints Overture → polígono/área/centro;
-  material amostrando a cor **dentro** do footprint (`_material_footprint`, erode p/ fugir do
-  descasamento footprint×tile).
-- `detectar(arr, mpp)` — CV: `_mascaras` (HSV) → `_instancias_ws` (watershed) na cerâmica +
-  contorno inteiro na clara; `_pureza`/`_sombra_ratio` filtram e medem.
-- `recorte` (crop 360px com retângulo amarelo), `galeria`, `curar_exemplo`, `run`.
+- `detectar_overture(bbox, ox, oy, arr, mpp)` — footprints → polígono/área/centro; material
+  pela cor DENTRO do footprint (`_material_footprint`, erode contra desalinhamento).
+- `detectar(arr, mpp)` — CV: `_mascaras` (HSV) → `_instancias_ws` (watershed) na cerâmica.
+- `analisar_e_tipar(roofs, arr, mpp)` — altura+tipo (item acima).
+- `recorte` (crop 360px com contorno), `galeria`, `curar_exemplo`, `run`.
 
 ### Comandos
 ```
 # área por polígono (4+ vértices), Overture (recomendado):
 python telhados_cv.py --poligono="-5.1279,-42.7981;-5.1259,-42.7940;-5.1320,-42.7914;-5.1346,-42.7954" --rotulo=area1
-python telhados_cv.py --bbox=-2.9165,-41.775,-2.9150,-41.772 --rotulo=quadra1   # por bbox
-python telhados_cv.py --bbox=... --fonte=cor        # nosso CV (fallback)
-python telhados_cv.py --bbox=... --ia               # refina tipo c/ exemplos (seu Ollama)
-python telhados_cv.py --exemplo casa_terrea=quadra1:7   # curar exemplo de referência
+python telhados_cv.py --bbox=-5.13157,-42.79608,-5.12843,-42.79292 --rotulo=amostra
+python telhados_cv.py --bbox=... --fonte=cor --zoom=20   # CV fallback / zoom menor
+python telhados_cv.py --bbox=... --ia                    # refina tipo c/ exemplos
+python telhados_cv.py --exemplo casa_terrea=quadra1:7    # curar exemplo de referência
 ```
 
-### Teste validado (Teresina-PI, polígono ~0,7 km²)
-Overture achou **603 edificações** no polígono vs 293 do CV por cor (que perdia o condomínio
-de laje cinza): **533 casas térreas · 6 alto padrão · 64 galpões/empresas · 93.114 m²**
-construídos. Tabela `telhados` (uma linha por edificação; `origem_tipo` = `overture+heuristica`).
+### Validação (Teresina-PI, amostra com condomínio de apês revisada card a card)
+132 edificações: **92 casas térreas (100% ok) · 31 prédios (28/28 blocos verificados na
+calibração) · 9 galpões · 0 vazios**. Limite conhecido: ainda há confusão residual
+prédio×galpão em construções altas atípicas — se um dia precisar de andares exatos, o
+dado real é o **Google Open Buildings 2.5D via Earth Engine** (login único de 5 min).
 
-> Antecessores (mantidos): `telhados_area.py` (Overture cru, classifica por altura/`--visao`)
-> e `segmentar_telhados.py` (FastSAM — descartado, virava ruído). O `telhados_cv.py` é o
-> caminho recomendado.
+> Antecessores (mantidos): `telhados_area.py` (Overture cru, `--visao`) e
+> `segmentar_telhados.py` (FastSAM — descartado, ruído; ainda exporta o motor de tiles).
+> O `telhados_cv.py` é o caminho recomendado.
