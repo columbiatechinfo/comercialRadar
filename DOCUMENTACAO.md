@@ -431,7 +431,7 @@ src/ingest.ts (Prisma)  prisma/schema.prisma  user_agents.json  camada1_serp_TOD
 areas/area_atual.json (polígono)  uploads/ (planilhas)  mineracao/ (saídas do minerador)
 .env (segredos)  mapa_pois.html (saída legado)  PIPELINE.md (doc pipeline)  DOCUMENTACAO.md (este)
 descrever_imagens.py (análise IA)  docs/processo.html (mapa visual do fluxo)
-base_comum.py  base_cnpj.py  base_cnefe.py  base_aneel.py (bases externas p/ enriquecer)
+base_comum.py  base_cnpj.py  base_cnefe.py (bases externas p/ enriquecer)
 telhados_cv.py (identificador de telhados: Overture+CV+IA)  telhados_area.py  segmentar_telhados.py
 ```
 
@@ -462,13 +462,12 @@ controle de carga). Ver [[ferramentas-separadas]] e [[bases-externas-fontes]].
   comércio, etc.). Tabela `ibge_cnefe` com colunas derivadas do cabeçalho do CSV.
 - Rodar: `base_cnefe.py` (Brasil) ou `--uf PI` (uma UF); `--recriar` limpa antes.
 
-### 13.3 Instalações de energia — `base_aneel.py` (ANEEL BDGD)
-- Fonte: portal CKAN `dadosabertos.aneel.gov.br` — unidades consumidoras georreferenciadas
-  UCBT (baixa tensão, o grosso), UCMT (média), UCAT (alta). Cada camada vira `aneel_<camada>`.
-- **ATENÇÃO:** o endpoint de download da ANEEL bloqueia bot com **302-loop de WAF** (cookie/
-  Referer não passam — precisa de browser). Baixe a camada no navegador e carregue com
-  `base_aneel.py --arquivo <caminho.csv|.zip>`. A carga automática (`base_aneel.py`) fica
-  pronta pra quando/onde o WAF não bloquear.
+### 13.3 Energia (ANEEL/BDGD) — REMOVIDO
+Avaliado e **descartado** (2026-07-20). A BDGD foi obtida (o CKAN da ANEEL está quebrado —
+302-loop e datastore 404 —, mas o repositório ArcGIS oficial serve o Geodatabase por
+distribuidora) e a Equatorial PI chegou a ser carregada: 1,47 mi de UCs de baixa tensão com
+coordenada, consumo mensal e classe. **Os dados não atenderam** — tabelas `aneel_*`,
+`base_aneel.py` e `aneel_gdb_loader.py` foram apagados. Não reintroduzir sem pedido.
 
 > Escopo escolhido: **Brasil inteiro, base de CNPJ completa** (estabelecimentos + empresas +
 > sócios + Simples). Os testes de fumaça deixaram no banco só uma amostra (CNEFE-RR + 3

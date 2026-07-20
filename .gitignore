@@ -54,3 +54,6 @@ scratchpad/
 
 # Galerias/artefatos gerados de telhados (base64 pesado, regeneráveis)
 exemplos/_telhados_*.html
+
+# Bases externas baixadas (pesadas, regeneráveis)
+dados_externos/
