@@ -667,6 +667,11 @@ def _classificar_faces(sid: str, con) -> tuple:
         por_quadra.setdefault(p["quadra_id"], []).append(p)
 
     pol_por_quadra = {q["id"]: _wkt.loads(q["geom_osm"]) for q in QD.quadras(sid, con)}
+    # índice das quadras: sem ele, testar "há quadra do outro lado?" para cada
+    # face varre todas as quadras da sessão — 2.260 × 598 em Itambé, 2 min
+    from shapely import STRtree
+    _ids = list(pol_por_quadra)
+    _idx = (STRtree([pol_por_quadra[i] for i in _ids]), _ids) if _ids else None
     n_canon = n_nao = 0
     with con.cursor() as cur:
         for qid, fs in _agrupar_faces(faces).items():
@@ -716,17 +721,29 @@ def _classificar_faces(sid: str, con) -> tuple:
                              round(st.median(prof[0]), 1) if prof[0] else None,
                              round(st.median(prof[1]), 1) if prof[1] else None,
                              qid, fi))
+                # rua de um lado só: a paridade não tem o que separar aqui
+                so_um_lado = _sem_outro_lado(ln, qid, pol_por_quadra,
+                                             f.get("recuo_m"), _idx)
                 # classifica os pontos desta face
                 for p in meus:
                     if do_ponto[p["id"]][0] != fi:
                         continue
                     rec = _recuo_com_sinal(Point(p["lng"], p["lat"]), ln, quadra_pol)
-                    ok, motivo = _canonico(p, par, rec, centro, largura, nome)
+                    ok, motivo = _canonico(p, par, rec, centro, largura, nome,
+                                           so_um_lado)
                     n_canon += int(ok is True)
                     n_nao += int(ok is False)
+                    # aprovado só porque a rua não tem outro lado sai em tom
+                    # escuro, como os demais resgates: é desta face, mas não pela
+                    # regra principal
+                    rg = ("via_sem_outro_lado" if ok is True and so_um_lado
+                          and p.get("numero")
+                          and (p["numero"] % 2 == 0) != (par == "par") and par
+                          else None)
                     cur.execute("""UPDATE quadra_ponto SET face_idx=%s, canonico=%s,
-                                          motivo=%s WHERE id=%s""",
-                                (fi, ok, motivo, p["id"]))
+                                          motivo=%s, resgate=coalesce(%s, resgate)
+                                    WHERE id=%s""",
+                                (fi, ok, motivo, rg, p["id"]))
     con.commit()
     return n_canon, n_nao, faces
 
@@ -1170,8 +1187,48 @@ def _paridade(prof: dict, largura: float):
     return None, f"só {tot} endereço(s) com número — insuficiente para dizer o lado", None
 
 
+def _sem_outro_lado(ln: LineString, qid, pol_por_quadra: dict, recuo_m: float,
+                    indice=None) -> bool:
+    """Esta face é de uma rua que só tem UM lado edificável?
+
+    A paridade existe para separar os dois lados de uma rua. Onde não há outro
+    lado — a rua margeia o fim do bairro, um rio, a zona rural — ela não tem o
+    que separar: par e ímpar caem todos na única face que existe, e reprovar
+    metade deles por "numeração destoa" é aplicar uma régua que não vale ali.
+
+    O teste: anda perpendicular à face, para fora da própria quadra, um pouco
+    além da caixa da rua. Se não cai dentro de NENHUMA outra quadra da sessão,
+    não há outro lado. Em Itambé, 563 das 2.260 faces (25%)."""
+    if ln.length <= 0:
+        return False
+    mid = ln.interpolate(0.5, normalized=True)
+    a = ln.interpolate(max(0.0, 0.45), normalized=True)
+    b = ln.interpolate(min(1.0, 0.55), normalized=True)
+    dx, dy = b.x - a.x, b.y - a.y
+    n = math.hypot(dx, dy)
+    if not n:
+        return False
+    px, py = -dy / n, dx / n
+    passo = (float(recuo_m or LARGURA_PADRAO_M / 2.0) + 16.0) / 111320.0
+    propria = pol_por_quadra.get(qid)
+    for s in (1, -1):
+        t = Point(mid.x + px * passo * s, mid.y + py * passo * s)
+        if propria is not None and propria.contains(t):
+            continue                       # esse lado é o miolo da própria quadra
+        if indice is not None:
+            arv, ids = indice
+            for i in arv.query(t):
+                if ids[i] != qid and arv.geometries[i].contains(t):
+                    return False
+        else:
+            for oid, pol in pol_por_quadra.items():
+                if oid != qid and pol.contains(t):
+                    return False
+    return True
+
+
 def _canonico(p, paridade, recuo: float, centro: float | None, largura: float,
-              nome_face: str | None = None):
+              nome_face: str | None = None, sem_outro_lado: bool = False):
     """None = não dá para julgar; True = é desta face; False = não é.
 
     A referência é o CENTRO do lado da face (a linha das portas dela), não o
@@ -1206,25 +1263,39 @@ def _canonico(p, paridade, recuo: float, centro: float | None, largura: float,
                           "e o ponto está do lado dela")
         return None, "face sem paridade definida"
     ok = (p["numero"] % 2 == 0) == (paridade == "par")
+    if not ok and sem_outro_lado:
+        # não existe outro lado para onde este número possa ir: a face é a única
+        # que a rua tem, e a paridade não tem o que separar
+        return True, ("numeração destoa, mas esta rua não tem outro lado — "
+                      "a face é a única que existe")
     return ok, None if ok else f"numeração destoa da face ({paridade})"
 
 
 # ════════════════════════════════════════════════════════════════════════════
 # PASSO 6 — alinhar os pontos na face real
 # ════════════════════════════════════════════════════════════════════════════
-def preservar_vias_abertas(sid: str, con=None) -> dict:
-    """Ponto de via que NÃO fecha quadra, com telhado por perto, fica onde está.
+def preservar_no_lugar(sid: str, con=None) -> dict:
+    """Quem já está num lugar construído e não pertence àquela testada FICA.
 
-    Beco, rua projetada e acesso de engenho não delimitam quarteirão: quem mora
-    neles não tem testada para onde ser alinhado. O passo 6 mesmo assim projetava
-    esses pontos na face da quadra VIZINHA, porque a projeção perpendicular não
-    tem teto — em Itambé isso arrastava a Rua Sete, a Rua do Buracão e o Beco de
-    Manoel Barbosa por 50 a 164 m, cruzando quarteirão inteiro.
+    Havendo TELHADO a menos de `RAIO_TELHADO_VIA_ABERTA_M` do ponto, a coordenada
+    do CNEFE aponta para uma construção real — vale mais que qualquer projeção. O
+    telhado é a condição de entrada; a partir dele, duas situações mandam manter:
 
-    A regra: se a via mais próxima do ponto é uma dessas E existe telhado a menos
-    de `RAIO_TELHADO_VIA_ABERTA_M`, a coordenada do CNEFE já está num lugar
-    construído — vale mais que qualquer projeção. Sem telhado por perto não há
-    essa evidência, e o ponto segue com o tratamento normal.
+    1. **A via mais próxima não fecha quadra.** Beco, rua projetada e acesso de
+       engenho não delimitam quarteirão, e quem mora neles não tem testada para
+       onde ir. O passo 6 os projetava na face da quadra VIZINHA — em Itambé, de
+       50 a 164 m, cruzando quarteirão inteiro.
+
+    2. **O nome do endereço não confirma a face.** Se o ponto diz "RUA TIMBAÚBA"
+       e a face para onde ele iria tem outro nome — ou não tem nome nenhum,
+       porque nenhum endereço do CNEFE caiu nela —, não há o que sustente a
+       mudança. O nome do próprio endereço é a evidência mais forte de onde ele
+       fica, e nenhuma projeção deve passar por cima dela. Medido em Itambé: com
+       nome batendo, o deslocamento médio é 5,8 m; com nome diferente, 9,2 m; com
+       face sem nome, 18,0 m — a discordância de nome PREVÊ o disparate.
+
+    Sem telhado por perto não existe evidência nenhuma, e o ponto segue com o
+    tratamento normal: melhor uma projeção do que uma coordenada solta no nada.
 
     Depende dos telhados (passo 7), então roda no fim do 6 (se já houver) e de
     novo no fim do 8. É idempotente: rodar duas vezes dá o mesmo resultado."""
@@ -1238,15 +1309,17 @@ def preservar_vias_abertas(sid: str, con=None) -> dict:
             vias = cur.fetchall()
             cur.execute("SELECT lat, lng FROM quadra_telhado WHERE sessao_id=%s", (sid,))
             tel = cur.fetchall()
-            cur.execute("""SELECT id, lat, lng FROM quadra_ponto
-                            WHERE sessao_id=%s AND lat_alinhado IS NOT NULL""", (sid,))
+            cur.execute("""SELECT p.id, p.lat, p.lng, p.logradouro,
+                                  coalesce(f.nome_canonico, f.nome_osm)
+                             FROM quadra_ponto p
+                             LEFT JOIN quadra_face f
+                               ON f.quadra_id=p.quadra_id AND f.face_idx=p.face_idx
+                            WHERE p.sessao_id=%s AND p.lat_alinhado IS NOT NULL""",
+                        (sid,))
             pts = cur.fetchall()
-        abertas = [v for v, f in vias if not f]
-        if not vias or not abertas or not tel or not pts:
-            falta = ("nenhuma via aberta" if vias and not abertas else
-                     "vias sem a marca fecha_quadra (refaça o passo 2)" if not vias else
-                     "sem telhados — rode o passo 7" if not tel else "sem pontos alinhados")
-            print(f"      preservação de vias abertas: não se aplica ({falta})", flush=True)
+        if not tel or not pts:
+            falta = "sem telhados — rode o passo 7" if not tel else "sem pontos alinhados"
+            print(f"      preservação: não se aplica ({falta})", flush=True)
             return {"preservados": 0, "motivo": falta}
 
         # tudo em metros num plano local: comparar distância em grau mente, porque
@@ -1258,39 +1331,54 @@ def preservar_vias_abertas(sid: str, con=None) -> dict:
             return LineString([((x - lng0) * mx, (y - lat0) * my)
                                for x, y in _wkt.loads(w).coords])
 
-        t_abertas = STRtree([em_m(v) for v, f in vias if not f])
-        t_fechadas = STRtree([em_m(v) for v, f in vias if f])
+        g_ab = [em_m(v) for v, f in vias if not f]
+        g_fe = [em_m(v) for v, f in vias if f]
+        t_ab = STRtree(g_ab) if g_ab else None
+        t_fe = STRtree(g_fe) if g_fe else None
         t_tel = STRtree([Point((ln - lng0) * mx, (la - lat0) * my) for la, ln in tel])
-        tem_fechada = len([1 for _, f in vias if f]) > 0
 
-        n = 0
+        n = n_via = n_nome = 0
         with con.cursor() as cur:
-            for pid, la, ln in pts:
+            for pid, la, ln, logr, nome_face in pts:
                 p = Point((ln - lng0) * mx, (la - lat0) * my)
-                d_ab = t_abertas.geometries[t_abertas.nearest(p)].distance(p)
-                if tem_fechada:
-                    d_fe = t_fechadas.geometries[t_fechadas.nearest(p)].distance(p)
-                    if d_fe <= d_ab:
-                        continue                  # a via dele fecha quadra: régua vale
                 if not len(t_tel.query(p.buffer(RAIO_TELHADO_VIA_ABERTA_M))):
                     continue                      # sem telhado perto, sem evidência
+                via_aberta = False
+                if t_ab is not None:
+                    d_ab = t_ab.geometries[t_ab.nearest(p)].distance(p)
+                    d_fe = (t_fe.geometries[t_fe.nearest(p)].distance(p)
+                            if t_fe is not None else float("inf"))
+                    via_aberta = d_ab < d_fe
+                nome_confirma = bool(nome_face and logr
+                                     and norm_via(logr) == norm_via(nome_face))
+                if not via_aberta and nome_confirma:
+                    continue                      # é a face dele mesmo: régua vale
+                por = ("via que não fecha quadra" if via_aberta else
+                       "a face não tem nome identificado" if not nome_face else
+                       f"o endereço diz '{logr}' e a face é '{nome_face}'")
                 cur.execute("""UPDATE quadra_ponto
                                   SET lat_alinhado=lat, lng_alinhado=lng, desloc_m=0,
                                       ordem_face=NULL, alinhado_modo='preservado',
                                       alinhado_por=%s
                                 WHERE id=%s""",
-                            (f"via que não fecha quadra, com telhado a menos de "
+                            (f"{por}, com telhado a menos de "
                              f"{RAIO_TELHADO_VIA_ABERTA_M:.0f} m — mantido na "
                              f"coordenada original do CNEFE", pid))
                 n += 1
+                n_via += int(via_aberta)
+                n_nome += int(not via_aberta)
         con.commit()
-        print(f"      {n} pontos MANTIDOS na coordenada original (via que não fecha "
-              f"quadra + telhado a menos de {RAIO_TELHADO_VIA_ABERTA_M:.0f} m)",
-              flush=True)
+        print(f"      {n} pontos MANTIDOS na coordenada original "
+              f"({n_via} por via que não fecha quadra, {n_nome} porque o nome do "
+              f"endereço não confirma a face)", flush=True)
         return {"preservados": n}
     finally:
         if fechar:
             con.close()
+
+
+# nome antigo, de quando a regra só olhava a via
+preservar_vias_abertas = preservar_no_lugar
 
 
 def passo6_alinhar(sid: str, con=None) -> dict:
@@ -1434,7 +1522,7 @@ def passo6_alinhar(sid: str, con=None) -> dict:
         gr = _agrupar_mesmo_endereco(sid, con)
         # depende dos telhados: só age se o passo 7 já rodou nesta sessão. Numa
         # corrida 1→8 quem aplica é o passo 8, no fim.
-        pv = preservar_vias_abertas(sid, con)
+        pv = preservar_no_lugar(sid, con)
         res = {"alinhados": n_alin, "faces_alinhadas": n_faces,
                "perpendiculares": n_recusa + n_perp_sem_regua,
                "preservados": pv.get("preservados", 0), **gr}

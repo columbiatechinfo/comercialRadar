@@ -321,7 +321,7 @@ def passo8_casar(sid: str, con=None) -> dict:
         # fecha quadra e tem telhado por perto volta para a coordenada original.
         # Aqui os telhados existem por definição, então é aqui que a regra pega
         # numa corrida normal de 1 a 8.
-        pv = QA.preservar_vias_abertas(sid, con)
+        pv = QA.preservar_no_lugar(sid, con)
         res = {"casados_com_telhado": n_casados, "interpolados": n_interp,
                "preservados": pv.get("preservados", 0)}
         print(f"[8/8] {n_casados} pontos casados com telhado · "

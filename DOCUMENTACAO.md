@@ -960,19 +960,36 @@ cadastro não tem, e espaçar por igual fingiria que a rua é contínua. A posi�
 - **`preservado`** — fica **exatamente onde o CNEFE o pôs**. Ver "Via que não
   fecha quadra" abaixo.
 
-#### Via que não fecha quadra
+#### O que NÃO deve ser movido (`preservar_no_lugar`)
 
-Beco, rua projetada e acesso de engenho **não delimitam quarteirão**: quem mora
-neles não tem testada de quadra para onde ser alinhado. Como a perpendicular não
-tem teto, o passo 6 projetava esses endereços na face da quadra VIZINHA — em
-Itambé isso arrastava a Rua Sete, a Rua do Buracão e o Beco de Manoel Barbosa por
+**Todo deslocamento acima de 20 m é `perpendicular`** — medido: régua, telhado e
+interpolado nunca passam do teto de 10 m. A perpendicular é a única etapa sem
+limite, e era por ela que os disparates entravam.
+
+A condição de entrada é sempre o **telhado a menos de
+`RAIO_TELHADO_VIA_ABERTA_M` (53 m)**: havendo construção ali, a coordenada do
+CNEFE aponta para algo real e vale mais que qualquer projeção. A partir dela,
+duas situações mandam manter o ponto onde está:
+
+**1. A via mais próxima não fecha quadra.** Beco, rua projetada e acesso de
+engenho não delimitam quarteirão, e quem mora neles não tem testada para onde ir.
+Em Itambé a Rua Sete, a Rua do Buracão e o Beco de Manoel Barbosa eram arrastados
 **50 a 164 m**, cruzando quarteirão inteiro.
 
-A regra (`preservar_vias_abertas`): se a via mais próxima do ponto é uma dessas
-**e** há telhado a menos de `RAIO_TELHADO_VIA_ABERTA_M` (53 m), a coordenada do
-CNEFE já está num lugar construído — vale mais que qualquer projeção, e o ponto
-**não é movido**. Sem telhado por perto não existe essa evidência, e o ponto
-segue com o tratamento normal.
+**2. O nome do endereço não confirma a face.** Se o ponto diz "RUA TIMBAÚBA" e a
+face para onde ele iria tem outro nome — ou não tem nome nenhum, porque nenhum
+endereço do CNEFE caiu nela —, não há o que sustente a mudança. O nome do próprio
+endereço é a evidência mais forte de onde ele fica, e nenhuma projeção passa por
+cima dela.
+
+> A discordância de nome **prevê** o disparate. Antes da regra: nome batendo →
+> deslocamento médio 5,8 m; nome diferente → 9,2 m; face sem nome → **18,0 m**.
+> E os deslocamentos acima de 20 m: 249 com nome igual, 208 com nome diferente,
+> 89 em face sem nome — desproporção enorme, já que a categoria "nome diferente"
+> tem 8× menos pontos.
+
+Sem telhado por perto não existe evidência nenhuma, e o ponto segue com o
+tratamento normal: melhor uma projeção do que uma coordenada solta no nada.
 
 Quem fecha quadra é decidido em `via_osm.fecha_quadra`, pela **fração do
 comprimento que a via corre AO LONGO de uma borda** (`_fecham_quadra`, corte em
@@ -987,18 +1004,46 @@ A regra depende dos telhados, então roda no fim do passo 6 (se o 7 já tiver
 rodado) e de novo no fim do 8, que é onde ela pega numa corrida normal de 1 a 8.
 É idempotente.
 
-Efeito em Itambé inteira: **1.011 pontos preservados**; a perpendicular caiu de
-5.166 para 4.389 pontos e sua média de 14,5 m para 9,7 m; os deslocamentos acima
-de 53 m foram de **299 para 70**. As ruas apontadas ficaram inteiras: Rua Sete
-36/36, Rua do Buracão 3 48/48, Beco de Manoel Barbosa 5/5.
+Efeito em Itambé inteira: **2.100 pontos preservados** (1.007 pela via, 1.093
+pelo nome). A perpendicular caiu de 5.166 para 3.688 pontos e sua média de
+14,5 m para 7,6 m; o máximo geral de 163,8 m para 101,7 m; e os deslocamentos
+acima de 53 m foram de **299 para 22**.
 
-**O que sobra:** os 70 restantes (máximo 120,9 m) são pontos em via que não fecha
-quadra mas **sem telhado nenhum a 53 m** — a regra, como especificada, não tem o
-que os segure. São loteamentos ainda sem construção, onde o Overture não tem o
-que mostrar.
+Por categoria de nome, depois da regra:
+
+| categoria | n | média | máx | > 20 m |
+|---|---:|---:|---:|---:|
+| nome IGUAL | 10.864 | 5,8 m | 101,7 m | 245 |
+| nome DIFERENTE | 1.365 | **0,0 m** | 9,4 m | **0** |
+| face SEM NOME | 242 | 0,2 m | 36,6 m | 1 |
+
+**O que sobra:** os 245 acima de 20 m estão todos na categoria *nome igual* — são
+endereços na rua CERTA, apenas longe da própria testada. Não são o problema
+relatado; seriam resolvidos por um teto na perpendicular, que hoje é a única
+etapa sem limite, mas isso muda o comportamento de pontos legítimos e fica em
+aberto.
 
 No mapa o preservado sai com **anel azul-claro** e tooltip "📌 mantido onde
 estava"; e o ponto de origem **não** é apagado, porque ele não saiu do lugar.
+
+#### Rua que só tem um lado
+
+A paridade existe para separar os **dois lados** de uma rua. Onde não há outro
+lado — a rua margeia o fim do bairro, um rio, a zona rural — ela não tem o que
+separar: par e ímpar caem todos na única face que existe, e reprovar metade deles
+por "numeração destoa" é aplicar uma régua que não vale ali.
+
+`_sem_outro_lado` anda perpendicular à face, para fora da própria quadra, um
+pouco além da caixa da rua; se não cai dentro de nenhuma outra quadra da sessão,
+não há outro lado. Em Itambé são **563 das 2.260 faces (25%)**.
+
+Nessas faces a paridade **não reprova**: o ponto é aprovado com
+`resgate='via_sem_outro_lado'`, saindo em tom escuro como os demais resgates — é
+daquela face, mas não pela regra principal. Medido: **241 pontos** marcados, e as
+reprovações por paridade caíram de 249 para 176.
+
+O teste geométrico continua valendo — quem está do outro lado da via segue
+reprovado. Só a paridade é dispensada.
 
 > **TODO aprovado termina sobre a testada da sua face.** Antes só os numerados
 > entravam, e 77 aprovados sem número ficavam soltos no meio da quadra — era o
