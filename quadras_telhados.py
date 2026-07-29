@@ -263,8 +263,12 @@ def passo8_casar(sid: str, con=None) -> dict:
                 trilho = _wkt.loads(f["anel_real_wkt"])
                 comp = trilho.length or 1
                 # a porta de cada telhado: a projeção dele na testada
+                # ordena SÓ pela posição: dois telhados podem se projetar no mesmo
+                # ponto da testada (prédio dividido em duas feições no Overture), e
+                # sem `key` o empate faz o Python comparar os dicts e estourar
                 portas = sorted(
-                    (trilho.project(Point(t["lng"], t["lat"])) / comp, t) for t in ts)
+                    ((trilho.project(Point(t["lng"], t["lat"])) / comp, t) for t in ts),
+                    key=lambda x: x[0])
                 ps = sorted(ps, key=lambda p: p["numero"])
                 # o sentido da numeração já foi decidido no passo 6; usa a posição
                 # alinhada de cada ponto como palpite inicial
