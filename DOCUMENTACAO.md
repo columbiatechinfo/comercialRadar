@@ -1037,13 +1037,25 @@ por "numeração destoa" é aplicar uma régua que não vale ali.
 pouco além da caixa da rua; se não cai dentro de nenhuma outra quadra da sessão,
 não há outro lado. Em Itambé são **563 das 2.260 faces (25%)**.
 
-Nessas faces a paridade **não reprova**: o ponto é aprovado com
-`resgate='via_sem_outro_lado'`, saindo em tom escuro como os demais resgates — é
-daquela face, mas não pela regra principal. Medido: **241 pontos** marcados, e as
-reprovações por paridade caíram de 249 para 176.
+Nessas faces **nem a paridade nem a geometria reprovam**. As duas regras só sabem
+escolher ENTRE dois lados:
 
-O teste geométrico continua valendo — quem está do outro lado da via segue
-reprovado. Só a paridade é dispensada.
+- a **paridade** decide se o número é do lado par ou do ímpar;
+- o **teste de lado** decide se o ponto atravessou a rua.
+
+Sem outro lado, nenhuma das duas tem o que decidir, e reprovar deixa o endereço
+órfão: não há face nenhuma para onde ele possa ir. Então **todos os pontos
+coletados são distribuídos** naquela face. O alcance continua limitado pela coleta
+(faixa de 20 m das vias formadoras) e pela distância à face (`RAIO_FACE_M`) — não
+é uma porta aberta.
+
+O ponto entra com `resgate='via_sem_outro_lado'`, em tom escuro como os demais
+resgates: é daquela face, mas não pela regra principal.
+
+Medido em Itambé: **1.003 pontos** marcados. Reprovações por paridade de 249 para
+176; por "está do outro lado da via", de 1.756 para 1.094 (as que sobram são de
+faces que de fato têm outro lado). No total, os reprovados caíram de **1.932 para
+1.270** e os aprovados subiram de 12.471 para **13.057**.
 
 > **TODO aprovado termina sobre a testada da sua face.** Antes só os numerados
 > entravam, e 77 aprovados sem número ficavam soltos no meio da quadra — era o

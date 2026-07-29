@@ -735,11 +735,10 @@ def _classificar_faces(sid: str, con) -> tuple:
                     n_nao += int(ok is False)
                     # aprovado só porque a rua não tem outro lado sai em tom
                     # escuro, como os demais resgates: é desta face, mas não pela
-                    # regra principal
-                    rg = ("via_sem_outro_lado" if ok is True and so_um_lado
-                          and p.get("numero")
-                          and (p["numero"] % 2 == 0) != (par == "par") and par
-                          else None)
+                    # regra principal. O próprio motivo diz quando foi esse o caso.
+                    rg = ("via_sem_outro_lado"
+                          if ok is True and so_um_lado and motivo
+                          and "não tem outro lado" in motivo else None)
                     cur.execute("""UPDATE quadra_ponto SET face_idx=%s, canonico=%s,
                                           motivo=%s, resgate=coalesce(%s, resgate)
                                     WHERE id=%s""",
@@ -1247,28 +1246,38 @@ def _canonico(p, paridade, recuo: float, centro: float | None, largura: float,
     paridade definida."""
     ref = centro if centro is not None else 0.0
     limite = ref - max(largura / 2.0, TOLERANCIA_LADO_MIN_M)
-    if recuo < limite:
+    # Numa rua de um lado só NÃO EXISTE "o outro lado": não há face para onde
+    # mandar quem está aquém do centro, e reprová-lo o deixa órfão. Vale para a
+    # geometria tanto quanto para a paridade — as duas regras só sabem escolher
+    # ENTRE dois lados. O alcance segue limitado pela coleta (faixa de 20 m) e
+    # pela distância à face (RAIO_FACE_M).
+    if recuo < limite and not sem_outro_lado:
         return False, (f"está do outro lado da via ({recuo:+.0f} m, contra "
                        f"{ref:+.0f} m das portas desta face)")
+    # deixou passar por não haver outro lado: o motivo tem de dizer isso
+    so_lado = (" · esta rua não tem outro lado, então o ponto é desta face"
+               if recuo < limite else "")
     mesmo_logr = bool(nome_face and p.get("logradouro")
                       and norm_via(p["logradouro"]) == norm_via(nome_face))
     if not p.get("numero"):
         if mesmo_logr:
             return True, ("sem número, mas o logradouro é o desta face e o ponto "
-                          "está do lado dela")
+                          "está do lado dela" + so_lado)
         return None, "sem número e logradouro diferente do da face"
     if not paridade:
         if mesmo_logr:
             return True, ("face sem paridade definida, mas o logradouro é o dela "
-                          "e o ponto está do lado dela")
+                          "e o ponto está do lado dela" + so_lado)
         return None, "face sem paridade definida"
     ok = (p["numero"] % 2 == 0) == (paridade == "par")
-    if not ok and sem_outro_lado:
+    if ok:
+        return True, (so_lado.lstrip(" ·").strip() or None)
+    if sem_outro_lado:
         # não existe outro lado para onde este número possa ir: a face é a única
         # que a rua tem, e a paridade não tem o que separar
         return True, ("numeração destoa, mas esta rua não tem outro lado — "
                       "a face é a única que existe")
-    return ok, None if ok else f"numeração destoa da face ({paridade})"
+    return False, f"numeração destoa da face ({paridade})"
 
 
 # ════════════════════════════════════════════════════════════════════════════
