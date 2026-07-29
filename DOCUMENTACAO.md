@@ -655,6 +655,7 @@ quadras.py alinhar --sessao S                # 6  distribui na testada
 quadras.py telhados --sessao S [--com-maps]  # 7  Overture (+ âncora no Maps)
 quadras.py casar   --sessao S                # 8  ponto ↔ telhado
 quadras.py tudo    --area areas/area_atual.json   # 1 a 6
+quadras.py tudo    --municipio "Itambé/PE"        # 1 a 6 na CIDADE INTEIRA
 quadras.py retomar --sessao S                # segue do passo que faltou
 quadras.py sessoes | ver --sessao S
 ```
@@ -662,6 +663,10 @@ quadras.py sessoes | ver --sessao S
 Os passos **7 e 8 ficam fora do `tudo`** e do botão azul de propósito: eles
 dependem de rede (Overture, e o Maps quando ligado) e custam 30× mais que todo o
 resto somado. Quem quer só classificar os pontos não deve pagar por isso.
+
+`--municipio` roda o **município inteiro** (Itambé/PE: 598 quadras em 6 min 43 s
+ponta a ponta) e é a forma mais barata de usar o sistema — ver
+"[Rodar a cidade inteira](#rodar-a-cidade-inteira)".
 
 Pelo mapa é o mesmo caminho: o botão do painel chama `POST /api/quadras/area` e
 `POST /api/quadras/rodar`, que executam **o mesmo módulo** do terminal. Rodar
@@ -1094,6 +1099,46 @@ rodam sozinhos em **2 a 4 segundos** — é por isso que 7 e 8 ficaram fora do
 
 A leitura do nome no Maps (`--com-maps`, passo 2) e a âncora de campo (passo 7)
 acrescentam ~10 s por via e ~30 s por sessão. Ambas estão desligadas por padrão.
+
+### Rodar a cidade inteira
+
+Levando a conclusão acima ao limite: dá para processar o município todo de uma
+vez, e é **a forma mais barata de usar o sistema**.
+
+```bash
+python quadras.py tudo --municipio "Itambé/PE"     # passos 1 a 6
+python quadras.py telhados --sessao <id>           # passo 7
+python quadras.py casar    --sessao <id>           # passo 8
+```
+
+`--municipio` aceita `"Nome/UF"`, só o nome (se não repetir entre as UFs
+baixadas) ou o código do IBGE, e tira o polígono da malha já em disco
+(`malhas/UF.geojson`) — a mesma que identifica o município de um ponto.
+
+Medido em Itambé/PE (**306 km²**, 29/07/2026):
+
+| passo | tempo | resultado |
+|---|---:|---|
+| 1–6 | 3 min 47 s | 1.452 vias · **598 quadras** · 2.260 faces · 14.588 endereços |
+| 7 telhados | 2 min 53 s | 46.182 telhados na área, **8.680 dentro das quadras** |
+| 8 casar | 3 s | 4.359 casados + 5.080 interpolados |
+| **TOTAL** | **6 min 43 s** | **0,67 s por quadra** |
+
+Compare com os 68 s de uma quadra isolada: **a cidade inteira sai 100× mais
+barata por quadra**. A consulta ao Overture custou 85 s para 736 km² de caixa
+contra 66 s para 0,019 km² — confirmação direta de que o custo é fixo. Não há
+motivo para rodar quadra a quadra.
+
+Qualidade nessa corrida: 12.416 endereços canônicos contra 1.998 destoantes, e
+**1.425 das 2.260 faces (63%) receberam via canônica**. As faces sem via são as
+que não têm endereço do CNEFE — o nome sai da maioria dos endereços, então face
+vazia fica sem nome. É limite do dado, não do processo.
+
+**O gargalo passa a ser o navegador, não o Python.** A sessão inteira devolve
+19,2 MB de GeoJSON (30.426 feições), que o Leaflet transforma em **52.311 paths
+SVG** e ~200 MB de heap: 4,6 s de download e ~14 s de desenho. Funciona, mas é o
+teto — para navegar, use a **lista de quadras tratadas** e abra uma por vez, que
+é justamente para isso que ela existe.
 
 ### Esquema
 

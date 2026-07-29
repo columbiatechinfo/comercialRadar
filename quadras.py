@@ -10,9 +10,10 @@
     quadras.py alinhar --sessao S               passo 6
     quadras.py telhados --sessao S [--com-maps]  passo 7 (Overture)
     quadras.py casar   --sessao S               passo 8 (ponto ↔ telhado)
-    quadras.py tudo   --area areas/area_atual.json  1 a 5 na área do mapa
-    quadras.py tudo   --wkt "..."                   1 a 5 de uma vez
-    quadras.py tudo   --sessao S                    refaz 2 a 5 da sessão
+    quadras.py tudo   --area areas/area_atual.json  1 a 6 na área do mapa
+    quadras.py tudo   --wkt "..."                   1 a 6 de uma vez
+    quadras.py tudo   --municipio "Itambé/PE"       1 a 6 na CIDADE INTEIRA
+    quadras.py tudo   --sessao S                    refaz 2 a 6 da sessão
     quadras.py retomar --sessao S                   segue do passo que faltou
     quadras.py sessoes                              lista as sessões
     quadras.py ver    --sessao S                    resumo do que há na sessão
@@ -39,7 +40,51 @@ import quadras_analise as QA  # noqa: E402
 import quadras_db as QD  # noqa: E402
 
 
+def _municipio_wkt(alvo: str) -> str:
+    """Polígono de um município pela malha do IBGE já em disco (`malhas/UF.geojson`).
+
+    Aceita "Itambé/PE", só o nome (se não repetir entre as UFs baixadas) ou o
+    código do IBGE. Sem isso, rodar a cidade inteira exigia extrair o WKT à mão.
+    """
+    import json
+    import unicodedata
+    from shapely.geometry import shape
+
+    def norm(s):
+        s = unicodedata.normalize("NFKD", str(s or ""))
+        return "".join(c for c in s if not unicodedata.combining(c)).strip().lower()
+
+    nome, _, uf = alvo.partition("/")
+    nome, uf = norm(nome), norm(uf)
+    achados = []
+    for arq in sorted((BASE / "malhas").glob("*.geojson")):
+        if arq.stem.startswith("_") or (uf and norm(arq.stem) != uf):
+            continue
+        try:
+            gj = json.loads(arq.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        for f in gj.get("features", []):
+            pr = f.get("properties", {})
+            if norm(pr.get("nome")) == nome or str(pr.get("codarea", "")) == alvo.strip():
+                achados.append((pr.get("nome"), arq.stem, shape(f["geometry"])))
+    if not achados:
+        ufs = ", ".join(sorted(p.stem for p in (BASE / "malhas").glob("*.geojson")
+                               if not p.stem.startswith("_"))) or "nenhuma"
+        raise SystemExit(f"município '{alvo}' não está nas malhas em disco (UFs: {ufs})")
+    if len(achados) > 1:
+        onde = ", ".join(f"{n}/{u}" for n, u, _ in achados)
+        raise SystemExit(f"'{alvo}' existe em mais de uma UF ({onde}) — use nome/UF")
+    n, u, g = achados[0]
+    import math
+    km2 = g.area * 111.32 * (111.32 * math.cos(math.radians(g.centroid.y)))
+    print(f"município {n}/{u} · {km2:.0f} km² (aproximado)")
+    return g.wkt
+
+
 def _area_wkt(a) -> str:
+    if a.municipio:
+        return _municipio_wkt(a.municipio)
     if a.wkt:
         return a.wkt
     if a.arquivo:
@@ -73,6 +118,8 @@ def main():
     p.add_argument("--sessao")
     p.add_argument("--wkt")
     p.add_argument("--arquivo")
+    p.add_argument("--municipio", help="cidade inteira pela malha do IBGE em disco: "
+                                       "\"Itambé/PE\", só o nome, ou o código IBGE")
     p.add_argument("--area", help="areas/area_atual.json — o mesmo polígono que os "
                                   "outros processos usam (é como o mapa dispara)")
     p.add_argument("--sem-proxy", action="store_true",
