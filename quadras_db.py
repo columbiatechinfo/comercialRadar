@@ -147,6 +147,10 @@ def garantir_esquema(con=None) -> None:
                          ("alinhado_modo", "text")):
                 cur.execute(f"ALTER TABLE quadra_ponto ADD COLUMN IF NOT EXISTS {c} {t}")
             cur.execute("ALTER TABLE quadra_face ADD COLUMN IF NOT EXISTS anel_real_wkt text")
+            # a via corre AO LONGO da borda de alguma quadra? Beco, rua projetada
+            # e acesso de engenho não fecham quarteirão — quem mora neles não tem
+            # testada para onde ser alinhado (passo 6).
+            cur.execute("ALTER TABLE via_osm ADD COLUMN IF NOT EXISTS fecha_quadra boolean")
         con.commit()
         _PRONTO = True
     finally:

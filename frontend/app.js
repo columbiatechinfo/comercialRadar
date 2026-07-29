@@ -1358,11 +1358,16 @@ async function carregarQuadras(sid, silencioso = false) {
         // numeração: anel TRACEJADO, para não se confundir com o alinhado
         const perp = p.alinhado_modo === "perpendicular";
         const noTelhado = p.alinhado_modo === "telhado";
+        // preservado = via que não fecha quadra, com telhado perto: ficou na
+        // coordenada original de propósito. Anel claro, para não parecer que a
+        // régua o alcançou nem que ele foi projetado.
+        const preso = p.alinhado_modo === "preservado";
         return L.circleMarker(latlng, {
           pane: "paneMarcadores", radius: 5 + Math.min(6, Math.sqrt(n - 1) * 3),
-          weight: perp ? 2.4 : (n > 1 ? 2.2 : 1.6),
+          weight: perp || preso ? 2.4 : (n > 1 ? 2.2 : 1.6),
           dashArray: perp ? "3,3" : null,
-          color: perp ? "#111827" : (noTelhado ? "#ffffff" : "#0b0f14"),
+          color: preso ? "#38bdf8"
+               : perp ? "#111827" : (noTelhado ? "#ffffff" : "#0b0f14"),
           fillColor: c, fillOpacity: perp ? 0.75 : 1, opacity: 1 });
       },
       onEachFeature: (f, l) => {
@@ -1372,6 +1377,7 @@ async function carregarQuadras(sid, silencioso = false) {
           `<b>${esc(p.logradouro || "—")}, ${p.numero}</b>` +
           (p.grupo_n > 1 ? ` <b>· ${p.grupo_n} endereços nesta porta</b>` : "") +
           `<br><small>${perp ? "⚠ posto só na perpendicular"
+              : p.alinhado_modo === "preservado" ? "📌 mantido onde estava"
               : p.alinhado_modo === "telhado" ? "🏠 casado com um telhado"
               : p.alinhado_modo === "interpolado" ? "interpolado entre telhados"
               : "alinhado pela régua da numeração"} · ` +
@@ -1392,8 +1398,9 @@ async function carregarQuadras(sid, silencioso = false) {
       // resgatado pela coordenada: mesma face, tom mais escuro
       const cor = (p.canonico === true && p.resgate) ? escurecer(base) : base;
       // quem já tem posição alinhada fica APAGADO aqui: a leitura principal
-      // passa a ser a da borda real, e esta vira só a origem, para conferência
-      const movido = p.lat_alinhado != null;
+      // passa a ser a da borda real, e esta vira só a origem, para conferência.
+      // O preservado NÃO saiu do lugar — apagá-lo diria o contrário.
+      const movido = p.lat_alinhado != null && p.alinhado_modo !== "preservado";
       return L.circleMarker(latlng, {
         pane: "paneMarcadores",
         radius: movido ? 3 : (p.origem === "dentro_quadra" ? 5 : 4),

@@ -957,6 +957,48 @@ cadastro não tem, e espaçar por igual fingiria que a rua é contínua. A posi�
   teto; o endereço **não tem número** (76 na sessão de Itambé, aprovados pela
   regra do logradouro); ou a face não tem **duas âncoras numeradas** para haver
   reta.
+- **`preservado`** — fica **exatamente onde o CNEFE o pôs**. Ver "Via que não
+  fecha quadra" abaixo.
+
+#### Via que não fecha quadra
+
+Beco, rua projetada e acesso de engenho **não delimitam quarteirão**: quem mora
+neles não tem testada de quadra para onde ser alinhado. Como a perpendicular não
+tem teto, o passo 6 projetava esses endereços na face da quadra VIZINHA — em
+Itambé isso arrastava a Rua Sete, a Rua do Buracão e o Beco de Manoel Barbosa por
+**50 a 164 m**, cruzando quarteirão inteiro.
+
+A regra (`preservar_vias_abertas`): se a via mais próxima do ponto é uma dessas
+**e** há telhado a menos de `RAIO_TELHADO_VIA_ABERTA_M` (53 m), a coordenada do
+CNEFE já está num lugar construído — vale mais que qualquer projeção, e o ponto
+**não é movido**. Sem telhado por perto não existe essa evidência, e o ponto
+segue com o tratamento normal.
+
+Quem fecha quadra é decidido em `via_osm.fecha_quadra`, pela **fração do
+comprimento que a via corre AO LONGO de uma borda** (`_fecham_quadra`, corte em
+50%). Não confundir com `_vias_das_quadras`, que só pergunta se a via ENCOSTA
+numa borda: uma viela que cruza a rua perpendicularmente atravessa o buffer e
+ganha ~24 m de sobreposição, o bastante para o critério de lá. A distribuição
+medida é **bimodal** — 506 das 1.452 vias de Itambé abaixo de 10% e 737 acima de
+90% —, então o corte exato pouco importa: entre 30% e 70% o total só varia de 597
+para 688 vias.
+
+A regra depende dos telhados, então roda no fim do passo 6 (se o 7 já tiver
+rodado) e de novo no fim do 8, que é onde ela pega numa corrida normal de 1 a 8.
+É idempotente.
+
+Efeito em Itambé inteira: **1.011 pontos preservados**; a perpendicular caiu de
+5.166 para 4.389 pontos e sua média de 14,5 m para 9,7 m; os deslocamentos acima
+de 53 m foram de **299 para 70**. As ruas apontadas ficaram inteiras: Rua Sete
+36/36, Rua do Buracão 3 48/48, Beco de Manoel Barbosa 5/5.
+
+**O que sobra:** os 70 restantes (máximo 120,9 m) são pontos em via que não fecha
+quadra mas **sem telhado nenhum a 53 m** — a regra, como especificada, não tem o
+que os segure. São loteamentos ainda sem construção, onde o Overture não tem o
+que mostrar.
+
+No mapa o preservado sai com **anel azul-claro** e tooltip "📌 mantido onde
+estava"; e o ponto de origem **não** é apagado, porque ele não saiu do lugar.
 
 > **TODO aprovado termina sobre a testada da sua face.** Antes só os numerados
 > entravam, e 77 aprovados sem número ficavam soltos no meio da quadra — era o

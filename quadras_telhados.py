@@ -317,7 +317,13 @@ def passo8_casar(sid: str, con=None) -> dict:
                                           alinhado_por=%s, desloc_m=%s WHERE id=%s""",
                                 (pe.y, pe.x, modo, por, round(d, 1), p["id"]))
         con.commit()
-        res = {"casados_com_telhado": n_casados, "interpolados": n_interp}
+        # por último, e depois de todo mundo ter mexido: quem mora em via que não
+        # fecha quadra e tem telhado por perto volta para a coordenada original.
+        # Aqui os telhados existem por definição, então é aqui que a regra pega
+        # numa corrida normal de 1 a 8.
+        pv = QA.preservar_vias_abertas(sid, con)
+        res = {"casados_com_telhado": n_casados, "interpolados": n_interp,
+               "preservados": pv.get("preservados", 0)}
         print(f"[8/8] {n_casados} pontos casados com telhado · "
               f"{n_interp} interpolados entre as portas", flush=True)
         QD.marcar_passo(sid, 8, res, con=con)

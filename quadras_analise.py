@@ -78,6 +78,16 @@ MARGEM_ESQUINA_M = 4.0
 # coordenada já está quase certa. Quem passa do teto FICA onde está e é marcado
 # — o mapa mostra que ali a numeração e a coordenada discordam de verdade.
 DESLOC_MAX_M = 10.0
+# Fração do comprimento que a via precisa correr AO LONGO da borda de uma quadra
+# para ser considerada formadora dela. Ver `_fecham_quadra`: a distribuição é
+# bimodal, então o valor exato no meio pouco importa.
+FRACAO_BORDA_MIN = 0.50
+# Passo 6: raio para achar telhado perto de um ponto de via que NÃO fecha quadra.
+# Quem mora em beco, rua projetada ou acesso de engenho não tem testada de
+# quarteirão para onde ir — projetar na face da quadra vizinha arrastava esses
+# pontos 50 a 164 m. Havendo telhado por perto, a coordenada do CNEFE já está
+# num lugar construído e é melhor que qualquer projeção: fica onde está.
+RAIO_TELHADO_VIA_ABERTA_M = 53.0
 
 
 def _metros(lat: float):
@@ -220,10 +230,15 @@ def passo2_vias(sid: str, usar_proxy=True, com_maps=False, con=None) -> dict:
             raise ValueError("nenhuma quadra fechada dentro da área desenhada")
 
         usadas = _vias_das_quadras(faces_ll, linhas)
+        fecham = _fecham_quadra(faces_ll, linhas)
+        print(f"      {sum(1 for x in fecham if not x)} vias NÃO fecham quadra "
+              f"(beco, rua projetada, acesso) — seus pontos não são alinhados "
+              f"quando há telhado por perto", flush=True)
         alvos = []
         for i, ls in enumerate(linhas):
             p = ls.interpolate(0.5, normalized=True)
-            alvos.append({"lat": p.y, "lng": p.x, "usar": i in usadas})
+            alvos.append({"lat": p.y, "lng": p.x, "usar": i in usadas,
+                          "fecha": fecham[i]})
         pedir = [a for a in alvos if a["usar"]]
         # O Maps está DESLIGADO por padrão: ele custava mais tempo que todo o
         # resto do processo somado (~60 s contra 1,4 s). O nome da face sai da
@@ -246,10 +261,11 @@ def passo2_vias(sid: str, usar_proxy=True, com_maps=False, con=None) -> dict:
             for ls, (nome, tipo), a in zip(linhas, meta, alvos):
                 cur.execute("""INSERT INTO via_osm
                     (sessao_id, nome_osm, tipo, geom_wkt, comprimento_m,
-                     lat_consulta, lng_consulta, nome_canonico, canonico_erro)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                     lat_consulta, lng_consulta, nome_canonico, canonico_erro,
+                     fecha_quadra)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                     (sid, nome, tipo, ls.wkt, _comprimento_m(ls), a["lat"], a["lng"],
-                     a.get("nome_canonico"), a.get("erro")))
+                     a.get("nome_canonico"), a.get("erro"), a["fecha"]))
             cur.execute("UPDATE via_osm SET canonico_em=now() "
                         "WHERE sessao_id=%s AND nome_canonico IS NOT NULL", (sid,))
         con.commit()
@@ -363,6 +379,25 @@ def _largura_minima(pol) -> float:
         return 1e9
     lados = [math.dist(cs[i], cs[i + 1]) for i in range(3)]
     return min(lados)
+
+
+def _fecham_quadra(faces_ll, linhas, tol_m: float = 12.0) -> list:
+    """Quais vias correm AO LONGO da borda de alguma quadra — uma por linha.
+
+    Não confundir com `_vias_das_quadras`, que só pergunta se a via ENCOSTA numa
+    borda: uma viela que cruza a rua perpendicularmente atravessa o buffer e
+    ganha ~24 m de sobreposição, o suficiente para o critério de lá (8 m). Aqui
+    o que vale é a FRAÇÃO do comprimento que acompanha a borda.
+
+    Medido em Itambé (1.452 vias), a distribuição é bimodal — 506 vias abaixo de
+    10% e 737 acima de 90%, quase nada no meio. Por isso o corte em 50% é
+    estável: entre 30% e 70% o total só varia de 597 para 688 vias."""
+    bordas = unary_union([p.exterior for p in faces_ll]).buffer(tol_m / 111320.0)
+    out = []
+    for ls in linhas:
+        tot = ls.length
+        out.append(bool(tot) and ls.intersection(bordas).length / tot >= FRACAO_BORDA_MIN)
+    return out
 
 
 def _vias_das_quadras(faces_ll, linhas, tol_m: float = 12.0) -> set:
@@ -1177,6 +1212,87 @@ def _canonico(p, paridade, recuo: float, centro: float | None, largura: float,
 # ════════════════════════════════════════════════════════════════════════════
 # PASSO 6 — alinhar os pontos na face real
 # ════════════════════════════════════════════════════════════════════════════
+def preservar_vias_abertas(sid: str, con=None) -> dict:
+    """Ponto de via que NÃO fecha quadra, com telhado por perto, fica onde está.
+
+    Beco, rua projetada e acesso de engenho não delimitam quarteirão: quem mora
+    neles não tem testada para onde ser alinhado. O passo 6 mesmo assim projetava
+    esses pontos na face da quadra VIZINHA, porque a projeção perpendicular não
+    tem teto — em Itambé isso arrastava a Rua Sete, a Rua do Buracão e o Beco de
+    Manoel Barbosa por 50 a 164 m, cruzando quarteirão inteiro.
+
+    A regra: se a via mais próxima do ponto é uma dessas E existe telhado a menos
+    de `RAIO_TELHADO_VIA_ABERTA_M`, a coordenada do CNEFE já está num lugar
+    construído — vale mais que qualquer projeção. Sem telhado por perto não há
+    essa evidência, e o ponto segue com o tratamento normal.
+
+    Depende dos telhados (passo 7), então roda no fim do 6 (se já houver) e de
+    novo no fim do 8. É idempotente: rodar duas vezes dá o mesmo resultado."""
+    from shapely import STRtree
+    fechar = con is None
+    con = con or bc.conectar()
+    try:
+        with con.cursor() as cur:
+            cur.execute("""SELECT geom_wkt, fecha_quadra FROM via_osm
+                            WHERE sessao_id=%s AND fecha_quadra IS NOT NULL""", (sid,))
+            vias = cur.fetchall()
+            cur.execute("SELECT lat, lng FROM quadra_telhado WHERE sessao_id=%s", (sid,))
+            tel = cur.fetchall()
+            cur.execute("""SELECT id, lat, lng FROM quadra_ponto
+                            WHERE sessao_id=%s AND lat_alinhado IS NOT NULL""", (sid,))
+            pts = cur.fetchall()
+        abertas = [v for v, f in vias if not f]
+        if not vias or not abertas or not tel or not pts:
+            falta = ("nenhuma via aberta" if vias and not abertas else
+                     "vias sem a marca fecha_quadra (refaça o passo 2)" if not vias else
+                     "sem telhados — rode o passo 7" if not tel else "sem pontos alinhados")
+            print(f"      preservação de vias abertas: não se aplica ({falta})", flush=True)
+            return {"preservados": 0, "motivo": falta}
+
+        # tudo em metros num plano local: comparar distância em grau mente, porque
+        # um grau de longitude vale menos que um de latitude fora do equador
+        lat0, lng0 = pts[0][1], pts[0][2]
+        my, mx = _metros(lat0)
+
+        def em_m(w):
+            return LineString([((x - lng0) * mx, (y - lat0) * my)
+                               for x, y in _wkt.loads(w).coords])
+
+        t_abertas = STRtree([em_m(v) for v, f in vias if not f])
+        t_fechadas = STRtree([em_m(v) for v, f in vias if f])
+        t_tel = STRtree([Point((ln - lng0) * mx, (la - lat0) * my) for la, ln in tel])
+        tem_fechada = len([1 for _, f in vias if f]) > 0
+
+        n = 0
+        with con.cursor() as cur:
+            for pid, la, ln in pts:
+                p = Point((ln - lng0) * mx, (la - lat0) * my)
+                d_ab = t_abertas.geometries[t_abertas.nearest(p)].distance(p)
+                if tem_fechada:
+                    d_fe = t_fechadas.geometries[t_fechadas.nearest(p)].distance(p)
+                    if d_fe <= d_ab:
+                        continue                  # a via dele fecha quadra: régua vale
+                if not len(t_tel.query(p.buffer(RAIO_TELHADO_VIA_ABERTA_M))):
+                    continue                      # sem telhado perto, sem evidência
+                cur.execute("""UPDATE quadra_ponto
+                                  SET lat_alinhado=lat, lng_alinhado=lng, desloc_m=0,
+                                      ordem_face=NULL, alinhado_modo='preservado',
+                                      alinhado_por=%s
+                                WHERE id=%s""",
+                            (f"via que não fecha quadra, com telhado a menos de "
+                             f"{RAIO_TELHADO_VIA_ABERTA_M:.0f} m — mantido na "
+                             f"coordenada original do CNEFE", pid))
+                n += 1
+        con.commit()
+        print(f"      {n} pontos MANTIDOS na coordenada original (via que não fecha "
+              f"quadra + telhado a menos de {RAIO_TELHADO_VIA_ABERTA_M:.0f} m)",
+              flush=True)
+        return {"preservados": n}
+    finally:
+        if fechar:
+            con.close()
+
+
 def passo6_alinhar(sid: str, con=None) -> dict:
     """Distribui os pontos de cada face ao longo da BORDA REAL dela.
 
@@ -1316,8 +1432,12 @@ def passo6_alinhar(sid: str, con=None) -> dict:
             print(f"      {n_perp_sem_regua} pontos na PERPENDICULAR — sem número "
                   f"ou face sem duas âncoras", flush=True)
         gr = _agrupar_mesmo_endereco(sid, con)
+        # depende dos telhados: só age se o passo 7 já rodou nesta sessão. Numa
+        # corrida 1→8 quem aplica é o passo 8, no fim.
+        pv = preservar_vias_abertas(sid, con)
         res = {"alinhados": n_alin, "faces_alinhadas": n_faces,
-               "perpendiculares": n_recusa + n_perp_sem_regua, **gr}
+               "perpendiculares": n_recusa + n_perp_sem_regua,
+               "preservados": pv.get("preservados", 0), **gr}
         print(f"[6/6] {n_alin} pontos alinhados na borda real de {n_faces} faces",
               flush=True)
         QD.marcar_passo(sid, 6, res, con=con)
