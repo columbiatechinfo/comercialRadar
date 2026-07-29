@@ -9,13 +9,81 @@ const $ = (id) => document.getElementById(id);
 const map = L.map("map", { zoomControl: false, attributionControl: false })
   .setView([-2.9055, -41.7734], 13); // Parnaíba-PI como partida
 
+/* Panes com z-index explícito — a malha (divisas municipais) é uma camada
+   clicável que cobre o mapa inteiro e roubava o clique das faces e quadras,
+   levando ao centro do município. Cada coisa no seu andar:
+   malha (baixo) < quadras < faces/vias < marcadores (topo, sempre clicáveis). */
+map.createPane("paneMalha").style.zIndex = 410;
+map.createPane("paneQuadras").style.zIndex = 620;
+map.createPane("paneMarcadores").style.zIndex = 630;
+map.createPane("paneFaces").style.zIndex = 645;   // vias no topo: clicar nelas sempre vence
+
 L.control.zoom({ position: "bottomright" }).addTo(map);
 L.control.attribution({ position: "bottomright", prefix: false })
   .addAttribution('&copy; OpenStreetMap &middot; CARTO').addTo(map);
 
-L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
-  maxZoom: 20, subdomains: "abcd",
-}).addTo(map);
+/* Bases disponíveis. O SATÉLITE é a fonte de maior zoom, que é onde as
+   (Google XYZ lyrs=s) — então o que aparece no mapa é a imagem que gerou os
+   quadras e os pontos ficam legíveis. */
+const BASES = {
+  limpo: {
+    nome: "Mapa limpo", ico: "🗺️",
+    layer: L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
+      { maxZoom: 20, subdomains: "abcd" }),
+  },
+  satelite: {
+    nome: "Satélite", ico: "🛰️",
+    layer: L.tileLayer("https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}",
+      { maxZoom: 21, maxNativeZoom: 21 }),
+  },
+  hibrido: {
+    nome: "Satélite + ruas", ico: "🛣️",
+    layer: L.tileLayer("https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}",
+      { maxZoom: 21, maxNativeZoom: 21 }),
+  },
+  escuro: {
+    nome: "Escuro", ico: "🌙",
+    layer: L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
+      { maxZoom: 20, subdomains: "abcd" }),
+  },
+};
+let baseAtual = localStorage.getItem("cr_base") || "limpo";
+if (!BASES[baseAtual]) baseAtual = "limpo";
+BASES[baseAtual].layer.addTo(map);
+
+function trocarBase(chave) {
+  if (!BASES[chave] || chave === baseAtual) return;
+  map.removeLayer(BASES[baseAtual].layer);
+  BASES[chave].layer.addTo(map);
+  BASES[chave].layer.bringToBack();          // nunca por cima dos desenhos
+  baseAtual = chave;
+  localStorage.setItem("cr_base", chave);
+  document.querySelectorAll("#base-menu button").forEach((b) =>
+    b.classList.toggle("on", b.dataset.base === chave));
+  $("base-atual").textContent = BASES[chave].ico;
+}
+
+/* Seletor de tipo de mapa — vive na topbar, não flutuando sobre o mapa: os
+   cantos já são disputados pelo painel, pelos stats, pelos filtros e pelo zoom,
+   todos com z-index maior, e o botão ficava escondido atrás deles. */
+(function montarSeletorBase() {
+  const wrap = document.createElement("div");
+  wrap.id = "base-switch";
+  wrap.innerHTML =
+    `<button id="base-btn" title="Tipo de mapa"><span id="base-atual">${BASES[baseAtual].ico}</span>` +
+    `<span class="base-cap">Mapa</span><span class="base-seta">▾</span></button>` +
+    `<div id="base-menu" class="hidden">` +
+    Object.entries(BASES).map(([k, v]) =>
+      `<button data-base="${k}" class="${k === baseAtual ? "on" : ""}">${v.ico} ${v.nome}</button>`).join("") +
+    `</div>`;
+  const alvo = document.querySelector("#topbar .top-right") || document.body;
+  alvo.insertBefore(wrap, alvo.firstChild);
+  $("base-btn").onclick = (e) => { e.stopPropagation(); $("base-menu").classList.toggle("hidden"); };
+  wrap.querySelectorAll("#base-menu button").forEach((b) => {
+    b.onclick = () => { trocarBase(b.dataset.base); $("base-menu").classList.add("hidden"); };
+  });
+  document.addEventListener("click", () => $("base-menu").classList.add("hidden"));
+})();
 
 /* ────────────────────────────────────────────────────────────
    Estilo dos markers por categoria (padrão Google/Waze)
@@ -106,6 +174,16 @@ let municipioSel = null;           // nome normalizado (ex.: 'parnaiba') | null 
 let municipioNome = null;          // nome de exibição (ex.: 'Parnaíba')
 let municipioLayer = null;         // polígono selecionado (realce/limpeza)
 const _normCidade = (s) => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").trim().toLowerCase();
+
+/* Normaliza logradouro como o backend (norm_via): expande abreviações e tira
+   ruído, para "R. das Angélicas" == "RUA DAS ANGELICAS" e a discrepância só
+   aparecer quando as ruas forem REALMENTE diferentes. */
+const _VIA_ABREV = { r: "rua", av: "avenida", trav: "travessa", tv: "travessa", pc: "praca",
+  pca: "praca", al: "alameda", rod: "rodovia", estr: "estrada", dr: "doutor", dra: "doutora",
+  prof: "professor", pe: "padre", cel: "coronel", gen: "general", mal: "marechal" };
+const _VIA_RUIDO = new Set(["de", "da", "do", "das", "dos", "e"]);
+const _normVia = (s) => _normCidade(s).replace(/[.,\-/]/g, " ").split(/\s+/)
+  .map((p) => _VIA_ABREV[p] || p).filter((p) => p && !_VIA_RUIDO.has(p)).join(" ");
 function poisBase() {              // POIs do município selecionado (base dos filtros e contagens)
   if (!municipioSel) return [];
   return [...allPois.values()].filter((p) => _normCidade(p.cidade) === municipioSel);
@@ -247,31 +325,65 @@ function renderChips() {
 /* ────────────────────────────────────────────────────────────
    Malha territorial (IBGE) — ênfase nas divisas municipais
 ──────────────────────────────────────────────────────────── */
-let malhaLayer = null;
+let malhaGrupo = null;                  // uma camada geoJSON por UF já baixada
+const malhaUFs = new Map();             // sigla -> camada
 let malhaVisivel = true;
 
 const MALHA_STYLE = { color: "#5b6b80", weight: 1.2, opacity: 0.9, fillColor: "#5b6b80", fillOpacity: 0.03 };
 
-async function carregarMalha() {
+/* A malha segue o mapa: pede a UF do centro e acumula os estados visitados.
+   Antes vinha só a UF majoritária do banco (PI), então em PE não havia divisa. */
+async function carregarMalha(param) {
+  if (!malhaGrupo) malhaGrupo = L.layerGroup();
+  let url = "/api/malha";
+  if (typeof param === "string" && param) {
+    if (malhaUFs.has(param)) return;
+    url += `?uf=${param}`;
+  } else if (param && param.lat !== undefined) {
+    url += `?lat=${param.lat.toFixed(4)}&lng=${param.lng.toFixed(4)}`;
+  }
   try {
-    const gj = await (await fetch("/api/malha")).json();
+    const gj = await (await fetch(url)).json();
     if (gj.erro || !gj.features) return;
-    malhaLayer = L.geoJSON(gj, {
-      style: MALHA_STYLE,
+    const sig = gj.uf || "?";
+    if (malhaUFs.has(sig)) return;                       // já desenhada
+    const camada = L.geoJSON(gj, {
+      style: MALHA_STYLE, pane: "paneMalha",
       onEachFeature: (f, l) => {
+        l._malhaDono = null;                             // preenchido abaixo
         l.bindTooltip(f.properties?.nome || "", { sticky: true, direction: "top", className: "muni-tip" });
         l.on("mouseover", () => { if (l !== municipioLayer) l.setStyle({ weight: 2.4, color: "#334155", fillOpacity: 0.08 }); });
-        l.on("mouseout", () => { if (l !== municipioLayer) malhaLayer.resetStyle(l); });
+        l.on("mouseout", () => { if (l !== municipioLayer) resetMalha(l); });
         l.on("click", () => selecionarMunicipio(f.properties?.nome, l));
       },
     });
-    if (malhaVisivel) malhaLayer.addTo(map);
-    // sem área/município: enquadra na malha (não nos POIs, que só aparecem ao clicar)
-    if (!areaLayer && !municipioSel) {
-      try { map.fitBounds(malhaLayer.getBounds().pad(0.05)); } catch { /* ok */ }
+    camada.eachLayer((l) => { l._malhaDono = camada; });
+    malhaUFs.set(sig, camada);
+    malhaGrupo.addLayer(camada);
+    if (malhaVisivel && !map.hasLayer(malhaGrupo)) malhaGrupo.addTo(map);
+    // primeira UF, sem área/município: enquadra nela (os POIs só aparecem ao clicar)
+    if (malhaUFs.size === 1 && !areaLayer && !municipioSel) {
+      try { map.fitBounds(camada.getBounds().pad(0.05)); } catch { /* ok */ }
     }
     renderChips();
   } catch { /* IBGE fora do ar — segue sem a malha */ }
+}
+
+/* devolve o estilo padrão a um município (cada um sabe de que camada veio) */
+function resetMalha(l) {
+  if (l && l._malhaDono) l._malhaDono.resetStyle(l);
+  else if (l && l.setStyle) l.setStyle(MALHA_STYLE);
+}
+
+/* ao parar de navegar, garante a malha da UF sob o centro do mapa */
+let malhaTimer = null;
+function malhaSegueMapa() {
+  clearTimeout(malhaTimer);
+  malhaTimer = setTimeout(() => {
+    if (map.getZoom() < 6) return;                       // no mundo inteiro não faz sentido
+    const c = map.getCenter();
+    carregarMalha({ lat: c.lat, lng: c.lng });
+  }, 400);
 }
 
 /* Seleção de município por clique no polígono da malha */
@@ -281,7 +393,7 @@ function selecionarMunicipio(nome, layer) {
   const norm = _normCidade(nome);
   if (!norm) return;
   if (municipioSel === norm) return limparMunicipio();   // clicar de novo desmarca
-  if (municipioLayer && malhaLayer) malhaLayer.resetStyle(municipioLayer);
+  if (municipioLayer) resetMalha(municipioLayer);
   municipioSel = norm; municipioNome = nome; municipioLayer = layer;
   layer.setStyle(MUNI_STYLE_SEL); layer.bringToFront();
   aplicarFiltro();
@@ -291,7 +403,7 @@ function selecionarMunicipio(nome, layer) {
 }
 
 window.limparMunicipio = function () {
-  if (municipioLayer && malhaLayer) malhaLayer.resetStyle(municipioLayer);
+  if (municipioLayer) resetMalha(municipioLayer);
   municipioSel = null; municipioNome = null; municipioLayer = null;
   aplicarFiltro();
   carregarStats();
@@ -314,8 +426,8 @@ function atualizarBannerMunicipio() {
 
 function toggleMalha() {
   malhaVisivel = !malhaVisivel;
-  if (malhaLayer) {
-    if (malhaVisivel) malhaLayer.addTo(map); else map.removeLayer(malhaLayer);
+  if (malhaGrupo) {
+    if (malhaVisivel) malhaGrupo.addTo(map); else map.removeLayer(malhaGrupo);
   }
   renderChips();
 }
@@ -475,6 +587,12 @@ async function abrirPoi(poiLeve) {
   $("modal-card").innerHTML = html;
   $("modal-overlay").classList.remove("hidden");
 }
+/* Modal genérico — o de POI monta o HTML dele à mão; este serve a qualquer
+   conteúdo (a lista de quadras usa). */
+window.abrirModal = (html) => {
+  $("modal-card").innerHTML = html;
+  $("modal-overlay").classList.remove("hidden");
+};
 window.fecharModal = () => $("modal-overlay").classList.add("hidden");
 $("modal-overlay").addEventListener("click", (e) => { if (e.target.id === "modal-overlay") fecharModal(); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") { fecharModal(); $("confirm-overlay").classList.add("hidden"); } });
@@ -484,6 +602,7 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape") { fecharMo
 ──────────────────────────────────────────────────────────── */
 let areaLayer = null;
 let drawer = null;
+let modoDesenho = "area";        // só a área é desenhada pelo usuário
 const AREA_STYLE = { color: "#1a73e8", weight: 2.5, dashArray: "6 6", fillColor: "#1a73e8", fillOpacity: 0.06, className: "area-poly" };
 
 function setAreaLayer(latlngs) {
@@ -577,6 +696,9 @@ document.querySelectorAll(".mode").forEach((b) => {
     $("sec-planilha").classList.toggle("hidden", modo !== "planilha");
     $("sec-mineracao").classList.toggle("hidden", modo !== "mineracao");
     $("sec-enriquecimento").classList.toggle("hidden", modo !== "enriquecimento");
+    $("sec-quadras").classList.toggle("hidden", modo !== "quadras");
+    if (modo === "quadras") carregarUltimaQuadra();
+    else { limparQuadras(); }
     atualizarBotoes();
   };
 });
@@ -599,11 +721,22 @@ $("file-input").onchange = async () => {
   atualizarBotoes();
 };
 
+/* Os ÚNICOS modos que o botão "Iniciar processo" dispara. A lista é explícita
+   porque o último ramo daquele if/else era um `else` aberto: quando o modo
+   "quadras" entrou, ele caiu ali e disparou o enriquecimento de POIs — processo
+   caro, de outra parte do sistema, sem ninguém ter pedido. Modo fora desta lista
+   não inicia job nenhum e o botão nem aparece. */
+const MODOS_JOB = { planilha: "da planilha", mineracao: "de mineração",
+                    enriquecimento: "de enriquecimento", quadras: "de quadras" };
+
 function atualizarBotoes() {
   const temArea = !!areaLayer;
-  const pronto = temArea && !jobRodando && (modo !== "planilha" || !!arquivoImportado);
+  // o modo Quadras tem o seu próprio botão e NÃO passa pelo job de POIs
+  const usaJob = modo in MODOS_JOB;
+  const pronto = usaJob && temArea && !jobRodando &&
+                 (modo !== "planilha" || !!arquivoImportado);
   $("btn-iniciar").disabled = !pronto;
-  $("btn-iniciar").classList.toggle("hidden", jobRodando);
+  $("btn-iniciar").classList.toggle("hidden", jobRodando || !usaJob);
   $("btn-parar").classList.toggle("hidden", !jobRodando);
   if (!temArea) $("job-status-txt").textContent = "Defina a área (passo 1) para liberar o início.";
   else if (modo === "planilha" && !arquivoImportado && !jobRodando) $("job-status-txt").textContent = "Importe a planilha (passo 2).";
@@ -613,6 +746,10 @@ function atualizarBotoes() {
 $("btn-iniciar").onclick = async () => {
   let modoJob = modo;
   let opcoes;
+  if (!(modo in MODOS_JOB)) {
+    toast(`o modo "${modo}" não usa este botão`, "err");
+    return;
+  }
   if (modo === "planilha") {
     opcoes = {
       workers: parseInt($("op-workers").value) || 10,
@@ -628,7 +765,10 @@ $("btn-iniciar").onclick = async () => {
       step: parseFloat($("op-step").value) || 150,
       details: $("op-details").checked,
     };
-  } else { // enriquecimento: cascata única Maps→Web→StreetView
+  } else if (modo === "quadras") {
+    opcoes = { com_maps: !!$("op-q-maps")?.checked,
+               sem_proxy: !$("op-q-proxy")?.checked };
+  } else if (modo === "enriquecimento") {  // cascata única Maps→Web→StreetView
     modoJob = "enriquecer_tudo";
     opcoes = {
       workers: parseInt($("op-enr-workers").value) || 6,
@@ -647,7 +787,8 @@ $("btn-iniciar").onclick = async () => {
   if (r.erro) return toast(r.erro, "err");
   aplicarJob(r);
   $("log-panel").classList.remove("collapsed");
-  toast(`Processo ${modo === "planilha" ? "da planilha" : "de mineração"} iniciado ▶`, "ok");
+  toast(`Processo ${MODOS_JOB[modo]} iniciado ▶`, "ok");
+  if (modo === "quadras") acompanharQuadras();
 };
 
 $("btn-parar").onclick = () => confirmar(
@@ -944,9 +1085,700 @@ $("btn-baixar-imgs").onclick = async () => {
   await carregarPois();            // carrega todos em allPois; nada aparece até clicar num município
   carregarStats();                 // painel em branco até selecionar
   carregarMalha();                 // divisas municipais (IBGE) — enquadra na malha; clique seleciona
+  map.on("moveend", malhaSegueMapa);   // navegou para outro estado? baixa a malha de lá
   atualizarBannerMunicipio();      // badge "clique num município"
   conectarWS();
   try { aplicarJob(await (await fetch("/api/jobs/atual")).json()); } catch { /* ok */ }
   atualizarBotoes();
   toast("Clique num município no mapa para ver os dados 🗺️", "ok");
+})();
+
+/* ────────────────────────────────────────────────────────────
+   QUADRAS — área → vias → quadras → pontos → faces
+   O ponto é desenhado na coordenada ORIGINAL do CNEFE. Nada é
+   deslocado: a cor diz a que face ele pertence e se a numeração
+   dele condiz com a paridade daquela face.
+──────────────────────────────────────────────────────────── */
+const COR_FACE = ["#00f5ff", "#ff9628", "#7c5cff", "#3ea64a", "#ff4d6d", "#ffd166",
+                  "#22d3ee", "#f472b6", "#a3e635", "#fb923c", "#60a5fa", "#e879f9",
+                  "#2dd4bf", "#facc15", "#c084fc", "#4ade80"];
+/* Quando UMA via separa duas quadras, cada uma tem a sua face ali. Colorir por
+   `face_idx` dava a mesma cor às duas (o índice reinicia em cada quarteirão) e as
+   linhas caíam uma sobre a outra — não dava para saber de quem era cada ponto.
+   A cor passa a ser por (quadra, face), única na sessão, e a linha é DESLOCADA
+   para o lado da sua quadra, então a rua compartilhada mostra as duas. */
+let qCorFace = new Map();
+const chaveQF = (qid, fi) => `${qid}:${fi}`;
+
+function mapearCoresFaces(faces) {
+  qCorFace = new Map();
+  faces.slice()
+    .sort((a, b) => (a.properties.quadra_id - b.properties.quadra_id)
+                 || (a.properties.face_idx - b.properties.face_idx))
+    .forEach((f, i) => qCorFace.set(
+      chaveQF(f.properties.quadra_id, f.properties.face_idx),
+      COR_FACE[i % COR_FACE.length]));
+}
+
+/* Desloca a linha da face ~3 m para dentro da sua quadra, para que duas faces
+   sobre a mesma rua não se sobreponham. Só o desenho muda; o dado não. */
+function deslocarParaDentro(coords, centro, metros = 3) {
+  if (!coords || coords.length < 2 || !centro) return coords;
+  const [x0, y0] = coords[0], [x1, y1] = coords[coords.length - 1];
+  const k = Math.cos((y0 * Math.PI) / 180);
+  let dx = (x1 - x0) * k, dy = y1 - y0;
+  const n = Math.hypot(dx, dy) || 1e-9;
+  let nx = -dy / n, ny = dx / n;                       // normal da linha
+  const mx = (x0 + x1) / 2, my = (y0 + y1) / 2;
+  if ((centro[0] - mx) * k * nx + (centro[1] - my) * ny < 0) { nx = -nx; ny = -ny; }
+  const g = metros / 111320;
+  return coords.map(([x, y]) => [x + (nx * g) / k, y + ny * g]);
+}
+const COR_DESTOA = "#ef4444";      // numeração do outro lado da rua
+const COR_INDEF = "#9aa4b0";       // sem número ou face sem paridade
+
+let qCamadas = [];                 // tudo que a sessão desenhou, para limpar
+let qSessaoAtual = null;
+let qFaceFiltro = null;
+let qDados = null;
+
+/* Cada camada tem NOME para o modal de visualização poder ligar e desligar uma a
+   uma. `qVis` guarda a escolha do usuário e sobrevive ao recarregar a sessão. */
+let qLayers = {};
+const qVis = { area: true, vias: true, quadraOsm: true, quadraReal: true,
+               faces: true, faceReal: true, ligacoes: true, alinhados: true,
+               origens: true, telhados: true };
+/* filtros por CLASSE do ponto, aplicados dentro das camadas de pontos */
+const qMostra = { aprovado: true, resgatado: true, reprovado: true, semJulg: true };
+
+function addCamada(nome, layer) {
+  qCamadas.push(layer);
+  qLayers[nome] = layer;
+  if (qVis[nome] === false) { try { map.removeLayer(layer); } catch { /* ok */ } }
+  return layer;
+}
+
+function limparQuadras() {
+  qCamadas.forEach((c) => { try { map.removeLayer(c); } catch { /* ok */ } });
+  qCamadas = [];
+  qLayers = {};
+}
+
+function classeDoPonto(p) {
+  if (p.canonico === true) return p.resgate ? "resgatado" : "aprovado";
+  if (p.canonico === false) return "reprovado";
+  return "semJulg";
+}
+
+function porCamadaQ(nome) {
+  return (qDados?.features || []).filter((f) => f.properties.camada === nome);
+}
+
+/* Uma cor por face DENTRO de cada quadra: o índice reinicia a cada quarteirão,
+   senão duas quadras vizinhas ficariam com a mesma paleta deslocada. */
+function corDaFace(qid, fi) {
+  return qCorFace.get(chaveQF(qid, fi)) || COR_FACE[(fi ?? 0) % COR_FACE.length];
+}
+
+/* Escurece a cor da face para o ponto que entrou por RESGATE (coordenada nível 1
+   perto da quadra, com a numeração contra). É aprovação por outra evidência, e
+   isso precisa se distinguir de quem passou pela regra principal. */
+function escurecer(hex, fator = 0.55) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex || "");
+  if (!m) return hex;
+  const n = parseInt(m[1], 16);
+  const r = Math.round(((n >> 16) & 255) * fator);
+  const g = Math.round(((n >> 8) & 255) * fator);
+  const b = Math.round((n & 255) * fator);
+  return `#${((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1)}`;
+}
+
+async function carregarQuadras(sid, silencioso = false) {
+  if (!sid) return;
+  const r = await fetch(`/api/quadras/${encodeURIComponent(sid)}`);
+  const gj = await r.json();
+  if (gj.erro) { toast(gj.erro, "erro"); return; }
+  qDados = gj;
+  qSessaoAtual = sid;
+  limparQuadras();
+  mapearCoresFaces(porCamadaQ("face"));
+
+  // a área desenhada
+  addCamada("area", L.geoJSON({ type: "FeatureCollection", features: porCamadaQ("area") }, {
+    pane: "paneQuadras", interactive: false,
+    style: { color: "#ffffff", weight: 1, opacity: 0.35, fill: false, dashArray: "8,8" },
+  }).addTo(map));
+
+  // vias do OSM, com o nome canônico lido no Maps
+  addCamada("vias", L.geoJSON({ type: "FeatureCollection", features: porCamadaQ("via") }, {
+    pane: "paneFaces",
+    style: { color: "#ffd400", weight: 2, opacity: 0.5 },
+    onEachFeature: (f, l) => {
+      const p = f.properties;
+      const dif = p.nome_canonico && p.nome_osm &&
+                  _normVia(p.nome_canonico) !== _normVia(p.nome_osm);
+      l.bindTooltip(
+        `🛣️ <b>${esc(p.nome_canonico || p.nome_osm || "sem nome")}</b>` +
+        (dif ? `<br><span style="color:#f0b429">OSM: ${esc(p.nome_osm)}</span>` : "") +
+        (!p.nome_canonico ? `<br><small style="color:#f0b429">canônico não lido</small>` : "") +
+        `<br><small>${esc(p.tipo || "")} · ${Math.round(p.comprimento_m || 0)} m</small>`,
+        { sticky: true });
+    },
+  }).addTo(map));
+
+  // quadra do OSM (eixo das vias) e a borda REAL
+  addCamada("quadraOsm", L.geoJSON({ type: "FeatureCollection", features: porCamadaQ("quadra_osm") }, {
+    pane: "paneQuadras", interactive: false,
+    style: { color: "#ffffff", weight: 1, opacity: 0.4, fill: false, dashArray: "2,6" },
+  }).addTo(map));
+  addCamada("quadraReal", L.geoJSON({ type: "FeatureCollection", features: porCamadaQ("quadra_real") }, {
+    pane: "paneQuadras",
+    style: { color: "#ffffff", weight: 2, opacity: 0.9, fill: false },
+    onEachFeature: (f, l) => l.bindTooltip(
+      `Quadra ${f.properties.id}<br>${Math.round(f.properties.area_m2 || 0)} m²` +
+      `<br><small>borda real · recuo ${f.properties.recuo_medio_m} m da meia-via</small>`,
+      { sticky: true }),
+  }).addTo(map));
+
+  // faces: cada uma com cor própria na sessão e deslocada para o lado da sua
+  // quadra — duas faces sobre a mesma rua aparecem lado a lado, não empilhadas
+  const centros = {};
+  porCamadaQ("quadra_osm").forEach((q) => {
+    const a = q.geometry.coordinates[0];
+    centros[q.properties.id] = [a.reduce((s, c) => s + c[0], 0) / a.length,
+                                a.reduce((s, c) => s + c[1], 0) / a.length];
+  });
+  const facesDesl = porCamadaQ("face").map((f) => ({
+    ...f,
+    geometry: { ...f.geometry,
+                coordinates: deslocarParaDentro(f.geometry.coordinates,
+                                                centros[f.properties.quadra_id]) },
+  }));
+  addCamada("faces", L.geoJSON({ type: "FeatureCollection", features: facesDesl }, {
+    pane: "paneFaces",
+    style: (f) => ({ color: corDaFace(f.properties.quadra_id, f.properties.face_idx),
+                     weight: 6, opacity: 0.9, lineCap: "round" }),
+    onEachFeature: (f, l) => {
+      const p = f.properties;
+      l.bindTooltip(
+        `<b>quadra ${p.quadra_id} · face ${p.face_idx}</b> · ` +
+        `${Math.round(p.comprimento_m || 0)} m<br>` +
+        `${esc(p.nome_canonico || p.nome_osm || "via não identificada")}<br>` +
+        `numeração <b>${p.paridade || "indefinida"}</b>` +
+        (p.paridade_por ? `<br><small>${esc(p.paridade_por)}</small>` : "") +
+        `<br><small>recuo do eixo — par ${p.recuo_par_m ?? "—"} m · ` +
+        `ímpar ${p.recuo_impar_m ?? "—"} m</small>`, { sticky: true });
+      l.on("click", () => {
+        const k = `${p.quadra_id}:${p.face_idx}`;
+        qFaceFiltro = qFaceFiltro === k ? null : k;
+        aplicarFiltroFace();
+        montarLegendaQuadras();
+      });
+    },
+  }).addTo(map));
+
+  // TELHADOS do Overture (passo 7) — referência, não substituem o ponto.
+  // Quem tem ÂNCORA confirmada no Maps sai destacado: é o único par
+  // (número, posição) medido no chão que a face tem.
+  addCamada("telhados", L.geoJSON(
+    { type: "FeatureCollection", features: porCamadaQ("telhado") }, {
+      pane: "paneQuadras",
+      style: (f) => {
+        const p = f.properties;
+        const c = corDaFace(p.quadra_id, p.face_idx);
+        return p.ancora_numero
+          ? { color: "#ffffff", weight: 2.5, fillColor: c, fillOpacity: 0.55 }
+          : { color: c, weight: 1, opacity: 0.7, fillColor: c, fillOpacity: 0.18 };
+      },
+      onEachFeature: (f, l) => {
+        const p = f.properties;
+        l.bindTooltip(
+          `🏠 <b>${Math.round(p.area_m2 || 0)} m²</b>` +
+          (p.pavimentos ? ` · ${p.pavimentos} pav.` : "") +
+          (p.altura_m ? ` · ${p.altura_m} m` : "") +
+          `<br><small>quadra ${p.quadra_id} · face ${p.face_idx ?? "—"}` +
+          (p.dist_face_m != null ? ` · ${p.dist_face_m} m da face` : "") + `</small>` +
+          (p.ancora_via
+            ? `<br><small style="color:#22e07a">âncora Maps: ` +
+              `${p.ancora_numero ? "<b>nº " + p.ancora_numero + "</b> " : ""}` +
+              `${esc(p.ancora_via)}</small>`
+            : ""), { sticky: true });
+      },
+    }));
+
+  // a borda REAL de cada face — o trilho sobre o qual o passo 6 distribui
+  addCamada("faceReal", L.geoJSON({ type: "FeatureCollection", features: porCamadaQ("face_real") }, {
+    pane: "paneFaces", interactive: false,
+    style: (f) => ({ color: corDaFace(f.properties.quadra_id, f.properties.face_idx),
+                     weight: 2, opacity: 0.55, dashArray: "6,5" }),
+  }).addTo(map));
+
+  // PASSO 6 — a posição alinhada na borda real, ligada à original por tracejado.
+  // A original continua desenhada (mais apagada): a correção tem de ser sempre
+  // auditável contra o que o cadastro diz.
+  // um marcador por PORTA: mesmo logradouro e número já foram para o mesmo
+  // lugar, então desenhar um por endereço só empilharia círculos idênticos
+  const vistosGrupo = new Set();
+  const alinhados = porCamadaQ("ponto").filter((f) => {
+    const p = f.properties;
+    if (p.lat_alinhado == null) return false;
+    if (!p.grupo_id) return true;
+    if (vistosGrupo.has(p.grupo_id)) return false;
+    vistosGrupo.add(p.grupo_id);
+    return true;
+  });
+  if (alinhados.length) {
+    addCamada("ligacoes", L.geoJSON({
+      type: "FeatureCollection",
+      features: alinhados.map((f) => ({
+        type: "Feature", properties: f.properties,
+        geometry: { type: "LineString",
+                    coordinates: [f.geometry.coordinates,
+                                  [f.properties.lng_alinhado, f.properties.lat_alinhado]] },
+      })),
+    }, { pane: "paneFaces", interactive: false,
+         style: { color: "#9aa4b0", weight: 1, opacity: 0.55, dashArray: "3,4" } })
+      .addTo(map));
+    addCamada("alinhados", L.geoJSON({
+      type: "FeatureCollection",
+      features: alinhados.map((f) => ({
+        type: "Feature", properties: f.properties,
+        geometry: { type: "Point",
+                    coordinates: [f.properties.lng_alinhado, f.properties.lat_alinhado] },
+      })),
+    }, {
+      pane: "paneMarcadores",
+      pointToLayer: (f, latlng) => {
+        const p = f.properties;
+        const c = p.resgate ? escurecer(corDaFace(p.quadra_id, p.face_idx))
+                            : corDaFace(p.quadra_id, p.face_idx);
+        // porta com vários endereços fica MAIOR — é uma só, mas pesa mais
+        const n = p.grupo_n || 1;
+        // perpendicular = só projetado na testada, sem entrar na régua da
+        // numeração: anel TRACEJADO, para não se confundir com o alinhado
+        const perp = p.alinhado_modo === "perpendicular";
+        const noTelhado = p.alinhado_modo === "telhado";
+        return L.circleMarker(latlng, {
+          pane: "paneMarcadores", radius: 5 + Math.min(6, Math.sqrt(n - 1) * 3),
+          weight: perp ? 2.4 : (n > 1 ? 2.2 : 1.6),
+          dashArray: perp ? "3,3" : null,
+          color: perp ? "#111827" : (noTelhado ? "#ffffff" : "#0b0f14"),
+          fillColor: c, fillOpacity: perp ? 0.75 : 1, opacity: 1 });
+      },
+      onEachFeature: (f, l) => {
+        const p = f.properties;
+        const perp = p.alinhado_modo === "perpendicular";
+        l.bindTooltip(
+          `<b>${esc(p.logradouro || "—")}, ${p.numero}</b>` +
+          (p.grupo_n > 1 ? ` <b>· ${p.grupo_n} endereços nesta porta</b>` : "") +
+          `<br><small>${perp ? "⚠ posto só na perpendicular"
+              : p.alinhado_modo === "telhado" ? "🏠 casado com um telhado"
+              : p.alinhado_modo === "interpolado" ? "interpolado entre telhados"
+              : "alinhado pela régua da numeração"} · ` +
+          `${p.desloc_m} m da coordenada original` +
+          `<br>${esc(p.alinhado_por || "")}</small>`, { sticky: true });
+      },
+    }).addTo(map));
+  }
+
+  // os pontos, na coordenada ORIGINAL do CNEFE
+  addCamada("origens", L.geoJSON({ type: "FeatureCollection", features: porCamadaQ("ponto") }, {
+    pane: "paneMarcadores",
+    pointToLayer: (f, latlng) => {
+      const p = f.properties;
+      // canonico: true = é desta face · false = destoa · null = não dá para julgar
+      const base = p.canonico === true ? corDaFace(p.quadra_id, p.face_idx)
+        : p.canonico === false ? COR_DESTOA : COR_INDEF;
+      // resgatado pela coordenada: mesma face, tom mais escuro
+      const cor = (p.canonico === true && p.resgate) ? escurecer(base) : base;
+      // quem já tem posição alinhada fica APAGADO aqui: a leitura principal
+      // passa a ser a da borda real, e esta vira só a origem, para conferência
+      const movido = p.lat_alinhado != null;
+      return L.circleMarker(latlng, {
+        pane: "paneMarcadores",
+        radius: movido ? 3 : (p.origem === "dentro_quadra" ? 5 : 4),
+        weight: movido ? 1 : (p.canonico === false ? 2 : 1),
+        color: movido ? "#9aa4b0" : "#0b0f14", fillColor: cor,
+        fillOpacity: movido ? 0.25 : (p.canonico === null ? 0.5 : 0.95),
+        opacity: movido ? 0.4 : 0.9,
+      });
+    },
+    onEachFeature: (f, l) => {
+      const p = f.properties;
+      l.bindTooltip(
+        `<b>${esc(p.logradouro || "—")}${p.numero ? ", " + p.numero : ""}</b>` +
+        (p.estabelecimento ? `<br>${esc(p.estabelecimento)}` : "") +
+        `<br><small>face ${p.face_idx ?? "—"} · ` +
+        (p.canonico === true
+          ? (p.resgate ? `<b>resgatado</b> — ${esc(p.motivo || "")}` : "condiz com a face")
+          : p.canonico === false ? `<span style="color:#ff9b9b">${esc(p.motivo || "destoa")}</span>`
+          : esc(p.motivo || "sem julgamento")) + `</small>` +
+        `<br><small>${p.origem === "dentro_quadra" ? "dentro da quadra"
+          : `a ${p.dist_via_m} m do eixo da via`}` +
+        (p.cep ? ` · CEP ${esc(p.cep)}` : "") +
+        (p.nv_geo ? ` · coord. nível ${esc(p.nv_geo)}` : "") + `</small>` +
+        (p.alinhado_modo === "perpendicular"
+          ? `<br><small style="color:#f0b429">⚠ ${esc(p.alinhado_por || "")}</small>`
+          : ""),
+        { sticky: true });
+    },
+  }).addTo(map));
+
+  aplicarVisualizacao();          // respeita o que o usuário escolheu ver
+  const s = gj.sessao || {};
+  $("q-estado").innerHTML =
+    `<b>${esc(sid)}</b> — passo ${s.passo}/8 · ${esc(s.municipio || "?")}/${esc(s.uf || "?")}` +
+    (s.erro ? `<br><span style="color:#ff9b9b">${esc(s.erro)}</span>` : "");
+  montarLegendaQuadras();
+  if (!silencioso) {
+    try { map.fitBounds(qCamadas[0].getBounds().pad(0.05)); } catch { /* ok */ }
+    const np = porCamadaQ("ponto").length;
+    toast(`${porCamadaQ("quadra_osm").length} quadras · ${porCamadaQ("via").length} vias · ` +
+          `${np} pontos`, "ok");
+  }
+}
+
+/* Clicar numa face isola os pontos dela — é assim que se confere, olhando um
+   lado da rua de cada vez, se a paridade separou certo. */
+/* A face é identificada por QUADRA + índice: o `face_idx` reinicia em cada
+   quarteirão, então usá-lo sozinho junta a face 0 de 19 quadras num item só. */
+function chaveFace(p) {
+  return p.face_idx == null ? null : `${p.quadra_id}:${p.face_idx}`;
+}
+
+function aplicarFiltroFace() {
+  qCamadas.forEach((g) => g.eachLayer && g.eachLayer((l) => {
+    const p = l.feature?.properties;
+    if (!p || p.camada !== "ponto" || !l.setStyle) return;
+    const ok = qFaceFiltro === null || chaveFace(p) === qFaceFiltro;
+    l.setStyle({ opacity: ok ? 0.9 : 0.06, fillOpacity: ok ? 0.95 : 0.04 });
+  }));
+}
+
+/* Legenda por QUADRA: cada quarteirão com as suas faces, a via canônica, a
+   paridade que venceu e a contagem (condiz / destoa). Clicar isola a face. */
+function montarLegendaQuadras() {
+  const el = $("q-legenda");
+  if (!el) return;
+  const cont = new Map();
+  porCamadaQ("ponto").forEach((f) => {
+    const k = chaveFace(f.properties);
+    if (!k) return;
+    const c = cont.get(k) || { ok: 0, destoa: 0, indef: 0 };
+    if (f.properties.canonico === true) c.ok++;
+    else if (f.properties.canonico === false) c.destoa++;
+    else c.indef++;
+    cont.set(k, c);
+  });
+  const faces = porCamadaQ("face").map((f) => f.properties);
+  if (!faces.length) { el.innerHTML = `<div class="hint">sem faces classificadas</div>`; return; }
+  const porQuadra = new Map();
+  faces.forEach((p) => {
+    if (!porQuadra.has(p.quadra_id)) porQuadra.set(p.quadra_id, []);
+    porQuadra.get(p.quadra_id).push(p);
+  });
+  el.innerHTML = [...porQuadra.entries()].sort((a, b) => a[0] - b[0]).map(([qid, fs]) =>
+    `<div class="q-grupo"><div class="q-grupo-tit">quadra ${qid}</div>` +
+    fs.sort((a, b) => a.face_idx - b.face_idx).map((p) => {
+      const k = `${p.quadra_id}:${p.face_idx}`;
+      const c = cont.get(k) || { ok: 0, destoa: 0 };
+      return `<button class="conf-item${qFaceFiltro === k ? " on" : ""}" data-face="${k}"
+                title="${esc(p.paridade_por || "")}">
+         <i style="background:${corDaFace(p.quadra_id, p.face_idx)}"></i>
+         <span class="conf-nome">${esc(p.nome_canonico || p.nome_osm || "via não lida")}
+           — ${p.paridade || "indefinida"}</span>
+         <b>${c.ok}</b><span style="color:${COR_DESTOA};margin-left:6px">${c.destoa}</span>
+       </button>`;
+    }).join("") + `</div>`).join("");
+  el.querySelectorAll(".conf-item").forEach((b) => {
+    b.onclick = () => {
+      qFaceFiltro = qFaceFiltro === b.dataset.face ? null : b.dataset.face;
+      aplicarFiltroFace();
+      montarLegendaQuadras();
+    };
+  });
+}
+
+/* Quadras tratadas — MODAL, não lista no painel: são dezenas de linhas com rua,
+   contagem e paridade, e o painel lateral é estreito demais para isso. Clicar
+   numa carrega a sessão dela, leva o mapa até ela e fecha o modal. */
+let qListaCache = [];
+let qQuadraFoco = null;
+
+async function abrirQuadrasTratadas() {
+  abrirModal(`<div class="mdl-tit">📋 Quadras tratadas</div>
+    <div class="hint">carregando…</div>`);
+  try {
+    const r = await fetch("/api/quadras/lista");
+    const j = await r.json();
+    if (j.erro) throw new Error(j.erro);
+    if (!Array.isArray(j)) throw new Error("resposta inesperada da API");
+    qListaCache = j;
+  } catch (e) {
+    // erro VISÍVEL: antes eu engolia a falha e o painel só ficava vazio, o que
+    // parecia "não há quadras" quando na verdade a rota nem existia.
+    // "sessão não encontrada" aqui é assinatura de SERVIDOR ANTIGO: sem a rota
+    // /api/quadras/lista, o /api/quadras/{sid} captura a palavra "lista".
+    const msg = String(e.message || e);
+    const velho = /sess[aã]o n[aã]o encontrada|desatualizado|rota, n[aã]o uma sess/i.test(msg);
+    abrirModal(`<div class="mdl-tit">📋 Quadras tratadas</div>` +
+      (velho
+        ? `<div class="hint warn">O servidor em execução é anterior a esta tela.</div>
+           <div class="hint">Feche a janela do <code>python server.py</code> e suba de novo —
+             a rota <code>/api/quadras/lista</code> só existe depois de reiniciar.
+             As quadras já tratadas continuam no banco.</div>`
+        : `<div class="hint warn">não consegui ler a lista: ${esc(msg)}</div>`) +
+      `<div class="row right"><button class="btn" onclick="fecharModal()">Fechar</button></div>`);
+    return;
+  }
+  desenharQuadrasTratadas();
+}
+
+function desenharQuadrasTratadas() {
+  const b = (window._qFiltro || "").trim().toLowerCase();
+  const itens = qListaCache.filter((q) => !b ||
+    String(q.id).includes(b) || (q.vias || "").toLowerCase().includes(b) ||
+    (q.municipio || "").toLowerCase().includes(b));
+  const linhas = itens.map((q) => `
+    <button class="q-item${qQuadraFoco === q.id ? " on" : ""}" data-q="${q.id}"
+            data-s="${esc(q.sessao_id)}" data-lat="${q.lat}" data-lng="${q.lng}">
+      <b>quadra ${q.id}</b> · ${esc(q.municipio || "?")}/${esc(q.uf || "?")}
+      · <b>${q.canonicos}</b>/${q.pontos} pontos canônicos
+      <small>${esc(q.vias || "— sem via identificada —")}</small>
+      <small>${q.faces_com_paridade}/${q.faces} faces com paridade${
+        q.area_m2 ? ` · ${Math.round(q.area_m2).toLocaleString("pt-BR")} m²` : ""}
+        · ${esc((q.criado_em || "").replace("T", " ").slice(0, 16))}</small>
+    </button>`).join("");
+  abrirModal(`<div class="mdl-tit">📋 Quadras tratadas
+      <small style="font-weight:400;color:var(--ink-2)"> — ${qListaCache.length}</small></div>
+    <input id="q-busca-modal" class="sel-larga" placeholder="filtrar por rua, cidade ou id…"
+           value="${esc(window._qFiltro || "")}">
+    <div class="q-lista">${linhas || `<div class="hint">${
+      qListaCache.length ? "nada com esse filtro" : "nenhuma quadra tratada ainda"}</div>`}</div>
+    <div class="row right"><button class="btn" onclick="fecharModal()">Fechar</button></div>`);
+  const inp = $("q-busca-modal");
+  if (inp) {
+    inp.oninput = () => { window._qFiltro = inp.value; desenharQuadrasTratadas();
+                          $("q-busca-modal").focus(); };
+    if (b) inp.setSelectionRange(inp.value.length, inp.value.length);
+  }
+  document.querySelectorAll("#modal-card .q-item").forEach((bt) => {
+    bt.onclick = async () => {
+      qQuadraFoco = Number(bt.dataset.q);
+      fecharModal();
+      await carregarQuadras(bt.dataset.s, true);
+      map.setView([Number(bt.dataset.lat), Number(bt.dataset.lng)], 18);
+    };
+  });
+}
+
+/* Modal de VISUALIZAÇÃO — liga e desliga cada camada e cada classe de ponto.
+   O mapa acumula muita coisa (vias, quadra do OSM, borda real, faces, trilho,
+   origem, alinhado e a ligação entre os dois); ver um recorte de cada vez é o
+   que torna possível conferir. A escolha fica em `qVis`/`qMostra` e sobrevive ao
+   recarregar a sessão. */
+const VIS_CAMADAS = [
+  ["Geometria", [
+    ["area", "área desenhada", "#ffffff", 1],
+    ["quadraOsm", "quadra do OSM (eixo das vias)", "#ffffff", 1],
+    ["quadraReal", "borda real do quarteirão", "#ffffff", 1],
+    ["vias", "vias do OSM", "#ffd400", 1],
+    ["faces", "faces (cor por face)", "#7c5cff", 1],
+    ["faceReal", "borda real de cada face (trilho)", "#22d3ee", 1],
+    ["telhados", "telhados do Overture", "#7c5cff", 0],
+  ]],
+  ["Pontos", [
+    ["origens", "posição original do CNEFE", "#9aa4b0", 0],
+    ["alinhados", "posição alinhada na face", "#3ea64a", 0],
+    ["ligacoes", "linha origem → alinhado", "#9aa4b0", 1],
+  ]],
+];
+const VIS_CLASSES = [
+  ["aprovado", "aprovados pela regra da face", "#3ea64a"],
+  ["resgatado", "aprovados por outra evidência (tom escuro)", "#225b29"],
+  ["reprovado", "do outro lado da via / numeração destoa", "#ef4444"],
+  ["semJulg", "sem julgamento", "#9aa4b0"],
+];
+/* pontos que a régua levaria além do teto e por isso FICARAM onde estavam —
+   anel tracejado no mapa. Não é classe: é um estado do alinhamento. */
+function naoAlinhados() {
+  return porCamadaQ("ponto")
+    .filter((f) => f.properties.alinhado_modo === "perpendicular");
+}
+
+function contarClasses() {
+  const c = { aprovado: 0, resgatado: 0, reprovado: 0, semJulg: 0 };
+  porCamadaQ("ponto").forEach((f) => { c[classeDoPonto(f.properties)]++; });
+  return c;
+}
+
+function abrirVisualizacao() {
+  if (!qDados) { toast("carregue uma sessão primeiro", "err"); return; }
+  const cont = contarClasses();
+  const nCam = (k) => {
+    const l = qLayers[k];
+    if (!l) return 0;
+    let n = 0; l.eachLayer(() => n++); return n;
+  };
+  abrirModal(`<div class="mdl-tit">👁 Visualização</div>
+    <div class="hint">Clique para ligar ou desligar. Serve para ver um recorte de
+      cada vez — por exemplo só os alinhados, ou só o que foi reprovado.</div>
+    ${VIS_CAMADAS.map(([g, itens]) => `<div class="vis-grupo">${g}</div>` +
+      itens.map(([k, rot, cor, linha]) => `
+        <div class="vis-item${qVis[k] ? "" : " off"}" data-cam="${k}">
+          <i class="${linha ? "linha" : ""}" style="background:${cor}"></i>
+          <span>${rot}</span><span class="vis-n">${nCam(k)}</span>
+        </div>`).join("")).join("")}
+    <div class="vis-grupo">Classes de ponto</div>
+    ${VIS_CLASSES.map(([k, rot, cor]) => `
+      <div class="vis-item${qMostra[k] ? "" : " off"}" data-classe="${k}">
+        <i style="background:${cor}"></i><span>${rot}</span>
+        <span class="vis-n">${cont[k]}</span>
+      </div>`).join("")}
+    <div class="vis-grupo">Alinhamento</div>
+    <div class="hint" style="margin:2px 0 6px">
+      <b>Anel tracejado</b> = a régua o levaria a mais de 10 m, então ele foi só
+      projetado <b>perpendicular à testada</b> — o movimento mínimo, sem entrar na
+      ordem da numeração. Ali as duas fontes discordam de verdade.
+      <span class="vis-n"><b>${naoAlinhados().length}</b> pontos</span>
+    </div>
+    <div class="row right" style="margin-top:10px">
+      <button class="btn ghost" id="vis-tudo">tudo</button>
+      <button class="btn ghost" id="vis-so-alinhados">só alinhados</button>
+      <button class="btn" onclick="fecharModal()">Fechar</button>
+    </div>`);
+
+  document.querySelectorAll("#modal-card .vis-item[data-cam]").forEach((el) => {
+    el.onclick = () => { qVis[el.dataset.cam] = !qVis[el.dataset.cam];
+                         aplicarVisualizacao(); abrirVisualizacao(); };
+  });
+  document.querySelectorAll("#modal-card .vis-item[data-classe]").forEach((el) => {
+    el.onclick = () => { qMostra[el.dataset.classe] = !qMostra[el.dataset.classe];
+                         aplicarVisualizacao(); abrirVisualizacao(); };
+  });
+  $("vis-tudo").onclick = () => {
+    Object.keys(qVis).forEach((k) => { qVis[k] = true; });
+    Object.keys(qMostra).forEach((k) => { qMostra[k] = true; });
+    aplicarVisualizacao(); abrirVisualizacao();
+  };
+  $("vis-so-alinhados").onclick = () => {
+    Object.keys(qVis).forEach((k) => { qVis[k] = false; });
+    qVis.alinhados = qVis.faceReal = qVis.quadraReal = true;
+    aplicarVisualizacao(); abrirVisualizacao();
+  };
+}
+
+function aplicarVisualizacao() {
+  Object.entries(qLayers).forEach(([k, l]) => {
+    if (!l) return;
+    const quer = qVis[k] !== false;
+    const tem = map.hasLayer(l);
+    if (quer && !tem) map.addLayer(l);
+    if (!quer && tem) map.removeLayer(l);
+  });
+  // classes: esconde o elemento, sem desmontar a camada
+  ["origens", "alinhados", "ligacoes"].forEach((k) => {
+    const l = qLayers[k];
+    if (!l || !l.eachLayer) return;
+    l.eachLayer((m) => {
+      const p = m.feature?.properties;
+      if (!p) return;
+      const el = m.getElement ? m.getElement() : null;
+      if (el) el.style.display = qMostra[classeDoPonto(p)] ? "" : "none";
+    });
+  });
+}
+
+$("btn-q-ver") && ($("btn-q-ver").onclick = abrirVisualizacao);
+$("btn-q-tratadas") && ($("btn-q-tratadas").onclick = abrirQuadrasTratadas);
+$("btn-q-limpar") && ($("btn-q-limpar").onclick = () => {
+  limparQuadras();
+  qDados = null; qSessaoAtual = null; qFaceFiltro = null; qQuadraFoco = null;
+  $("q-legenda").innerHTML = "";
+  $("q-estado").textContent = "mapa limpo";
+});
+
+/* Carrega a sessão MAIS RECENTE. Não há escolha de sessão nem de passo na tela:
+   o botão azul roda o processo inteiro, como nos outros modos. Rodar passo a
+   passo é coisa do terminal (`quadras.py vias|borda|pontos|faces --sessao S`),
+   que é onde se conserta uma execução que quebrou no meio. */
+async function carregarUltimaQuadra(silencioso = false) {
+  try {
+    const ss = await (await fetch("/api/quadras/sessoes?limite=1")).json();
+    if (ss && ss[0]) await carregarQuadras(ss[0].id, silencioso);
+  } catch { /* ok */ }
+}
+
+/* Enquanto o job de quadras roda, o mapa vai preenchendo a cada passo. */
+let qTimer = null;
+function acompanharQuadras() {
+  if (qTimer) clearInterval(qTimer);
+  qTimer = setInterval(async () => {
+    if (!jobRodando) {
+      clearInterval(qTimer); qTimer = null;
+      await carregarUltimaQuadra(true);
+      return;
+    }
+    await carregarUltimaQuadra(true);
+  }, 6000);
+}
+
+/* ────────────────────────────────────────────────────────────
+   Clique LONGO no mapa copia a coordenada
+   Pressione ~600 ms em qualquer ponto: copia "lat, lng" para a
+   área de transferência, no formato que o Google Maps aceita.
+──────────────────────────────────────────────────────────── */
+(function copiarCoordNoCliqueLongo() {
+  const MS = 600, TOLERANCIA_PX = 8;
+  let timer = null, inicio = null;
+
+  async function copiar(txt) {
+    try {
+      await navigator.clipboard.writeText(txt);
+      return true;
+    } catch {
+      // clipboard bloqueado (http, permissão): cai no truque do textarea
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = txt;
+        ta.style.cssText = "position:fixed;opacity:0;pointer-events:none";
+        document.body.appendChild(ta);
+        ta.select();
+        const ok = document.execCommand("copy");
+        ta.remove();
+        return ok;
+      } catch { return false; }
+    }
+  }
+
+  function cancelar() {
+    if (timer) { clearTimeout(timer); timer = null; }
+    inicio = null;
+  }
+
+  map.on("mousedown", (e) => {
+    if (e.originalEvent.button !== 0) return;      // só botão esquerdo
+    if (drawer && drawer._enabled) return;              // está desenhando a área
+    inicio = e.containerPoint;
+    timer = setTimeout(async () => {
+      const lat = e.latlng.lat.toFixed(6), lng = e.latlng.lng.toFixed(6);
+      const txt = `${lat}, ${lng}`;
+      const ok = await copiar(txt);
+      toast(ok ? `📋 ${txt} copiado` : `Não consegui copiar: ${txt}`, ok ? "ok" : "err");
+      // pisca no lugar clicado, para não restar dúvida de onde copiou
+      const pulso = L.circleMarker(e.latlng, {
+        pane: "paneMarcadores", radius: 6, weight: 3,
+        color: "#7c3aed", fillColor: "#c4b5fd", fillOpacity: 0.9,
+      }).addTo(map);
+      setTimeout(() => map.removeLayer(pulso), 1200);
+      cancelar();
+    }, MS);
+  });
+
+  // andar o mouse ou soltar antes da hora cancela (é arrasto do mapa, não long-press)
+  map.on("mousemove", (e) => {
+    if (!inicio) return;
+    if (e.containerPoint.distanceTo(inicio) > TOLERANCIA_PX) cancelar();
+  });
+  map.on("mouseup dragstart zoomstart movestart", cancelar);
 })();

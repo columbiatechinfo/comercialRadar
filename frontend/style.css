@@ -476,3 +476,199 @@ button { font-family: inherit; }
 .ia-360 figure { margin: 0; border-radius: 8px; overflow: hidden; background: #fff; border: 1px solid rgba(0,0,0,.07); }
 .ia-360 img { display: block; width: 100%; height: 68px; object-fit: cover; }
 .ia-360 figcaption { font-size: 10px; font-weight: 700; color: var(--ink-2); text-align: center; padding: 2px 0; }
+
+/* ── Seletor de base do mapa (limpo / satélite / híbrido / escuro) ────────── */
+/* mora na topbar (.top-right): sobre o mapa os cantos são todos disputados */
+#base-switch { position: relative; }
+#base-btn {
+  display: flex; align-items: center; gap: 6px; cursor: pointer;
+  background: #f1f3f4; border: 1px solid transparent; border-radius: 999px;
+  padding: 6px 11px; font-size: 15px; line-height: 1; color: var(--ink-2);
+}
+#base-btn .base-cap { font-size: 12.5px; font-weight: 600; }
+#base-btn .base-seta { font-size: 10px; opacity: .6; }
+#base-btn:hover { background: #e6eaee; border-color: #d8dee6; }
+#base-menu {
+  position: absolute; right: 0; top: 42px; min-width: 190px; z-index: 1300;
+  background: #fff; border: 1px solid #d8dee6; border-radius: 12px; padding: 6px;
+  box-shadow: 0 8px 26px rgba(16, 24, 40, .2); display: flex; flex-direction: column; gap: 2px;
+}
+#base-menu.hidden { display: none; }
+#base-menu button {
+  text-align: left; padding: 9px 12px; border: 0; background: transparent;
+  border-radius: 8px; cursor: pointer; font-size: 14px; color: #1a2230;
+}
+#base-menu button:hover { background: #eef3f9; }
+#base-menu button.on { background: #e6f0ff; font-weight: 700; color: #12509e; }
+
+/* ── Curadoria dos telhados (popup no mapa + painel) ─────────────────────── */
+.p-sub {
+  margin: 14px 0 6px; font-size: 11.5px; font-weight: 800; letter-spacing: .04em;
+  text-transform: uppercase; color: var(--ink-2);
+  border-top: 1px solid #e6eaee; padding-top: 12px;
+}
+.tel-legenda { display: flex; gap: 12px; flex-wrap: wrap; font-size: 11.5px; color: var(--ink-2); margin: 2px 0 6px; }
+.tel-legenda i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 4px; vertical-align: middle; }
+#tel-aprendizado .ex-sim { color: #12805c; font-weight: 700; }
+#tel-aprendizado .ex-nao { color: #c5221f; font-weight: 700; }
+.ex-tipos { margin-top: 4px; font-size: 11px; line-height: 1.5; color: var(--ink-2); }
+
+/* popup: escolher o TIPO é a ação — não existe confirmar/remover genérico */
+.tel-pop { font-size: 13px; min-width: 240px; }
+.tel-pop .tp { background: #eef3f9; border-radius: 5px; padding: 1px 6px; font-weight: 700; }
+.tel-grp { font-size: 11px; font-weight: 800; color: var(--ink-2); margin: 9px 0 4px;
+  text-transform: uppercase; letter-spacing: .03em; }
+.tel-acoes { display: flex; flex-wrap: wrap; gap: 5px; }
+.tel-acoes button {
+  flex: 1 1 46%; border: 0; border-radius: 7px; padding: 7px 6px; cursor: pointer;
+  font-size: 11.5px; font-weight: 700; color: #10171f; text-shadow: 0 1px 0 rgba(255,255,255,.35);
+}
+.tel-acoes button:hover { filter: brightness(1.08); box-shadow: 0 2px 6px rgba(16,24,40,.25); }
+
+/* diálogo obrigatório ao desenhar um telhado novo */
+.tipo-escolha { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
+.tipo-escolha button {
+  flex: 1 1 45%; border: 0; border-radius: 9px; padding: 12px 8px; cursor: pointer;
+  font-size: 13px; font-weight: 700; color: #10171f; text-shadow: 0 1px 0 rgba(255,255,255,.35);
+}
+.tipo-escolha button:hover { filter: brightness(1.08); }
+
+/* ── Gestão: quadras tratadas e auditoria dos exemplos ───────────────────── */
+.mdl-tit { font-size: 16px; font-weight: 800; margin-bottom: 8px; }
+.mdl-busca {
+  width: 100%; border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px;
+  font-size: 13.5px; font-family: inherit; outline-color: var(--blue); margin: 8px 0 10px;
+}
+.q-lista { max-height: 56vh; overflow-y: auto; display: flex; flex-direction: column; gap: 7px; }
+.q-item {
+  border: 1px solid var(--line); border-radius: 11px; padding: 9px 12px; cursor: pointer;
+  transition: all .13s ease;
+}
+.q-item:hover { background: #f4f8fd; border-color: #c9d8ea; transform: translateX(2px); }
+.q-cab { font-size: 13.5px; display: flex; align-items: baseline; gap: 7px; }
+.q-data { margin-left: auto; font-size: 11px; color: var(--ink-2); font-weight: 500; }
+.q-vias { font-size: 12px; color: var(--blue); margin: 2px 0 4px; }
+.q-nums { display: flex; flex-wrap: wrap; gap: 10px; font-size: 11.5px; color: var(--ink-2); }
+.q-nums small { opacity: .7; }
+
+.ex-lista {
+  max-height: 56vh; overflow-y: auto; display: grid; gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+}
+.ex-card {
+  position: relative; border: 2px solid var(--c); border-radius: 11px; overflow: hidden;
+  background: #0f1419;
+}
+.ex-card img { width: 100%; height: 118px; object-fit: cover; display: block; cursor: zoom-in; }
+.ex-card figcaption {
+  padding: 6px 8px; font-size: 11px; color: #e6edf5; display: flex; flex-direction: column; gap: 1px;
+}
+.ex-card figcaption b { color: var(--c); font-size: 11.5px; }
+.ex-card .ex-mun, .ex-card .ex-mot { color: #9aa4b0; font-size: 10.5px; }
+.ex-del {
+  position: absolute; top: 5px; right: 5px; width: 24px; height: 24px; border: 0;
+  border-radius: 50%; background: rgba(217,48,37,.92); color: #fff; cursor: pointer;
+  font-size: 13px; font-weight: 700; line-height: 1;
+}
+.ex-del:hover { background: #b3170f; transform: scale(1.1); }
+
+/* ── Numeração lida em campo (Street View) ──────────────────────────────── */
+.q-item { position: relative; }
+.q-sv {
+  position: absolute; right: 10px; bottom: 9px; border: 1px solid #d8dee6;
+  background: #fff; border-radius: 999px; padding: 3px 9px; font-size: 10.5px;
+  font-weight: 700; color: var(--ink-2); cursor: pointer;
+}
+.q-sv:hover { background: #eef3f9; color: var(--blue); border-color: #b9cde6; }
+.sv-reguas { display: flex; flex-direction: column; gap: 5px; margin: 10px 0; }
+.sv-regua {
+  font-size: 12px; padding: 7px 10px; border-radius: 9px; background: #f4f6f8;
+  color: var(--ink-2); border-left: 3px solid #c3cbd4;
+}
+.sv-regua.ok { background: #eaf7ef; border-left-color: var(--green); color: #14532d; }
+.sv-regua small { opacity: .75; margin-left: 5px; }
+.sv-lista {
+  max-height: 44vh; overflow-y: auto; display: grid; gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+}
+.sv-card { border: 2px solid #d8dee6; border-radius: 11px; overflow: hidden; background: #0f1419; }
+.sv-card.lido { border-color: var(--green); }
+.sv-card.vazio { border-color: #c5221f; opacity: .75; }
+.sv-card img { width: 100%; height: 132px; object-fit: cover; display: block; }
+.sv-semfoto {
+  height: 132px; display: flex; align-items: center; justify-content: center;
+  color: #9aa4b0; font-size: 12px; background: #171d24;
+}
+.sv-card figcaption {
+  padding: 6px 8px; font-size: 11px; color: #e6edf5; display: flex;
+  flex-direction: column; gap: 1px;
+}
+.sv-card .sv-num { color: #22e07a; font-weight: 700; }
+.sv-card.vazio .sv-num { color: #ff8a80; }
+.sv-card .sv-todos, .sv-card .sv-org { color: #9aa4b0; font-size: 10.5px; }
+
+.sv-card .sv-fonte { color: #7fd4ff; font-size: 10px; }
+
+.sv-regua .sv-disc { color: #f0b429; }
+.sv-regua .sv-anc { color: #22e07a; }
+
+/* Popup da face (via) — nome canônico × IBGE */
+.face-pop { font-size: 13px; min-width: 190px; }
+.face-tit { font-weight: 800; margin-bottom: 6px; }
+.face-lin { display: flex; justify-content: space-between; gap: 12px; padding: 2px 0; }
+.face-lin span { color: var(--ink-2); font-size: 11.5px; }
+.face-conf { color: #b26a00; background: #fff6e0; border-radius: 6px; padding: 4px 7px; margin-top: 6px; font-size: 11.5px; font-weight: 700; }
+.face-num { margin-top: 5px; font-size: 11px; color: var(--ink-2); }
+
+/* Popup da face — canônico é o nome de verdade, IBGE é registro secundário */
+.face-nome { font-size: 15px; font-weight: 800; }
+.face-sub { font-size: 10.5px; color: var(--ink-2); margin: 1px 0 7px; }
+.face-ibge { font-size: 12px; color: var(--ink-2); }
+.face-ibge b { color: var(--ink); }
+.face-dif { color: #b26a00; font-weight: 800; }
+.face-lump { font-size: 10.5px; color: #b26a00; background: #fff6e0; border-radius: 6px; padding: 4px 7px; margin-top: 5px; }
+
+/* Escada de confiança da amarração ponto ↔ telhado */
+.conf-leg { display: flex; flex-direction: column; gap: 3px; margin: 2px 0 6px; }
+.conf-item {
+  display: flex; align-items: center; gap: 7px; width: 100%; cursor: pointer;
+  border: 1px solid transparent; background: #f6f8fa; border-radius: 8px;
+  padding: 5px 8px; font-size: 11.5px; color: var(--ink); text-align: left;
+}
+.conf-item:hover { background: #eef3f9; border-color: #c9d8ea; }
+.conf-item.on { background: #e6f0ff; border-color: var(--blue); font-weight: 700; }
+.conf-item i { width: 11px; height: 11px; border-radius: 50%; flex-shrink: 0; }
+.conf-item .conf-nome { flex: 1; }
+.conf-item b { color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.conf-item.entorno { border-style: dashed; }
+.hint.puxados { margin-top: 5px; font-size: 11px; color: #7c3aed; }
+
+/* Legenda das quadras: um grupo por quarteirão, com as faces dentro. A lista
+   cresce com a área analisada, então rola dentro do painel em vez de empurrá-lo. */
+#q-legenda { max-height: 46vh; overflow-y: auto; }
+.q-grupo { margin: 6px 0 2px; }
+.q-grupo-tit { font-size: 11px; text-transform: uppercase; letter-spacing: .5px;
+               color: var(--ink-2); margin: 6px 0 3px; }
+.sel-larga { width: 100%; margin: 4px 0; }
+
+/* Lista de quadras tratadas: rola dentro do painel, uma linha por quarteirão */
+.q-lista { max-height: 52vh; overflow-y: auto; margin: 6px 0; }
+.q-item { display: block; width: 100%; text-align: left; padding: 5px 8px; margin: 2px 0;
+          border: 1px solid var(--linha, #dbe3ec); border-radius: 6px; background: #fff;
+          cursor: pointer; font-size: 12.5px; }
+.q-item:hover { background: #eef3f9; }
+.q-item.on { background: #e6f0ff; border-color: var(--blue, #1a73e8); font-weight: 600; }
+.q-item b { font-variant-numeric: tabular-nums; }
+.q-item small { display: block; color: var(--ink-2, #6b7785); font-weight: 400; }
+
+/* Modal de visualização: uma linha por camada, com o contador do que ela desenha */
+.vis-grupo { margin: 10px 0 4px; font-size: 11px; text-transform: uppercase;
+             letter-spacing: .5px; color: var(--ink-2); }
+.vis-item { display: flex; align-items: center; gap: 8px; padding: 5px 8px; margin: 2px 0;
+            border: 1px solid var(--linha, #dbe3ec); border-radius: 6px; cursor: pointer;
+            font-size: 12.5px; background: #fff; }
+.vis-item:hover { background: #eef3f9; }
+.vis-item i { width: 13px; height: 13px; border-radius: 50%; flex: none; }
+.vis-item i.linha { height: 3px; border-radius: 2px; }
+.vis-item .vis-n { margin-left: auto; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.vis-item.off { opacity: .45; }

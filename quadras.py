@@ -1,0 +1,160 @@
+# -*- coding: utf-8 -*-
+"""Terminal do processo de quadras — cada passo roda sozinho, e dá para retomar.
+
+    quadras.py area   --wkt "POLYGON((...))"        passo 1 (cria a sessão)
+    quadras.py area   --arquivo area.wkt
+    quadras.py vias   --sessao S [--com-maps] [--sem-proxy]
+    quadras.py borda  --sessao S
+    quadras.py pontos --sessao S
+    quadras.py faces  --sessao S
+    quadras.py alinhar --sessao S               passo 6
+    quadras.py telhados --sessao S [--com-maps]  passo 7 (Overture)
+    quadras.py casar   --sessao S               passo 8 (ponto ↔ telhado)
+    quadras.py tudo   --area areas/area_atual.json  1 a 5 na área do mapa
+    quadras.py tudo   --wkt "..."                   1 a 5 de uma vez
+    quadras.py tudo   --sessao S                    refaz 2 a 5 da sessão
+    quadras.py retomar --sessao S                   segue do passo que faltou
+    quadras.py sessoes                              lista as sessões
+    quadras.py ver    --sessao S                    resumo do que há na sessão
+
+Rodar um passo isolado REFAZ aquele passo e invalida os seguintes (refazer as
+vias invalida quadras, pontos e faces — elas derivam dele). É de propósito: meio
+resultado velho misturado com metade novo é pior que refazer.
+
+O nome de cada face sai da MAIORIA dos endereços que caem nela. A leitura no
+Maps (`--com-maps`) fica desligada: ela custava ~60 s contra 1,4 s de todo o
+resto, e a coluna `via_osm.nome_canonico` continua no banco para quando voltar.
+"""
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+BASE = Path(__file__).resolve().parent
+sys.path.insert(0, str(BASE))
+
+import base_comum as bc  # noqa: E402
+import quadras_analise as QA  # noqa: E402
+import quadras_db as QD  # noqa: E402
+
+
+def _area_wkt(a) -> str:
+    if a.wkt:
+        return a.wkt
+    if a.arquivo:
+        return Path(a.arquivo).read_text(encoding="utf-8").strip()
+    if a.area:
+        # mesmo formato dos demais processos: {"polygon": [[lat, lng], ...]}
+        import json
+        d = json.loads(Path(a.area).read_text(encoding="utf-8"))
+        pol = d.get("polygon") or []
+        if len(pol) < 3:
+            raise SystemExit(f"{a.area} não tem polígono — desenhe a área no mapa")
+        anel = list(pol) + [pol[0]]
+        return "POLYGON ((" + ", ".join(f"{ln} {la}" for la, ln in anel) + "))"
+    raise SystemExit("informe --wkt, --arquivo ou --area com o polígono")
+
+
+def _exige_sessao(a) -> str:
+    if not a.sessao:
+        raise SystemExit("informe --sessao (veja com: quadras.py sessoes)")
+    if not QD.sessao(a.sessao):
+        raise SystemExit(f"sessão '{a.sessao}' não existe")
+    return a.sessao
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("comando", choices=["area", "vias", "borda", "pontos", "faces",
+                                       "alinhar", "telhados", "casar", "tudo", "retomar",
+                                       "sessoes", "ver"])
+    p.add_argument("--sessao")
+    p.add_argument("--wkt")
+    p.add_argument("--arquivo")
+    p.add_argument("--area", help="areas/area_atual.json — o mesmo polígono que os "
+                                  "outros processos usam (é como o mapa dispara)")
+    p.add_argument("--sem-proxy", action="store_true",
+                   help="consulta o Maps direto, sem o pool de proxies")
+    p.add_argument("--com-maps", action="store_true",
+                   help="lê o nome canônico de cada via no Maps (lento: ~10 s/via). "
+                        "Sem isso o nome da face vem da maioria dos endereços dela.")
+    a = p.parse_args()
+
+    if a.comando == "sessoes":
+        for s in QD.sessoes():
+            marca = "✗" if s["erro"] else " "
+            print(f"{marca} {s['id']:34s} passo {s['passo']}/8 · "
+                  f"{s['municipio'] or '?'}/{s['uf'] or '?'} · "
+                  f"{s['vias']} vias · {s['quadras']} quadras · {s['pontos']} pontos"
+                  + (f"\n    erro: {s['erro']}" if s["erro"] else ""))
+        return
+
+    if a.comando == "ver":
+        sid = _exige_sessao(a)
+        s = QD.sessao(sid)
+        print(f"sessão {sid} · {s['municipio']}/{s['uf']} · passo {s['passo']}/8")
+        if s["erro"]:
+            print(f"  ERRO: {s['erro']}")
+        for n, r in sorted((s["passos"] or {}).items()):
+            print(f"  passo {n} ({QA.PASSOS.get(int(n), '?')}): {r}")
+        fs = QD.faces(sid)
+        for f in fs:
+            print(f"  q{f['quadra_id']} face {f['face_idx']}: "
+                  f"{f['nome_canonico'] or f['nome_osm'] or '—'} · "
+                  f"paridade {f['paridade'] or '—'} "
+                  f"(par {f['recuo_par_m']} m / ímpar {f['recuo_impar_m']} m)")
+        return
+
+    kw = {"usar_proxy": not a.sem_proxy, "com_maps": a.com_maps}
+
+    if a.comando == "area":
+        r = QA.passo1_area(_area_wkt(a))
+        print(f"  rode agora:  quadras.py vias --sessao {r['sessao']}")
+        return
+
+    if a.comando == "tudo":
+        sid = a.sessao or QA.passo1_area(_area_wkt(a))["sessao"]
+        QA.rodar(sid, 2, 6, **kw)
+        print(f"\nsessão: {sid}")
+        return
+
+    if a.comando == "retomar":
+        sid = _exige_sessao(a)
+        s = QD.sessao(sid)
+        de = min(int(s["passo"]) + 1, 6)
+        if s["passo"] >= 6 and not s["erro"]:
+            print(f"sessão {sid} já concluiu os 6 passos (use um passo isolado "
+                  f"para refazer)")
+            return
+        print(f"retomando {sid} do passo {de}", flush=True)
+        QA.rodar(sid, de, 6, **kw)
+        return
+
+    sid = _exige_sessao(a)
+    con = bc.conectar()
+    try:
+        if a.comando == "vias":
+            QA.passo2_vias(sid, con=con, **kw)
+        elif a.comando == "borda":
+            QA.passo3_borda(sid, con=con)
+        elif a.comando == "pontos":
+            QA.passo4_pontos(sid, con=con)
+        elif a.comando == "faces":
+            QA.passo5_faces(sid, con=con)
+        elif a.comando == "alinhar":
+            QA.passo6_alinhar(sid, con=con)
+        elif a.comando == "telhados":
+            import quadras_telhados as QT
+            QT.passo7_telhados(sid, com_maps=a.com_maps,
+                               usar_proxy=not a.sem_proxy, con=con)
+        elif a.comando == "casar":
+            import quadras_telhados as QT
+            QT.passo8_casar(sid, con=con)
+    finally:
+        con.close()
+
+
+if __name__ == "__main__":
+    main()

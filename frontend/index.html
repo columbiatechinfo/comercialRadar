@@ -37,6 +37,9 @@
     <button class="mode" data-mode="enriquecimento">
       <span class="mode-ico">💎</span> Enriquecimento
     </button>
+    <button class="mode" data-mode="quadras">
+      <span class="mode-ico">🏘️</span> Quadras + endereços
+    </button>
   </nav>
 
   <div class="top-right">
@@ -115,6 +118,38 @@
       </label>
       <label class="opt"><input type="checkbox" id="op-details"> Coleta profunda — telefone, horários e reviews <small>(Place Details, pago)</small></label>
       <div class="hint">Varre toda a área do polígono e traz <b>tudo que existir</b> de comércio/serviço.</div>
+    </div>
+  </section>
+
+  <!-- PASSO 2: modo quadras (área → vias → quadras → pontos → faces) -->
+  <section class="p-sec hidden" id="sec-quadras">
+    <div class="p-title"><span class="p-step">2</span> Quadras + endereços</div>
+    <div class="p-body">
+      <div class="hint">Monta as <b>quadras</b> da área pelas vias do OSM, dá a cada face o
+        <b>nome majoritário</b> dos endereços dela, acha a <b>borda real</b> do quarteirão e traz os
+        <b>endereços do CNEFE</b> a 20&nbsp;m das vias e de dentro da quadra — dizendo a
+        <b>via e a paridade</b> de cada face.</div>
+      <div class="hint"><b>Nenhum ponto é movido.</b> A posição é sempre a original do
+        cadastro — o processo classifica, não corrige a base.</div>
+      <label class="opt"><input type="checkbox" id="op-q-maps">
+        Ler o nome da via no Maps
+        <small>(desligado: custa ~10&nbsp;s por via. Sem isso o nome da face vem da
+        maioria dos endereços dela, que é instantâneo)</small></label>
+      <label class="opt"><input type="checkbox" id="op-q-proxy" checked>
+        Usar o pool de proxies <small>(só vale com a leitura no Maps ligada)</small></label>
+
+      <div class="row">
+        <button class="btn sm" id="btn-q-tratadas">📋 Quadras tratadas</button>
+        <button class="btn sm" id="btn-q-ver">👁 Visualização</button>
+        <button class="btn sm" id="btn-q-limpar">✖ Limpar mapa</button>
+      </div>
+
+      <div class="p-sub">Faces da quadra</div>
+      <div class="conf-leg" id="q-legenda"></div>
+      <div class="hint">A cor do ponto é a da face a que ele pertence;
+        <b style="color:#ef4444">vermelho</b> = numeração destoa da paridade daquela face
+        (é o outro lado da rua). Clique numa face para isolá-la.</div>
+      <div class="hint" id="q-estado">nenhum resultado carregado</div>
     </div>
   </section>
 

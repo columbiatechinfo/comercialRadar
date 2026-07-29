@@ -25,6 +25,7 @@ Subir:  .venv\\Scripts\\python server.py   →  http://localhost:8765
 
 import io
 import json
+import os
 import re
 import sys
 import time
@@ -36,7 +37,7 @@ from pathlib import Path
 from datetime import datetime
 from collections import Counter
 
-from fastapi import FastAPI, UploadFile, File, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, UploadFile, File, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, StreamingResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
@@ -436,10 +437,60 @@ def _http_json(url: str, timeout: int = 90):
     return json.loads(raw)
 
 
+_UF_POR_COD = {"11": "RO", "12": "AC", "13": "AM", "14": "RR", "15": "PA", "16": "AP", "17": "TO",
+               "21": "MA", "22": "PI", "23": "CE", "24": "RN", "25": "PB", "26": "PE", "27": "AL",
+               "28": "SE", "29": "BA", "31": "MG", "32": "ES", "33": "RJ", "35": "SP", "41": "PR",
+               "42": "SC", "43": "RS", "50": "MS", "51": "MT", "52": "GO", "53": "DF"}
+_UFS_GEO: list = []          # [(sigla, shapely geom)] — malha das UFs, carregada uma vez
+
+
+def _uf_do_ponto(lat: float, lng: float) -> str:
+    """Em que UF cai este ponto? Usa a malha de estados do IBGE (cache em disco).
+
+    É o que faz as divisas seguirem o mapa: sem isto a malha vinha sempre da UF
+    majoritária do banco de POIs (PI), então quem trabalhava em PE não via divisa
+    nenhuma."""
+    global _UFS_GEO
+    if not _UFS_GEO:
+        cache = MALHAS / "_ufs.geojson"
+        try:
+            if cache.exists():
+                gj = json.loads(cache.read_text(encoding="utf-8"))
+            else:
+                # "intermediaria" e não "minima": a mínima generaliza as divisas e
+                # joga cidades de fronteira no estado errado (Itambé-PE virava PB)
+                gj = _http_json("https://servicodados.ibge.gov.br/api/v3/malhas/paises/BR"
+                                "?formato=application/vnd.geo+json&qualidade=intermediaria"
+                                "&intrarregiao=UF")
+                cache.write_text(json.dumps(gj, ensure_ascii=False), encoding="utf-8")
+            from shapely.geometry import shape
+            _UFS_GEO = [(_UF_POR_COD[c], shape(f["geometry"]))
+                        for f in gj.get("features", [])
+                        for c in [str(f.get("properties", {}).get("codarea", ""))[:2]]
+                        if c in _UF_POR_COD]
+        except Exception:
+            return ""
+    try:
+        from shapely.geometry import Point
+        p = Point(lng, lat)
+        for sig, geo in _UFS_GEO:
+            if geo.contains(p):
+                return sig
+        # fora de terra (mar, fronteira): pega a UF mais próxima
+        return min(_UFS_GEO, key=lambda g: g[1].distance(p))[0]
+    except Exception:
+        return ""
+
+
 @app.get("/api/malha")
-def malha(uf: str = ""):
-    """GeoJSON dos municípios da UF (malha IBGE, cache em malhas/<UF>.geojson)."""
+def malha(uf: str = "", lat: float | None = None, lng: float | None = None):
+    """GeoJSON dos municípios da UF (malha IBGE, cache em malhas/<UF>.geojson).
+
+    Sem `uf`, resolve pela coordenada (o front manda o centro do mapa); sem
+    coordenada, cai na UF majoritária do banco."""
     uf = (uf or "").strip().upper()
+    if uf not in _UFS and lat is not None and lng is not None:
+        uf = _uf_do_ponto(lat, lng)
     if uf not in _UFS:
         uf = _uf_majoritaria()
     cache = MALHAS / f"{uf}.geojson"
@@ -464,6 +515,172 @@ def malha(uf: str = ""):
 # ──────────────────────────────────────────────────────────────────────────
 # API — POIs / stats
 # ──────────────────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────
+# API — quadras (área → vias → quadras → pontos → faces)
+#
+# Cinco passos, cada um disparável sozinho e retomável pela SESSÃO. O servidor
+# só orquestra: quem faz é `quadras_analise`, o mesmo módulo do terminal — para
+# que rodar pelo mapa e rodar pelo shell não possam divergir.
+# ──────────────────────────────────────────────────────────────────────────
+def _qa():
+    """Import tardio: puxa shapely e o DuckDB do OSM, que não precisam subir
+    junto com o servidor."""
+    import quadras_analise
+    return quadras_analise
+
+
+@app.get("/api/quadras/sessoes")
+def quadras_sessoes(limite: int = 50):
+    import quadras_db
+    try:
+        return quadras_db.sessoes(limite=limite)
+    except Exception as e:
+        return JSONResponse({"erro": str(e)[:200]}, status_code=500)
+
+
+@app.get("/api/quadras/lista")
+def quadras_lista(limite: int = 300, busca: str = ""):
+    """Quadras já tratadas — a lista do painel. Clicar numa leva o mapa até ela."""
+    import quadras_db
+    try:
+        return quadras_db.lista_quadras(limite=limite, busca=busca)
+    except Exception as e:
+        return JSONResponse({"erro": str(e)[:200]}, status_code=500)
+
+
+@app.post("/api/quadras/area")
+async def quadras_area(req: Request):
+    """Passo 1 — a área desenhada vira sessão."""
+    op = await req.json()
+    try:
+        return _qa().passo1_area(op["wkt"])
+    except Exception as e:
+        return JSONResponse({"erro": str(e)[:300]}, status_code=400)
+
+
+@app.post("/api/quadras/rodar")
+async def quadras_rodar(req: Request):
+    """Passos 2–5 da sessão, em segundo plano (a leitura do nome canônico no
+    Maps leva minutos). O progresso é lido por /api/quadras/{sid}."""
+    op = await req.json()
+    sid = op.get("sessao")
+    de = int(op.get("de") or 2)
+    ate = int(op.get("ate") or 5)
+    if not sid:
+        return JSONResponse({"erro": "informe a sessão"}, status_code=400)
+    kw = {"usar_proxy": not op.get("sem_proxy"),
+          "com_maps": bool(op.get("com_maps"))}
+    threading.Thread(target=_qa().rodar, args=(sid, de, ate), kwargs=kw,
+                     daemon=True).start()
+    return {"ok": True, "sessao": sid, "de": de, "ate": ate}
+
+
+@app.post("/api/quadras/retomar")
+async def quadras_retomar(req: Request):
+    """Continua do passo seguinte ao último concluído."""
+    import quadras_db
+    op = await req.json()
+    sid = op.get("sessao")
+    s = quadras_db.sessao(sid) if sid else None
+    if not s:
+        return JSONResponse({"erro": "sessão não encontrada"}, status_code=404)
+    de = min(int(s["passo"]) + 1, 5)
+    threading.Thread(target=_qa().rodar, args=(sid, de, 5),
+                     kwargs={"usar_proxy": not op.get("sem_proxy")},
+                     daemon=True).start()
+    return {"ok": True, "sessao": sid, "de": de}
+
+
+# nomes que são ROTAS, não sessões. Sem esta lista, uma instância antiga do
+# servidor (sem /api/quadras/lista) deixa o {sid} capturar a palavra "lista" e
+# responder "sessão não encontrada" — erro que não diz o que está errado.
+_QUADRAS_RESERVADOS = {"lista", "sessoes", "area", "rodar", "retomar"}
+
+
+@app.get("/api/quadras/{sid}")
+def quadras_geojson(sid: str):
+    """GeoJSON da sessão: vias, quadra (OSM e real), faces e pontos.
+
+    O ponto sai na coordenada ORIGINAL do CNEFE — este processo classifica, não
+    corrige a base."""
+    import quadras_db
+    if sid in _QUADRAS_RESERVADOS:
+        return JSONResponse({"erro": f"'{sid}' é uma rota, não uma sessão — "
+                                     f"este servidor está desatualizado, reinicie-o",
+                             "servidor_antigo": True}, status_code=409)
+    try:
+        s = quadras_db.sessao(sid)
+        if not s:
+            return JSONResponse({"erro": "sessão não encontrada"}, status_code=404)
+        con = realtime_ingest.conectar()
+    except Exception as e:
+        return JSONResponse({"erro": str(e)[:200]}, status_code=500)
+    try:
+        feats = []
+        feats.append({"type": "Feature", "properties": {"camada": "area"},
+                      "geometry": _wkt_geo(s["area_wkt"])})
+        for v in quadras_db.vias(sid, con):
+            feats.append({"type": "Feature",
+                          "geometry": _wkt_geo(v["geom_wkt"]),
+                          "properties": {"camada": "via", "id": v["id"],
+                                         "nome_osm": v["nome_osm"], "tipo": v["tipo"],
+                                         "nome_canonico": v["nome_canonico"],
+                                         "comprimento_m": v["comprimento_m"]}})
+        for q in quadras_db.quadras(sid, con):
+            feats.append({"type": "Feature", "geometry": _wkt_geo(q["geom_osm"]),
+                          "properties": {"camada": "quadra_osm", "id": q["id"],
+                                         "area_m2": q["area_osm_m2"], "vias": q["vias"]}})
+            if q["geom_real"]:
+                feats.append({"type": "Feature", "geometry": _wkt_geo(q["geom_real"]),
+                              "properties": {"camada": "quadra_real", "id": q["id"],
+                                             "area_m2": q["area_real_m2"],
+                                             "recuo_medio_m": q["recuo_medio_m"]}})
+        for f in quadras_db.faces(sid, con):
+            feats.append({"type": "Feature", "geometry": _wkt_geo(f["anel_wkt"]),
+                          "properties": {"camada": "face", **f, "anel_wkt": None,
+                                         "anel_real_wkt": None}})
+            # a borda REAL da face é o trilho do alinhamento (passo 6)
+            if f.get("anel_real_wkt"):
+                feats.append({"type": "Feature",
+                              "geometry": _wkt_geo(f["anel_real_wkt"]),
+                              "properties": {"camada": "face_real",
+                                             "quadra_id": f["quadra_id"],
+                                             "face_idx": f["face_idx"],
+                                             "nome_canonico": f["nome_canonico"]}})
+        try:
+            import quadras_telhados
+            for t in quadras_telhados.telhados(sid, con):
+                if not t.get("geom_wkt"):
+                    continue
+                feats.append({"type": "Feature",
+                              "geometry": _wkt_geo(t["geom_wkt"]),
+                              "properties": {"camada": "telhado", **t,
+                                             "geom_wkt": None}})
+        except Exception as e:
+            print(f"[quadras] telhados indisponíveis: {str(e)[:90]}", flush=True)
+        for p in quadras_db.pontos(sid, con):
+            feats.append({"type": "Feature",
+                          "geometry": {"type": "Point", "coordinates": [p["lng"], p["lat"]]},
+                          "properties": {"camada": "ponto", **p}})
+        return {"type": "FeatureCollection", "features": feats,
+                "sessao": {k: v for k, v in s.items()
+                           if k not in ("area_wkt",)} | {
+                    "criado_em": s["criado_em"].isoformat(timespec="seconds")
+                    if s["criado_em"] else None,
+                    "atualizado_em": s["atualizado_em"].isoformat(timespec="seconds")
+                    if s["atualizado_em"] else None}}
+    except Exception as e:
+        return JSONResponse({"erro": str(e)[:300]}, status_code=500)
+    finally:
+        try: con.close()
+        except Exception: pass
+
+
+def _wkt_geo(w: str) -> dict:
+    from shapely import wkt as _w
+    from shapely.geometry import mapping
+    return mapping(_w.loads(w))
+
 @app.get("/api/pois")
 def listar_pois():
     conn = realtime_ingest.conectar()
@@ -808,6 +1025,18 @@ def iniciar_job(body: dict):
                 cmd.append("--pular-streetview")
             _novo_job("baixar_imagens", out_json, {})
 
+        elif modo == "quadras":
+            # Os 5 passos na área desenhada. Roda o MESMO CLI do terminal, como
+            # os demais processos: o log do subprocess é o progresso na tela.
+            # Não toca em POI nenhum — grava só nas tabelas de quadras.
+            out_json = MINERACAO / "_quadras_noop.json"   # watcher fica ocioso
+            cmd = [PYTHON, "quadras.py", "tudo", "--area", str(AREA_ATUAL)]
+            if op.get("com_maps"):
+                cmd.append("--com-maps")
+            if op.get("sem_proxy"):
+                cmd.append("--sem-proxy")
+            _novo_job("quadras", out_json, {})
+
         else:
             return JSONResponse({"erro": f"Modo inválido: {modo}"}, status_code=400)
 
@@ -845,10 +1074,29 @@ def parar_job():
 # ──────────────────────────────────────────────────────────────────────────
 @app.get("/")
 def index():
-    return FileResponse(FRONT / "index.html")
+    """index.html com css/js versionados pelo mtime.
+
+    O `?v=` troca a URL a cada edição do arquivo, então o navegador busca a versão
+    nova mesmo tendo uma cópia velha em cache — sem depender de hard reload."""
+    html = (FRONT / "index.html").read_text(encoding="utf-8")
+    for arq in ("style.css", "app.js"):
+        v = int((FRONT / arq).stat().st_mtime)
+        html = html.replace(f"/static/{arq}", f"/static/{arq}?v={v}")
+    return Response(html, media_type="text/html", headers={"Cache-Control": "no-cache"})
 
 
-app.mount("/static", StaticFiles(directory=str(FRONT)), name="static")
+class _FrontSemCache(StaticFiles):
+    """O front é editado com o servidor no ar; sem isto o navegador segura o
+    css/js antigos por horas (foi o que sumiu com o seletor de mapa). O
+    "no-cache" não desliga o cache: manda revalidar, e o 304 é barato."""
+
+    def file_response(self, *a, **kw):
+        r = super().file_response(*a, **kw)
+        r.headers["Cache-Control"] = "no-cache"
+        return r
+
+
+app.mount("/static", _FrontSemCache(directory=str(FRONT)), name="static")
 
 SV_DIR = BASE / "streetview"
 SV_DIR.mkdir(exist_ok=True)

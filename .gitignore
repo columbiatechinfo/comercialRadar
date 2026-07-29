@@ -57,3 +57,14 @@ exemplos/_telhados_*.html
 
 # Bases externas baixadas (pesadas, regeneráveis)
 dados_externos/
+
+# Quadras BR — caches reconstruiveis (PBF do Geofabrik, banco DuckDB, imagens pan-crop)
+dados/pbf/
+dados/pan_cache/
+dados/*.duckdb
+dados/*.duckdb.wal
+lab/
+
+# Pesos de modelos e cache de imagens do processo de telhados REMOVIDO em 28/07/2026
+# (ficam em disco por ora; nada no codigo os le mais)
+dados/modelos/
