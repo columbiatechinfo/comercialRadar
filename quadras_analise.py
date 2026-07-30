@@ -1283,6 +1283,168 @@ def _canonico(p, paridade, recuo: float, centro: float | None, largura: float,
 # ════════════════════════════════════════════════════════════════════════════
 # PASSO 6 — alinhar os pontos na face real
 # ════════════════════════════════════════════════════════════════════════════
+def alinhar_vias_abertas(sid: str, con=None) -> dict:
+    """Distribui na PRÓPRIA rua os endereços de via que não fecha quadra.
+
+    Beco, rua projetada e acesso de engenho não delimitam quarteirão, então não
+    há testada de quadra para eles. Mas a rua existe, tem eixo e tem dois lados —
+    e é nela que esses endereços moram. Antes eles ou eram projetados na face da
+    quadra VIZINHA (50 a 164 m de arrasto) ou ficavam na coordenada crua, soltos:
+    1.089 pontos espalhados sem organização nenhuma.
+
+    Aqui a via vira o trilho: recuada de meia caixa para o lado em que o ponto
+    está (dois trilhos por via, um por lado), com a MESMA régua do passo 6 —
+    sentido pelo Theil–Sen dos próprios números, espaçamento proporcional ao
+    NÚMERO e teto de `DESLOC_MAX_M`. Quem passa do teto ou não tem número vai
+    para o pé da perpendicular NESSE trilho, não no da quadra vizinha.
+
+    O lado sai do produto vetorial entre a direção da via e o vetor até o ponto:
+    positivo à esquerda do traçado, negativo à direita. Não importa qual é qual —
+    importa que os dois grupos não se misturem, senão a régua ordenaria juntos os
+    números dos dois lados da rua."""
+    from shapely import STRtree
+    fechar = con is None
+    con = con or bc.conectar()
+    try:
+        with con.cursor() as cur:
+            cur.execute("""SELECT id, geom_wkt, tipo, fecha_quadra FROM via_osm
+                            WHERE sessao_id=%s AND fecha_quadra IS NOT NULL""", (sid,))
+            vias = cur.fetchall()
+        if not vias:
+            return {"alinhados_via_aberta": 0}
+        pts = [p for p in QD.pontos(sid, con) if p["canonico"]]
+        if not pts:
+            return {"alinhados_via_aberta": 0}
+
+        lat0, lng0 = pts[0]["lat"], pts[0]["lng"]
+        my, mx = _metros(lat0)
+
+        def para_m(g):
+            return LineString([((x - lng0) * mx, (y - lat0) * my) for x, y in g.coords])
+
+        geos = [para_m(_wkt.loads(g)) for _, g, _, _ in vias]
+        arv = STRtree(geos)
+        aberta = {i: (vias[i][0], vias[i][2]) for i in range(len(vias)) if not vias[i][3]}
+
+        # cada ponto para a via mais próxima; só nos interessam as abertas
+        grupos: dict = {}
+        for p in pts:
+            q = Point((p["lng"] - lng0) * mx, (p["lat"] - lat0) * my)
+            i = arv.nearest(q)
+            if i not in aberta:
+                continue                       # a via dele fecha quadra: passo 6
+            ln = geos[i]
+            s = ln.project(q)
+            a = ln.interpolate(max(0.0, s - 0.5))
+            b = ln.interpolate(min(ln.length, s + 0.5))
+            # sinal do produto vetorial: de que lado do traçado o ponto está
+            cruz = ((b.x - a.x) * (q.y - a.y) - (b.y - a.y) * (q.x - a.x))
+            grupos.setdefault((i, cruz >= 0), []).append(p)
+
+        n_reg = n_perp = n_longe = 0
+        with con.cursor() as cur:
+            for (i, esq), ps in grupos.items():
+                ln = geos[i]
+                meia = LARGURA_VIA_M.get(aberta[i][1], LARGURA_PADRAO_M) / 2.0
+                try:
+                    trilho = ln.offset_curve(meia if esq else -meia)
+                except Exception:
+                    trilho = ln
+                if trilho.is_empty or trilho.length <= 0:
+                    trilho = ln
+                if trilho.geom_type != "LineString":       # offset pode partir
+                    trilho = max(trilho.geoms, key=lambda g: g.length)
+
+                def grava(p, alvo, modo, por):
+                    # de volta a graus
+                    la, lg = alvo.y / my + lat0, alvo.x / mx + lng0
+                    d = _dist_m(p["lat"], p["lng"], la, lg)
+                    # Teto também na perpendicular. Ela é o "movimento mínimo",
+                    # mas mínimo de 105 m é teletransporte: o ponto simplesmente
+                    # não é dessa rua. `FAIXA_PONTOS_M` é a própria faixa com que
+                    # a coleta o trouxe — além dela não há vínculo com a via.
+                    if d > FAIXA_PONTOS_M:
+                        cur.execute("""UPDATE quadra_ponto
+                                          SET lat_alinhado=lat, lng_alinhado=lng,
+                                              desloc_m=0, ordem_face=NULL,
+                                              alinhado_modo='preservado',
+                                              alinhado_por=%s WHERE id=%s""",
+                                    (f"a rua mais próxima não fecha quadra e está a "
+                                     f"{d:.0f} m — longe demais para ser dele; "
+                                     f"mantido na coordenada original", p["id"]))
+                        return None
+                    cur.execute("""UPDATE quadra_ponto SET lat_alinhado=%s,
+                                          lng_alinhado=%s, alinhado_modo=%s,
+                                          alinhado_por=%s, desloc_m=%s WHERE id=%s""",
+                                (la, lg, modo, por, round(d, 1), p["id"]))
+                    return d
+
+                ms = [p for p in ps if p["numero"]]
+                if len(ms) < 2:
+                    for p in ps:
+                        q = Point((p["lng"] - lng0) * mx, (p["lat"] - lat0) * my)
+                        if grava(p, trilho.interpolate(trilho.project(q)),
+                                 "via_aberta_perp",
+                                 "perpendicular à própria rua (que não fecha quadra) "
+                                 "— sem duas âncoras numeradas para haver régua") is None:
+                            n_longe += 1
+                        else:
+                            n_perp += 1
+                    continue
+
+                comp = trilho.length or 1
+                proj = {p["id"]: trilho.project(
+                    Point((p["lng"] - lng0) * mx, (p["lat"] - lat0) * my)) / comp
+                    for p in ms}
+                cresce = _sentido(ms, proj)
+                nums = [p["numero"] for p in ms]
+                n0, n1 = min(nums), max(nums)
+                span = (n1 - n0) or 1
+                for p in ps:
+                    q = Point((p["lng"] - lng0) * mx, (p["lat"] - lat0) * my)
+                    if not p["numero"]:
+                        if grava(p, trilho.interpolate(trilho.project(q)),
+                                 "via_aberta_perp",
+                                 "perpendicular à própria rua (que não fecha quadra) "
+                                 "— sem número, fora da régua") is None:
+                            n_longe += 1
+                        else:
+                            n_perp += 1
+                        continue
+                    frac = (p["numero"] - n0) / span
+                    if cresce < 0:
+                        frac = 1.0 - frac
+                    alvo = trilho.interpolate(frac, normalized=True)
+                    la, lg = alvo.y / my + lat0, alvo.x / mx + lng0
+                    if _dist_m(p["lat"], p["lng"], la, lg) > DESLOC_MAX_M:
+                        if grava(p, trilho.interpolate(trilho.project(q)),
+                                 "via_aberta_perp",
+                                 f"perpendicular à própria rua (que não fecha "
+                                 f"quadra) — a régua o levaria além do teto de "
+                                 f"{DESLOC_MAX_M:.0f} m") is None:
+                            n_longe += 1
+                        else:
+                            n_perp += 1
+                        continue
+                    if grava(p, alvo, "via_aberta",
+                             f"nº {n0}–{n1} distribuídos na PRÓPRIA rua, que não fecha "
+                             f"quadra ({'crescente' if cresce > 0 else 'decrescente'} "
+                             f"no traçado), espaçamento proporcional ao número") is None:
+                        n_longe += 1
+                    else:
+                        n_reg += 1
+        con.commit()
+        print(f"      {n_reg + n_perp} pontos alinhados na PRÓPRIA rua que não fecha "
+              f"quadra ({n_reg} pela régua, {n_perp} na perpendicular)"
+              + (f" · {n_longe} longe demais da rua, mantidos onde estavam"
+                 if n_longe else ""), flush=True)
+        return {"alinhados_via_aberta": n_reg, "perp_via_aberta": n_perp,
+                "longe_da_via_aberta": n_longe}
+    finally:
+        if fechar:
+            con.close()
+
+
 def preservar_no_lugar(sid: str, con=None) -> dict:
     """Quem já está num lugar construído e não pertence àquela testada FICA.
 
@@ -1358,12 +1520,17 @@ def preservar_no_lugar(sid: str, con=None) -> dict:
                     d_fe = (t_fe.geometries[t_fe.nearest(p)].distance(p)
                             if t_fe is not None else float("inf"))
                     via_aberta = d_ab < d_fe
+                if via_aberta:
+                    # NÃO fica mais na coordenada crua: `alinhar_vias_abertas`
+                    # o distribui na PRÓPRIA rua, que é onde ele mora. Deixá-lo
+                    # solto era o espalhamento que aparecia no mapa; arrastá-lo
+                    # para a face vizinha era pior ainda. Esta regra sai de cena.
+                    continue
                 nome_confirma = bool(nome_face and logr
                                      and norm_via(logr) == norm_via(nome_face))
-                if not via_aberta and nome_confirma:
+                if nome_confirma:
                     continue                      # é a face dele mesmo: régua vale
-                por = ("via que não fecha quadra" if via_aberta else
-                       "a face não tem nome identificado" if not nome_face else
+                por = ("a face não tem nome identificado" if not nome_face else
                        f"o endereço diz '{logr}' e a face é '{nome_face}'")
                 cur.execute("""UPDATE quadra_ponto
                                   SET lat_alinhado=lat, lng_alinhado=lng, desloc_m=0,
@@ -1374,12 +1541,10 @@ def preservar_no_lugar(sid: str, con=None) -> dict:
                              f"{RAIO_TELHADO_VIA_ABERTA_M:.0f} m — mantido na "
                              f"coordenada original do CNEFE", pid))
                 n += 1
-                n_via += int(via_aberta)
-                n_nome += int(not via_aberta)
+                n_nome += 1
         con.commit()
         print(f"      {n} pontos MANTIDOS na coordenada original "
-              f"({n_via} por via que não fecha quadra, {n_nome} porque o nome do "
-              f"endereço não confirma a face)", flush=True)
+              f"(o nome do endereço não confirma a face)", flush=True)
         return {"preservados": n}
     finally:
         if fechar:
@@ -1528,13 +1693,17 @@ def passo6_alinhar(sid: str, con=None) -> dict:
         if n_perp_sem_regua:
             print(f"      {n_perp_sem_regua} pontos na PERPENDICULAR — sem número "
                   f"ou face sem duas âncoras", flush=True)
+        # quem mora em rua que não fecha quadra é distribuído NA PRÓPRIA RUA, e
+        # não na testada da quadra vizinha. Roda DEPOIS da régua das faces,
+        # porque sobrescreve o que ela tiver feito com esses pontos.
+        va = alinhar_vias_abertas(sid, con)
         gr = _agrupar_mesmo_endereco(sid, con)
         # depende dos telhados: só age se o passo 7 já rodou nesta sessão. Numa
         # corrida 1→8 quem aplica é o passo 8, no fim.
         pv = preservar_no_lugar(sid, con)
         res = {"alinhados": n_alin, "faces_alinhadas": n_faces,
                "perpendiculares": n_recusa + n_perp_sem_regua,
-               "preservados": pv.get("preservados", 0), **gr}
+               "preservados": pv.get("preservados", 0), **va, **gr}
         print(f"[6/6] {n_alin} pontos alinhados na borda real de {n_faces} faces",
               flush=True)
         QD.marcar_passo(sid, 6, res, con=con)

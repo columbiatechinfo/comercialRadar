@@ -960,6 +960,40 @@ cadastro não tem, e espaçar por igual fingiria que a rua é contínua. A posi�
 - **`preservado`** — fica **exatamente onde o CNEFE o pôs**. Ver "Via que não
   fecha quadra" abaixo.
 
+#### A rua que não fecha quadra vira trilho dela mesma
+
+Beco, rua projetada e acesso de engenho não delimitam quarteirão — mas a rua
+**existe**, tem eixo e tem dois lados, e é nela que esses endereços moram. Antes
+eles eram projetados na testada da quadra VIZINHA (50 a 164 m de arrasto) ou
+ficavam na coordenada crua, espalhados sem organização nenhuma.
+
+`alinhar_vias_abertas` usa a própria via como trilho: recuada de meia caixa para o
+lado em que o ponto está (dois trilhos por via, um por lado), com a **mesma régua
+do passo 6** — sentido pelo Theil–Sen dos próprios números, espaçamento
+proporcional ao NÚMERO e teto de `DESLOC_MAX_M`.
+
+O lado sai do produto vetorial entre a direção da via e o vetor até o ponto. Não
+importa qual lado é qual — importa que os dois grupos não se misturem, senão a
+régua ordenaria juntos os números dos dois lados da rua.
+
+**Teto também na perpendicular**, que aqui é a saída mais usada: ela é o
+"movimento mínimo", mas mínimo de 105 m é teletransporte — o ponto simplesmente
+não é daquela rua. Além de `FAIXA_PONTOS_M` (20 m, a mesma faixa com que a coleta
+o trouxe) ele fica na coordenada original.
+
+Medido em Itambé — **1.039 pontos** distribuídos (77 pela régua, 962 na
+perpendicular) e 76 mantidos por estarem longe demais. A dispersão em relação à
+rua colapsou:
+
+| distância à rua | mediana | desvio | máximo |
+|---|---:|---:|---:|
+| antes (coordenada crua) | 4,8 m | **5,0 m** | 24,6 m |
+| depois (alinhado) | 4,0 m | **0,5 m** | 7,0 m |
+
+A mediana de 4,0 m é meia caixa de via residencial: os pontos estão exatamente
+sobre a testada. No mapa saem com **anel âmbar**, tracejado quando na
+perpendicular.
+
 #### O que NÃO deve ser movido (`preservar_no_lugar`)
 
 **Todo deslocamento acima de 20 m é `perpendicular`** — medido: régua, telhado e
@@ -968,15 +1002,10 @@ limite, e era por ela que os disparates entravam.
 
 A condição de entrada é sempre o **telhado a menos de
 `RAIO_TELHADO_VIA_ABERTA_M` (53 m)**: havendo construção ali, a coordenada do
-CNEFE aponta para algo real e vale mais que qualquer projeção. A partir dela,
-duas situações mandam manter o ponto onde está:
+CNEFE aponta para algo real e vale mais que qualquer projeção. A partir dela, uma
+situação manda manter o ponto onde está:
 
-**1. A via mais próxima não fecha quadra.** Beco, rua projetada e acesso de
-engenho não delimitam quarteirão, e quem mora neles não tem testada para onde ir.
-Em Itambé a Rua Sete, a Rua do Buracão e o Beco de Manoel Barbosa eram arrastados
-**50 a 164 m**, cruzando quarteirão inteiro.
-
-**2. O nome do endereço não confirma a face.** Se o ponto diz "RUA TIMBAÚBA" e a
+**O nome do endereço não confirma a face.** Se o ponto diz "RUA TIMBAÚBA" e a
 face para onde ele iria tem outro nome — ou não tem nome nenhum, porque nenhum
 endereço do CNEFE caiu nela —, não há o que sustente a mudança. O nome do próprio
 endereço é a evidência mais forte de onde ele fica, e nenhuma projeção passa por

@@ -18,6 +18,12 @@ map.createPane("paneQuadras").style.zIndex = 620;
 map.createPane("paneMarcadores").style.zIndex = 630;
 map.createPane("paneFaces").style.zIndex = 645;   // vias no topo: clicar nelas sempre vence
 
+/* Tirar o mouse do mapa de uma vez (sair pela borda, ir para o painel, trocar de
+   janela) não dispara `mouseout` no <path> que está sob o cursor, e o tooltip
+   fica preso na tela. Fechar na saída do container cobre todos esses casos. */
+map.getContainer().addEventListener("mouseleave", () => fecharTooltips());
+window.addEventListener("blur", () => fecharTooltips());
+
 L.control.zoom({ position: "bottomright" }).addTo(map);
 L.control.attribution({ position: "bottomright", prefix: false })
   .addAttribution('&copy; OpenStreetMap &middot; CARTO').addTo(map);
@@ -1158,7 +1164,21 @@ function addCamada(nome, layer) {
   return layer;
 }
 
+/* Fecha qualquer tooltip aberto.
+
+   Leaflet só fecha o tooltip no `mouseout` do elemento. Esconder um <path> com
+   `display:none` (é o que o modal de visualização faz) NÃO dispara mouseout, e
+   remover a camada com o tooltip aberto também não — nos dois casos ele fica
+   órfão na tela, preso até a página recarregar. O tooltip entra no mapa como
+   camada, então dá para varrer e remover. */
+function fecharTooltips() {
+  try {
+    map.eachLayer((l) => { if (l instanceof L.Tooltip) map.removeLayer(l); });
+  } catch { /* mapa ainda não montado */ }
+}
+
 function limparQuadras() {
+  fecharTooltips();
   qCamadas.forEach((c) => { try { map.removeLayer(c); } catch { /* ok */ } });
   qCamadas = [];
   qLayers = {};
@@ -1362,11 +1382,16 @@ async function carregarQuadras(sid, silencioso = false) {
         // coordenada original de propósito. Anel claro, para não parecer que a
         // régua o alcançou nem que ele foi projetado.
         const preso = p.alinhado_modo === "preservado";
+        // distribuído na PRÓPRIA rua que não fecha quadra: anel âmbar, para se
+        // distinguir de quem foi para a testada de um quarteirão
+        const rua = p.alinhado_modo === "via_aberta"
+                 || p.alinhado_modo === "via_aberta_perp";
+        const ruaPerp = p.alinhado_modo === "via_aberta_perp";
         return L.circleMarker(latlng, {
           pane: "paneMarcadores", radius: 5 + Math.min(6, Math.sqrt(n - 1) * 3),
-          weight: perp || preso ? 2.4 : (n > 1 ? 2.2 : 1.6),
-          dashArray: perp ? "3,3" : null,
-          color: preso ? "#38bdf8"
+          weight: perp || preso || rua ? 2.4 : (n > 1 ? 2.2 : 1.6),
+          dashArray: perp || ruaPerp ? "3,3" : null,
+          color: preso ? "#38bdf8" : rua ? "#f59e0b"
                : perp ? "#111827" : (noTelhado ? "#ffffff" : "#0b0f14"),
           fillColor: c, fillOpacity: perp ? 0.75 : 1, opacity: 1 });
       },
@@ -1676,6 +1701,7 @@ function abrirVisualizacao() {
 }
 
 function aplicarVisualizacao() {
+  fecharTooltips();       // o que vai sumir agora não pode deixar tooltip preso
   Object.entries(qLayers).forEach(([k, l]) => {
     if (!l) return;
     const quer = qVis[k] !== false;

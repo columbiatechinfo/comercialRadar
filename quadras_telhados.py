@@ -321,6 +321,10 @@ def passo8_casar(sid: str, con=None) -> dict:
         # fecha quadra e tem telhado por perto volta para a coordenada original.
         # Aqui os telhados existem por definição, então é aqui que a regra pega
         # numa corrida normal de 1 a 8.
+        # o casamento acima mexe em ponto de rua que não fecha quadra (ele tem
+        # face_idx da quadra vizinha): redistribui na própria rua de novo, senão
+        # o passo 8 desfaz o que o 6 arrumou
+        QA.alinhar_vias_abertas(sid, con)
         pv = QA.preservar_no_lugar(sid, con)
         res = {"casados_com_telhado": n_casados, "interpolados": n_interp,
                "preservados": pv.get("preservados", 0)}
