@@ -708,16 +708,36 @@ def _classificar_faces(sid: str, con) -> tuple:
                     if d < md:
                         melhor, md = fi, d
                 do_ponto[p["id"]] = (melhor if md <= RAIO_FACE_M else None, md)
+            # Quanto de cada face corre AO LONGO de uma via nomeada do OSM. Serve
+            # para separar as faces com respaldo das que não têm nenhum — e a
+            # distância do ponto médio não serve para isso, porque nos cantos a
+            # face encosta em todas as transversais a 0,0 m.
+            respaldo = {f["face_idx"]: _via_ao_longo(linhas[f["face_idx"]], vias)
+                        for f in fs}
+            # Nome que uma face COM respaldo já tomou não pode ser adotado por uma
+            # face SEM respaldo. Foi assim que uma face de 51 m sem via no OSM
+            # virou "RUA JOAO PAES" pela maioria dos endereços e passou a puxar os
+            # pontos da João Paes de verdade, que tem 100% de respaldo ao lado.
+            tomados = set()
+            for fi2, (v2, fr2) in respaldo.items():
+                if fr2 < FRACAO_BORDA_MIN:
+                    continue
+                da2 = [p for p in meus if do_ponto[p["id"]][0] == fi2]
+                n2, _ = _nome_da_face(da2, v2)
+                if n2:
+                    tomados.add(norm_via(n2))
+
             for f in fs:
                 fi = f["face_idx"]
                 ln = linhas[fi]
-                # via canônica: a via do OSM cujo eixo acompanha esta face
-                meio = ln.interpolate(0.5, normalized=True)
-                via, dv = None, 1e18
-                for v, g in vias:
-                    d = g.distance(meio) * 111320.0
-                    if d < dv:
-                        via, dv = v, d
+                via, fr = respaldo[fi]
+                dv = (via["_dist_m"] if via and "_dist_m" in via else 1e18)
+                if via is None:            # nenhuma via ao longo: pega a mais perto
+                    meio = ln.interpolate(0.5, normalized=True)
+                    for v, g in vias:
+                        d = g.distance(meio) * 111320.0
+                        if d < dv:
+                            via, dv = v, d
                 prof = {0: [], 1: []}
                 da_face = []
                 for p in meus:
@@ -729,7 +749,10 @@ def _classificar_faces(sid: str, con) -> tuple:
                             _recuo_com_sinal(Point(p["lng"], p["lat"]), ln, quadra_pol))
                 largura = 2.0 * _tolerancia(f.get("recuo_m"))
                 par, por, centro = _paridade(prof, largura)
-                nome, fonte = _nome_da_face(da_face, via)
+                # face sem via ao longo dela não herda o nome de uma face que TEM
+                nome, fonte = _nome_da_face(
+                    da_face, via,
+                    bloqueados=(tomados if fr < FRACAO_BORDA_MIN else None))
                 cur.execute("""UPDATE quadra_face SET via_id=%s, nome_canonico=%s,
                                       nome_osm=%s, nome_fonte=%s, dist_via_m=%s,
                                       paridade=%s, paridade_por=%s,
@@ -1121,7 +1144,30 @@ def _agrupar_faces(faces):
     return d
 
 
-def _nome_da_face(pontos: list[dict], via: dict | None):
+def _via_ao_longo(ln: LineString, vias, tol_m: float = 12.0):
+    """A via do OSM que mais acompanha esta face, e QUANTO dela acompanha.
+
+    Distância não serve: numa esquina a face encosta em todas as transversais a
+    0,0 m. O que separa "esta é a rua da face" de "esta rua só cruza aqui" é a
+    fração do comprimento da face que corre dentro do buffer da via."""
+    tot = ln.length
+    if not tot:
+        return None, 0.0
+    g_buf = tol_m / 111320.0
+    melhor, frac = None, 0.0
+    for v, g in vias:
+        if not (v.get("nome_osm") or "").strip():
+            continue
+        f = ln.intersection(g.buffer(g_buf)).length / tot
+        if f > frac:
+            melhor, frac = v, f
+    if melhor is not None:
+        melhor = dict(melhor)
+        melhor["_dist_m"] = 0.0
+    return melhor, frac
+
+
+def _nome_da_face(pontos: list[dict], via: dict | None, bloqueados=None):
     """O nome da face é o do LOGRADOURO MAJORITÁRIO dos endereços que caem nela.
 
     Quem sabe o nome da rua são os itens que moram nela — não o traçado do OSM,
@@ -1137,10 +1183,18 @@ def _nome_da_face(pontos: list[dict], via: dict | None):
     c = Counter((p.get("logradouro") or "").strip()
                 for p in pontos if (p.get("logradouro") or "").strip())
     if c:
-        (nome, n), *resto = c.most_common()
-        folga = n - (resto[0][1] if resto else 0)
-        if n >= MIN_VOTOS_NOME and folga >= 1:
-            return nome, f"maioria dos endereços ({n} de {sum(c.values())})"
+        # `bloqueados` chega quando esta face NÃO tem via do OSM correndo ao longo
+        # dela: aí ela não pode tomar por maioria um nome que uma face vizinha já
+        # tem com respaldo do traçado. Sem isso, uma face de 51 m sem via virava
+        # "RUA JOAO PAES" e puxava os pontos da João Paes de verdade, ao lado.
+        blo = bloqueados or set()
+        for nome, n in c.most_common():
+            if norm_via(nome) in blo:
+                continue
+            folga = n - max((k for x, k in c.most_common() if x != nome), default=0)
+            if n >= MIN_VOTOS_NOME and folga >= 1:
+                return nome, f"maioria dos endereços ({n} de {sum(c.values())})"
+            break
     if via and via.get("nome_osm"):
         return via["nome_osm"], "traçado do OSM (sem maioria nos endereços)"
     return None, "indefinido"
@@ -1480,9 +1534,16 @@ def alinhar_vias_abertas(sid: str, con=None) -> dict:
 def preservar_no_lugar(sid: str, con=None) -> dict:
     """Quem já está num lugar construído e não pertence àquela testada FICA.
 
-    Havendo TELHADO a menos de `RAIO_TELHADO_VIA_ABERTA_M` do ponto, a coordenada
-    do CNEFE aponta para uma construção real — vale mais que qualquer projeção. O
-    telhado é a condição de entrada; a partir dele, duas situações mandam manter:
+    **Regra que vence todas: ponto DENTRO de um telhado não se move.** Se a
+    coordenada do CNEFE caiu sobre o polígono de uma construção do Overture, ela
+    já está no lugar certo — a porta é ali. Levá-la para o trilho da testada a
+    joga na rua, trocando uma posição verificada por uma estimada. Vale mesmo
+    quando o nome bate com o da face e a régua "funcionaria": não existe projeção
+    melhor do que um endereço em cima do próprio prédio.
+
+    Havendo TELHADO a menos de `RAIO_TELHADO_VIA_ABERTA_M` do ponto (perto, mas
+    não em cima), a coordenada aponta para uma região construída — é mais fraco
+    que estar dentro, e por isso só segura o ponto em duas situações:
 
     1. **A via mais próxima não fecha quadra.** Beco, rua projetada e acesso de
        engenho não delimitam quarteirão, e quem mora neles não tem testada para
@@ -1510,8 +1571,10 @@ def preservar_no_lugar(sid: str, con=None) -> dict:
             cur.execute("""SELECT geom_wkt, fecha_quadra FROM via_osm
                             WHERE sessao_id=%s AND fecha_quadra IS NOT NULL""", (sid,))
             vias = cur.fetchall()
-            cur.execute("SELECT lat, lng FROM quadra_telhado WHERE sessao_id=%s", (sid,))
-            tel = cur.fetchall()
+            cur.execute("SELECT lat, lng, geom_wkt FROM quadra_telhado WHERE sessao_id=%s",
+                        (sid,))
+            tel_raw = cur.fetchall()
+            tel = [(la, ln) for la, ln, _ in tel_raw]
             cur.execute("""SELECT p.id, p.lat, p.lng, p.logradouro,
                                   coalesce(f.nome_canonico, f.nome_osm)
                              FROM quadra_ponto p
@@ -1540,10 +1603,34 @@ def preservar_no_lugar(sid: str, con=None) -> dict:
         t_fe = STRtree(g_fe) if g_fe else None
         t_tel = STRtree([Point((ln - lng0) * mx, (la - lat0) * my) for la, ln in tel])
 
-        n = n_via = n_nome = 0
+        # polígonos dos telhados, para a pergunta forte: o ponto está EM CIMA?
+        def pol_m(w):
+            g = _wkt.loads(w)
+            ext = g.exterior if g.geom_type == "Polygon" else None
+            if ext is None:
+                return None
+            return Polygon([((x - lng0) * mx, (y - lat0) * my) for x, y in ext.coords])
+
+        pols = [q for q in (pol_m(w) for _, _, w in tel_raw if w) if q is not None]
+        t_pol = STRtree(pols) if pols else None
+
+        n = n_via = n_nome = n_sobre = 0
         with con.cursor() as cur:
             for pid, la, ln, logr, nome_face in pts:
                 p = Point((ln - lng0) * mx, (la - lat0) * my)
+                # EM CIMA de um telhado: a porta é ali, e nenhuma projeção melhora
+                # isso. Vence inclusive o nome batendo com o da face.
+                if t_pol is not None and any(pols[i].contains(p) for i in t_pol.query(p)):
+                    cur.execute("""UPDATE quadra_ponto
+                                      SET lat_alinhado=lat, lng_alinhado=lng, desloc_m=0,
+                                          ordem_face=NULL, alinhado_modo='preservado',
+                                          alinhado_por=%s WHERE id=%s""",
+                                ("a coordenada do CNEFE cai SOBRE um telhado real — "
+                                 "a porta é ali; mover para a testada a jogaria na rua",
+                                 pid))
+                    n += 1
+                    n_sobre += 1
+                    continue
                 if not len(t_tel.query(p.buffer(RAIO_TELHADO_VIA_ABERTA_M))):
                     continue                      # sem telhado perto, sem evidência
                 via_aberta = False
@@ -1576,8 +1663,9 @@ def preservar_no_lugar(sid: str, con=None) -> dict:
                 n_nome += 1
         con.commit()
         print(f"      {n} pontos MANTIDOS na coordenada original "
-              f"(o nome do endereço não confirma a face)", flush=True)
-        return {"preservados": n}
+              f"({n_sobre} em cima de um telhado, {n_nome} porque o nome do "
+              f"endereço não confirma a face)", flush=True)
+        return {"preservados": n, "sobre_telhado": n_sobre}
     finally:
         if fechar:
             con.close()
