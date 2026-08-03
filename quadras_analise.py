@@ -835,6 +835,10 @@ def passo5_faces(sid: str, con=None) -> dict:
         if dup["duplicados_removidos"]:
             # o expurgo mudou a composição das faces — o veredito anterior é velho
             n_canon, n_nao, faces = _classificar_faces(sid, con)
+        # A rua tem dois lados complementares: face sem paridade herda o contrário
+        # da de frente. Vai AQUI, depois da classificação e antes dos resgates —
+        # o que a paridade herdada decide não precisa ser resgatado depois.
+        opo = paridade_pela_face_oposta(sid, con)
         ext = _tolerancia_por_endereco(sid, con)
         n_canon += ext["recuperados"] + ext["trazidos"]
         n_nao -= ext["recuperados"]
@@ -853,7 +857,7 @@ def passo5_faces(sid: str, con=None) -> dict:
         n_canon = sum(1 for p in pts if p["canonico"] is True)
         n_nao = sum(1 for p in pts if p["canonico"] is False)
         res = {"canonicos": n_canon, "nao_canonicos": n_nao,
-               "faces": len(faces), **ext, **nv1, **dup,
+               "faces": len(faces), **ext, **nv1, **dup, **opo,
                "faces_com_via": sum(1 for f in QD.faces(sid, con) if f["nome_canonico"])}
         print(f"[5/5] {n_canon} pontos canônicos · {n_nao} destoam · "
               f"{res['faces_com_via']}/{len(faces)} faces com via canônica", flush=True)
@@ -1282,6 +1286,125 @@ def _paridade(prof: dict, largura: float):
         return (v, f"{max(n_par, n_imp)} de {tot} endereços da face são {v} "
                    f"({med:+.1f} m)", med)
     return None, f"só {tot} endereço(s) com número — insuficiente para dizer o lado", None
+
+
+def paridade_pela_face_oposta(sid: str, con=None) -> dict:
+    """Face sem paridade herda o CONTRÁRIO da face que está do outro lado da rua.
+
+    Uma rua tem dois lados complementares: se o de lá é par, o de cá é ímpar. Mas
+    cada face decidia sozinha, e quem não tinha endereços numerados suficientes
+    ficava sem paridade nenhuma — **1.349 das 2.260 faces de Itambé (60%)**, e
+    face sem paridade não reprova ninguém.
+
+    A face oposta é achada andando perpendicular ao meio da face, para FORA do
+    próprio quarteirão, além da caixa da rua — o mesmo passo de `_sem_outro_lado`.
+    Vale a face mais próxima daquele ponto que seja de OUTRA quadra e que tenha
+    paridade decidida. Quando as duas têm nome, eles precisam bater: rua diferente
+    não é o outro lado da mesma rua.
+
+    Depois de herdar, os pontos numerados daquela face que estavam parados por
+    falta de paridade são REJULGADOS — senão a herança não muda nada.
+
+    E a herança PROPAGA: quem acabou de herdar já serve de referência para a face
+    de frente dela. Por isso roda em rodadas, até uma rodada não ensinar mais
+    ninguém."""
+    total = {"paridade_herdada": 0, "rejulgados_pela_oposta": 0}
+    for _ in range(8):
+        r = _herdar_uma_rodada(sid, con)
+        total["paridade_herdada"] += r["paridade_herdada"]
+        total["rejulgados_pela_oposta"] += r["rejulgados_pela_oposta"]
+        if not r["paridade_herdada"]:
+            break
+    print(f"      {total['paridade_herdada']} faces herdaram a paridade da face "
+          f"oposta ({total['rejulgados_pela_oposta']} pontos rejulgados)", flush=True)
+    return total
+
+
+def _herdar_uma_rodada(sid: str, con=None) -> dict:
+    """Uma rodada da herança — ver `paridade_pela_face_oposta`."""
+    from shapely import STRtree
+    fechar = con is None
+    con = con or bc.conectar()
+    try:
+        quadras = {q["id"]: _wkt.loads(q["geom_osm"]) for q in QD.quadras(sid, con)}
+        fs = QD.faces(sid, con)
+        linhas, meta = [], []
+        for f in fs:
+            if not f.get("anel_wkt"):
+                continue
+            linhas.append(_wkt.loads(f["anel_wkt"]))
+            meta.append(f)
+        if not linhas:
+            return {"paridade_herdada": 0}
+        arv = STRtree(linhas)
+
+        herdadas = rejulgados = 0
+        with con.cursor() as cur:
+            for i, f in enumerate(meta):
+                if f.get("paridade"):
+                    continue
+                ln = linhas[i]
+                if ln.length <= 0:
+                    continue
+                mid = ln.interpolate(0.5, normalized=True)
+                a = ln.interpolate(0.45, normalized=True)
+                b = ln.interpolate(0.55, normalized=True)
+                dx, dy = b.x - a.x, b.y - a.y
+                n = math.hypot(dx, dy)
+                if not n:
+                    continue
+                px, py = -dy / n, dx / n
+                passo = (float(f.get("recuo_m") or LARGURA_PADRAO_M / 2.0)
+                         + 16.0) / 111320.0
+                propria = quadras.get(f["quadra_id"])
+                alvo = None
+                for s in (1, -1):
+                    t = Point(mid.x + px * passo * s, mid.y + py * passo * s)
+                    if propria is not None and propria.contains(t):
+                        continue                   # esse lado é o miolo da quadra
+                    melhor, md = None, 1e18
+                    for j in arv.query(t.buffer(30.0 / 111320.0)):
+                        g = meta[j]
+                        if g["quadra_id"] == f["quadra_id"] or not g.get("paridade"):
+                            continue
+                        d = linhas[j].distance(t) * 111320.0
+                        if d < md:
+                            melhor, md = g, d
+                    if melhor is not None and md <= 30.0:
+                        alvo = melhor
+                        break
+                if alvo is None:
+                    continue
+                n1 = norm_via(f.get("nome_canonico") or f.get("nome_osm") or "")
+                n2 = norm_via(alvo.get("nome_canonico") or alvo.get("nome_osm") or "")
+                if n1 and n2 and n1 != n2:
+                    continue                       # ruas diferentes: não são lados
+                nova = "impar" if alvo["paridade"] == "par" else "par"
+                cur.execute("""UPDATE quadra_face SET paridade=%s, paridade_por=%s
+                                WHERE quadra_id=%s AND face_idx=%s""",
+                            (nova, f"herdada da face oposta (q{alvo['quadra_id']} "
+                                   f"face {alvo['face_idx']} é {alvo['paridade']})",
+                             f["quadra_id"], f["face_idx"]))
+                herdadas += 1
+                # rejulga só quem estava parado por FALTA de paridade
+                cur.execute("""UPDATE quadra_ponto
+                                  SET canonico = ((numero %% 2 = 0) = %s),
+                                      motivo = CASE WHEN (numero %% 2 = 0) = %s
+                                        THEN 'paridade herdada da face oposta: confere'
+                                        ELSE 'paridade herdada da face oposta: destoa'
+                                      END
+                                WHERE sessao_id=%s AND quadra_id=%s AND face_idx=%s
+                                  AND numero IS NOT NULL AND numero <> 0
+                                  AND resgate IS NULL
+                                  AND motivo LIKE 'face sem paridade%%'""",
+                            (nova == "par", nova == "par", sid,
+                             f["quadra_id"], f["face_idx"]))
+                rejulgados += cur.rowcount
+        con.commit()
+        return {"paridade_herdada": herdadas, "rejulgados_pela_oposta": rejulgados}
+    finally:
+        if fechar:
+            con.close()
 
 
 def _sem_outro_lado(ln: LineString, qid, pol_por_quadra: dict, recuo_m: float,
