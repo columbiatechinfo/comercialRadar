@@ -222,7 +222,8 @@ def passo2_vias(sid: str, usar_proxy=True, com_maps=False, con=None) -> dict:
             raise ValueError("nenhuma quadra fechada dentro da área desenhada")
 
         usadas = _vias_das_quadras(faces_ll, linhas)
-        fecham = _fecham_quadra(faces_ll, linhas)
+        # o contexto é a CIDADE, não o desenho — ver `quadras_do_municipio`
+        fecham = _fecham_quadra(quadras_do_municipio(s["cod_municipio"]), linhas)
         print(f"      {sum(1 for x in fecham if not x)} vias NÃO fecham quadra "
               f"(beco, rua projetada, acesso) — seus pontos não são alinhados "
               f"quando há telhado por perto", flush=True)
@@ -367,8 +368,34 @@ def _largura_minima(pol) -> float:
     return min(lados)
 
 
-def _fecham_quadra(faces_ll, linhas, tol_m: float = 12.0) -> list:
+def quadras_do_municipio(cod_municipio, con=None):
+    """Todas as quadras do município na base do OSM — o MUNDO REAL de referência.
+
+    Existe porque duas perguntas do processo não são sobre o desenho, e sim sobre
+    a cidade: "esta via forma quarteirão?" e "esta rua tem outro lado?". Responder
+    olhando só as quadras que sobraram na sessão dá resultado catastrófico quando
+    o usuário desenha em cima de UMA quadra: sem outra quadra para comparar, todas
+    as vias viram "não fecha quadra" (82 de 82, medido) e todas as faces viram
+    "rua de um lado só" — aí nenhum endereço é reprovado e o quarteirão vizinho
+    entra inteiro. Itambé tem 609 quadras na base; a sessão tinha 1."""
+    if not cod_municipio:
+        return []
+    import quadras_br as QB
+    c = QB.con() if con is None else con
+    try:
+        rs = c.execute("SELECT ST_AsText(geom) FROM osm_quadra WHERE cod_municipio = ?",
+                       [str(cod_municipio)]).fetchall()
+        return [_wkt.loads(w) for (w,) in rs]
+    finally:
+        if con is None:
+            c.close()
+
+
+def _fecham_quadra(contexto, linhas, tol_m: float = 12.0) -> list:
     """Quais vias correm AO LONGO da borda de alguma quadra — uma por linha.
+
+    `contexto` são as quadras do MUNICÍPIO (ver `quadras_do_municipio`), não as da
+    sessão: a pergunta é sobre a cidade, não sobre o recorte desenhado.
 
     Não confundir com `_vias_das_quadras`, que só pergunta se a via ENCOSTA numa
     borda: uma viela que cruza a rua perpendicularmente atravessa o buffer e
@@ -378,7 +405,9 @@ def _fecham_quadra(faces_ll, linhas, tol_m: float = 12.0) -> list:
     Medido em Itambé (1.452 vias), a distribuição é bimodal — 506 vias abaixo de
     10% e 737 acima de 90%, quase nada no meio. Por isso o corte em 50% é
     estável: entre 30% e 70% o total só varia de 597 para 688 vias."""
-    bordas = unary_union([p.exterior for p in faces_ll]).buffer(tol_m / 111320.0)
+    if not contexto:
+        return [True] * len(linhas)      # sem referência, não se acusa ninguém
+    bordas = unary_union([p.exterior for p in contexto]).buffer(tol_m / 111320.0)
     out = []
     for ls in linhas:
         tot = ls.length
@@ -653,11 +682,16 @@ def _classificar_faces(sid: str, con) -> tuple:
         por_quadra.setdefault(p["quadra_id"], []).append(p)
 
     pol_por_quadra = {q["id"]: _wkt.loads(q["geom_osm"]) for q in QD.quadras(sid, con)}
-    # índice das quadras: sem ele, testar "há quadra do outro lado?" para cada
-    # face varre todas as quadras da sessão — 2.260 × 598 em Itambé, 2 min
+    # "há quadra do outro lado?" é pergunta sobre a CIDADE, não sobre o desenho.
+    # Com as quadras da sessão, quem desenha em cima de UM quarteirão não tem
+    # nenhuma outra para comparar: toda face vira "rua de um lado só", ninguém é
+    # reprovado e o quarteirão vizinho entra inteiro. Aqui entra o município.
     from shapely import STRtree
-    _ids = list(pol_por_quadra)
-    _idx = (STRtree([pol_por_quadra[i] for i in _ids]), _ids) if _ids else None
+    _ctx = quadras_do_municipio((QD.sessao(sid, con) or {}).get("cod_municipio"))
+    if not _ctx:                     # município ainda não montado: usa a sessão
+        _ctx = list(pol_por_quadra.values())
+    _ids = list(range(len(_ctx)))
+    _idx = (STRtree(_ctx), [-1] * len(_ctx)) if _ctx else None
     n_canon = n_nao = 0
     with con.cursor() as cur:
         for qid, fs in _agrupar_faces(faces).items():
@@ -1182,8 +1216,12 @@ def _sem_outro_lado(ln: LineString, qid, pol_por_quadra: dict, recuo_m: float,
     metade deles por "numeração destoa" é aplicar uma régua que não vale ali.
 
     O teste: anda perpendicular à face, para fora da própria quadra, um pouco
-    além da caixa da rua. Se não cai dentro de NENHUMA outra quadra da sessão,
-    não há outro lado. Em Itambé, 563 das 2.260 faces (25%)."""
+    além da caixa da rua. Se não cai dentro de NENHUMA outra quadra DO MUNICÍPIO,
+    não há outro lado. Em Itambé, 563 das 2.260 faces (25%).
+
+    O contexto é o município e não a sessão: quem desenha em cima de um único
+    quarteirão não tem outra quadra para comparar, e TODA face passaria por "um
+    lado só" — nada seria reprovado e o quarteirão vizinho entraria inteiro."""
     if ln.length <= 0:
         return False
     mid = ln.interpolate(0.5, normalized=True)
@@ -1196,6 +1234,10 @@ def _sem_outro_lado(ln: LineString, qid, pol_por_quadra: dict, recuo_m: float,
     px, py = -dy / n, dx / n
     passo = (float(recuo_m or LARGURA_PADRAO_M / 2.0) + 16.0) / 111320.0
     propria = pol_por_quadra.get(qid)
+    # o próprio quarteirão também está no contexto do município, com geometria
+    # ligeiramente diferente da da sessão: sem excluí-lo, ele responderia como
+    # "o outro lado de si mesmo"
+    centro = propria.representative_point() if propria is not None else None
     for s in (1, -1):
         t = Point(mid.x + px * passo * s, mid.y + py * passo * s)
         if propria is not None and propria.contains(t):
@@ -1203,8 +1245,12 @@ def _sem_outro_lado(ln: LineString, qid, pol_por_quadra: dict, recuo_m: float,
         if indice is not None:
             arv, ids = indice
             for i in arv.query(t):
-                if ids[i] != qid and arv.geometries[i].contains(t):
-                    return False
+                g = arv.geometries[i]
+                if ids[i] == qid or not g.contains(t):
+                    continue
+                if centro is not None and g.contains(centro):
+                    continue               # é a própria quadra, vista pela base
+                return False
         else:
             for oid, pol in pol_por_quadra.items():
                 if oid != qid and pol.contains(t):
