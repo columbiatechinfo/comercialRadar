@@ -326,6 +326,7 @@ def passo8_casar(sid: str, con=None) -> dict:
         # o passo 8 desfaz o que o 6 arrumou
         QA.alinhar_vias_abertas(sid, con)
         pv = QA.preservar_no_lugar(sid, con)
+        QA.nao_atravessar_via(sid, con)
         res = {"casados_com_telhado": n_casados, "interpolados": n_interp,
                "preservados": pv.get("preservados", 0)}
         print(f"[8/8] {n_casados} pontos casados com telhado · "

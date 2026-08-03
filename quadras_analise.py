@@ -1531,6 +1531,57 @@ def alinhar_vias_abertas(sid: str, con=None) -> dict:
             con.close()
 
 
+def nao_atravessar_via(sid: str, con=None) -> dict:
+    """Alinhamento não atravessa a rua: quem está do outro lado do eixo, fica.
+
+    O trilho corre DENTRO do quarteirão (meia caixa para cá do eixo). Um ponto
+    cujo recuo com sinal é negativo está do lado de lá; projetá-lo no trilho o faz
+    cruzar a via inteira.
+
+    Só que negativo pequeno NÃO é do outro lado: o CNEFE põe o endereço em cima do
+    eixo, e medido nesta quadra 9 dos 10 cruzamentos tinham recuo entre −0,1 e
+    −2,8 m — mover esses para a calçada a +4 m é justamente o que se quer. O que
+    não vale é o caso real: um ponto a **−13,4 m** arrastado 18,2 m para o outro
+    lado. O corte é a MEIA CAIXA VIÁRIA da face (mínimo `TOLERANCIA_LADO_MIN_M`),
+    a mesma medida que o passo 5 usa para dizer "isto é do outro quarteirão".
+
+    Roda depois de tudo que posiciona (fim do 6 e fim do 8) e é idempotente."""
+    fechar = con is None
+    con = con or bc.conectar()
+    try:
+        faces = {(f["quadra_id"], f["face_idx"]): f for f in QD.faces(sid, con)}
+        quadras = {q["id"]: _wkt.loads(q["geom_osm"]) for q in QD.quadras(sid, con)}
+        n = 0
+        with con.cursor() as cur:
+            for p in QD.pontos(sid, con):
+                if p["lat_alinhado"] is None or not (p["desloc_m"] or 0):
+                    continue
+                f = faces.get((p["quadra_id"], p["face_idx"]))
+                if not f or not f.get("anel_wkt"):
+                    continue
+                eixo = _wkt.loads(f["anel_wkt"])
+                lim = -max(float(f.get("recuo_m") or LARGURA_PADRAO_M / 2.0),
+                           TOLERANCIA_LADO_MIN_M)
+                if _recuo_com_sinal(Point(p["lng"], p["lat"]), eixo,
+                                    quadras.get(p["quadra_id"])) >= lim:
+                    continue                       # está do lado de cá (ou no eixo)
+                cur.execute("""UPDATE quadra_ponto
+                                  SET lat_alinhado=lat, lng_alinhado=lng, desloc_m=0,
+                                      ordem_face=NULL, alinhado_modo='preservado',
+                                      alinhado_por=%s WHERE id=%s""",
+                            (f"está do OUTRO lado do eixo da via (além da meia "
+                             f"caixa): alinhá-lo o faria atravessar a rua", p["id"]))
+                n += 1
+        con.commit()
+        if n:
+            print(f"      {n} pontos NÃO atravessaram a via — estavam do outro lado "
+                  f"do eixo e ficaram onde estavam", flush=True)
+        return {"nao_atravessaram": n}
+    finally:
+        if fechar:
+            con.close()
+
+
 def preservar_no_lugar(sid: str, con=None) -> dict:
     """Quem já está num lugar construído e não pertence àquela testada FICA.
 
@@ -1821,7 +1872,9 @@ def passo6_alinhar(sid: str, con=None) -> dict:
         # depende dos telhados: só age se o passo 7 já rodou nesta sessão. Numa
         # corrida 1→8 quem aplica é o passo 8, no fim.
         pv = preservar_no_lugar(sid, con)
+        at = nao_atravessar_via(sid, con)
         res = {"alinhados": n_alin, "faces_alinhadas": n_faces,
+               **at,
                "perpendiculares": n_recusa + n_perp_sem_regua,
                "preservados": pv.get("preservados", 0), **va, **gr}
         print(f"[6/6] {n_alin} pontos alinhados na borda real de {n_faces} faces",
