@@ -88,6 +88,12 @@ FRACAO_BORDA_MIN = 0.50
 # pontos 50 a 164 m. Havendo telhado por perto, a coordenada do CNEFE já está
 # num lugar construído e é melhor que qualquer projeção: fica onde está.
 RAIO_TELHADO_VIA_ABERTA_M = 53.0
+# Passo 5, esquina: diferença de distância entre a 1ª e a 2ª face abaixo da qual
+# o ponto é considerado AMBÍGUO entre as duas, e quem decide passa a ser o nome do
+# logradouro. Medido em Itambé: 714 pontos (4,9%) empatam dentro de 1 m e 1.753
+# (12%) dentro de 5 m — o lote de canto tem frente para as duas ruas, e a face
+# mais próxima por centímetros pode ser a rua errada.
+EMPATE_ESQUINA_M = 5.0
 
 
 def _metros(lat: float):
@@ -699,14 +705,32 @@ def _classificar_faces(sid: str, con) -> tuple:
             linhas = {f["face_idx"]: _wkt.loads(f["anel_wkt"]) for f in fs}
             quadra_pol = pol_por_quadra.get(qid)
             # cada ponto vai para a face mais próxima (até RAIO_FACE_M)
+            # nomes já conhecidos das faces desta quadra, para o desempate de
+            # esquina (o passo anterior pode tê-los gravado; na 1ª passada vêm
+            # vazios e o desempate simplesmente não age)
+            nome_face = {f["face_idx"]: (f.get("nome_canonico") or f.get("nome_osm"))
+                         for f in fs}
             do_ponto: dict = {}
             for p in meus:
                 pt = Point(p["lng"], p["lat"])
-                melhor, md = None, 1e18
-                for fi, ln in linhas.items():
-                    d = ln.distance(pt) * 111320.0
-                    if d < md:
-                        melhor, md = fi, d
+                ds = sorted((ln.distance(pt) * 111320.0, fi)
+                            for fi, ln in linhas.items())
+                if not ds:
+                    do_ponto[p["id"]] = (None, 1e18)
+                    continue
+                md, melhor = ds[0]
+                # ESQUINA: o endereço de canto fica quase à mesma distância de duas
+                # faces, e a mais próxima pode ser a rua errada — aí a paridade
+                # dela o reprova por algo que não é dele. Quando as duas estão
+                # dentro de `EMPATE_ESQUINA_M`, quem manda é o NOME do logradouro,
+                # que é a evidência mais forte de a que rua o endereço pertence.
+                if len(ds) > 1 and (ds[1][0] - md) <= EMPATE_ESQUINA_M:
+                    logr = norm_via(p.get("logradouro") or "")
+                    if logr:
+                        n0 = norm_via(nome_face.get(melhor) or "")
+                        n1 = norm_via(nome_face.get(ds[1][1]) or "")
+                        if n1 == logr and n0 != logr:
+                            melhor, md = ds[1][1], ds[1][0]
                 do_ponto[p["id"]] = (melhor if md <= RAIO_FACE_M else None, md)
             # Quanto de cada face corre AO LONGO de uma via nomeada do OSM. Serve
             # para separar as faces com respaldo das que não têm nenhum — e a
