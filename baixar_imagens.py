@@ -174,7 +174,17 @@ def fase_streetview(workers: int, limit: int):
         poi_id, arq, lat, lng = item
         try:
             fp = SV_DIR / arq
-            raw = fp.read_bytes() if fp.exists() else None
+            if not fp.exists():
+                # Esta fase era a migração streetview/ → banco, e terminou: as
+                # 4.108 fachadas estão todas em `streetview_imgs`, a pasta foi
+                # removida e o `streetview_capture.py` já grava direto no banco.
+                # Sem o arquivo não há o que inserir — gravar linha com `dados`
+                # nulo só criaria registro fantasma que a rota /api/sv devolve
+                # como 404.
+                with lock:
+                    cont["sem_arquivo"] = cont.get("sem_arquivo", 0) + 1
+                return
+            raw = fp.read_bytes()
             data, pano = _sv_metadata(lat, lng) if lat is not None else (None, None)
             c = _conn()
             with c, c.cursor() as cur:

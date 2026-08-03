@@ -479,7 +479,12 @@ async function abrirPoi(poiLeve) {
   const avaliacao = poi.avaliacao ? parseFloat(String(poi.avaliacao).replace(",", ".")) : null;
 
   let html = "";
-  const sv = poi.streetview_path && poi.streetview_path !== "NA" ? `/streetview/${esc(poi.streetview_path)}` : null;
+  // A fachada vem do BANCO (`streetview_imgs`, ângulo 'facade'), não da pasta
+  // streetview/. Eram 2,6 GB de arquivo dentro do diretório do sistema
+  // duplicando o que já estava gravado — conferido: as 4.108 fotos com
+  // streetview_path têm linha 'facade' no banco, sem uma falta.
+  const sv = poi.streetview_path && poi.streetview_path !== "NA" && poi.id != null
+    ? `/api/sv/${poi.id}/facade` : null;
   if (fotos.length) {
     html += `<div class="m-fotos">${sv ? `<img src="${sv}" loading="lazy" title="Street View (fachada)">` : ""}${fotos.map((u) => `<img src="${esc(u)}" loading="lazy" referrerpolicy="no-referrer">`).join("")}</div>`;
   } else if (sv) {

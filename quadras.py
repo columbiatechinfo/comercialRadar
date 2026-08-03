@@ -41,37 +41,48 @@ import quadras_db as QD  # noqa: E402
 
 
 def _municipio_wkt(alvo: str) -> str:
-    """Polígono de um município pela malha do IBGE já em disco (`malhas/UF.geojson`).
+    """Polígono de um município pela malha do IBGE, lida da tabela `ibge_malha`.
 
-    Aceita "Itambé/PE", só o nome (se não repetir entre as UFs baixadas) ou o
+    Aceita "Itambé/PE", só o nome (se não repetir entre as UFs carregadas) ou o
     código do IBGE. Sem isso, rodar a cidade inteira exigia extrair o WKT à mão.
-    """
-    import json
+
+    A busca por nome é `unaccent`-equivalente feita no Python só para o casamento
+    exato; o SQL traz os candidatos da UF (ou todos, se a UF não foi dita)."""
     import unicodedata
-    from shapely.geometry import shape
+
+    from shapely import wkt as _w
+    import quadras_br as QB
 
     def norm(s):
         s = unicodedata.normalize("NFKD", str(s or ""))
         return "".join(c for c in s if not unicodedata.combining(c)).strip().lower()
 
     nome, _, uf = alvo.partition("/")
-    nome, uf = norm(nome), norm(uf)
-    achados = []
-    for arq in sorted((BASE / "malhas").glob("*.geojson")):
-        if arq.stem.startswith("_") or (uf and norm(arq.stem) != uf):
-            continue
-        try:
-            gj = json.loads(arq.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-        for f in gj.get("features", []):
-            pr = f.get("properties", {})
-            if norm(pr.get("nome")) == nome or str(pr.get("codarea", "")) == alvo.strip():
-                achados.append((pr.get("nome"), arq.stem, shape(f["geometry"])))
+    nome, uf = norm(nome), norm(uf).upper()
+    cod_alvo = alvo.strip()
+    c = QB.con()
+    try:
+        # o código do IBGE é único: se bater, resolve sem olhar nome nem UF
+        r = c.execute("SELECT nome, uf, ST_AsText(geom) FROM ibge_malha "
+                      "WHERE cod_municipio = ?", [cod_alvo]).fetchone()
+        if r:
+            achados = [(r[0], r[1], _w.loads(r[2]))]
+        else:
+            sql = "SELECT nome, uf, ST_AsText(geom) FROM ibge_malha WHERE nome IS NOT NULL"
+            par = []
+            if uf:
+                sql += " AND uf = ?"
+                par = [uf]
+            achados = [(n, u, _w.loads(w))
+                       for n, u, w in c.execute(sql, par).fetchall()
+                       if norm(n) == nome]
+        ufs = ", ".join(u for (u,) in c.execute(
+            "SELECT DISTINCT uf FROM ibge_malha ORDER BY uf").fetchall())
+    finally:
+        c.close()
     if not achados:
-        ufs = ", ".join(sorted(p.stem for p in (BASE / "malhas").glob("*.geojson")
-                               if not p.stem.startswith("_"))) or "nenhuma"
-        raise SystemExit(f"município '{alvo}' não está nas malhas em disco (UFs: {ufs})")
+        raise SystemExit(f"município '{alvo}' não está na tabela ibge_malha "
+                         f"(UFs carregadas: {ufs or 'nenhuma'})")
     if len(achados) > 1:
         onde = ", ".join(f"{n}/{u}" for n, u, _ in achados)
         raise SystemExit(f"'{alvo}' existe em mais de uma UF ({onde}) — use nome/UF")

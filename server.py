@@ -484,7 +484,11 @@ def _uf_do_ponto(lat: float, lng: float) -> str:
 
 @app.get("/api/malha")
 def malha(uf: str = "", lat: float | None = None, lng: float | None = None):
-    """GeoJSON dos municípios da UF (malha IBGE, cache em malhas/<UF>.geojson).
+    """GeoJSON dos municípios da UF, montado da tabela `ibge_malha`.
+
+    Antes vinha de `malhas/<UF>.geojson`. Agora sai do banco: o dado é o mesmo,
+    mas deixa de existir uma cópia solta na pasta do sistema. Quando a UF ainda
+    não foi carregada, busca no IBGE e GRAVA NO BANCO — nunca mais em arquivo.
 
     Sem `uf`, resolve pela coordenada (o front manda o centro do mapa); sem
     coordenada, cai na UF majoritária do banco."""
@@ -493,23 +497,52 @@ def malha(uf: str = "", lat: float | None = None, lng: float | None = None):
         uf = _uf_do_ponto(lat, lng)
     if uf not in _UFS:
         uf = _uf_majoritaria()
-    cache = MALHAS / f"{uf}.geojson"
-    if cache.exists():
-        return JSONResponse(json.loads(cache.read_text(encoding="utf-8")))
+
+    def _do_banco():
+        conn = realtime_ingest.conectar()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""SELECT cod_municipio, nome, ST_AsGeoJSON(geom)
+                                 FROM ibge_malha WHERE uf = %s""", (uf,))
+                fs = [{"type": "Feature",
+                       "properties": {"codarea": cod, "nome": nome or cod},
+                       "geometry": json.loads(g)} for cod, nome, g in cur.fetchall()]
+            return fs
+        finally:
+            conn.close()
+
     try:
-        url_malha = (f"https://servicodados.ibge.gov.br/api/v3/malhas/estados/{uf}"
-                     f"?formato=application/vnd.geo+json&qualidade=intermediaria&intrarregiao=municipio")
-        gj = _http_json(url_malha)
-        url_nomes = f"https://servicodados.ibge.gov.br/api/v1/localidades/estados/{uf}/municipios"
-        nomes = {str(m["id"]): m["nome"] for m in _http_json(url_nomes, timeout=60)}
-        for f in gj.get("features", []):
-            cod = str(f.get("properties", {}).get("codarea", ""))
-            f.setdefault("properties", {})["nome"] = nomes.get(cod, cod)
-        gj["uf"] = uf
-        cache.write_text(json.dumps(gj, ensure_ascii=False), encoding="utf-8")
-        return JSONResponse(gj)
+        fs = _do_banco()
+        if not fs:
+            url_malha = (f"https://servicodados.ibge.gov.br/api/v3/malhas/estados/{uf}"
+                         f"?formato=application/vnd.geo+json&qualidade=intermediaria"
+                         f"&intrarregiao=municipio")
+            gj = _http_json(url_malha)
+            url_nomes = (f"https://servicodados.ibge.gov.br/api/v1/localidades/"
+                         f"estados/{uf}/municipios")
+            nomes = {str(m["id"]): m["nome"] for m in _http_json(url_nomes, timeout=60)}
+            conn = realtime_ingest.conectar()
+            try:
+                with conn.cursor() as cur:
+                    for f in gj.get("features", []):
+                        cod = str(f.get("properties", {}).get("codarea", ""))
+                        if not cod:
+                            continue
+                        cur.execute(
+                            """INSERT INTO ibge_malha (cod_municipio, nome, uf, geom)
+                               VALUES (%s,%s,%s,ST_SetSRID(ST_GeomFromGeoJSON(%s),4326))
+                               ON CONFLICT (cod_municipio) DO UPDATE
+                                 SET nome = COALESCE(EXCLUDED.nome, ibge_malha.nome),
+                                     uf = EXCLUDED.uf, geom = EXCLUDED.geom""",
+                            (cod, nomes.get(cod, cod), uf, json.dumps(f["geometry"])))
+                conn.commit()
+            finally:
+                conn.close()
+            fs = _do_banco()
+        return JSONResponse({"type": "FeatureCollection", "uf": uf, "features": fs})
     except Exception as e:
-        return JSONResponse({"erro": f"IBGE indisponível: {str(e)[:120]}"}, status_code=502)
+        return JSONResponse({"erro": f"malha indisponível: {str(e)[:120]}"},
+                            status_code=502)
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -1098,9 +1131,9 @@ class _FrontSemCache(StaticFiles):
 
 app.mount("/static", _FrontSemCache(directory=str(FRONT)), name="static")
 
-SV_DIR = BASE / "streetview"
-SV_DIR.mkdir(exist_ok=True)
-app.mount("/streetview", StaticFiles(directory=str(SV_DIR)), name="streetview")
+# A pasta streetview/ deixou de existir: a fachada é servida por
+# /api/sv/{poi_id}/facade, direto de `streetview_imgs`. Eram 2,6 GB de arquivo
+# duplicando o que já estava no banco.
 
 
 if __name__ == "__main__":

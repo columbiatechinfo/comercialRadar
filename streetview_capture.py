@@ -5,8 +5,8 @@ Para cada POI válido do banco com coordenada e sem streetview_path, abre o
 panorama do Street View na coordenada via Playwright headless (o Google Earth
 Pro é app desktop — automatizá-lo por mouse/teclado para milhares de POIs é
 inviável; o panorama do Maps é o mesmo acervo, em lote e headless), tira um
-screenshot e salva em streetview/<poi_id>.jpg. Atualiza pois.streetview_path
-direto no banco (o modal do frontend exibe via /streetview/<arquivo>).
+screenshot e grava os BYTES em streetview_imgs (angulo='facade'). Atualiza
+pois.streetview_path (o modal exibe via /api/sv/<poi_id>/facade).
 
 Sem pano na coordenada → marca 'NA' (não tenta de novo).
 
@@ -27,7 +27,6 @@ import config
 import realtime_ingest
 
 BASE = Path(__file__).resolve().parent
-SV_DIR = BASE / "streetview"
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
 
@@ -81,6 +80,25 @@ def _gravar_path(poi_id: int, path: str, conn):
         cur.execute("UPDATE pois SET streetview_path = %s WHERE id = %s", (path, poi_id))
 
 
+def _gravar_imagem(poi_id: int, dados: bytes, lat, lng):
+    """A fachada vai para `streetview_imgs`, não para um .jpg na pasta.
+
+    Substitui a linha 'facade' anterior deste POI: recapturar é justamente para
+    trocar a foto, e acumular versões só incharia a tabela."""
+    import psycopg2
+    conn = realtime_ingest.conectar()
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute("DELETE FROM streetview_imgs WHERE poi_id=%s AND angulo='facade'",
+                        (poi_id,))
+            cur.execute("""INSERT INTO streetview_imgs
+                             (poi_id, dados, bytes_tam, lat, lng, angulo)
+                           VALUES (%s,%s,%s,%s,%s,'facade')""",
+                        (poi_id, psycopg2.Binary(dados), len(dados), lat, lng))
+    finally:
+        conn.close()
+
+
 async def _achar_pano(page, lat, lng, heading=None) -> tuple | None:
     """Abre o pano na coordenada (com heading opcional). Retorna (cam_lat, cam_lng)
     lidos da URL, ou None se não houver pano."""
@@ -114,9 +132,15 @@ async def _capturar(page, alvo: dict) -> str | None:
         if not cam2:  # fallback: fica com a vista padrão já carregada
             await _achar_pano(page, lat, lng, None)
         await page.wait_for_timeout(2500)  # tiles do panorama carregarem
+        # Sem `path=`, o Playwright DEVOLVE os bytes — e é assim que a imagem vai
+        # direto para `streetview_imgs`. Antes ela era salva em streetview/, e uma
+        # segunda passada (`baixar_imagens.py --streetview`) a copiava para o
+        # banco: o arquivo era só um intermediário que ninguém apagava, e a pasta
+        # tinha chegado a 2,6 GB duplicando o que já estava gravado.
+        png = await page.screenshot(type="jpeg", quality=72,
+                                    clip={"x": 0, "y": 64, "width": 1280, "height": 656})
         arq = f"{alvo['id']}.jpg"
-        await page.screenshot(path=str(SV_DIR / arq), type="jpeg", quality=72,
-                              clip={"x": 0, "y": 64, "width": 1280, "height": 656})
+        _gravar_imagem(alvo["id"], png, lat, lng)
         return arq
     except Exception:
         return None
@@ -153,7 +177,6 @@ async def worker(wid, fila: asyncio.Queue, ctx, counter, total, lock):
 
 
 async def run(workers: int, limit: int, refazer: bool, ids: list = None):
-    SV_DIR.mkdir(exist_ok=True)
     alvos = carregar_alvos(limit, refazer, ids)
     total = len(alvos)
     print(f"📸 Street View: {total} POIs para capturar | workers: {workers}", flush=True)
@@ -182,7 +205,7 @@ async def run(workers: int, limit: int, refazer: bool, ids: list = None):
     print(f"   Capturados : {counter['ok']}/{total}")
     print(f"   Sem pano   : {counter['na']}")
     print(f"   Tempo      : {(time.time()-ini)/60:.1f} min")
-    print(f"   💾 {SV_DIR}")
+    print("   💾 gravado em streetview_imgs (banco)")
     print(f"{'═'*52}", flush=True)
 
 

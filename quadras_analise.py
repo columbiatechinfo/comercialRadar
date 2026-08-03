@@ -135,33 +135,25 @@ def passo1_area(area_wkt: str, con=None) -> dict:
 
 
 def _municipio_do_ponto(lat, lng, con):
-    """De que município é este ponto? Pela MALHA do IBGE já em disco (`malhas/`).
+    """De que município é este ponto? Pela MALHA do IBGE, agora no banco.
 
     Antes isso saía do CNEFE com um GROUP BY por caixa envolvente. Sem filtro de
     município a consulta não tinha índice utilizável e varria a tabela de 111 M
-    de linhas: **31,4 s dos 32 s do processo inteiro**. A malha municipal é um
-    GeoJSON de 185 polígonos que o servidor já mantém em cache — ponto em
-    polígono, instantâneo.
+    de linhas: **31,4 s dos 32 s do processo inteiro**. Passou então a varrer os
+    GeoJSON de `malhas/` em Python — abrindo 13 arquivos e testando polígono a
+    polígono. Hoje é `ST_Contains` sobre `ibge_malha`, com índice GIST: um
+    índice espacial de verdade, e nenhum dado solto na pasta.
 
     O CNEFE fica como último recurso, e o `rollback` no except não é zelo: uma
     consulta que falha deixa a transação ABORTADA no psycopg2, e o comando
     seguinte morre com 'comandos ignorados até o fim do bloco'."""
-    from shapely.geometry import shape
-    p = Point(lng, lat)
-    for arq in sorted((BASE / "malhas").glob("*.geojson")):
-        if arq.stem.startswith("_"):          # _ufs.geojson não é malha municipal
-            continue
-        try:
-            gj = json.loads(arq.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-        for f in gj.get("features", []):
-            try:
-                if shape(f["geometry"]).contains(p):
-                    pr = f.get("properties", {})
-                    return pr.get("nome", ""), arq.stem, str(pr.get("codarea", ""))
-            except Exception:
-                continue
+    try:
+        import quadras_br as QB
+        nome, uf, cod = QB.municipio_do_ponto(lat, lng)
+        if cod:
+            return nome, uf, cod
+    except Exception as e:
+        print(f"  [município] malha do banco falhou: {str(e)[:80]}", flush=True)
     # sem malha em disco: cai no CNEFE, restringindo a caixa ao mínimo
     try:
         with con.cursor() as cur:
@@ -304,24 +296,18 @@ def _vias_do_osm(area: Polygon, cod_municipio: str):
     g = MARGEM_VIAS_M / 111320.0
     minlng, minlat, maxlng, maxlat = area.buffer(g).bounds
     viz = area.buffer(g)
-    # a região certa é a que CONTÉM a área. Pegar "a última tabela de vias" trazia
-    # o Sudeste para uma área de Pernambuco e devolvia zero via.
-    tab = None
-    for (t,) in c.execute("""SELECT table_name FROM information_schema.tables
-                              WHERE table_name LIKE 'vias_%'
-                           ORDER BY table_name""").fetchall():
-        b = c.execute(f"SELECT min(xmin),max(xmax),min(ymin),max(ymax) FROM {t}").fetchone()
-        if b and b[0] <= minlng and b[1] >= maxlng and b[2] <= minlat and b[3] >= maxlat:
-            tab = t
-            break
-    if not tab:
-        raise ValueError("a área não está em nenhuma região de vias materializada — "
-                         f"rode: quadras_br.py mun {cod_municipio or '<cod>'}")
-    tipos = ", ".join(f"'{x}'" for x in QB.VIAS_OK)
-    rows = c.execute(f"""SELECT g, name, highway FROM {tab}
-                          WHERE highway IN ({tipos})
-                            AND xmin <= {maxlng} AND xmax >= {minlng}
-                            AND ymin <= {maxlat} AND ymax >= {minlat}""").fetchall()
+    # Não é preciso mais escolher a REGIÃO: as vias das duas regiões vivem na
+    # mesma tabela e o índice GIST recorta pela caixa. Antes, escolher "a última
+    # tabela vias_*" trazia o Sudeste para uma área de Pernambuco e devolvia zero.
+    # Ainda assim se confere se há alguma via ali, para o erro continuar claro.
+    rows = c.execute("""SELECT ST_AsBinary(geom), nome, tipo FROM osm_via
+                         WHERE tipo = ANY(?)
+                           AND geom && ST_MakeEnvelope(?, ?, ?, ?, 4326)""",
+                     [list(QB.VIAS_OK), minlng, minlat, maxlng, maxlat]).fetchall()
+    if not rows:
+        raise ValueError("nenhuma via do OSM nesta área — a região dela ainda não "
+                         f"foi carregada; rode: quadras_br.py mun "
+                         f"{cod_municipio or '<cod>'}")
     linhas, meta = [], []
     for g, nm, hw in rows:
         try:

@@ -18,7 +18,7 @@ e fica em cache para sempre. É `garantir_municipio(cod)`.
 
 Como um município é montado (só na primeira vez que é pedido):
     1. baixa o extrato .osm.pbf da REGIÃO no Geofabrik (cache; ~450 MB, uma vez);
-    2. materializa as vias da região numa tabela DuckDB (uma vez; ~1 min);
+    2. carrega as vias da região na tabela `osm_via` do Postgres (uma vez);
     3. recorta as vias do município pela caixa da malha municipal do IBGE (0,1 s);
     4. une as linhas — o que noda a rede em todo cruzamento — e polygoniza;
     5. classifica cada face (retangular?, vias, cruzamentos) e grava.
@@ -29,7 +29,6 @@ uso:
     quadras_br.py uf PE                        lote de uma UF (opcional)
     quadras_br.py regioes                      lista as regiões e tamanhos
 env:
-    DB=caminho do banco (padrão dados/quadras_br.duckdb)
     AREA_MIN=250   AREA_MAX=250000   metros quadrados por face
 """
 import sys, os, json, math, time, urllib.request, hashlib
@@ -37,7 +36,7 @@ from pathlib import Path
 from collections import Counter
 
 import numpy as np
-import duckdb
+import base_comum as bc
 from shapely import wkb as _wkb, wkt as _wkt
 from shapely.geometry import Polygon, LineString, Point
 from shapely.ops import unary_union, polygonize
@@ -45,7 +44,6 @@ from pyproj import Transformer
 
 RAIZ = Path(__file__).resolve().parent
 CACHE = Path(os.environ.get("CACHE_PBF", RAIZ / "dados" / "pbf"))
-DB = Path(os.environ.get("DB", RAIZ / "dados" / "quadras_br.duckdb"))
 AREA_MIN = float(os.environ.get("AREA_MIN", 250))
 AREA_MAX = float(os.environ.get("AREA_MAX", 250_000))
 
@@ -68,41 +66,89 @@ VIAS_OK = ("motorway", "trunk", "primary", "secondary", "tertiary", "unclassifie
 
 
 # ── infraestrutura ────────────────────────────────────────────────────────────
+class _PG:
+    """Adaptador fino do psycopg2 para a API que este módulo já usava.
+
+    O resto do arquivo foi escrito contra o DuckDB, onde
+    `c.execute(sql, [p]).fetchall()` funciona direto na conexão. O psycopg2 usa
+    cursor e o marcador `%s` em vez de `?`. Traduzir aqui, num lugar só, evita
+    reescrever dezenas de chamadas — e o `?` só aparece como marcador neste
+    módulo, nunca dentro de literal."""
+
+    def __init__(self, conexao):
+        self._con = conexao
+        self._cur = conexao.cursor()
+
+    def execute(self, sql, params=None):
+        self._cur.execute(sql.replace("?", "%s"), params or None)
+        return self
+
+    def executemany(self, sql, seq):
+        self._cur.executemany(sql.replace("?", "%s"), seq)
+        return self
+
+    def fetchall(self):
+        return self._cur.fetchall()
+
+    def fetchone(self):
+        return self._cur.fetchone()
+
+    def commit(self):
+        self._con.commit()
+
+    def close(self):
+        try:
+            self._con.commit()
+        finally:
+            self._cur.close()
+            self._con.close()
+
+
 def con():
-    DB.parent.mkdir(parents=True, exist_ok=True)
-    c = duckdb.connect(str(DB))
-    c.execute("INSTALL spatial; LOAD spatial;")
+    """Conexão com o Postgres+PostGIS, garantindo o esquema.
+
+    As vias saíram de um DuckDB de 3 GB dentro da pasta do sistema para cá: dado
+    é do banco, não do diretório de desenvolvimento. E o índice GIST tornou a
+    consulta por caixa 48× mais rápida (0,06 s contra 2,91 s medidos na caixa de
+    Itambé, com resultado idêntico via a via)."""
+    c = _PG(bc.conectar())
+    c.execute("CREATE EXTENSION IF NOT EXISTS postgis")
     c.execute("""
-        CREATE TABLE IF NOT EXISTS quadras (
-            id            BIGINT PRIMARY KEY,
-            cod_municipio VARCHAR NOT NULL,
-            uf            VARCHAR NOT NULL,
-            municipio     VARCHAR,
-            geom_wkt      VARCHAR NOT NULL,   -- EPSG:4326
-            area_m2       DOUBLE  NOT NULL,
-            perimetro_m   DOUBLE,
-            n_vertices    INTEGER,
-            n_vias        INTEGER,
-            n_cruzamentos INTEGER,
-            retangular    BOOLEAN NOT NULL,
-            preenchimento DOUBLE,             -- área / retângulo mínimo
-            cantos_90     INTEGER,
-            vias          VARCHAR,            -- JSON [{nome,tipo,m}]
-            lat_centro    DOUBLE,
-            lng_centro    DOUBLE,
-            fonte         VARCHAR DEFAULT 'osm',
-            criado_em     TIMESTAMP DEFAULT current_timestamp
+        CREATE TABLE IF NOT EXISTS osm_via (
+            id     bigserial PRIMARY KEY,
+            regiao text NOT NULL,             -- extrato do Geofabrik de origem
+            nome   text,
+            tipo   text,                      -- highway=
+            geom   geometry(Geometry, 4326) NOT NULL
         )""")
-    for ix, col in (("ix_quadras_mun", "cod_municipio"), ("ix_quadras_uf", "uf"),
-                    ("ix_quadras_ret", "retangular"), ("ix_quadras_area", "area_m2")):
-        c.execute(f"CREATE INDEX IF NOT EXISTS {ix} ON quadras({col})")
-    # caixa envolvente indexada: filtro espacial barato sem depender de RTree
-    for ix, col in (("ix_quadras_lat", "lat_centro"), ("ix_quadras_lng", "lng_centro")):
-        c.execute(f"CREATE INDEX IF NOT EXISTS {ix} ON quadras({col})")
-    c.execute("""CREATE TABLE IF NOT EXISTS municipios_feitos (
-                    cod_municipio VARCHAR PRIMARY KEY, uf VARCHAR, municipio VARCHAR,
-                    n_quadras INTEGER, n_retangulares INTEGER,
-                    segundos DOUBLE, feito_em TIMESTAMP DEFAULT current_timestamp)""")
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS osm_quadra (
+            id            bigint PRIMARY KEY,
+            cod_municipio text, uf text, municipio text,
+            area_m2       double precision, perimetro_m double precision,
+            n_vertices    integer, n_vias integer, n_cruzamentos integer,
+            retangular    boolean, preenchimento double precision,
+            cantos_90     integer,
+            vias          text,               -- JSON [{nome,tipo,m}]
+            lat_centro    double precision, lng_centro double precision,
+            fonte         text, criado_em timestamp DEFAULT now(),
+            geom          geometry(Geometry, 4326) NOT NULL
+        )""")
+    c.execute("""CREATE TABLE IF NOT EXISTS osm_municipio_feito (
+                    cod_municipio text PRIMARY KEY, uf text, municipio text,
+                    n_quadras integer, n_retangulares integer,
+                    segundos double precision, feito_em timestamp DEFAULT now())""")
+    c.execute("""CREATE TABLE IF NOT EXISTS ibge_malha (
+                    cod_municipio text PRIMARY KEY, nome text, uf text,
+                    geom geometry(Geometry, 4326) NOT NULL)""")
+    for ix, tab, col in (("ix_osm_via_geom", "osm_via", "USING GIST (geom)"),
+                         ("ix_osm_via_regiao", "osm_via", "(regiao)"),
+                         ("ix_osm_quadra_geom", "osm_quadra", "USING GIST (geom)"),
+                         ("ix_osm_quadra_mun", "osm_quadra", "(cod_municipio)"),
+                         ("ix_ibge_malha_geom", "ibge_malha", "USING GIST (geom)"),
+                         ("ix_ibge_malha_uf", "ibge_malha", "(uf)")):
+        c.execute(f"CREATE INDEX IF NOT EXISTS {ix} ON {tab} {col}")
+    c.commit()
     return c
 
 
@@ -138,21 +184,57 @@ def _json_ibge(url, timeout=300):
     return b
 
 
-def malha_municipios(uf):
-    """Polígonos municipais do IBGE, direto da API de malhas."""
-    ch = CACHE / f"malha_{uf}.json"
-    if not ch.exists() or ch.stat().st_size < 1000:
-        CACHE.mkdir(parents=True, exist_ok=True)
-        ch.write_bytes(_json_ibge(
-            f"https://servicodados.ibge.gov.br/api/v3/malhas/estados/{uf}"
-            f"?formato=application/vnd.geo+json&intrarregiao=municipio"))
-    d = json.loads(ch.read_bytes())
-    from shapely.geometry import shape
-    out = {}
-    for f in d["features"]:
-        cod = str(f["properties"].get("codarea"))
-        out[cod] = shape(f["geometry"])
-    return out
+def malha_municipios(uf, c=None):
+    """Polígonos municipais do IBGE — do BANCO, baixando da API se faltar a UF.
+
+    Antes isto ficava em `dados/pbf/malha_UF.json` e em `malhas/UF.geojson`, duas
+    cópias do mesmo dado dentro da pasta do sistema. Agora mora em `ibge_malha`,
+    com índice GIST: quem precisa do município de um ponto pergunta ao banco em
+    vez de abrir 13 arquivos e testar polígono a polígono em Python."""
+    fechar = c is None
+    c = c or con()
+    try:
+        rs = c.execute("SELECT cod_municipio, ST_AsText(geom) FROM ibge_malha "
+                       "WHERE uf = ?", [uf.upper()]).fetchall()
+        if not rs:
+            print(f"  malha de {uf} não está no banco — baixando do IBGE...", flush=True)
+            gj = json.loads(_json_ibge(
+                f"https://servicodados.ibge.gov.br/api/v3/malhas/estados/{uf}"
+                f"?formato=application/vnd.geo+json&intrarregiao=municipio"))
+            for f in gj.get("features", []):
+                cod = str((f.get("properties") or {}).get("codarea") or "").strip()
+                if not cod:
+                    continue
+                c.execute("""INSERT INTO ibge_malha (cod_municipio, nome, uf, geom)
+                             VALUES (?,?,?,ST_SetSRID(ST_GeomFromGeoJSON(?),4326))
+                             ON CONFLICT (cod_municipio) DO UPDATE
+                               SET uf = EXCLUDED.uf, geom = EXCLUDED.geom""",
+                          [cod, (f.get("properties") or {}).get("nome"), uf.upper(),
+                           json.dumps(f["geometry"])])
+            c.commit()
+            rs = c.execute("SELECT cod_municipio, ST_AsText(geom) FROM ibge_malha "
+                           "WHERE uf = ?", [uf.upper()]).fetchall()
+        return {cod: _wkt.loads(w) for cod, w in rs}
+    finally:
+        if fechar:
+            c.close()
+
+
+def municipio_do_ponto(lat, lng, c=None):
+    """Que município contém este ponto? Uma consulta indexada, no banco.
+
+    Substitui a varredura de `malhas/*.geojson` em Python — que abria cada
+    arquivo, montava cada polígono e testava um a um."""
+    fechar = c is None
+    c = c or con()
+    try:
+        r = c.execute("""SELECT cod_municipio, nome, uf FROM ibge_malha
+                          WHERE ST_Contains(geom, ST_SetSRID(ST_Point(?, ?), 4326))
+                          LIMIT 1""", [lng, lat]).fetchone()
+        return (r[1] or "", r[2] or "", r[0]) if r else ("", "", "")
+    finally:
+        if fechar:
+            c.close()
 
 
 def nomes_municipios(uf):
@@ -182,71 +264,98 @@ def retangular(pol, tol_ang=12.0, tol_lado=0.12):
     return (preench >= 1 - tol_lado and rectos >= 4), preench, rectos
 
 
-def tabela_vias(pbf):
-    return "vias_" + Path(pbf).stem.replace("-latest.osm", "").replace("-", "_")
+def regiao_de(pbf):
+    """Nome do extrato do Geofabrik: 'nordeste-latest.osm.pbf' → 'nordeste'."""
+    return Path(pbf).stem.replace("-latest.osm", "")
+
+
+# nome antigo, de quando cada região era uma TABELA
+tabela_vias = regiao_de
 
 
 def preparar_regiao(c, pbf):
-    """Extrai as vias do PBF UMA vez e guarda com a caixa envolvente pré-calculada.
+    """Carrega as vias do extrato UMA vez, se a região ainda não estiver no banco.
 
-    É o passo que torna o Brasil viável: sem ele, cada município reabre o extrato
-    inteiro pelo GDAL. O bbox vai em colunas simples porque o filtro por caixa
-    resolve 99% do recorte e não exige índice espacial."""
-    t = tabela_vias(pbf)
-    ok = c.execute("SELECT count(*) FROM information_schema.tables WHERE table_name=?",
-                   [t]).fetchone()[0]
-    if ok:
-        n = c.execute(f"SELECT count(*) FROM {t}").fetchone()[0]
-        if n > 0:
-            print(f"  vias em cache: {t} ({n:,} linhas)", flush=True); return t
-        c.execute(f"DROP TABLE {t}")
+    É o passo que torna o Brasil viável: sem ele, cada município reabriria o
+    extrato inteiro pelo GDAL (98 s por município — o país levaria 6 dias).
+
+    A leitura do PBF continua sendo do DuckDB, que tem o driver espacial do GDAL;
+    ele entra aqui como LEITOR de arquivo, em memória, e o resultado vai para o
+    Postgres. Depois disso o .pbf não é mais necessário — e é re-baixável do
+    Geofabrik quando uma região nova for pedida."""
+    reg = regiao_de(pbf)
+    n = c.execute("SELECT count(*) FROM osm_via WHERE regiao=?", [reg]).fetchone()[0]
+    if n > 0:
+        print(f"  vias já no banco: {reg} ({n:,} linhas)", flush=True)
+        return reg
     print(f"  extraindo vias de {Path(pbf).name} (uma vez só)...", flush=True)
     t0 = time.time()
+    import csv
+    import io
+
+    import duckdb                                   # só para ler o PBF pelo GDAL
+    d = duckdb.connect()
+    d.execute("INSTALL spatial; LOAD spatial;")
     tipos = ", ".join(f"'{x}'" for x in VIAS_OK)
-    c.execute(f"""
-        CREATE TABLE {t} AS
-        SELECT ST_AsWKB(geom) AS g, name, highway,
-               ST_XMin(geom) AS xmin, ST_XMax(geom) AS xmax,
-               ST_YMin(geom) AS ymin, ST_YMax(geom) AS ymax
+    rs = d.execute(f"""
+        SELECT ST_AsWKB(geom) AS g, name, highway
         FROM st_read('{str(pbf).replace(chr(92), '/')}', layer='lines',
                      open_options=['INTERLEAVED_READING=YES'])
         WHERE highway IN ({tipos}) AND geom IS NOT NULL
-    """)
-    for col in ("xmin", "xmax", "ymin", "ymax"):
-        c.execute(f"CREATE INDEX IF NOT EXISTS ix_{t}_{col} ON {t}({col})")
-    n = c.execute(f"SELECT count(*) FROM {t}").fetchone()[0]
-    print(f"  {n:,} vias em {time.time()-t0:.0f}s -> {t}", flush=True)
-    return t
+    """).fetchall()
+    d.close()
+    # COPY e não INSERT: são milhões de linhas, e a diferença é de minutos para
+    # horas. A geometria viaja como WKB hexadecimal dentro de um CSV (onde a
+    # barra invertida não é escape) e só vira `geometry` no INSERT final.
+    c.execute("""CREATE TEMP TABLE _stage_via
+                 (regiao text, nome text, tipo text, wkb bytea)""")
+    buf = io.StringIO()
+    w = csv.writer(buf, lineterminator="\n")
+    for g, nm, hw in rs:
+        w.writerow((reg, nm, hw, "\\x" + bytes(g).hex()))
+    buf.seek(0)
+    c._cur.copy_expert("COPY _stage_via (regiao, nome, tipo, wkb) "
+                       "FROM STDIN WITH (FORMAT csv)", buf)
+    c.execute("""INSERT INTO osm_via (regiao, nome, tipo, geom)
+                 SELECT regiao, nome, tipo, ST_SetSRID(ST_GeomFromWKB(wkb), 4326)
+                   FROM _stage_via""")
+    c.execute("DROP TABLE _stage_via")
+    c.execute("ANALYZE osm_via")
+    c.commit()
+    print(f"  {len(rs):,} vias em {time.time()-t0:.0f}s -> osm_via (regiao={reg})",
+          flush=True)
+    return reg
 
 
 def _prox_id(c):
-    r = c.execute("SELECT coalesce(max(id), 0) FROM quadras").fetchone()[0]
+    r = c.execute("SELECT coalesce(max(id), 0) FROM osm_quadra").fetchone()[0]
     return int(r) + 1
 
 
 def processar_municipio(c, pbf, cod, poli_mun, uf, nome):
-    ja = c.execute("SELECT 1 FROM municipios_feitos WHERE cod_municipio = ?", [cod]).fetchone()
+    ja = c.execute("SELECT 1 FROM osm_municipio_feito WHERE cod_municipio = ?",
+                   [cod]).fetchone()
     if ja: return 0, 0, True
     t0 = time.time()
     minlng, minlat, maxlng, maxlat = poli_mun.bounds
-    tipos = ", ".join(f"'{t}'" for t in VIAS_OK)
-    # Lê da tabela já materializada da região. Ler o PBF por município custava
-    # 98 s cada — a varredura dos 436 MB acontecia inteira toda vez, e o Brasil
-    # levaria 6 dias. Materializando a região uma vez, cai para segundos.
-    q = f"""
-        SELECT g, name, highway FROM {tabela_vias(pbf)}
-        WHERE highway IN ({tipos})
-          AND xmin <= {maxlng} AND xmax >= {minlng}
-          AND ymin <= {maxlat} AND ymax >= {minlat}
-    """
+    # `&&` compara as caixas envolventes usando o índice GIST — é o mesmo recorte
+    # que antes se fazia com quatro colunas xmin/xmax/ymin/ymax, só que indexado
+    # de verdade: 0,06 s contra 2,91 s na caixa de Itambé, resultado idêntico.
     linhas_ll, meta = [], []
-    for g, nm, hw in c.execute(q).fetchall():
+    rs = c.execute("""SELECT ST_AsBinary(geom), nome, tipo FROM osm_via
+                       WHERE regiao = ?
+                         AND tipo = ANY(?)
+                         AND geom && ST_MakeEnvelope(?, ?, ?, ?, 4326)""",
+                   [regiao_de(pbf), list(VIAS_OK),
+                    minlng, minlat, maxlng, maxlat]).fetchall()
+    for g, nm, hw in rs:
         try: ls = _wkb.loads(bytes(g))
         except Exception: continue
         if ls.is_empty or ls.geom_type != "LineString" or len(ls.coords) < 2: continue
         linhas_ll.append(ls); meta.append((nm or "(sem nome)", hw))
     if len(linhas_ll) < 4:
-        c.execute("INSERT INTO municipios_feitos VALUES (?,?,?,?,?,?,current_timestamp)",
+        c.execute("INSERT INTO osm_municipio_feito (cod_municipio,uf,municipio,"
+                  "n_quadras,n_retangulares,segundos) VALUES (?,?,?,?,?,?)",
                   [cod, uf, nome, 0, 0, time.time() - t0])
         return 0, 0, False
     lat0 = (minlat + maxlat) / 2; lng0 = (minlng + maxlng) / 2
@@ -258,7 +367,8 @@ def processar_municipio(c, pbf, cod, poli_mun, uf, nome):
     rede = unary_union(linhas)                       # noda em todo cruzamento
     faces = [p for p in polygonize(rede) if AREA_MIN < p.area < AREA_MAX]
     if not faces:
-        c.execute("INSERT INTO municipios_feitos VALUES (?,?,?,?,?,?,current_timestamp)",
+        c.execute("INSERT INTO osm_municipio_feito (cod_municipio,uf,municipio,"
+                  "n_quadras,n_retangulares,segundos) VALUES (?,?,?,?,?,?)",
                   [cod, uf, nome, 0, 0, time.time() - t0])
         return 0, 0, False
     seg = list(rede.geoms) if hasattr(rede, "geoms") else [rede]
@@ -298,12 +408,14 @@ def processar_municipio(c, pbf, cod, poli_mun, uf, nome):
                            json.dumps(vias, ensure_ascii=False), cll.y, cll.x, "osm"])
         pid += 1; n_ret += int(ret)
     if linhas_out:
-        c.executemany("INSERT INTO quadras (id,cod_municipio,uf,municipio,geom_wkt,area_m2,"
+        c.executemany("INSERT INTO osm_quadra (id,cod_municipio,uf,municipio,geom,area_m2,"
                       "perimetro_m,n_vertices,n_vias,n_cruzamentos,retangular,preenchimento,"
-                      "cantos_90,vias,lat_centro,lng_centro,fonte) "
-                      "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", linhas_out)
+                      "cantos_90,vias,lat_centro,lng_centro,fonte) VALUES "
+                      "(?,?,?,?,ST_SetSRID(ST_GeomFromText(?),4326),?,?,?,?,?,?,?,?,?,?,?,?)",
+                      linhas_out)
     dt = time.time() - t0
-    c.execute("INSERT INTO municipios_feitos VALUES (?,?,?,?,?,?,current_timestamp)",
+    c.execute("INSERT INTO osm_municipio_feito (cod_municipio,uf,municipio,"
+                  "n_quadras,n_retangulares,segundos) VALUES (?,?,?,?,?,?)",
               [cod, uf, nome, len(linhas_out), n_ret, dt])
     return len(linhas_out), n_ret, False
 
@@ -325,15 +437,15 @@ def garantir_municipio(cod, c=None):
     fechar = c is None
     if c is None: c = con()
     try:
-        feito = c.execute("SELECT n_quadras FROM municipios_feitos WHERE cod_municipio=?",
-                          [cod]).fetchone()
+        feito = c.execute("SELECT n_quadras FROM osm_municipio_feito "
+                          "WHERE cod_municipio=?", [cod]).fetchone()
         if feito is None:
             uf, nome = uf_de(cod)
             pbf = baixar_pbf(UF_REGIAO[uf]); preparar_regiao(c, pbf)
             processar_municipio(c, pbf, cod, malha_municipios(uf)[cod], uf, nome)
-        return c.execute("SELECT id, geom_wkt, area_m2, retangular, preenchimento, "
-                         "n_cruzamentos, vias, lat_centro, lng_centro "
-                         "FROM quadras WHERE cod_municipio=? ORDER BY area_m2 DESC",
+        return c.execute("SELECT id, ST_AsText(geom), area_m2, retangular, "
+                         "preenchimento, n_cruzamentos, vias, lat_centro, lng_centro "
+                         "FROM osm_quadra WHERE cod_municipio=? ORDER BY area_m2 DESC",
                          [cod]).fetchall()
     finally:
         if fechar: c.close()
