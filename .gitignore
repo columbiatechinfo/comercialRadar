@@ -68,3 +68,6 @@ lab/
 # Pesos de modelos e cache de imagens do processo de telhados REMOVIDO em 28/07/2026
 # (ficam em disco por ora; nada no codigo os le mais)
 dados/modelos/
+
+# Cache de malha das UFs (0,3 MB, se rebaixa do IBGE sozinho)
+malhas/

@@ -594,8 +594,9 @@ Em Itambé-PE: das 609 faces, ~28% saem retangulares.
 ele. Processar o Brasil inteiro levaria dias e é desnecessário. Cada município entra quando é
 pedido e fica em cache. Ver memória `[[nao-superdimensionar]]`.
 1. baixa o `.osm.pbf` da REGIÃO no Geofabrik (cache `dados/pbf/`, ~450 MB, uma vez);
-2. **materializa** as vias da região numa tabela DuckDB `vias_<regiao>` com bbox em colunas
-   indexadas (uma vez, ~1 min). Ler o PBF por município custava 98 s cada; materializado, ~3 s;
+2. **carrega** as vias da região em `osm_via` (Postgres+PostGIS, índice GIST), uma vez. Ler o
+   PBF por município custava 98 s cada; carregado, ~3 s. Feito isso o `.pbf` não serve para
+   mais nada e pode ser apagado — `baixar_pbf` o rebaixa se uma região nova for pedida;
 3. recorta as vias do município pela caixa da malha municipal do IBGE;
 4. `unary_union(linhas)` **noda todo cruzamento**, `polygonize` dá as faces;
 5. classifica cada face e grava.
@@ -611,12 +612,29 @@ pedido e fica em cache. Ver memória `[[nao-superdimensionar]]`.
 - `VIAS_OK`: só tipos que fecham quarteirão. Fora trilha, calçada, ciclovia, escada — cortam a
   quadra ao meio sem serem rua.
 
-### Tabela `quadras` (DuckDB em `dados/quadras_br.duckdb`)
-`id, cod_municipio, uf, municipio, geom_wkt (EPSG:4326), area_m2, perimetro_m, n_vertices,
-n_vias, n_cruzamentos, retangular, preenchimento, cantos_90, vias (JSON [{nome,tipo,m}]),
-lat_centro, lng_centro, fonte, criado_em`. Índices em cod_municipio, uf, retangular, area_m2,
-lat, lng. Controle de progresso em `municipios_feitos`. Caches (pbf/duckdb/pan_cache) no
-`.gitignore` — reconstruíveis.
+### Onde isso mora: Postgres + PostGIS (migrado em 03/08/2026)
+
+Estava num DuckDB de 3 GB **dentro da pasta do sistema**. Dado é do banco, não do diretório de
+código — e a migração ainda saiu mais rápida:
+
+| tabela | conteúdo | tamanho |
+|---|---|---:|
+| `osm_via` | 4.566.049 vias, `geometry(4326)` + GIST | 1.781 MB |
+| `osm_quadra` | 139.221 quadras | 103 MB |
+| `ibge_malha` | 2.746 municípios de 17 UFs | 7,5 MB |
+| `osm_municipio_feito` | controle de progresso | — |
+
+O recorte por caixa, que eram quatro colunas `xmin/xmax/ymin/ymax`, virou `&&` sobre o índice
+GIST: a mesma caixa de Itambé devolve as **mesmas 3.390 vias** — conferido via a via, geometria,
+nome e tipo — em **0,06 s contra 2,91 s**. E o `_PG` em `quadras_br.py` é um adaptador fino que
+traduz `?`→`%s` e cursor, para não reescrever dezenas de chamadas escritas contra a API do DuckDB.
+
+O DuckDB continua no processo, mas só como **leitor de PBF** (é ele que tem o driver do GDAL):
+lê em memória e entrega ao Postgres.
+
+As malhas do IBGE existiam em DUAS cópias (`malhas/UF.geojson` e `dados/pbf/malha_UF.json`).
+Agora é `ibge_malha` com GIST — achar o município de um ponto era abrir 13 arquivos e testar
+polígono a polígono em Python; hoje é um `ST_Contains` indexado (`quadras_br.municipio_do_ponto`).
 
 ### Comandos
 ```
