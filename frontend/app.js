@@ -31,21 +31,30 @@ L.control.attribution({ position: "bottomright", prefix: false })
 /* Bases disponíveis. O SATÉLITE é a fonte de maior zoom, que é onde as
    (Google XYZ lyrs=s) — então o que aparece no mapa é a imagem que gerou os
    quadras e os pontos ficam legíveis. */
+/* Os três primeiros são o mapa do Google DE VERDADE, pela Maps JavaScript API —
+   cobrada por CARREGAMENTO de mapa, não por tile. O GoogleMutant instancia um
+   `google.maps.Map` por baixo e sincroniza com o Leaflet, então tudo o que já
+   existe (POIs, quadras, desenho de área, panes) continua funcionando igual.
+
+   A chave vem do .env pelo /api/mapa/config e É VISÍVEL no navegador — não há
+   alternativa: quem carrega a JS API é a página. Chave de JS API se protege
+   RESTRINGINDO por referrer HTTP e por API no console do Google, não escondendo.
+
+   Se a chave faltar ou o script do Google não carregar, `googleMutant` não
+   existe e os fundos caem para Carto, que não depende de conta nenhuma. */
+const _mut = (tipo) => (window.L && L.gridLayer && L.gridLayer.googleMutant)
+  ? L.gridLayer.googleMutant({ type: tipo, maxZoom: 22 })
+  : L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
+      { maxZoom: 20, subdomains: "abcd" });
+
 const BASES = {
-  limpo: {
-    nome: "Mapa limpo", ico: "🗺️",
+  limpo:    { nome: "Mapa limpo",       ico: "🗺️", tipo: "roadmap" },
+  satelite: { nome: "Satélite",         ico: "🛰️", tipo: "satellite" },
+  hibrido:  { nome: "Satélite + ruas",  ico: "🛣️", tipo: "hybrid" },
+  claro: {
+    nome: "Claro (sem Google)", ico: "☁️",
     layer: L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
       { maxZoom: 20, subdomains: "abcd" }),
-  },
-  satelite: {
-    nome: "Satélite", ico: "🛰️",
-    layer: L.tileLayer("https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}",
-      { maxZoom: 21, maxNativeZoom: 21 }),
-  },
-  hibrido: {
-    nome: "Satélite + ruas", ico: "🛣️",
-    layer: L.tileLayer("https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}",
-      { maxZoom: 21, maxNativeZoom: 21 }),
   },
   escuro: {
     nome: "Escuro", ico: "🌙",
@@ -55,13 +64,41 @@ const BASES = {
 };
 let baseAtual = localStorage.getItem("cr_base") || "limpo";
 if (!BASES[baseAtual]) baseAtual = "limpo";
-BASES[baseAtual].layer.addTo(map);
+
+/* A camada só é criada quando pedida: as do Google dependem do script da JS API,
+   que carrega depois. Criada uma vez, fica guardada em `.layer`. */
+function camadaBase(chave) {
+  const b = BASES[chave];
+  if (!b.layer) b.layer = _mut(b.tipo || "roadmap");
+  return b.layer;
+}
+
+/* Carrega a Maps JavaScript API com a chave do .env e só então põe o fundo.
+   Sem chave (ou sem internet), `_mut` já devolve o Carto — o mapa nunca fica
+   sem fundo. */
+(async function carregarFundoGoogle() {
+  try {
+    const c = await (await fetch("/api/mapa/config")).json();
+    if (c.key) {
+      await new Promise((ok, falha) => {
+        const s = document.createElement("script");
+        const mid = c.mapId ? `&map_ids=${encodeURIComponent(c.mapId)}` : "";
+        s.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(c.key)}`
+              + `${mid}&language=pt-BR&region=BR&loading=async`;
+        s.async = true; s.onload = ok; s.onerror = falha;
+        document.head.appendChild(s);
+      });
+    }
+  } catch { /* segue com o Carto */ }
+  camadaBase(baseAtual).addTo(map);
+  camadaBase(baseAtual).bringToBack();
+})();
 
 function trocarBase(chave) {
   if (!BASES[chave] || chave === baseAtual) return;
-  map.removeLayer(BASES[baseAtual].layer);
-  BASES[chave].layer.addTo(map);
-  BASES[chave].layer.bringToBack();          // nunca por cima dos desenhos
+  map.removeLayer(camadaBase(baseAtual));
+  camadaBase(chave).addTo(map);
+  camadaBase(chave).bringToBack();           // nunca por cima dos desenhos
   baseAtual = chave;
   localStorage.setItem("cr_base", chave);
   document.querySelectorAll("#base-menu button").forEach((b) =>

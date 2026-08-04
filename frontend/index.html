@@ -271,6 +271,11 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+<!-- GoogleMutant: põe um mapa do Google DE VERDADE sob o Leaflet e sincroniza os
+     dois. É o que permite usar a Maps JavaScript API (cobrada por CARREGAMENTO
+     de mapa) sem trocar o Leaflet, então todas as camadas de POIs, quadras e
+     desenho seguem iguais. -->
+<script src="https://unpkg.com/leaflet.gridlayer.googlemutant@0.14.1/dist/Leaflet.GoogleMutant.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

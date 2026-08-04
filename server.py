@@ -477,6 +477,21 @@ def _uf_do_ponto(lat: float, lng: float) -> str:
         return ""
 
 
+@app.get("/api/mapa/config")
+def mapa_config():
+    """Chave e Map ID da Maps JavaScript API, lidos do .env.
+
+    Aqui a chave VAI para o navegador — não tem como ser diferente: quem carrega
+    a Maps JavaScript API é a página. O que protege esse tipo de chave não é
+    escondê-la, e sim restringi-la no console do Google por **referrer HTTP** e
+    por API. Guardá-la no .env evita que ela viva no repositório, que é o ganho
+    real aqui.
+
+    Cobrança: Dynamic Maps é por CARREGAMENTO de mapa, não por tile."""
+    return {"key": os.environ.get("GOOGLE_TILES_KEY", "").strip(),
+            "mapId": os.environ.get("GOOGLE_MAP_ID", "").strip()}
+
+
 @app.get("/api/ufs")
 def ufs_carregadas():
     """UFs que já têm malha municipal no banco, com a contagem."""
