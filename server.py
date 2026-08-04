@@ -482,6 +482,74 @@ def _uf_do_ponto(lat: float, lng: float) -> str:
         return ""
 
 
+@app.get("/api/ufs")
+def ufs_carregadas():
+    """UFs que já têm malha municipal no banco, com a contagem."""
+    conn = realtime_ingest.conectar()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""SELECT uf, count(*) FROM ibge_malha
+                            WHERE uf IS NOT NULL AND length(uf)=2
+                         GROUP BY uf ORDER BY uf""")
+            return JSONResponse([{"uf": u, "n": n} for u, n in cur.fetchall()])
+    finally:
+        conn.close()
+
+
+@app.get("/api/municipios")
+def municipios_da_uf(uf: str):
+    """Municípios de uma UF, para o seletor — sem geometria, que é pesada."""
+    conn = realtime_ingest.conectar()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""SELECT cod_municipio, nome FROM ibge_malha
+                            WHERE uf = %s AND nome IS NOT NULL ORDER BY nome""",
+                        ((uf or "").strip().upper(),))
+            return JSONResponse([{"cod": c, "nome": n} for c, n in cur.fetchall()])
+    finally:
+        conn.close()
+
+
+@app.post("/api/area/municipio")
+def area_do_municipio(cod: str):
+    """Usa o polígono do município COMO ÁREA DE TRABALHO.
+
+    Evita desenhar a divisa ponto a ponto no mapa. Grava no mesmo
+    `areas/area_atual.json` que o desenho manual usa, então todo o resto do
+    sistema (mineração, enriquecimento, quadras) segue igual — muda só de onde
+    veio o polígono.
+
+    O anel externo basta: a área de trabalho é um filtro de contenção, e ilha ou
+    buraco na divisa não muda quem está dentro para efeito de varredura."""
+    conn = realtime_ingest.conectar()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""SELECT nome, uf, ST_AsGeoJSON(ST_Envelope(geom)),
+                                  ST_AsGeoJSON(geom)
+                             FROM ibge_malha WHERE cod_municipio = %s""",
+                        ((cod or "").strip(),))
+            r = cur.fetchone()
+    finally:
+        conn.close()
+    if not r:
+        return JSONResponse({"erro": f"município {cod} não está na malha"},
+                            status_code=404)
+    nome, uf, _, gj = r
+    g = json.loads(gj)
+    coords = g["coordinates"]
+    if g["type"] == "MultiPolygon":       # fica com a maior ilha
+        coords = max(coords, key=lambda p: len(p[0]))
+    anel = coords[0]
+    poly = [[lat, lng] for lng, lat in anel]
+    AREA_ATUAL.write_text(json.dumps({
+        "nome": f"{nome}/{uf}",
+        "salvo_em": datetime.now().isoformat(timespec="seconds"),
+        "polygon": poly,
+    }, ensure_ascii=False, indent=1), encoding="utf-8")
+    return JSONResponse({"ok": True, "municipio": nome, "uf": uf,
+                         "vertices": len(poly), "polygon": poly})
+
+
 @app.get("/api/malha")
 def malha(uf: str = "", lat: float | None = None, lng: float | None = None):
     """GeoJSON dos municípios da UF, montado da tabela `ibge_malha`.
@@ -659,18 +727,27 @@ def quadras_geojson(sid: str):
                                          "nome_osm": v["nome_osm"], "tipo": v["tipo"],
                                          "nome_canonico": v["nome_canonico"],
                                          "comprimento_m": v["comprimento_m"]}})
+        # a quadra de via aberta é degenerada (um corredor por lado da rua): o
+        # mapa precisa saber, senão ela é desenhada como se fosse quarteirão
+        aberta_q = set()
         for q in quadras_db.quadras(sid, con):
+            ab = bool(q.get("via_aberta_id"))
+            if ab:
+                aberta_q.add(q["id"])
             feats.append({"type": "Feature", "geometry": _wkt_geo(q["geom_osm"]),
                           "properties": {"camada": "quadra_osm", "id": q["id"],
-                                         "area_m2": q["area_osm_m2"], "vias": q["vias"]}})
+                                         "area_m2": q["area_osm_m2"], "vias": q["vias"],
+                                         "via_aberta": ab, "lado": q.get("lado")}})
             if q["geom_real"]:
                 feats.append({"type": "Feature", "geometry": _wkt_geo(q["geom_real"]),
                               "properties": {"camada": "quadra_real", "id": q["id"],
                                              "area_m2": q["area_real_m2"],
+                                             "via_aberta": ab,
                                              "recuo_medio_m": q["recuo_medio_m"]}})
         for f in quadras_db.faces(sid, con):
             feats.append({"type": "Feature", "geometry": _wkt_geo(f["anel_wkt"]),
                           "properties": {"camada": "face", **f, "anel_wkt": None,
+                                         "via_aberta": f["quadra_id"] in aberta_q,
                                          "anel_real_wkt": None}})
             # a borda REAL da face é o trilho do alinhamento (passo 6)
             if f.get("anel_real_wkt"):
@@ -679,6 +756,7 @@ def quadras_geojson(sid: str):
                               "properties": {"camada": "face_real",
                                              "quadra_id": f["quadra_id"],
                                              "face_idx": f["face_idx"],
+                                             "via_aberta": f["quadra_id"] in aberta_q,
                                              "nome_canonico": f["nome_canonico"]}})
         try:
             import quadras_telhados

@@ -1258,9 +1258,16 @@ async function carregarQuadras(sid, silencioso = false) {
   }).addTo(map));
   addCamada("quadraReal", L.geoJSON({ type: "FeatureCollection", features: porCamadaQ("quadra_real") }, {
     pane: "paneQuadras",
-    style: { color: "#ffffff", weight: 2, opacity: 0.9, fill: false },
+    // a quadra de rua aberta não é quarteirão: é o corredor de um lado da via.
+    // Desenhá-la igual a um quarteirão faria o mapa afirmar o que não existe.
+    style: (f) => (f.properties.via_aberta
+      ? { color: "#ffffff", weight: 1, opacity: 0.45, fill: false, dashArray: "4,5" }
+      : { color: "#ffffff", weight: 2, opacity: 0.9, fill: false }),
     onEachFeature: (f, l) => l.bindTooltip(
-      `Quadra ${f.properties.id}<br>${Math.round(f.properties.area_m2 || 0)} m²` +
+      (f.properties.via_aberta
+        ? `Rua aberta ${f.properties.id} — um lado da via`
+        : `Quadra ${f.properties.id}`) +
+      `<br>${Math.round(f.properties.area_m2 || 0)} m²` +
       `<br><small>borda real · recuo ${f.properties.recuo_medio_m} m da meia-via</small>`,
       { sticky: true }),
   }).addTo(map));
@@ -1286,7 +1293,8 @@ async function carregarQuadras(sid, silencioso = false) {
     onEachFeature: (f, l) => {
       const p = f.properties;
       l.bindTooltip(
-        `<b>quadra ${p.quadra_id} · face ${p.face_idx}</b> · ` +
+        `<b>${p.via_aberta ? "rua aberta" : "quadra"} ${p.quadra_id} · face ` +
+        `${p.face_idx}</b> · ` +
         `${Math.round(p.comprimento_m || 0)} m<br>` +
         `${esc(p.nome_canonico || p.nome_osm || "via não identificada")}<br>` +
         `numeração <b>${p.paridade || "indefinida"}</b>` +
@@ -1387,8 +1395,10 @@ async function carregarQuadras(sid, silencioso = false) {
         // coordenada original de propósito. Anel claro, para não parecer que a
         // régua o alcançou nem que ele foi projetado.
         const preso = p.alinhado_modo === "preservado";
-        // distribuído na PRÓPRIA rua que não fecha quadra: anel âmbar, para se
-        // distinguir de quem foi para a testada de um quarteirão
+        // anel âmbar: só aparece em sessão ANTERIOR à mudança que fez da via
+        // aberta uma face de verdade. Hoje esses pontos saem como 'regua' ou
+        // 'perpendicular', como os de qualquer face — o modo fica reconhecido
+        // para que a sessão antiga continue sendo desenhada pelo que ela é.
         const rua = p.alinhado_modo === "via_aberta"
                  || p.alinhado_modo === "via_aberta_perp";
         const ruaPerp = p.alinhado_modo === "via_aberta_perp";
@@ -1819,4 +1829,43 @@ function acompanharQuadras() {
     if (e.containerPoint.distanceTo(inicio) > TOLERANCIA_PX) cancelar();
   });
   map.on("mouseup dragstart zoomstart movestart", cancelar);
+})();
+/* ── Escolher o município inteiro como área de trabalho ────────────────────────
+   Desenhar a divisa de um município ponto a ponto é inviável: Canoas tem
+   centenas de vértices e o polígono desenhado à mão sempre corta bairro. Aqui a
+   divisa vem da malha oficial do IBGE (tabela `ibge_malha`) e é gravada no MESMO
+   `areas/area_atual.json` que o desenho manual usa — o resto do sistema não sabe
+   a diferença. */
+(async function seletorMunicipio() {
+  const selUF = $("mun-uf"), selMun = $("mun-cod");
+  if (!selUF || !selMun) return;
+  try {
+    const ufs = await (await fetch("/api/ufs")).json();
+    ufs.forEach((u) => selUF.insertAdjacentHTML("beforeend",
+      `<option value="${esc(u.uf)}">${esc(u.uf)} (${u.n})</option>`));
+  } catch { return; }
+
+  selUF.onchange = async () => {
+    selMun.innerHTML = `<option value="">município…</option>`;
+    selMun.disabled = true;
+    if (!selUF.value) return;
+    try {
+      const ms = await (await fetch(`/api/municipios?uf=${selUF.value}`)).json();
+      ms.forEach((m) => selMun.insertAdjacentHTML("beforeend",
+        `<option value="${esc(m.cod)}">${esc(m.nome)}</option>`));
+      selMun.disabled = false;
+    } catch { toast("não consegui listar os municípios", "err"); }
+  };
+
+  selMun.onchange = async () => {
+    if (!selMun.value) return;
+    try {
+      const r = await fetch(`/api/area/municipio?cod=${selMun.value}`, { method: "POST" });
+      const d = await r.json();
+      if (d.erro) { toast(d.erro, "err"); return; }
+      setAreaLayer(d.polygon);                 // mesma camada do desenho manual
+      map.fitBounds(areaLayer.getBounds().pad(0.05));
+      toast(`Área: ${d.municipio}/${d.uf} — ${d.vertices} vértices ✔`, "ok");
+    } catch (e) { toast("falhou ao aplicar o município", "err"); }
+  };
 })();

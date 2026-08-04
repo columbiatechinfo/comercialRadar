@@ -107,6 +107,15 @@
   <section class="p-sec hidden" id="sec-mineracao">
     <div class="p-title"><span class="p-step">2</span> Mineração</div>
     <div class="p-body">
+      <div class="opt">
+        <div style="font-weight:600;margin-bottom:4px">Ou escolha o município inteiro</div>
+        <div class="row" style="gap:6px">
+          <select id="mun-uf" style="flex:0 0 84px"><option value="">UF…</option></select>
+          <select id="mun-cod" style="flex:1" disabled><option value="">município…</option></select>
+        </div>
+        <div class="hint">Usa a divisa oficial do IBGE como área de trabalho — não
+          precisa desenhar ponto a ponto.</div>
+      </div>
       <label class="opt inline">Nome da sessão <input type="text" id="op-sessao" placeholder="ex.: parnaiba_centro"></label>
       <label class="opt inline">Passo da grade
         <select id="op-step">
