@@ -31,30 +31,21 @@ L.control.attribution({ position: "bottomright", prefix: false })
 /* Bases disponíveis. O SATÉLITE é a fonte de maior zoom, que é onde as
    (Google XYZ lyrs=s) — então o que aparece no mapa é a imagem que gerou os
    quadras e os pontos ficam legíveis. */
-/* Os fundos do Google vêm por /api/mapa/tile/... e não direto do Google: a chave
-   fica no .env do servidor e NUNCA chega ao navegador. Antes o satélite vinha de
-   `mt1.google.com/vt/lyrs=`, endpoint não documentado — sem chave, sem cota e
-   fora dos termos. Se a chave faltar ou a API estiver fora, o servidor devolve
-   503 e o Leaflet cai no `errorTileUrl`; por isso os fundos Carto continuam
-   aqui, como alternativa que não depende de conta nenhuma. */
-const GTILE = (t) => `/api/mapa/tile/${t}/{z}/{x}/{y}`;
 const BASES = {
   limpo: {
     nome: "Mapa limpo", ico: "🗺️",
-    layer: L.tileLayer(GTILE("roadmap"), { maxZoom: 22, maxNativeZoom: 22 }),
+    layer: L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
+      { maxZoom: 20, subdomains: "abcd" }),
   },
   satelite: {
     nome: "Satélite", ico: "🛰️",
-    layer: L.tileLayer(GTILE("satellite"), { maxZoom: 22, maxNativeZoom: 22 }),
+    layer: L.tileLayer("https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}",
+      { maxZoom: 21, maxNativeZoom: 21 }),
   },
   hibrido: {
     nome: "Satélite + ruas", ico: "🛣️",
-    layer: L.tileLayer(GTILE("hybrid"), { maxZoom: 22, maxNativeZoom: 22 }),
-  },
-  claro: {
-    nome: "Claro (sem Google)", ico: "☁️",
-    layer: L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
-      { maxZoom: 20, subdomains: "abcd" }),
+    layer: L.tileLayer("https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}",
+      { maxZoom: 21, maxNativeZoom: 21 }),
   },
   escuro: {
     nome: "Escuro", ico: "🌙",
