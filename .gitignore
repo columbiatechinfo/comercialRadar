@@ -71,3 +71,6 @@ dados/modelos/
 
 # Cache de malha das UFs (0,3 MB, se rebaixa do IBGE sozinho)
 malhas/
+
+# A área de trabalho mora na tabela area_trabalho, não em arquivo
+areas/

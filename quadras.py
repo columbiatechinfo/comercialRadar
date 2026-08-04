@@ -10,7 +10,7 @@
     quadras.py alinhar --sessao S               passo 6
     quadras.py telhados --sessao S [--com-maps]  passo 7 (Overture)
     quadras.py casar   --sessao S               passo 8 (ponto ↔ telhado)
-    quadras.py tudo   --area areas/area_atual.json  1 a 6 na área do mapa
+    quadras.py tudo   --area area_atual              1 a 6 na área do mapa
     quadras.py tudo   --wkt "..."                   1 a 6 de uma vez
     quadras.py tudo   --municipio "Itambé/PE"       1 a 6 na CIDADE INTEIRA
     quadras.py tudo   --sessao S                    refaz 2 a 6 da sessão
@@ -101,10 +101,9 @@ def _area_wkt(a) -> str:
     if a.arquivo:
         return Path(a.arquivo).read_text(encoding="utf-8").strip()
     if a.area:
-        # mesmo formato dos demais processos: {"polygon": [[lat, lng], ...]}
-        import json
-        d = json.loads(Path(a.area).read_text(encoding="utf-8"))
-        pol = d.get("polygon") or []
+        # a área vem do BANCO (tabela `area_trabalho`), igual aos demais processos
+        import area_utils
+        pol = area_utils.carregar_area(a.area) or []
         if len(pol) < 3:
             raise SystemExit(f"{a.area} não tem polígono — desenhe a área no mapa")
         anel = list(pol) + [pol[0]]
@@ -131,7 +130,7 @@ def main():
     p.add_argument("--arquivo")
     p.add_argument("--municipio", help="cidade inteira pela malha do IBGE em disco: "
                                        "\"Itambé/PE\", só o nome, ou o código IBGE")
-    p.add_argument("--area", help="areas/area_atual.json — o mesmo polígono que os "
+    p.add_argument("--area", help="nome da área no banco — o mesmo polígono que os "
                                   "outros processos usam (é como o mapa dispara)")
     p.add_argument("--sem-proxy", action="store_true",
                    help="consulta o Maps direto, sem o pool de proxies")

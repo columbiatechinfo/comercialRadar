@@ -51,7 +51,9 @@ UPLOADS = BASE / "uploads"
 AREAS = BASE / "areas"
 MINERACAO = BASE / "mineracao"
 MALHAS = BASE / "malhas"
-AREA_ATUAL = AREAS / "area_atual.json"
+# A área de trabalho mora na tabela `area_trabalho` (area_utils), não em
+# arquivo: ela é compartilhada entre o servidor e os coletores, que rodam
+# como subprocessos separados.
 PYTHON = str(BASE / ".venv" / "Scripts" / "python.exe")
 
 for d in (UPLOADS, AREAS, MINERACAO, MALHAS):
@@ -369,27 +371,20 @@ def _iniciar_subprocess(cmd: list, out_json: Path, poligono):
 # ──────────────────────────────────────────────────────────────────────────
 @app.get("/api/area")
 def get_area():
-    poly = area_utils.carregar_area(AREA_ATUAL)
+    poly = area_utils.carregar_area()
     return {"polygon": poly or []}
 
 
 @app.post("/api/area")
 async def post_area(body: dict):
     poly = body.get("polygon") or []
-    if len(poly) < 3:
-        AREA_ATUAL.unlink(missing_ok=True)
-        return {"ok": True, "polygon": []}
-    AREA_ATUAL.write_text(json.dumps({
-        "nome": body.get("nome", "area_atual"),
-        "salvo_em": datetime.now().isoformat(timespec="seconds"),
-        "polygon": poly,
-    }, ensure_ascii=False, indent=1), encoding="utf-8")
-    return {"ok": True, "vertices": len(poly)}
+    n = area_utils.salvar_area(poly, body.get("nome") or area_utils.AREA_PADRAO)
+    return {"ok": True, "vertices": n, "polygon": poly if n else []}
 
 
 @app.post("/api/limpar-fora")
 def limpar_fora(body: dict):
-    poly = area_utils.carregar_area(AREA_ATUAL)
+    poly = area_utils.carregar_area()
     if not poly:
         return JSONResponse({"erro": "Nenhuma área definida. Desenhe o polígono primeiro."}, status_code=400)
     dry = bool(body.get("dry_run", True))
@@ -541,11 +536,7 @@ def area_do_municipio(cod: str):
         coords = max(coords, key=lambda p: len(p[0]))
     anel = coords[0]
     poly = [[lat, lng] for lng, lat in anel]
-    AREA_ATUAL.write_text(json.dumps({
-        "nome": f"{nome}/{uf}",
-        "salvo_em": datetime.now().isoformat(timespec="seconds"),
-        "polygon": poly,
-    }, ensure_ascii=False, indent=1), encoding="utf-8")
+    area_utils.salvar_area(poly)
     return JSONResponse({"ok": True, "municipio": nome, "uf": uf,
                          "vertices": len(poly), "polygon": poly})
 
@@ -1026,7 +1017,7 @@ def iniciar_job(body: dict):
             return JSONResponse({"erro": "Já existe um job rodando. Pare-o antes de iniciar outro."},
                                 status_code=409)
 
-        poly = area_utils.carregar_area(AREA_ATUAL)
+        poly = area_utils.carregar_area()
         if not poly:
             return JSONResponse({"erro": "Desenhe o polígono da área antes de iniciar."}, status_code=400)
 
@@ -1041,7 +1032,7 @@ def iniciar_job(body: dict):
             out_json = arquivo.parent / f"{arquivo.stem}_db.json"
             cmd = [PYTHON, "search_from_sheet.py", str(arquivo),
                    "--workers", str(int(op.get("workers", 10))),
-                   "--area", str(AREA_ATUAL)]
+                   "--area", area_utils.AREA_PADRAO]
             if op.get("recuperar", True):
                 cmd.append("--recuperar")
             if op.get("retry_failed"):
@@ -1058,7 +1049,7 @@ def iniciar_job(body: dict):
             sessao = re.sub(r"[^\w-]", "_", str(op.get("sessao") or "mineracao"))
             sessao = f"{sessao}_{datetime.now().strftime('%Y%m%d_%H%M')}"
             out_json = MINERACAO / f"{sessao}_db.json"
-            cmd = [PYTHON, "minerar_area.py", "--area", str(AREA_ATUAL),
+            cmd = [PYTHON, "minerar_area.py", "--area", area_utils.AREA_PADRAO,
                    "--sessao", sessao, "--out", str(out_json),
                    "--step", str(float(op.get("step", 150))),
                    "--radius", str(float(op.get("radius", 110)))]
@@ -1073,7 +1064,7 @@ def iniciar_job(body: dict):
             out_json = MINERACAO / f"enrich_tudo_{datetime.now().strftime('%Y%m%d_%H%M')}_db.json"
             cmd = [PYTHON, "enriquecer_tudo.py", "--out", str(out_json),
                    "--workers", str(int(op.get("workers", 6))),
-                   "--area", str(AREA_ATUAL), "--sem-ingest"]
+                   "--area", area_utils.AREA_PADRAO, "--sem-ingest"]
             if op.get("no_proxy"):
                 cmd.append("--no-proxy")
             if op.get("pular_maps"):
@@ -1100,7 +1091,7 @@ def iniciar_job(body: dict):
                                              "Rode a planilha primeiro."}, status_code=400)
             cmd = [PYTHON, "minerar_web.py", "--json", str(json_alvo),
                    "--workers", str(int(op.get("workers", 5))),
-                   "--area", str(AREA_ATUAL)]
+                   "--area", area_utils.AREA_PADRAO]
             if op.get("cidade"):
                 cmd += ["--cidade", str(op["cidade"])]
             out_json = json_alvo
@@ -1111,7 +1102,7 @@ def iniciar_job(body: dict):
             out_json = MINERACAO / f"enrich_maps_{datetime.now().strftime('%Y%m%d_%H%M')}_db.json"
             cmd = [PYTHON, "enriquecer_maps.py", "--out", str(out_json),
                    "--workers", str(int(op.get("workers", 6))),
-                   "--area", str(AREA_ATUAL), "--sem-ingest"]
+                   "--area", area_utils.AREA_PADRAO, "--sem-ingest"]
             if op.get("no_proxy"):
                 cmd.append("--no-proxy")
             _novo_job("enriquecer_maps", out_json, {})
@@ -1141,7 +1132,7 @@ def iniciar_job(body: dict):
             # os demais processos: o log do subprocess é o progresso na tela.
             # Não toca em POI nenhum — grava só nas tabelas de quadras.
             out_json = MINERACAO / "_quadras_noop.json"   # watcher fica ocioso
-            cmd = [PYTHON, "quadras.py", "tudo", "--area", str(AREA_ATUAL)]
+            cmd = [PYTHON, "quadras.py", "tudo", "--area", area_utils.AREA_PADRAO]
             if op.get("com_maps"):
                 cmd.append("--com-maps")
             if op.get("sem_proxy"):
