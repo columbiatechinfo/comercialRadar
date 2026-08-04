@@ -1306,3 +1306,90 @@ lados da rua e a paridade marca em vermelho o lado que não é daquela face.
 
 Conferido no mapa: 2.090 pontos desenhados, **desvio máximo da coordenada
 original = 0 m**.
+---
+
+## 17. Regras de posicionamento acrescentadas em 03/08/2026
+
+Todas nasceram de um caso concreto que o usuário mostrou no mapa, e cada uma foi
+medida antes e depois. Ordem em que agem no passo 5 e no 6/8:
+
+### Passo 5 — a quem o endereço pertence
+
+**O contexto é a CIDADE, não o desenho** (`quadras_do_municipio`). Duas perguntas
+— "esta via forma quarteirão?" e "esta rua tem outro lado?" — eram respondidas
+contra as quadras da SESSÃO. Quem desenha em cima de um único quarteirão não tem
+outra para comparar: 82 de 82 vias saíam como "não fecha quadra" e toda face
+virava "rua de um lado só", então **nada era reprovado** e o quarteirão vizinho
+entrava inteiro. Hoje consulta `osm_quadra` do município (Itambé: 609 quadras).
+
+**Face sem via no OSM não herda o nome de uma face que tem.** O respaldo é medido
+pela FRAÇÃO da face que corre ao longo da via (`_via_ao_longo`), não por
+distância — numa esquina a face encosta em todas as transversais a 0,0 m. Uma
+face de 51 m sem via nenhuma tomava "RUA JOAO PAES" pela maioria dos endereços e
+puxava os pontos da João Paes de verdade, que tem 100% de respaldo ao lado.
+Resolvido em duas passadas: primeiro as faces com respaldo, depois as sem.
+
+**Na esquina, quem decide é o nome do logradouro** (`EMPATE_ESQUINA_M = 5 m`). O
+lote de canto tem frente para duas ruas e a face mais próxima por centímetros
+pode ser a errada. Medido: 714 pontos (4,9%) empatam dentro de 1 m, 1.744 dentro
+de 5 m; destes, 122 estavam reprovados com o logradouro batendo com a segunda
+face. Recuperou 19 — o resto depende de o nome da face já estar gravado, e na
+primeira das duas passadas de `_classificar_faces` ele ainda não está.
+
+**Face sem paridade herda o CONTRÁRIO da face de frente**
+(`paridade_pela_face_oposta`). A rua tem dois lados complementares, mas cada face
+decidia sozinha: **1.349 das 2.260 faces (60%)** ficavam sem paridade, e face sem
+paridade não reprova ninguém. A oposta é achada andando perpendicular ao meio da
+face, para fora da quadra, além da caixa; quando as duas têm nome, eles precisam
+bater. **A herança propaga**, então roda em rodadas até nenhuma face nova
+aprender: uma rodada ensinava 162 faces, iterando chega a 230. Os pontos
+numerados parados por falta de paridade são rejulgados (213). Sobram 1.126 faces
+sem paridade — a de frente também não tem, e é limite do dado.
+
+### Passos 6 e 8 — para onde o endereço vai
+
+**Ponto EM CIMA de um telhado não se move.** Se a coordenada do CNEFE caiu sobre o
+polígono de uma construção do Overture, a porta é ali; levá-la ao trilho a joga na
+rua. Vence inclusive o nome batendo com a face, e é mais forte que o "telhado a
+53 m", que só indica região construída.
+
+**O alinhamento não atravessa a rua** (`nao_atravessar_via`). O trilho corre
+dentro do quarteirão, então recuo negativo projetado nele cruza a via. Mas
+negativo pequeno NÃO é do outro lado: o CNEFE põe o endereço em cima do eixo — 9
+dos 10 cruzamentos tinham recuo entre −0,1 e −2,8 m, e movê-los para a calçada é o
+certo. O corte é a meia caixa viária. O caso real era um só: −13,4 m arrastado
+18,2 m.
+
+**Na rua aberta, o trilho é o TRECHO OCUPADO, não a rua inteira.** A face de
+quadra é curta por natureza; uma via que não fecha quadra tem centenas de metros
+(447 m no caso visto), e espalhar a numeração por tudo jogava cada endereço longe
+da origem — o teto de 10 m barrava e quase todos caíam na perpendicular. A régua
+passou a interpolar entre as projeções extremas dos próprios endereços do grupo
+(via, lado). Régua na rua aberta: 77 → **267** pontos; perpendicular 927 → 737,
+com deslocamento médio de 6,4 → 4,6 m.
+
+### O que NÃO tem solução com os dados de hoje
+
+**Cruzar coordenadas de várias fontes não é possível.** Medido em Itambé:
+
+| fonte | endereços urbanos | veredito |
+|---|---:|---|
+| CNEFE 2010 | **0** de 7.386 | IBGE só coletou GPS no rural em 2010 (61–82% lá) |
+| Overture `addresses` | 16.573 | **é o próprio CNEFE** — `dataset: br_ibge`, mediana 0,1 m |
+| OSM `addr:housenumber` | **10** na caixa inteira | inexistente |
+
+Não há fonte independente para tirar mediana. A única que de fato traria
+coordenada urbana nova é a leitura no Maps (título do panorama), já implementada e
+desligada por custar ~10 s por via. O telhado do Overture é a outra evidência
+independente — vem de imagem, não do IBGE — e já é usada.
+
+### Aberto
+
+- **737 pontos de rua aberta ainda vão para a perpendicular**, sem ordem de
+  numeração. Causas possíveis: grupo (via, lado) com menos de dois endereços
+  numerados, ou a régua ainda estourando o teto. **Não medido qual predomina** —
+  é o primeiro passo antes de mexer.
+- **103 dos 122 reprovados de esquina** seguem reprovados (ver acima).
+- **1.126 faces sem paridade**, por a face de frente também não ter.
+- O botão azul do mapa roda os passos **1 a 6**; telhados (7) e casamento (8) são
+  à parte, por custarem ~70 s contra 2–4 s de todo o resto.
