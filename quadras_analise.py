@@ -1633,6 +1633,16 @@ def alinhar_vias_abertas(sid: str, con=None) -> dict:
                 nums = [p["numero"] for p in ms]
                 n0, n1 = min(nums), max(nums)
                 span = (n1 - n0) or 1
+                # O TRILHO É O TRECHO OCUPADO, não a rua inteira. A face de quadra
+                # é curta e delimitada por natureza; uma via aberta tem 447 m, e
+                # espalhar a numeração por tudo joga cada ponto dezenas de metros
+                # da origem — o teto de 10 m barra e todos caem na perpendicular
+                # (medido: 927 na perpendicular contra 77 pela régua). Ancorar nas
+                # projeções extremas dos próprios endereços mantém a proporção e
+                # deixa o deslocamento pequeno.
+                t0, t1 = min(proj.values()), max(proj.values())
+                if t1 - t0 < 1e-9:
+                    t0, t1 = 0.0, 1.0
                 for p in ps:
                     q = Point((p["lng"] - lng0) * mx, (p["lat"] - lat0) * my)
                     if not p["numero"]:
@@ -1647,7 +1657,7 @@ def alinhar_vias_abertas(sid: str, con=None) -> dict:
                     frac = (p["numero"] - n0) / span
                     if cresce < 0:
                         frac = 1.0 - frac
-                    alvo = trilho.interpolate(frac, normalized=True)
+                    alvo = trilho.interpolate(t0 + frac * (t1 - t0), normalized=True)
                     la, lg = alvo.y / my + lat0, alvo.x / mx + lng0
                     if _dist_m(p["lat"], p["lng"], la, lg) > DESLOC_MAX_M:
                         if grava(p, trilho.interpolate(trilho.project(q)),
