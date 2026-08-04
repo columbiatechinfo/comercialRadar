@@ -1383,13 +1383,250 @@ coordenada urbana nova é a leitura no Maps (título do panorama), já implement
 desligada por custar ~10 s por via. O telhado do Overture é a outra evidência
 independente — vem de imagem, não do IBGE — e já é usada.
 
+---
+
+## 18. A via que não fecha quadra virou FACE DE VERDADE (04/08/2026)
+
+### O que estava errado
+
+`alinhar_vias_abertas` era um caminho paralelo: agrupava os pontos por
+`(via do OSM, lado pelo produto vetorial)` e distribuía com uma régua própria.
+Esse grupo não é uma face — não tem nome, não tem paridade, não tem recuo nem
+borda real. Medido na sessão de 03/08 (Itambé, 306 km²):
+
+| | |
+|---|---:|
+| pontos de via aberta | 1.004 |
+| **com o logradouro DIFERENTE do nome da face que os carregava** | **547 (54%)** |
+| grupos misturando par e ímpar numa régua só | 74 de 162 |
+| estouros do teto que estavam em grupo com par+ímpar | **456 de 507 (90%)** |
+| deslocamento que a régua queria (mediana) | **33,3 m** (máx 785 m) |
+
+Casos reais: `RUA DAS MARGARIDAS nº 1029` na face `RUA AFONSO PENA`;
+`RUA SETE 3 nº 26` na face `1A TRAVESSA DA RUA JOAO PAES`. O endereço herdava
+nome, paridade e recuo de uma rua que não era a dele.
+
+Os 737 que iam para a perpendicular sem ordem se dividiam em: **419** a régua
+estourou o teto, **234** sem número (`numero = 0`, não NULL), **84** grupo com
+menos de duas âncoras numeradas.
+
+### O modelo novo
+
+Cada via que **não fecha quadra** vira, no passo 2, **quadras degeneradas**:
+
+1. o traçado é quebrado **nas transversais** (`_partir_nas_transversais`) — é a
+   esquina que faz a face ser face, e sem isso uma via de 447 m era uma "face"
+   só. Trecho abaixo de `COMP_MIN_FACE_ABERTA_M` (15 m) é toco de cruzamento e
+   não entra;
+2. cada trecho gera **duas** quadras, uma por lado (`_corredor`): o corredor vai
+   do eixo até `FAIXA_PONTOS_M` para um lado, e **invade 0,5 m para o outro** de
+   propósito — o CNEFE põe o endereço em cima do eixo, e um ponto exatamente
+   sobre a linha não estaria contido em nenhum dos dois lados;
+3. é esse polígono que responde "de que lado da rua está este endereço?", a mesma
+   pergunta que o polígono do quarteirão responde numa face normal. Por isso
+   `_recuo_com_sinal`, `_paridade` e `_canonico` funcionam **sem saber** que a
+   quadra é degenerada.
+
+Colunas novas em `quadra`: `via_aberta_id`, `lado`, `eixo_wkt`.
+
+O passo 4 colhe os endereços da própria via **pelos dois lados** (é o passo 5 que
+decide o lado, e para decidir ele precisa ver os dois grupos). O corredor **não**
+conta como "dentro do quarteirão": `_dentro_e_da_quadra` o ignora, senão a regra
+aprovaria justamente quem a paridade acabou de reprovar.
+
+Três ajustes que o modelo exigiu:
+
+- **"rua de um lado só" não pode ser perguntada ao município** — o corredor não
+  existe no OSM, e toda via aberta responderia "um lado só", que dispensa a
+  paridade e aprova os dois lados. A pergunta virou direta: *há endereço numerado
+  do lado de lá da caixa?*
+- **`_resolver_duplicados` ganhou um critério** — as duas faces de uma via aberta
+  compartilham o MESMO eixo, então a distância à face empata sempre e não
+  desempata nada. Entra `no_espaco` (estar do lado dela) antes da distância.
+- **o trilho vai onde as portas ESTÃO** (`_recuo_observado`): a mediana do recuo
+  do lado que venceu a paridade, e não a meia caixa contada a partir do eixo. O
+  eixo do OSM quase nunca cai no centro exato da rua, e sem quadra não há
+  polígono para dar a borda real. As pontas só encurtam onde o trecho encosta em
+  outra via (`_pontas_de_esquina`) — beco sem saída não perde 8 m à toa.
+
+`alinhar_vias_abertas` (172 linhas) foi **removida**, com a chamada no passo 8 e
+o braço "a via mais próxima não fecha quadra" do `preservar_no_lugar`: hoje quem
+mora em via aberta é julgado pelo nome como todo mundo.
+
+### Medido (mesma área, 306 km², antes × depois)
+
+| | antes | depois |
+|---|---:|---:|
+| quadras | 598 | 2.090 (598 + **1.492** corredores) |
+| faces | 2.260 | 3.752 |
+| pontos | 14.587 | 15.691 |
+| aprovados | 12.919 | 13.867 |
+| **logradouro do ponto bate com o nome da face (via aberta)** | **54%** | **97%** |
+
+**O que funcionou:** a identidade. O endereço de via aberta está na face da rua
+dele, com nome e paridade próprios — as faces saem limpas (`P37/I1`, `P0/I23`,
+`P33/I0`), o que era impossível quando a régua misturava os dois lados.
+
+**O que NÃO funcionou:** a régua. Nas faces de via aberta, 258 pela régua contra
+805 na perpendicular — praticamente o mesmo 267/737 de antes. E no total geral a
+perpendicular por teto **piorou**, de 6.011 para 7.003.
+
+### A causa real, que não era a paridade
+
+A paridade era 90% do problema *no modelo antigo*. Corrigida ela, o que sobrou é
+um defeito **do processo inteiro, não só da via aberta**: a régua ancora em
+`n_min` e `n_max`, então **um único número fora da série comprime todo o resto**.
+
+`RUA JOSE CESAR MARINHO FALCÃO`, lado par, face de 293 m, 38 endereços:
+
+```
+47, 182, 216, 216, 224, 232, 240, 248, ... , 456, 460, 464, 480
+ ↑ o 47 é o único abaixo de 182
+```
+
+Ancorando em 47–480, o nº 182 (o segundo da fila) cai a **91 m** do começo da
+face; os 37 endereços reais ficam espremidos nos últimos 69% dela, cada um
+deslocado dezenas de metros — e o teto de 10 m barra todos. Sem o 47, a série
+182–480 se distribui sozinha.
+
+Segundo caso, pior: `ESTRADA ENGENHO MEREPES` tem endereços **todos com o mesmo
+número** (11). Aí `span = (n1 - n0) or 1` vale 1, `frac` dá 0 para todos e eles
+se **empilham no começo do trilho**. Número igual não é régua nenhuma — esses
+pontos deveriam ir para a perpendicular, não para o mesmo ponto.
+
+### Dois defeitos que o mapa revelou (04/08/2026, mesma sessão)
+
+O usuário apontou dois no print: pontos vermelhos parados **em cima da via** e
+endereços de um lado **desenhados do outro**. Nenhum dos dois era o que parecia.
+
+**1. Recuo POSITIVO era chamado de "outro lado da via"** (`_canonico`). O limite
+acompanhava a linha das portas (`ref - meia caixa`), então numa face cujas portas
+estão fundas ele subia junto:
+
+```
+motivo: "está do outro lado da via (+2 m, contra +7 m das portas desta face)"
+```
+
+`+2 m` é do lado de cá — só mais perto do eixo, que é onde o CNEFE põe boa parte
+dos endereços. Eram **1.037 pontos não aprovados com o logradouro DA PRÓPRIA
+FACE a 2,2 m dela**, 786 deles por esse motivo. Atravessar a rua é passar do eixo
+para lá, além da meia caixa, e é só isso que o teste tem como afirmar:
+`limite = min(ref - meia, -meia)`.
+
+**2. O trilho de 11% das faces ficava do lado errado da rua** (`_face_real`) —
+**399 de 3.752**, sendo **85 em quadras reais**: o defeito é anterior ao modelo
+de via aberta, que só o tornou visível ao criar mais faces. Duas causas:
+
+- a normal era a da **corda** entre o primeiro e o último ponto da face; numa
+  face curva de 154 ou 200 m a corda não representa o traçado;
+- o lado era escolhido pelo **centroide** da quadra, que num polígono em L ou num
+  corredor estreito cai fora da face.
+
+Agora cada vértice anda pela média das normais dos segmentos vizinhos, e o lado é
+decidido por **contenção no polígono** (centroide só de reserva).
+
+| | antes | depois |
+|---|---:|---:|
+| faces com o trilho fora do próprio polígono | 399 | **3** |
+| pontos que terminam do outro lado do eixo | 716 | **526** |
+| não aprovados com o logradouro da face, a <15 m | 1.037 | **783** |
+| … destes, por "está do outro lado da via" | 786 | **103** (mediana 2,2 → 9,7 m) |
+| … destes, sem número | 261 | **55** |
+| aprovados | 13.867 | **14.189** |
+| reprovados | 1.448 | **1.081** |
+| "recuperados do outro lado da via" (resgate por identidade) | 740 | **116** |
+
+A queda de 740 para 116 no resgate por identidade é a confirmação de que ele
+estava **tapando o buraco do teste de lado**: sem o erro, quase ninguém precisa
+ser resgatado.
+
+Os 526 que ainda terminam do outro lado **não são defeito**: 308 estão em rua sem
+outro lado e 213 são o `nao_atravessar_via` agindo — a regra explícita de não
+arrastar ninguém para cruzar a rua. Mudá-los é decisão de produto, não correção.
+
 ### Aberto
 
-- **737 pontos de rua aberta ainda vão para a perpendicular**, sem ordem de
-  numeração. Causas possíveis: grupo (via, lado) com menos de dois endereços
-  numerados, ou a régua ainda estourando o teto. **Não medido qual predomina** —
-  é o primeiro passo antes de mexer.
-- **103 dos 122 reprovados de esquina** seguem reprovados (ver acima).
-- **1.126 faces sem paridade**, por a face de frente também não ter.
+- **Reprovado por paridade com a face certa longe.** Sobraram 636 pontos a 2,0 m
+  de uma face da própria rua, reprovados porque a numeração é do outro lado.
+  Destes, 540 têm em algum lugar uma face da mesma rua com a paridade certa, mas
+  a **mediana da distância até ela é 34,3 m** — é outro quarteirão. Só 229 estão
+  a menos de `RAIO_FACE_M`. Os outros 173 não têm nenhuma face daquela rua com
+  aquela paridade. **A causa não foi isolada**: pode ser cobertura de paridade
+  (a face de frente também não tem) ou a coleta do passo 4 não alcançar.
+- **A régua ancorada em min/max é frágil a outlier** — é hoje a maior causa de
+  ponto na perpendicular em TODA a análise (7.003 de 9.941). Ancoragem robusta
+  (Theil–Sen já dá o sentido; falta usá-lo para a inclinação) resolveria os dois
+  casos acima. **Não implementado.**
+- **`span = 0` empilha os pontos** em vez de mandá-los para a perpendicular.
+- A perpendicular global subiu de 8.239 para 9.941. Parte é volume (1.104 pontos
+  a mais), mas a proporção sobre os aprovados também subiu, de 46,5% para 50,5%
+  — **a parcela que não é volume não foi isolada.**
+- 1.392 das 1.492 faces de via aberta não têm **nenhum** endereço numerado: são
+  becos e acessos sem cadastro. Não é defeito, é o dado.
+- **103 dos 122 reprovados de esquina** seguem reprovados (ver seção 17).
 - O botão azul do mapa roda os passos **1 a 6**; telhados (7) e casamento (8) são
   à parte, por custarem ~70 s contra 2–4 s de todo o resto.
+- Custo: a área inteira de Itambé nos passos 2–6 levou **555 s** contra ~227 s
+  antes — o preço de 1.492 quadras a mais (o passo 4 colhe 41.003 linhas e o
+  expurgo de duplicados remove 25.532).
+
+---
+
+## 18. Os DOIS caminhos de POI — leia antes de mexer (04/08/2026)
+
+Descoberto ao investigar "a mineração não acha POI nenhum". **Existem dois
+processos de POI na pasta, e só um está ligado ao painel.**
+
+### O principal: captura + OCR (roda FORA do painel)
+
+`src/capture.ts` — TypeScript com Playwright. É o que o usuário chama de processo
+principal: **10 workers paralelos**, um mapa do Google carregado por worker e
+reposicionado por coordenada (em vez de recarregar o mapa a cada ponto), usando um
+Map ID com estilo vetorial limpo — **sem nomes de rua, só os markers de POI** —
+para o OCR ter o que ler.
+
+```
+const WORKERS      = 10;
+const MAPS_MAP_ID  = '33696f50cbe8e2d228094f61';  // mapa_pois, estilo clean
+const TILE_WAIT_MS = 6000;                        // espera os labels aparecerem
+```
+
+Pipeline: `src/capture.ts` → `detect_crops.py` → `ocr_pois.py` (EasyOCR) →
+`capturas/<sessão>/crops/ocr_resultado.json`. A pasta `capturas/` é SAÍDA desse
+processo — não é lixo de run antiga.
+
+**Ele nunca esteve ligado ao servidor.** É executado por linha de comando.
+
+> ⚠️ A chave da Google está **em texto puro no `src/capture.ts`, linha 8**. Não
+> está no `.env`. Ao girar a chave, trocar ali também — e o certo é tirá-la do
+> código.
+
+### O do painel: Places API (último recurso)
+
+O botão **Mineração de área** chama `minerar_area.py`, que usa a **Places API
+paga** (`nearbysearch` + `details`). Depende de `MAPS_API_KEY` no `.env`.
+
+**Em 04/08/2026 essa variável NÃO existe no `.env`** — por isso a mineração
+retornava "4 células, 0 POIs, 0.0 min": sem chave, cada célula chama a URL com
+`key=` vazio, o Google recusa na hora e o script segue em silêncio, sem erro.
+
+Conferido no histórico: a linha que dispara `minerar_area.py` tem só **dois
+commits** — o original da v2.0 e o de 04/08, que trocou o argumento da área de
+caminho de arquivo para nome no banco. **O painel sempre chamou o Places**; nada
+foi desconfigurado ao construir quadras/telhados.
+
+### E o terceiro, que não é minerador
+
+`minerar_web.py` é **recuperação de resíduo**, não varredura: pega POIs que já
+falharam no Maps e busca no Yahoo (Playwright + proxy), OpenAI e BrasilAPI. Roda
+sobre um JSON de coleta que já existe.
+
+### Em aberto para a próxima sessão
+
+1. **Ligar o `capture.ts` ao painel** no lugar do Places, ou deixar explícito na
+   interface que o botão usa a API paga. Ponto de partida:
+   `node --version`, `ls src/`, `cat package.json`.
+2. **`MAPS_API_KEY` ausente no `.env`** — decidir se volta (habilitando Places na
+   chave) ou se o painel passa a chamar o processo de captura.
+3. **Girar a chave do Google**, exposta em dois lugares: `src/capture.ts` linha 8
+   e o histórico da conversa de 03–04/08.
