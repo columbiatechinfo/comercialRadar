@@ -90,9 +90,23 @@ function camadaBase(chave) {
       });
     }
   } catch { /* segue com o Carto */ }
-  camadaBase(baseAtual).addTo(map);
-  camadaBase(baseAtual).bringToBack();
+  // O fundo do Google entra TROCANDO o provisório. Adicionar a camada só aqui,
+  // de forma assíncrona, invertia a ordem de execução do resto do app.js e os
+  // botões da topbar perdiam o onclick — o menu superior parava de funcionar.
+  const antigo = BASES[baseAtual].layer;
+  BASES[baseAtual].layer = null;               // força recriar, agora com Google
+  const novo = camadaBase(baseAtual);
+  if (novo !== antigo) {
+    novo.addTo(map);
+    novo.bringToBack();
+    if (antigo && map.hasLayer(antigo)) map.removeLayer(antigo);
+  }
 })();
+
+/* Fundo PROVISÓRIO, síncrono: o mapa nunca fica sem base, e — mais importante —
+   a ordem de execução do app.js continua a mesma de antes. */
+camadaBase(baseAtual).addTo(map);
+camadaBase(baseAtual).bringToBack();
 
 function trocarBase(chave) {
   if (!BASES[chave] || chave === baseAtual) return;
