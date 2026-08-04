@@ -477,6 +477,75 @@ def _uf_do_ponto(lat: float, lng: float) -> str:
         return ""
 
 
+# ──────────────────────────────────────────────────────────────────────────
+# Mapa de fundo — Map Tiles API do Google, com a chave FORA do navegador
+# ──────────────────────────────────────────────────────────────────────────
+# Antes o fundo vinha de `mt1.google.com/vt/lyrs=...`, endpoint não documentado:
+# sem chave, sem cota e fora dos termos de uso — some quando o Google quiser.
+# Aqui é a API oficial. A chave fica no .env e NUNCA vai ao cliente: o navegador
+# pede o tile a este servidor, que busca no Google e devolve. Por isso o proxy.
+_TILE_SESS: dict = {}          # tipo -> {"session": str, "expiry": int}
+_TILE_LOCK = threading.Lock()
+TIPOS_TILE = {
+    "roadmap":   {"mapType": "roadmap"},
+    "satellite": {"mapType": "satellite"},
+    "hybrid":    {"mapType": "satellite", "layerTypes": ["layerRoadmap"]},
+}
+
+
+def _sessao_tile(tipo: str) -> str | None:
+    """Token de sessão da Map Tiles API, renovado quando expira.
+
+    O Google cobra por tile, não por sessão — mas a sessão vale ~2 semanas e
+    recriá-la a cada tile seria uma chamada extra por imagem."""
+    chave = os.environ.get("GOOGLE_TILES_KEY", "").strip()
+    if not chave or tipo not in TIPOS_TILE:
+        return None
+    with _TILE_LOCK:
+        s = _TILE_SESS.get(tipo)
+        if s and s["expiry"] > time.time() + 300:
+            return s["session"]
+        corpo = dict(TIPOS_TILE[tipo], language="pt-BR", region="BR")
+        try:
+            req = urllib.request.Request(
+                f"https://tile.googleapis.com/v1/createSession?key={chave}",
+                data=json.dumps(corpo).encode(),
+                headers={"Content-Type": "application/json"})
+            d = json.loads(urllib.request.urlopen(req, timeout=30).read())
+        except Exception as e:
+            print(f"[tiles] createSession {tipo} falhou: {str(e)[:120]}", flush=True)
+            return None
+        _TILE_SESS[tipo] = {"session": d["session"], "expiry": int(d.get("expiry", 0))}
+        return d["session"]
+
+
+@app.get("/api/mapa/tipos")
+def mapa_tipos():
+    """Diz ao front se o fundo do Google está disponível (chave presente e válida)."""
+    ok = bool(os.environ.get("GOOGLE_TILES_KEY", "").strip())
+    return {"google": ok and bool(_sessao_tile("roadmap")),
+            "tipos": list(TIPOS_TILE)}
+
+
+@app.get("/api/mapa/tile/{tipo}/{z}/{x}/{y}")
+def mapa_tile(tipo: str, z: int, x: int, y: int):
+    ses = _sessao_tile(tipo)
+    if not ses:
+        return JSONResponse({"erro": "fundo do Google indisponível"}, status_code=503)
+    chave = os.environ.get("GOOGLE_TILES_KEY", "").strip()
+    url = (f"https://tile.googleapis.com/v1/2dtiles/{z}/{x}/{y}"
+           f"?session={ses}&key={chave}")
+    try:
+        with urllib.request.urlopen(url, timeout=30) as r:
+            dados = r.read()
+            ct = r.headers.get("Content-Type", "image/png")
+    except Exception as e:
+        return JSONResponse({"erro": str(e)[:120]}, status_code=502)
+    # cache longo no navegador: tile de mapa não muda, e cada requisição é paga
+    return Response(content=dados, media_type=ct,
+                    headers={"Cache-Control": "public, max-age=604800"})
+
+
 @app.get("/api/ufs")
 def ufs_carregadas():
     """UFs que já têm malha municipal no banco, com a contagem."""
