@@ -144,13 +144,30 @@ def garantir_esquema(con=None) -> None:
                          ("grupo_lng", "double precision"),
                          # 'regua' = distribuído pela numeração · 'perpendicular'
                          # = só projetado na testada, porque a régua o levaria longe
-                         ("alinhado_modo", "text")):
+                         ("alinhado_modo", "text"),
+                         # o número não pertence à série desta face (um 79 no
+                         # meio de 641–733): não pode ancorar a régua, e vai ser
+                         # realocado para o trecho da rua onde ele se encaixa
+                         ("fora_serie", "boolean"),
+                         # face de ORIGEM de quem foi realocado — é ela que o
+                         # `limpar_passo(6)` devolve, para o passo seguir refazível
+                         ("realoc_quadra_id", "bigint"),
+                         ("realoc_face_idx", "integer")):
                 cur.execute(f"ALTER TABLE quadra_ponto ADD COLUMN IF NOT EXISTS {c} {t}")
             cur.execute("ALTER TABLE quadra_face ADD COLUMN IF NOT EXISTS anel_real_wkt text")
             # a via corre AO LONGO da borda de alguma quadra? Beco, rua projetada
-            # e acesso de engenho não fecham quarteirão — quem mora neles não tem
-            # testada para onde ser alinhado (passo 6).
+            # e acesso de engenho não fecham quarteirão.
             cur.execute("ALTER TABLE via_osm ADD COLUMN IF NOT EXISTS fecha_quadra boolean")
+            # A via que NÃO fecha quadra também tem dois lados, e é neles que os
+            # endereços dela moram. Ela vira uma quadra DEGENERADA por lado — um
+            # corredor cujo único lado edificável é o eixo da própria via — para
+            # que a face dela tenha exatamente as mesmas propriedades de uma face
+            # de quarteirão: nome, paridade, recuo, borda real e régua. Antes
+            # esses pontos ficavam pendurados na face da quadra VIZINHA (medido:
+            # 547 de 1.004 com o logradouro batendo com outra rua).
+            for c, t in (("via_aberta_id", "bigint"), ("lado", "text"),
+                         ("eixo_wkt", "text")):
+                cur.execute(f"ALTER TABLE quadra ADD COLUMN IF NOT EXISTS {c} {t}")
         con.commit()
         _PRONTO = True
     finally:
@@ -288,11 +305,19 @@ def limpar_passo(sid: str, passo: int, con=None) -> None:
             elif passo == 4:
                 cur.execute("DELETE FROM quadra_ponto WHERE sessao_id=%s", (sid,))
             elif passo == 6:
+                # quem foi realocado trocou de face: devolve antes de zerar o
+                # resto, senão refazer o passo 6 parte de um dono trocado
+                cur.execute("""UPDATE quadra_ponto
+                                  SET quadra_id=realoc_quadra_id,
+                                      face_idx=realoc_face_idx,
+                                      realoc_quadra_id=NULL, realoc_face_idx=NULL
+                                WHERE sessao_id=%s AND realoc_quadra_id IS NOT NULL""",
+                            (sid,))
                 cur.execute("""UPDATE quadra_ponto SET lat_alinhado=NULL,
                                       lng_alinhado=NULL, ordem_face=NULL,
                                       alinhado_por=NULL, desloc_m=NULL, grupo_id=NULL,
                                       grupo_n=NULL, grupo_lat=NULL, grupo_lng=NULL,
-                                      alinhado_modo=NULL
+                                      alinhado_modo=NULL, fora_serie=NULL
                                 WHERE sessao_id=%s""", (sid,))
             elif passo == 5:
                 cur.execute("""UPDATE quadra_face SET via_id=NULL, nome_canonico=NULL,
@@ -332,11 +357,13 @@ def quadras(sid: str, con=None) -> list[dict]:
     try:
         with con.cursor() as cur:
             cur.execute("""SELECT id, geom_osm, geom_real, recuo_medio_m, area_osm_m2,
-                                  area_real_m2, lat_centro, lng_centro, vias
+                                  area_real_m2, lat_centro, lng_centro, vias,
+                                  via_aberta_id, lado, eixo_wkt
                              FROM quadra WHERE sessao_id=%s ORDER BY id""", (sid,))
             rows = cur.fetchall()
         k = ("id", "geom_osm", "geom_real", "recuo_medio_m", "area_osm_m2",
-             "area_real_m2", "lat_centro", "lng_centro", "vias")
+             "area_real_m2", "lat_centro", "lng_centro", "vias",
+             "via_aberta_id", "lado", "eixo_wkt")
         return [dict(zip(k, r)) for r in rows]
     finally:
         if fechar:
@@ -419,14 +446,15 @@ def pontos(sid: str, con=None) -> list[dict]:
                                   lat, lng, origem, dist_via_m, canonico, motivo, resgate,
                                   lat_alinhado, lng_alinhado, ordem_face, alinhado_por, desloc_m,
                                   grupo_id, grupo_n, grupo_lat, grupo_lng,
-                                  alinhado_modo
+                                  alinhado_modo, fora_serie
                              FROM quadra_ponto WHERE sessao_id=%s ORDER BY id""", (sid,))
             rows = cur.fetchall()
         k = ("id", "quadra_id", "face_idx", "cod_endereco", "logradouro", "numero",
              "cep", "especie", "estabelecimento", "nv_geo", "lat", "lng", "origem",
              "dist_via_m", "canonico", "motivo", "resgate",
              "lat_alinhado", "lng_alinhado", "ordem_face", "alinhado_por", "desloc_m",
-             "grupo_id", "grupo_n", "grupo_lat", "grupo_lng", "alinhado_modo")
+             "grupo_id", "grupo_n", "grupo_lat", "grupo_lng", "alinhado_modo",
+             "fora_serie")
         return [dict(zip(k, r)) for r in rows]
     finally:
         if fechar:
