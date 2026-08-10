@@ -1,0 +1,15 @@
+COMO USAR ESTE REPOSITORIO
+==========================
+
+Coloque em cada pasta 2 a 5 imagens de EXEMPLO daquele tipo de construcao.
+Formato: JPG ou PNG, um recorte de satelite (vista de cima) mostrando UMA
+construcao centralizada. Quanto mais nitido (z21) e representativo, melhor.
+
+As pastas:
+  casa/          casa terrea - so telhado, telha ceramica, porte de lote
+  predio/        predio multiandar - da pra ver a LATERAL, alto, em grupo
+  galpao/        galpao - telhado claro/metalico, bem maior que casa
+  casa_piscina/  casa com piscina (agua azul no quintal)
+  vazio/         terreno baldio - sem construcao ou demolido/mato
+
+A IA vai comparar cada construcao detectada com esses exemplos pra classificar.

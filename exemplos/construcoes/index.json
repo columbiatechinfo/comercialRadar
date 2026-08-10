@@ -1,0 +1,86 @@
+{
+ "classes": {
+  "casa": {
+   "descricao": "casa térrea — só se vê o telhado, porte de 1 lote",
+   "curados": [
+    "casa/Captura de tela 2026-07-21 082530.png",
+    "casa/Captura de tela 2026-07-21 082558.png",
+    "casa/casa_1.jpg",
+    "casa/casa_2.jpg",
+    "casa/casa_3.jpg"
+   ],
+   "aprovados": [],
+   "total": 5
+  },
+  "predio": {
+   "descricao": "prédio multiandar — dá pra ver a LATERAL/fachada; costuma vir em grupo de blocos iguais",
+   "curados": [
+    "predio/Captura de tela 2026-07-20 225234.png",
+    "predio/Captura de tela 2026-07-20 225335.png",
+    "predio/Captura de tela 2026-07-20 225729.png",
+    "predio/Captura de tela 2026-07-21 082944.png",
+    "predio/Captura de tela 2026-07-21 083011.png",
+    "predio/Captura de tela 2026-07-21 083123.png",
+    "predio/Captura de tela 2026-07-21 083224.png",
+    "predio/Captura de tela 2026-07-21 083247.png",
+    "predio/Captura de tela 2026-07-21 083418.png",
+    "predio/Captura de tela 2026-07-21 083650.png",
+    "predio/Captura de tela 2026-07-21 083755.png",
+    "predio/Captura de tela 2026-07-21 083823.png",
+    "predio/Captura de tela 2026-07-21 083837.png",
+    "predio/predio_1.jpg"
+   ],
+   "aprovados": [],
+   "total": 14
+  },
+  "galpao": {
+   "descricao": "galpão — telhado claro/metálico, MUITO maior que casa",
+   "curados": [
+    "galpao/Captura de tela 2026-07-20 225821.png",
+    "galpao/Captura de tela 2026-07-21 082733.png",
+    "galpao/Captura de tela 2026-07-21 082748.png",
+    "galpao/Captura de tela 2026-07-21 082832.png",
+    "galpao/Captura de tela 2026-07-21 082905.png",
+    "galpao/Captura de tela 2026-07-21 083102.png",
+    "galpao/galpao_1.jpg",
+    "galpao/galpao_2.jpg",
+    "galpao/galpao_3.jpg",
+    "galpao/galpao_4.jpg"
+   ],
+   "aprovados": [],
+   "total": 10
+  },
+  "casa_piscina": {
+   "descricao": "casa com piscina — água turquesa no lote",
+   "curados": [
+    "casa_piscina/Captura de tela 2026-07-20 225153.png",
+    "casa_piscina/Captura de tela 2026-07-21 082626.png",
+    "casa_piscina/Captura de tela 2026-07-21 083335.png",
+    "casa_piscina/Captura de tela 2026-07-21 083349.png",
+    "casa_piscina/Captura de tela 2026-07-21 083443.png",
+    "casa_piscina/Captura de tela 2026-07-21 083631.png",
+    "casa_piscina/Captura de tela 2026-07-21 083719.png"
+   ],
+   "aprovados": [],
+   "total": 7
+  },
+  "vazio": {
+   "descricao": "terreno vazio/baldio — sem construção ou demolido/mato",
+   "curados": [
+    "vazio/Captura de tela 2026-07-20 225427.png",
+    "vazio/Captura de tela 2026-07-20 225501.png",
+    "vazio/Captura de tela 2026-07-20 225515.png",
+    "vazio/Captura de tela 2026-07-20 225558.png"
+   ],
+   "aprovados": [],
+   "total": 4
+  }
+ },
+ "negativos": {
+  "casa": [],
+  "predio": [],
+  "galpao": [],
+  "casa_piscina": [],
+  "vazio": []
+ }
+}

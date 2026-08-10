@@ -17,8 +17,19 @@
 - **Header** com 2 modos: **Importar planilha** (com download da planilha modelo em
   `/api/template`) e **Mineração de área** (achar tudo que existe, sem planilha).
 - **Polígono obrigatório**: o usuário desenha a área válida no mapa (leaflet-draw), salva em
-  `areas/area_atual.json`. **Nenhum job inicia sem área.** POI fora do polígono → status
-  `fora_da_area`, `match_valido=False`, não entra no banco.
+  `areas/area_atual.json`. **Nenhum job inicia sem área.**
+  > **O polígono é FOCO, não filtro de gravação** (regra do usuário, 04/08/2026).
+  > Todo POI encontrado é gravado; o que cai fora entra identificado por
+  > `cidade`/`uf` (extraídas do endereço pela mesma regra da ingestão) e apenas
+  > **não aparece na tela** enquanto aquela área está em foco — reaparece ao
+  > selecionar o município dele. Antes, `gate_registro` zerava `match_valido` e o
+  > ingestor descartava na primeira checagem: numa mineração de Canoas, **57 POIs
+  > válidos eram jogados fora contra 26 gravados**, todos já pagos em tempo de
+  > busca. O tile fotografa muito além da faixa desenhada, e no dia em que a
+  > cidade vizinha for minerada ela já começa com parte do trabalho pronto.
+  > `ingerir_registro` devolve `inserido` ou `inserido_fora` — os dois gravam.
+  > Quem quiser o banco restrito à área usa **"Limpar banco fora da área"**, que é
+  > uma decisão explícita, o oposto de um descarte silencioso.
 - **Limpar banco fora da área**: botão no painel → `POST /api/limpar-fora` (com `dry_run` de
   prévia + confirmação). Remove `pois` + derivadas fora do polígono.
 - **Jobs como subprocess**: `POST /api/jobs` roda `search_from_sheet.py --area ...` (planilha)
@@ -222,8 +233,19 @@ OPENAI_API_KEY=<chave OpenAI>      # decisor de equivalência de vizinhos
 OPENAI_MODEL=gpt-4o-mini
 GEMINI_API_KEY=<chave Gemini>      # localizador via Google Search grounding (precisa BILLING p/ volume)
 GEMINI_MODEL=gemini-2.5-flash
+
+# Mapa e captura (Google)
+GOOGLE_TILES_KEY=<chave Map Tiles>  # fundo do mapa; nunca vai ao navegador (server.py faz proxy)
+GOOGLE_MAP_ID=<id do estilo>        # estilo do fundo no painel
+MAPS_JS_KEY=<chave Maps JavaScript> # captura (src/capture.ts) — SEM ela a captura para na hora
+MAPS_API_KEY=<chave Places>         # só p/ o motor pago de mineração; ausente = motor recusado
+
+# Metabuscador próprio — várias instâncias, em ordem de preferência
+SEARXNG_URL=http://100.115.117.49:8888,http://localhost:8888
 ```
-⚠️ Chaves foram coladas no chat durante o desenvolvimento — **rotacionar** por segurança.
+⚠️ Chaves foram coladas no chat durante o desenvolvimento — **rotacionar** por
+segurança. A `MAPS_JS_KEY` em especial: ela viveu em texto puro no
+`src/capture.ts` e **está no histórico do git** (commit `1c7f081`).
 
 **Dependências Python** (no .venv): `playwright, playwright-stealth, opencv-python, numpy, easyocr,
 scikit-learn, openpyxl, aiohttp, python-dotenv, psycopg2-binary, openai`. `playwright install chromium`.
@@ -447,6 +469,14 @@ areas/area_atual.json (polígono)  uploads/ (planilhas)  mineracao/ (saídas do 
 descrever_imagens.py (análise IA)  docs/processo.html (mapa visual do fluxo)
 base_comum.py  base_cnpj.py  base_cnefe.py (bases externas p/ enriquecer)
 quadras.py (CLI dos 5 passos)  quadras_analise.py  quadras_db.py  quadras_canonico.py
+
+io_atomico.py       gravação de JSON que não derruba a rodada (seção 21)
+cnpj_local.py       CNPJ pela Receita já no banco; tem CLI própria (seção 22)
+cadastro_cliente.py carteira de imóveis do cliente + cruzamento com POIs (seção 23)
+minerar_captura.py  orquestra captura → recortes → OCR → busca (seção 20)
+src/capture-cli.ts  captura não-interativa, chamada pelo painel
+assets/icone_poi_generico.png  template do detector de ícones cinza (seção 20)
+exemplos/           biblioteca few-shot da análise visual (confirmada com o cliente)
 ```
 
 ## 13. Bases externas (módulos separados de extração) — `base_*.py`
@@ -1544,8 +1574,70 @@ Os 526 que ainda terminam do outro lado **não são defeito**: 308 estão em rua
 outro lado e 213 são o `nao_atravessar_via` agindo — a regra explícita de não
 arrastar ninguém para cruzar a rua. Mudá-los é decisão de produto, não correção.
 
+---
+
+## 19. O número fora da série: a régua não ancora nele, e ele vai para o trecho certo
+
+`_marcar_fora_da_serie` roda no início do passo 6 e marca, por face, os números
+fora do intervalo do quartil (IQR × 1,5). Salvaguardas: só age com ≥ `MIN_SERIE`
+(6) endereços numerados e desiste se marcaria mais de `MAX_FORA_SERIE` (30%)
+deles — quando um terço da face é exceção, quem está errado é a face.
+
+O marcado sai da âncora `n_min`/`n_max` e da ordenação, e depois
+`realocar_fora_da_serie` o leva para a face da **mesma rua**, com a **mesma
+paridade**, cujo intervalo de numeração **contém** o número; havendo mais de uma,
+a mais perto. Ele troca de dono e é posicionado pela régua daquele trecho. Sem
+face que contenha o número, não se move — inventar destino é pior.
+
+| | antes | depois |
+|---|---:|---:|
+| alinhados pela régua | 3.447 | **3.816** |
+| perpendicular por estourar o teto | 7.405 | **6.743** |
+| endereços com número fora da série | — | 293, em 179 faces |
+| realocados | — | **95** (mediana 119 m) |
+| sem trecho que contenha o número | — | 198 |
+
+Nas faces medidas: `R. Projetada Q` par 207 m foi de 2 pela régua e 22 acima do
+teto para **21 pela régua e 2 na perpendicular**; `R. João Pedro Ribeiro` ímpar
+103 m, de 0 e 21 para **21 e 3**.
+
+**Nome de rua é chave FRACA quando é genérico.** Sem teto de distância, 4 pontos
+foram parar de 14 a 24 km, em homônimas do outro lado do município — `RUA SEM
+DENOMINACAO`, `RUA SEM DENOMINACAO 2`, `RUA PROJETADA O`, `RUA PROJETADA Q`.
+A distribuição escolheu o corte sozinha: 40 abaixo de 100 m, 31 de 100 a 250,
+22 de 250 a 500, 3 até 1 km e **nada entre 1 e 5 km**. `REALOCAR_MAX_M = 500 m`,
+medido do ponto até a face de destino (o deslocamento final pode passar disso, e
+passa: máx 592 m, porque a régua o põe numa fração ao longo daquela face).
+
+**A realocação troca o dono do ponto**, então a face de ORIGEM fica gravada em
+`realoc_quadra_id`/`realoc_face_idx` e o `limpar_passo(6)` a devolve antes de
+zerar o resto. Sem isso, refazer o passo 6 partia de um dono já trocado e a
+sessão deixava de ser refazível — que é a garantia central do processo.
+Verificado: `limpar_passo(6)` devolveu os 95, e refazer o passo deu exatamente os
+mesmos 95 realocados e 3.816 alinhados.
+
+**No mapa**, a ligação até a coordenada original deixa de ser um fio cinza quando
+o movimento é grande — a correção tem de ser conferida, não engolida:
+
+| ligação | quando |
+|---|---|
+| âmbar, 2,6 px | `alinhado_modo='realocado'` — trocou de trecho |
+| vermelha, 2 px | deslocamento ≥ `DESLOC_DESTAQUE_M` (25 m, dois e meio o teto) |
+| cinza fina | o resto |
+
+O marcador realocado ganha anel âmbar de 3,2 px e o tooltip abre com
+`⚠ REALOCADO para outro trecho da rua`, com o intervalo de destino e a distância.
+Em Itambé, **1.014 ligações** ficam em destaque (7% dos aprovados).
+
 ### Aberto
 
+- **198 dos 293 fora da série não têm para onde ir** — nenhuma face daquela rua
+  contém o número. Parte é erro de cadastro (`RUA JOAQUIM BARBALHO` tem um nº
+  **22611** numa rua que vai de 1 a 1.346), parte é trecho da rua que ficou fora
+  da sessão.
+- **Nome genérico de logradouro não foi tratado em geral.** `RUA SEM DENOMINACAO`
+  é usado como identidade em `_nome_da_face` e `_tolerancia_por_endereco`
+  também; aqui só o teto de distância o contém.
 - **Reprovado por paridade com a face certa longe.** Sobraram 636 pontos a 2,0 m
   de uma face da própria rua, reprovados porque a numeração é do outro lado.
   Destes, 540 têm em algum lugar uma face da mesma rua com a paridade certa, mas
@@ -1572,7 +1664,7 @@ arrastar ninguém para cruzar a rua. Mudá-los é decisão de produto, não corr
 
 ---
 
-## 18. Os DOIS caminhos de POI — leia antes de mexer (04/08/2026)
+## 20. Os DOIS caminhos de POI — e como a captura virou o motor do painel
 
 Descoberto ao investigar "a mineração não acha POI nenhum". **Existem dois
 processos de POI na pasta, e só um está ligado ao painel.**
@@ -1597,9 +1689,12 @@ processo — não é lixo de run antiga.
 
 **Ele nunca esteve ligado ao servidor.** É executado por linha de comando.
 
-> ⚠️ A chave da Google está **em texto puro no `src/capture.ts`, linha 8**. Não
-> está no `.env`. Ao girar a chave, trocar ali também — e o certo é tirá-la do
-> código.
+> ⚠️ **A chave saiu do código em 07/08/2026** — hoje vem só do `.env`
+> (`MAPS_JS_KEY`, com `MAPS_API_KEY` de alternativa), e a captura **para na hora**
+> se não achar nenhuma, em vez de gerar centenas de PNGs cinzentos. Mas a chave
+> antiga **continua no histórico do git** (commit `1c7f081`): tirar do código não
+> desfaz o que já foi publicado, então **ela precisa ser girada no console do
+> Google** e a nova posta no `.env`.
 
 ### O do painel: Places API (último recurso)
 
@@ -1621,12 +1716,369 @@ foi desconfigurado ao construir quadras/telhados.
 falharam no Maps e busca no Yahoo (Playwright + proxy), OpenAI e BrasilAPI. Roda
 sobre um JSON de coleta que já existe.
 
-### Em aberto para a próxima sessão
+### A captura virou o motor do painel (04/08/2026)
 
-1. **Ligar o `capture.ts` ao painel** no lugar do Places, ou deixar explícito na
-   interface que o botão usa a API paga. Ponto de partida:
-   `node --version`, `ls src/`, `cat package.json`.
-2. **`MAPS_API_KEY` ausente no `.env`** — decidir se volta (habilitando Places na
-   chave) ou se o painel passa a chamar o processo de captura.
-3. **Girar a chave do Google**, exposta em dois lugares: `src/capture.ts` linha 8
-   e o histórico da conversa de 03–04/08.
+A aba **Mineração de área** passou a rodar a captura por padrão. O seletor
+**Motor** tem duas opções; a Places continua lá, agora como escolha explícita:
+
+| motor | script | custo |
+|---|---|---|
+| **captura + OCR** (padrão) | `minerar_captura.py` | só tempo |
+| places | `minerar_area.py` | pago, e **recusado pelo servidor** se `MAPS_API_KEY` não estiver no `.env` |
+
+O erro em vez do silêncio é o ponto: antes, sem chave, o job terminava "com
+sucesso" e 0 POIs.
+
+**`minerar_captura.py`** encadeia quatro estágios, cada um retomável
+(`--de N --ate M` roda uma fatia):
+
+```
+1 captura   src/capture-cli.ts  → capturas/<sessao>/*.png
+2 recortes  detect_crops.py     → crops/*.png
+3 OCR       ocr_pois.py         → crops/ocr_resultado.json
+4 busca     search_pois_v2.py   → crops/search_resultado.json
+                db_export       → crops/<sessao>_db.json   ← é este que o watcher lê
+```
+
+**`src/capture-cli.ts`** existe porque o `src/index.ts` é interativo: um
+subprocess do servidor não tem quem responda "Iniciar captura? [s/N]" e ficaria
+pendurado para sempre. Recebe tudo por argumento e imprime `— N células`, que é
+a linha que o painel lê como total. Tem `--so-contar`, que só estima.
+
+Três coisas que o caminho do painel exigiu e que o de linha de comando escondia:
+
+1. **A área é POLÍGONO, não caixa.** `generateTiles` agora descarta o tile que
+   não encosta na área desenhada (`CaptureConfig.polygon`). Sem isso a captura
+   de um município paga tiles de mato — a caixa envolvente é muito maior que o
+   desenho. O teste do tile é retangular (centro, 4 cantos e vértices do
+   polígono dentro dele), então escapa só o sliver que atravessa sem vértice nem
+   canto dentro; área desenhada à mão não produz isso.
+2. **UTF-8 nos filhos.** Ligado a um PIPE em vez de um console, o Python do
+   Windows escolhe cp1252 e o primeiro emoji derruba o processo:
+   `detect_crops.py` morria com `UnicodeEncodeError` no PRÓPRIO CABEÇALHO, antes
+   de detectar nada. Quem importa `config` chama `forcar_utf8()` e escapa; nem
+   todo script importa. Resolvido no ambiente (`PYTHONIOENCODING=utf-8`), que
+   cobre qualquer filho.
+3. **O resultado da busca não está no formato do ingester.** `search_pois_v2`
+   grava o POI ANINHADO (`{"poi": {...}, "status": ...}`) e tanto o
+   `realtime_ingest` quanto o `src/ingest.ts` procuram `nome`/`maps_lat` no
+   TOPO. Sem achatar, o watcher leria o arquivo, não acharia `nome` em registro
+   nenhum e pularia todos **em silêncio**. Quem achata é o
+   `db_export.normalizar_item`, que já existia para o caminho de terminal — o
+   `minerar_captura` o chama **de 10 em 10 s durante a busca**, para o marcador
+   cair no mapa ao vivo, e uma vez no fim.
+
+A barra do painel é alimentada por tradução: o orquestrador repassa o stdout dos
+filhos e acrescenta `célula X/Y` (captura) ou `POIs X/Y` (busca), que são os
+formatos do `_thread_logs`. E o `_thread_logs` passou a **reiniciar `feitos`
+quando o total muda**: job de várias fases troca de escala no meio, e o `max`
+antigo travava a barra no fim da fase anterior.
+
+### Medido (1 tile, Canoas/RS, 04/08/2026)
+
+| estágio | resultado |
+|---|---|
+| captura | 1 tile 3840×2160, 802 KB, ~40 s com 1 navegador |
+| detecção | **43** ícones recortados |
+| OCR | 43 nomes, ~4 s (alguns tortos: "Prorfiessa de Deus Livrhria Evangelica") |
+| busca | 41 processados → **33 match válido**, 6 não encontrados |
+| normalização | **35 POIs**, 96 fotos, 26 comentários |
+| gate de área | 26 passam no filtro do ingester, **9 dentro do polígono** |
+
+A chave da Maps JavaScript API **funciona** — a captura saiu no estilo limpo, só
+markers, sem nome de rua, que é o que o OCR precisa.
+
+### O primeiro run real pelo painel revelou dois contadores mentindo
+
+Sessão `mineracao_20260804_1516` (Canoas): 41 processados, 31 POIs encontrados,
+**12 gravados**. Parecia falha do gravador; não era. A conta fecha exata:
+
+| | |
+|---|---:|
+| recortes com OCR que a busca processou | 41 |
+| POIs distintos encontrados no Maps (`place_id`) | **31** |
+| **fora do polígono desenhado** → recusados pelo gate de área | **19** |
+| dentro → gravados | **12** |
+
+Os 19 são inerentes ao método: um tile de zoom 19 cobre **1,14 × 0,74 km** e a
+área desenhada era uma faixa estreita. O `capture-cli` filtra TILES pelo
+polígono, mas um tile que encosta na área fotografa POIs muito além dela — e o
+gate faz o certo ao descartá-los. Para aproveitá-los, desenhe a área maior.
+
+**Bug 1 — "fora da área 0".** O watcher classificava pelo `status` do registro,
+que é `"ok"`: o POI FOI encontrado no Maps, ele só não é dali. O veredito
+`fora_da_area` vem do retorno de `ingerir_registro` e era descartado. Agora o
+watcher acumula as chaves recusadas (`fora_keys`) e as soma à categoria. Sem
+isso a única leitura possível do painel era "o gravador está quebrado".
+
+**Bug 2 — o POI da captura caía em "Outros".** `origemDe` tinha um caso especial
+mandando `fonte === "pipeline"` para o balde cinza. Agora existe o chip
+**Captura + OCR**, e ele vem ANTES de "Maps direto" na lista: o POI da captura
+também tem `status === "ok"`, então o teste de lá o pegaria primeiro.
+
+**E os chips zerados não eram bug nenhum:** `poisBase()` devolve `[]` enquanto
+nenhum município estiver selecionado — é o "Clique num município no mapa" do
+topo. Com Canoas selecionado, os mesmos 12 POIs aparecem como *Captura + OCR
+12 · Com telefone 8 · Com foto 9 · Sem telefone 4*. Telefone e foto vêm da
+própria busca; **CNPJ e Street View ficam em 0 até rodar o enriquecimento**.
+
+### Em aberto
+
+- **Girar a chave do Google.** Ela saiu do código para o ambiente
+  (`MAPS_JS_KEY` ou `MAPS_API_KEY`), **mas o literal antigo continua como
+  fallback** em `src/capture.ts` para não quebrar hoje — e está exposto no
+  histórico do repositório. Ao girar: nova chave no `.env`, literal apagado.
+### O detector só via ícone COLORIDO (corrigido em 04/08/2026)
+
+O usuário circulou no mapa uma dúzia de POIs que a mineração não pegou —
+Mecânica Chibiaque, OctopusLog, Ângelo Pedroni, Muzymed, Sindiconstrupolo,
+Potter Motors Racing… Rastreados na cadeia, **nenhum tinha chegado ao OCR**: o
+`detect_crops` não os detectava.
+
+A causa é a máscara: `COLOR_RANGES` tem 8 faixas de matiz e **todas exigem
+saturação ≥ 60**. O ícone que a MAIORIA dos comércios tem no Maps é o genérico —
+circulozinho cinza-claro com um ponto escuro, saturação ~0. Ele nunca entrava na
+máscara, o `HoughCircles` não tinha o que achar, e a guarda
+`best / roi_size < 0.08` o descartaria de qualquer jeito. As cores dos 43
+detectados confirmam: azul 35, laranja 6, roxo 2, **cinza zero**.
+
+Medido no tile de Canoas por template matching:
+
+| | |
+|---|---:|
+| ícones coloridos (o que o detector via) | 43 |
+| ícones genéricos no tile | 97 |
+| **cobertura** | **38%** |
+
+**A correção é uma segunda passada por template** (`detect_genericos`). O desenho
+do ícone é sempre o mesmo — o estilo do mapa é fixo pelo `MAPS_MAP_ID` e a
+captura é sempre 3840×2160 —, então `TM_CCOEFF_NORMED` contra
+`assets/icone_poi_generico.png` (27×27, recortado de um tile real) resolve. Os
+achados são ordenados pela CORRELAÇÃO, não pela varredura, para o vencedor de
+cada aglomerado ser o melhor casamento; e são descartados os que caem a menos de
+`DEDUP_PX` (22 px) de um ícone já detectado — o ícone colorido também tem anel
+claro e casa com o template, e sem isso o mesmo POI viraria duas buscas no Maps.
+
+Resultado no mesmo tile, cadeia inteira:
+
+| | antes | depois |
+|---|---:|---:|
+| ícones detectados | 43 | **102** (59 genéricos, 0 duplicados) |
+| recortes com nome legível | 43 | **99** |
+| match válido no Maps | 33 | **86** |
+| POIs distintos | 31 | **82** |
+| **dentro do polígono** | 12 | **27** |
+| fotos · comentários | 96 · 26 | **210 · 68** |
+| não encontrados · OCR curto | 6 · 0 | 8 · 4 |
+
+**2,2× mais POIs aproveitáveis**, e o refugo quase não cresceu — 8 não
+encontrados e 4 de OCR curto em 102. Dos POIs que o usuário circulou no mapa, 14
+de 15 passaram a entrar; o 15º não está neste tile.
+
+> ⚠️ **O template depende do estilo e da resolução.** Mudou o `MAPS_MAP_ID` ou o
+> viewport da captura, tem de ser refeito — é um recorte 27×27 em volta de um
+> ícone genérico qualquer de um tile novo. Faltando o arquivo, o detector avisa e
+> segue só com as cores.
+
+⚠️ **Isto multiplica o custo do estágio 4**: cada ícone detectado é uma busca no
+Maps de ~5 s. De 43 para 102 por tile, o tempo da busca dobra e meio. Captura,
+detecção e OCR continuam baratos (9 s e 20 s no tile de teste).
+- O OCR erra nomes ("Excdlerite", "Informer ificos 02026 Google" — este último é
+  o texto de copyright do mapa). A busca no Maps absorve parte disso, mas o
+  crédito do rodapé não deveria virar candidato.
+- Os estágios 2 e 3 rodam **sem paralelismo**; num município inteiro serão a
+  próxima fila de espera depois da captura.
+
+---
+
+## 21. O save que derrubava a rodada (06/08/2026)
+
+Rodada de enriquecimento morta aos 18 minutos, com 437 de 7.567 POIs:
+
+```
+File "enriquecer_tudo.py", line 457, in salvar
+    tmp.replace(out_json)
+PermissionError: [WinError 5] Acesso negado
+```
+
+Todo coletor grava num `.tmp` e renomeia por cima do `.json`, para o leitor nunca
+ver meio arquivo. No Windows esse rename é a parte frágil: `os.replace` sobre um
+arquivo **aberto por outro processo** devolve WinError 5, porque o `open()` do
+Python não pede `FILE_SHARE_DELETE`. E há sempre outro processo lendo — o watcher
+do server abre o mesmo JSON **a cada 2 segundos**.
+
+Era corrida de milissegundos, mas a exceção subia do `salvar()` → saía do `_um()`
+→ saía do `gather` → matava o `run()` inteiro.
+
+**`io_atomico.py`** resolve com duas garantias: a troca é repetida enquanto o
+leitor segura o arquivo (~3 s contra uma leitura de milissegundos) e, se ainda
+assim falhar, **o save é pulado e a rodada continua** — o payload é sempre
+completo, nunca um delta, então o próximo save regrava tudo.
+
+Aplicado nos três coletores que tinham a mesma troca: `enriquecer_tudo.py`,
+`minerar_web.py`, `minerar_area.py`. Testado com um leitor batendo em laço
+fechado: 40 saves, 40 bem-sucedidos.
+
+> Nada se perdeu naquela rodada: a fase Web grava **direto no banco**
+> (`_ingerir`) antes de chamar o `salvar()`. O JSON é espelho para o mapa ao vivo.
+
+---
+
+## 22. CNPJ: estrutura aceita, o resto é confiança (06/08/2026)
+
+Regra do usuário, depois de perder dado por similaridade de nome:
+
+> "o critério de aceitação é simplesmente ter a estrutura ou quantidade de
+> caracteres de um cnpj; ser da base nacional e estar no município em questão são
+> apenas critérios de nível de confiança"
+
+Coluna nova **`pois.cnpj_conf`**, com nota e critério:
+
+| nota | significado |
+|---|---|
+| `4/4 dv+base_nacional+uf+municipio` | dígito verificador + existe na Receita + UF e município conferem |
+| `4/4 receita_local+endereco+nome` | achado na base local pelo endereço, com nome batendo |
+| `2/4 receita_local+endereco_unico` | endereço com **uma empresa só** — não havia o que decidir |
+| `0/4 so_estrutura` | só tem forma de CNPJ (o que a IA inventou cai aqui) |
+
+### A fase 2 deixou de descartar por nome fraco
+
+Endereço identifica o PRÉDIO, não a loja. Com duas ou mais empresas ativas na
+mesma porta, escolher pelo nome com score 0,4 é sorteio — esses seguem para a
+web. **Com uma empresa só, não há o que decidir**: o CNPJ entra com a confiança
+registrada. Medido em Canoas, dos 3.850 recusados por nome:
+
+```
+1 empresa ativa na porta   2.025   <- sem ambiguidade nenhuma
+2 empresas                   839
+3 ou mais                  1.088
+```
+
+Exemplos que estavam sendo jogados fora — `Crazy Som` x `CRAZY COMERCIO E
+LOCACAO LTDA` (0,33), `Igreja Luterana Emanuel` x `CONGREGACAO EVANGELICA
+LUTERANA EMANUEL` (0,71, perdia por **um centésimo**).
+
+Resultado da mudança em Canoas: **6.345 CNPJs num passo, sem rede** (2.283 por
+nome + 4.062 por endereço único).
+
+`cnpj_local.py` ganhou linha de comando própria:
+
+```bash
+.venv/Scripts/python cnpj_local.py --cidade Canoas --aplicar
+```
+
+---
+
+## 23. Cruzamento com planilha externa e cadastro do cliente (06-07/08/2026)
+
+### Planilha de POIs de fora (Overture/OSM)
+
+16.123 linhas de Canoas cruzadas com o banco. Casamento do mais forte ao mais
+fraco: telefone único dos dois lados -> CEP+número+nome (>= 0,72) ->
+coordenada+nome. **3.475 POIs enriquecidos** (só campo vazio; nada sobrescrito) e
+**12.535 importados** como POIs novos, com `place_id` sintético `planilha:<id>`
+para dedup exata na reingestão.
+
+Duas armadilhas que só apareceram medindo:
+
+- A coluna `instagram` da planilha é **93% Facebook** (15.051 de 16.123) e só 22
+  são Instagram; e 973 perfis de Instagram estavam na coluna `site`. Gravar
+  coluna-a-coluna encheria o campo `instagram` de páginas do Facebook — e o
+  painel renderiza aquele campo como `@handle`, tirando o último trecho da URL.
+  **O destino sai do domínio, não do nome da coluna.** Coluna nova `pois.facebook`.
+- CEP+número a 0,55 de similaridade casava `Sapataria Santos` x `Audácia Jeans`
+  e `Bourbon Hipermercado` x `Zaffari` (telefone do shopping, repetido em sete
+  lojas). Corte subido para 0,72, e telefone repetido de qualquer lado passou a
+  exigir nome concordante.
+
+### Endereço no formato do Maps
+
+`endereco_completo` da planilha vem como `Rua Humaitá, nº 1258, Canoas` — sem CEP
+(coluna própria) e com "nº" entre a vírgula e o número. O `chave_endereco`, que é
+quem acha o CNPJ na Receita, procura exatamente CEP e número-depois-da-vírgula:
+os 12.535 importados entrariam **cegos para a fase 2 tendo CEP e número em mãos**.
+Passaram a ser montados como `Rua Humaitá, 1258 - Bairro, Canoas - RS, 92025-340`.
+
+### `cadastro_cliente` — a carteira de imóveis da empresa
+
+Tabela nova, alimentada pela aba **Importar planilha** (com download de modelo,
+prévia de amostra em modal e confirmação antes de gravar). Cada imóvel recebe uma
+flag no cruzamento com os POIs:
+
+| flag | significado |
+|---|---|
+| `ja_cadastrado` | comercial na base do cliente — **não visitar** |
+| `reclassificar_alta/media/baixa` | não é comercial na base, mas há POI; o nível segue a confiança do CNPJ |
+| `sem_poi` | imóvel da base sem POI correspondente |
+| `novo_comercial` | POI que não está na base — acresce à carteira |
+
+---
+
+## 24. SearXNG no i9 como principal (07/08/2026)
+
+`SEARXNG_URL` passou a aceitar **várias URLs separadas por vírgula, em ordem de
+preferência**. A consulta desce para a seguinte quando a primeira falha ou limita:
+
+```
+SEARXNG_URL=http://100.115.117.49:8888,http://localhost:8888
+```
+
+O i9 é servidor e fica sempre ligado; o WSL local é reserva. Instalação lá: WSL
+Ubuntu + `uv` + clone do repo + `settings_local.yml` com `formats: [html, json]`
+e `bind_address: 0.0.0.0`, `run.sh` como lançador e tarefa agendada `ONLOGON`.
+
+> Duas pegadinhas do WSL remoto: heredoc por `ssh -> wsl` chega mutilado (use
+> `scp` para `/mnt/c/...` e copie de lá dentro do WSL), e o WSL só é alcançável
+> de fora com `netsh portproxy` + regra de firewall apontando para o IP do WSL.
+
+---
+
+## 25. Painel: o que cada número mede (06-07/08/2026)
+
+Três correções de placar. Todas nasceram do mesmo erro: **mostrar o número certo
+debaixo da palavra errada.**
+
+**A fase Street View não escreve no JSON** — grava a foto direto em
+`streetview_imgs`. O watcher, que alimenta os cartões lendo o JSON, não tinha o
+que contar e congelava no placar da fase Web: a barra anunciava "2.229 de 21.701"
+juntando o resultado de uma fase com o total de outra. Agora a fase se anuncia
+(`⟦fase⟧ streetview`), as categorias zeram na virada, os números saem do próprio
+log da captura e os rótulos viram **Fachadas capturadas · Sem panorama**.
+
+**"Sem match" só existe onde houve busca de POI.** É derivado
+(`processados - sucessos`); no download de imagens a barra conta FOTOS e o
+watcher não tem POI nenhum, então todo processado virava "fracasso" — daí os
+4.250 sem match do nada. Passou a depender também do MODO, não só da fase.
+
+**O resumo do log só fala das fases que rodaram.** "Ficaram completos: 0" numa
+rodada só de fachadas era verdade aritmética lida como fracasso: aquele contador
+mede o carente de Maps/Web, que a fase 4 não toca.
+
+### Fase 4 só nos pobres
+
+Opção `--sv-so-pobres` (caixa no painel, marcada por padrão): fachada só em POI
+**sem foto, sem telefone ou sem avaliação**. Critério de propósito diferente do
+"carente" das fases Maps/Web — aquele inclui "sem CNPJ", e depois que a Receita
+local preencheu milhares isso não separa mais ninguém.
+
+### Aba Dashboard
+
+Cidades à esquerda, cards à direita, filtros por grupo. Esconde todo o resto do
+painel (área de trabalho, execução, processo atual, busca, chips, log): é tela de
+leitura, e os controles de operação ali sugeriam que o "Iniciar processo" rodava
+o que estava sendo exibido.
+
+**Faixas de qualidade** (exclusivas — cada POI numa só, então a soma fecha com o
+total da cidade) alimentam o card de **retorno direto**, onde o usuário digita o
+valor de cada faixa, as deduções, e vê o líquido.
+
+**Custo em três naturezas que não se somam**: gasto variável (LLM por POI),
+assinaturas (Webshare US$ 45 + IA, editável) e o cenário Google. Ratear a
+mensalidade do proxy pelas horas usadas dava "US$ 1,68" e sugeria que rodar mais
+sairia mais caro — é o contrário: a mensalidade é a mesma, então quanto mais
+roda, menor o custo por POI.
+
+> **Armadilha SQL que zerou duas faixas:** `p.cnpj <> ''` devolve **NULL** quando
+> o campo é NULL, e a exclusão das faixas seguintes usa `NOT (...)`. `NOT NULL` é
+> NULL e a linha some — a soma das faixas batia 8.447 num total de 21.700.
+> `coalesce` em todo campo de texto.

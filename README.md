@@ -38,6 +38,8 @@ Foi construído para levantamentos comerciais de campo (ex.: base de clientes po
 | 📸 | **Street View** — captura a fachada de cada ponto e guarda a **data do panorama** |
 | 🔎 | **Busca flutuante** com autocomplete ao vivo, e **filtros por origem e atributo** (com CNPJ, sem telefone, etc.) |
 | 📥 | **Imagens no banco** — baixa os bytes de todas as fotos + a **data EXIF** de cada uma |
+| 📊 | **Dashboard** — cobertura, CNPJ por confiança, custo real × cenário Google e **cálculo de retorno** por faixa de qualidade |
+| 👥 | **Cadastro do cliente** — importa a carteira de imóveis da empresa e cruza com os POIs, marcando o que **não visitar** e o que acresce à base |
 | ⚡ | **Tempo real** — markers e cards atualizam via WebSocket conforme o backend processa |
 
 ---
@@ -129,7 +131,14 @@ OPENAI_API_KEY=...             # opcional (fallback p/ Gemini flash)
 OPENAI_MODEL=gpt-4o-mini
 GEMINI_API_KEY=...
 GEMINI_MODEL=gemini-2.5-pro
-MAPS_API_KEY=...               # só para a data do Street View (endpoint grátis)
+
+GOOGLE_TILES_KEY=...           # fundo do mapa (o server faz proxy; não vai ao navegador)
+GOOGLE_MAP_ID=...
+MAPS_JS_KEY=...                # captura de tiles — SEM ela a captura para na hora
+MAPS_API_KEY=...               # Places (motor pago, opcional) e data do Street View
+
+# metabuscador próprio; várias instâncias em ordem de preferência
+SEARXNG_URL=http://100.115.117.49:8888,http://localhost:8888
 ```
 
 ---
@@ -142,8 +151,17 @@ MAPS_API_KEY=...               # só para a data do Street View (endpoint gráti
 ```
 Abra **http://localhost:8765**. No cabeçalho, escolha o modo:
 - **📄 Importar planilha** — baixe o modelo, importe seu `.xlsx`, **desenhe a área** (passo 1) e inicie.
-- **⛏️ Mineração de área** — desenhe o polígono e minere.
-- **💎 Enriquecimento** — cascata Maps→Web→Street View + botão **📥 Baixar imagens**.
+  Aqui também entra o **cadastro do cliente** (a carteira de imóveis), com prévia
+  em modal antes de gravar e cruzamento com os POIs no fim.
+- **⛏️ Mineração de área** — desenhe o polígono e minere. Motor padrão: captura+OCR (grátis).
+- **💎 Enriquecimento** — cascata Maps → CNPJ local → Web → Street View. A fase 4
+  vem marcada como **só nos pobres** (sem foto, telefone ou avaliação).
+- **🧱 Quadras + endereços** — o processo de 5 passos sobre a malha de vias.
+- **📊 Dashboard** — leitura, não operação: cobertura, CNPJ por confiança, custo e retorno.
+
+A **área de trabalho é a fonte única de cidade/UF** — ela vem do polígono
+desenhado, do clique num município ou do select de UF+município, e vale para
+todas as abas.
 
 Os markers e cards atualizam em tempo real conforme o processamento avança.
 
@@ -156,12 +174,23 @@ Os markers e cards atualizam em tempo real conforme o processamento avança.
 # enriquecimento em cascata (idempotente; retomável)
 .venv\Scripts\python enriquecer_tudo.py --area areas\area_atual.json --workers 4
 
-# só a fase web (Yahoo + Receita)
-.venv\Scripts\python enriquecer_tudo.py --area areas\area_atual.json --pular-maps --pular-streetview
+# só a fase web (SearXNG + Receita)
+.venv\Scripts\python enriquecer_tudo.py --area area_atual --pular-maps --pular-streetview
+
+# CNPJ pela base da Receita já no banco — segundos, sem rede, e resolve a maioria
+.venv\Scripts\python cnpj_local.py --cidade Canoas --aplicar
+
+# só a fachada, e só de quem está mal documentado
+.venv\Scripts\python enriquecer_tudo.py --area area_atual \
+  --pular-maps --pular-cnpj-local --pular-web --sv-so-pobres
 
 # baixar todas as imagens (bytes+datas) para o banco — rodar por ÚLTIMO
 .venv\Scripts\python baixar_imagens.py --workers 8
 ```
+
+> A área é passada pelo **nome** (`--area area_atual`), não por caminho de
+> arquivo: ela mora na tabela `area_trabalho`, para o servidor e todos os
+> coletores enxergarem a mesma coisa.
 
 ---
 

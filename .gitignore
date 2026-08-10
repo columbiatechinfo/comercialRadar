@@ -46,6 +46,11 @@ teste_*.json
 scratchpad/
 *.tmp
 
+# Saídas de rodada avulsa (listas de ids, resultados de rebusca) — são DADO de
+# uma execução, não código; o que vale delas já está no banco
+realocados_ids.txt
+rebusca_resultados.json
+
 # Config local do Claude Code
 .claude/
 
