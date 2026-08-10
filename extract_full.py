@@ -153,9 +153,19 @@ async def enriquecer_poi(sess, poi: dict) -> dict:
     except Exception:
         pass
 
+    # RESULTADO VAZIO NÃO APAGA O QUE JÁ EXISTE. O `extract_panel` já colheu as
+    # miniaturas do painel — é de lá que vieram as 24.515 fotos de Canoas — e
+    # `extrair_fotos` devolve [] sempre que não encontra o botão da galeria
+    # (`button[aria-label^="Foto de"]`). Atribuindo direto, o vazio da galeria
+    # apagava as fotos boas do painel: no enriquecimento de Canoas, 86 POIs
+    # seguidos saíram com zero foto. Mesmo princípio do merge do ingestor.
     try:
-        poi["fotos"] = await extrair_fotos(page)
+        novas = await extrair_fotos(page)
     except Exception:
-        poi["fotos"] = poi.get("fotos", [])
+        novas = []
+    if novas:
+        poi["fotos"] = novas
+    else:
+        poi["fotos"] = poi.get("fotos", []) or []
 
     return poi

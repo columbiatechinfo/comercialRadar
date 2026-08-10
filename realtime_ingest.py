@@ -88,7 +88,18 @@ def _horarios(h):
 def ingerir_registro(r: dict, poligono=None, conn=None) -> tuple:
     """
     Grava UM registro do pipeline no banco. Retorna (resultado, poi_id):
-      ('inserido', id) · ('pulado', None) · ('fora_da_area', None)
+      ('inserido', id) · ('inserido_fora', id) · ('pulado', None)
+
+    **Tudo que é achado é GRAVADO** — regra do usuário. O polígono deixou de ser
+    um portão e virou uma ETIQUETA: quem cai fora dele entra no banco do mesmo
+    jeito, identificado pela `cidade`/`uf` extraídas do endereço. O tile
+    fotografa muito além da faixa desenhada (medido em Canoas: 57 POIs válidos
+    fora contra 26 dentro), e jogar fora um POI já encontrado e já pago em tempo
+    de busca é destruir trabalho: no dia em que aquela cidade for minerada, ele
+    já está lá.
+
+    Quem quiser o banco restrito à área tem o botão "Limpar banco fora da área",
+    que é uma decisão explícita — o oposto de um descarte silencioso.
     """
     if not r.get("nome") or r.get("match_valido") is False or r.get("match_valido") is None:
         return ("pulado", None)
@@ -97,12 +108,12 @@ def ingerir_registro(r: dict, poligono=None, conn=None) -> tuple:
     lo = _f(r.get("maps_lng"))
     if la is None or lo is None:
         la, lo = _f(r.get("lat_origem")), _f(r.get("lng_origem"))
-    # Guard Brasil (mesma regra do ingest.ts)
+    # Guard Brasil (mesma regra do ingest.ts) — este SIM continua descartando:
+    # coordenada fora do país é dado errado, não dado de outro lugar
     if la is not None and lo is not None and (la < -34 or la > 6 or lo < -74 or lo > -34):
         return ("pulado", None)
-    # Gate de área (polígono do frontend)
-    if poligono and la is not None and not area_utils.ponto_no_poligono(la, lo, poligono):
-        return ("fora_da_area", None)
+    fora_da_area = bool(poligono and la is not None
+                        and not area_utils.ponto_no_poligono(la, lo, poligono))
 
     fechar = False
     if conn is None:
@@ -128,8 +139,9 @@ def ingerir_registro(r: dict, poligono=None, conn=None) -> tuple:
                 # operacionais — ex.: reabrir o Maps p/ pegar o endereço correto não pode
                 # zerar o telefone que a web havia achado. Coluna do banco = chave do reg,
                 # exceto endereço/telefone-da-planilha (esses vêm de nome_planilha etc).
-                _MERGE = ("cnpj", "razao_social", "nome_fantasia", "natureza_juridica",
+                _MERGE = ("cnpj", "cnpj_conf", "razao_social", "nome_fantasia", "natureza_juridica",
                           "cnae", "situacao_cadastral", "socios", "instagram", "email",
+                          "facebook",
                           "resumo_avaliacoes", "streetview_path", "fontes_web",
                           "telefone", "website", "categoria", "status_horario",
                           "avaliacao", "total_avaliacoes", "preco_medio", "plus_code",
@@ -173,9 +185,10 @@ def ingerir_registro(r: dict, poligono=None, conn=None) -> tuple:
                        nome_original, endereco_original, preco_medio, fonte_dado, ia_resposta,
                        cnpj, razao_social, nome_fantasia, natureza_juridica, cnae,
                        situacao_cadastral, socios, instagram, email, resumo_avaliacoes,
-                       streetview_path, fontes_web, endereco_fonte, cidade, uf)
+                       streetview_path, fontes_web, endereco_fonte, cidade, uf,
+                       cnpj_conf, facebook)
                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                           %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                           %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                    RETURNING id""",
                 (
                     r.get("fonte") or "desconhecido", _s(r.get("sessao")), str(r["nome"]),
@@ -198,6 +211,7 @@ def ingerir_registro(r: dict, poligono=None, conn=None) -> tuple:
                     # cidade/uf: usa o que o merge preservou ou extrai do endereço
                     _s(r.get("cidade")) or _cidade_uf(r.get("endereco"), r.get("endereco_planilha"))[0],
                     _s(r.get("uf")) or _cidade_uf(r.get("endereco"), r.get("endereco_planilha"))[1],
+                    _s(r.get("cnpj_conf")), _s(r.get("facebook")),
                 ),
             )
             poi_id = cur.fetchone()[0]
@@ -218,7 +232,8 @@ def ingerir_registro(r: dict, poligono=None, conn=None) -> tuple:
                 psycopg2.extras.execute_values(
                     cur, "INSERT INTO horario_funcionamento (poi_id, dia, horario) VALUES %s", hors)
 
-        return ("inserido", poi_id)
+        # gravado dos dois jeitos; o chamador só precisa saber se está no foco
+        return ("inserido_fora" if fora_da_area else "inserido", poi_id)
     finally:
         if fechar:
             conn.close()

@@ -846,8 +846,8 @@ def main():
     parser.add_argument("--gemini-direto", action="store_true",
                         help="Resíduo que já falhou no Maps → direto pro Gemini (sem browser/Maps). Use com --retry-failed.")
     parser.add_argument("--area", default="",
-                        help="JSON com o polígono da área válida ({'polygon': [[lat,lng],...]}). "
-                             "POI fora do polígono → status 'fora_da_area' (não ingere).")
+                        help="Polígono da área de trabalho (nome no banco ou JSON). É o FOCO: "
+                             "POI fora dele também é gravado, marcado com cidade/UF.")
     args = parser.parse_args()
 
     sheet = Path(args.planilha)

@@ -1,9 +1,12 @@
 """
 area_utils.py — Polígono de área válida (limite geográfico do trabalho)
 
-O frontend desenha um polígono no mapa; ele é salvo como JSON e passado aos
-coletores/ingestores. Todo POI cuja coordenada cai FORA do polígono é marcado
-com status 'fora_da_area' e match_valido=False (não entra no banco).
+O frontend desenha um polígono no mapa; ele é o FOCO do trabalho, não um filtro
+de gravação. Todo POI encontrado é gravado — o que cai fora do polígono entra
+identificado por `cidade`/`uf` e simplesmente não aparece na tela enquanto
+aquela área está em foco. Achar custa tempo de busca; descartar o que já foi
+achado é jogar esse tempo fora, e no dia em que a cidade vizinha for minerada
+ela já começa com parte do trabalho pronto.
 
 Formato do arquivo de área:
   {"nome": "parnaiba", "polygon": [[lat, lng], [lat, lng], ...]}
@@ -111,6 +114,40 @@ def ponto_no_poligono(lat, lng, poligono) -> bool:
     return dentro
 
 
+_MUN_CACHE: dict = {}
+
+
+def municipio_da_area(poligono=None, ref=AREA_PADRAO) -> tuple:
+    """(cidade, uf) DA ÁREA DE TRABALHO — a fonte única.
+
+    Cidade e UF não são adivinhadas por módulo. Elas saem de onde o usuário as
+    definiu: o polígono desenhado no mapa, ou o município escolhido no painel
+    (que vira polígono pela malha do IBGE). Um ponto dentro dele — o centroide —
+    resolve o município pela `ibge_malha`, com índice espacial.
+
+    Antes cada consumidor deduzia por conta própria e o `minerar_web` tinha
+    `"Parnaíba"` FIXO no código, herança de quando havia um cliente só: numa
+    rodada de Canoas ele montava a busca `"Fulano" parnaiba RS` e, pior, a
+    conferência do CNPJ na Receita comparava o município com "parnaiba" e
+    REJEITAVA todo CNPJ encontrado. O dado chegava e era jogado fora."""
+    poly = poligono if poligono is not None else carregar_area(ref)
+    if not poly or len(poly) < 3:
+        return ("", "")
+    chave = (round(poly[0][0], 5), round(poly[0][1], 5), len(poly))
+    if chave in _MUN_CACHE:
+        return _MUN_CACHE[chave]
+    lat = sum(p[0] for p in poly) / len(poly)
+    lng = sum(p[1] for p in poly) / len(poly)
+    try:
+        import quadras_br as QB
+        nome, uf, _cod = QB.municipio_do_ponto(lat, lng)
+        out = (nome or "", (uf or "").upper())
+    except Exception:
+        out = ("", "")
+    _MUN_CACHE[chave] = out
+    return out
+
+
 def bbox(poligono):
     lats = [p[0] for p in poligono]
     lngs = [p[1] for p in poligono]
@@ -132,9 +169,21 @@ def coord_do_registro(reg):
 
 def gate_registro(reg: dict, poligono) -> bool:
     """
-    Aplica o portão de área a um registro do pipeline.
-    Retorna True se o registro segue válido; False se foi marcado fora_da_area.
+    Marca se o registro caiu DENTRO da área de trabalho.
+    Retorna True se está dentro; False se está fora.
     Registros sem coordenada nenhuma passam (não há como julgar).
+
+    **Estar fora não invalida mais o registro** (regra do usuário, 04/08/2026).
+    Antes isto zerava `match_valido`, e o ingestor descartava o POI logo na
+    primeira checagem — um comércio já encontrado e já pago em tempo de busca era
+    jogado fora por estar 40 m além da linha desenhada. Agora ele é gravado, com
+    `cidade`/`uf` tiradas do endereço, e o polígono só decide o que aparece na
+    TELA: o mapa mostra a área em foco ou o município selecionado, e o de fora
+    espera ali até que aquela cidade seja o foco.
+
+    O `status` original é preservado — ele diz como o POI foi encontrado, que é
+    outra pergunta. Quem quiser o banco restrito à área usa "Limpar banco fora
+    da área", que é uma decisão explícita.
     """
     if not poligono:
         return True
@@ -142,9 +191,7 @@ def gate_registro(reg: dict, poligono) -> bool:
     if la is None:
         return True
     if ponto_no_poligono(la, lo, poligono):
+        reg["fora_da_area"] = False
         return True
-    if reg.get("match_valido"):
-        reg["status_antes_area"] = reg.get("status")
-        reg["status"] = "fora_da_area"
-        reg["match_valido"] = False
+    reg["fora_da_area"] = True
     return False

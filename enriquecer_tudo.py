@@ -18,7 +18,7 @@ O estado de "pobre" é mantido em memória entre as fases (não depende do watch
 USO:
   .venv\\Scripts\\python enriquecer_tudo.py --out mineracao/enrich_tudo_db.json
      [--workers 6] [--no-proxy] [--limit N] [--area areas/area_atual.json]
-     [--pular-maps] [--pular-web] [--pular-streetview]
+     [--pular-maps] [--pular-cnpj-local] [--pular-web] [--pular-streetview]
 """
 
 import json
@@ -32,6 +32,7 @@ from playwright.async_api import async_playwright
 
 import config
 import area_utils
+import io_atomico
 import realtime_ingest
 from proxy_pool import ProxyPool
 from human_browser import HumanSession
@@ -49,13 +50,45 @@ BASE = Path(__file__).resolve().parent
 # ──────────────────────────────────────────────────────────────────────────
 # Carrega os POIs pobres do banco como registros (formato do ingester)
 # ──────────────────────────────────────────────────────────────────────────
+def _tem_foto(reg: dict) -> bool:
+    """Foto já existente no banco (`_nfotos`) ou trazida agora (`fotos`).
+
+    `carregar_carentes` sempre monta `fotos: []` — é o campo que a fase Maps
+    PREENCHE. Quem responde pelo estado atual é o `_nfotos`, contado no banco.
+    Confundir os dois faria todo POI parecer sem foto."""
+    return bool(reg.get("_nfotos") or reg.get("fotos"))
+
+
+def _falta_maps(reg: dict) -> bool:
+    """Falta algo que o PAINEL DO MAPS sabe dar."""
+    return (not reg.get("telefone") or not reg.get("endereco")
+            or not reg.get("categoria") or not _tem_foto(reg))
+
+
+def _falta_web(reg: dict) -> bool:
+    """Falta algo que só a WEB dá: CNPJ (e o telefone que o Maps não achou).
+
+    O Maps não devolve CNPJ — nenhum. Mandar por ele um POI que só precisa de
+    CNPJ é abrir um navegador com proxy para buscar um dado que aquela fonte não
+    tem: em Canoas seriam 9.071 POIs, horas de máquina, zero CNPJ. Cada fase
+    pega o que ela sabe entregar."""
+    return not reg.get("cnpj") or not reg.get("telefone")
+
+
 def _carente(reg: dict) -> bool:
-    """Falta algo essencial → ainda vale a pena tentar mais um método."""
-    return not reg.get("telefone") or not reg.get("endereco") or not reg.get("categoria")
+    """Falta algum dado crítico — é isto que 'enriquecer' quer dizer."""
+    return _falta_maps(reg) or _falta_web(reg)
 
 
 _SEM_INGEST = False  # via server (--sem-ingest): o watcher ingere, evita dois
                      # processos fazendo delete+recreate do mesmo place_id.
+
+# Teto por POI na fase Web. O caminho completo (SERP + 5 páginas a 18 s + LLM a
+# 45 s + BrasilAPI) cabe folgado aqui; o que passar disso está pendurado.
+TIMEOUT_POI_S = 150.0
+# Tamanho do lote: pequeno o bastante para um travamento custar pouco, grande o
+# bastante para não serializar o pool de SERP.
+LOTE_WEB = 60
 
 
 def _ingerir(reg: dict, poligono):
@@ -81,20 +114,28 @@ def carregar_carentes(poligono, limit: int) -> list:
                        p.nome_original, p.endereco_original,
                        COALESCE(p.maps_lat, p.lat_origem), COALESCE(p.maps_lng, p.lng_origem),
                        p.lat_origem, p.lng_origem, p.cnpj, p.instagram,
+                       -- cidade/uf do POI: sem elas a fase Web caía no padrão
+                       -- fixo "Parnaíba" e a conferência do CNPJ na Receita
+                       -- rejeitava TODO CNPJ de qualquer outra cidade
+                       p.cidade, p.uf,
                        (SELECT COUNT(*) FROM images_urls i WHERE i.poi_id = p.id) AS nfotos
                 FROM pois p
                 WHERE p.match_valido IS NOT FALSE
                   AND COALESCE(p.maps_lat, p.lat_origem) IS NOT NULL
-                  AND (p.telefone IS NULL OR p.endereco IS NULL OR p.categoria IS NULL
-                       -- rasos que têm maps_url e podem ganhar fotos/painel:
-                       OR (p.status IN ('descoberto','recuperado_ia','minerado','recuperado_gemini','recuperado_web')
-                           AND NOT EXISTS (SELECT 1 FROM images_urls i WHERE i.poi_id = p.id)))
+                  -- DADO CRÍTICO FALTANDO: telefone, endereço, categoria, CNPJ
+                  -- ou imagem. O `status IN (...)` de antes limitava a busca de
+                  -- fotos aos POIs "rasos", e deixava de fora justamente os que
+                  -- a captura traz como `ok` — 2.738 sem foto em Canoas.
+                  AND (p.telefone IS NULL OR p.endereco IS NULL
+                       OR p.categoria IS NULL OR p.cnpj IS NULL
+                       OR NOT EXISTS (SELECT 1 FROM images_urls i WHERE i.poi_id = p.id))
                 ORDER BY p.id""")
             cols = ["db_id", "place_id", "maps_url", "fonte", "sessao", "status",
                     "nome", "categoria", "endereco", "telefone", "website",
                     "avaliacao", "total_avaliacoes", "status_horario",
                     "nome_original", "endereco_original", "lat", "lng",
-                    "lat_origem", "lng_origem", "cnpj", "instagram", "nfotos"]
+                    "lat_origem", "lng_origem", "cnpj", "instagram",
+                    "cidade", "uf", "nfotos"]
             regs = []
             for row in cur.fetchall():
                 d = dict(zip(cols, row))
@@ -113,9 +154,27 @@ def carregar_carentes(poligono, limit: int) -> list:
                     "avaliacao": d["avaliacao"], "total_avaliacoes": d["total_avaliacoes"],
                     "status_horario": d["status_horario"], "cnpj": d["cnpj"],
                     "instagram": d["instagram"],
+                    "cidade": d["cidade"], "uf": d["uf"],
                     "fotos": [], "comentarios": [], "horarios": {},
                     "_nfotos": d["nfotos"], "_db_id": d["db_id"],
                 })
+            # A ÁREA É O FOCO — também aqui. O `poligono` chegava e não era
+            # usado: a cascata varria o banco INTEIRO. Medido em 04/08/2026 com
+            # a área em Canoas: 2.170 POIs carentes, dos quais 6 dentro dela e
+            # 2.083 em Parnaíba — horas de browser e proxy gastas fora do foco,
+            # por um botão que diz "enriquecer a área".
+            # Quem foi gravado fora do polígono espera a sua vez: será enriquecido
+            # no dia em que a área de trabalho for a cidade dele.
+            if poligono:
+                antes = len(regs)
+                regs = [r for r in regs
+                        if area_utils.ponto_no_poligono(
+                            r.get("maps_lat") if r.get("maps_lat") is not None
+                            else r.get("lat_origem"),
+                            r.get("maps_lng") if r.get("maps_lng") is not None
+                            else r.get("lng_origem"), poligono)]
+                print(f"   área de trabalho: {len(regs)} de {antes} POIs carentes "
+                      f"estão dentro dela", flush=True)
             return regs[:limit] if limit > 0 else regs
     finally:
         conn.close()
@@ -125,7 +184,8 @@ def carregar_carentes(poligono, limit: int) -> list:
 # FASE 1 — Maps
 # ──────────────────────────────────────────────────────────────────────────
 async def fase_maps(regs, pool, usar_proxy, poligono, salvar, prog):
-    alvos = [r for r in regs if r.get("maps_url")]
+    # só quem precisa do que o Maps dá — quem só espera CNPJ vai direto à Web
+    alvos = [r for r in regs if r.get("maps_url") and _falta_maps(r)]
     total = len(alvos)
     prog["fase"] = "Maps"
     print(f"🔗 FASE 1/3 — Maps: {total} POIs com maps_url", flush=True)
@@ -215,15 +275,49 @@ def _aplica_maps(reg: dict, poi: dict):
 # ──────────────────────────────────────────────────────────────────────────
 # FASE 2 — Web (Yahoo + Receita) sobre quem continua pobre
 # ──────────────────────────────────────────────────────────────────────────
-async def fase_web(regs, uf, cidade_arg, usar_proxy, workers, poligono, salvar, prog):
+def fase_cnpj_local(regs, poligono, salvar, prog) -> dict:
+    """CNPJ pela base da Receita que já está no banco — ANTES de ir à web.
+
+    Buscar CNPJ no Yahoo sendo que as tabelas `rf_*` têm o Brasil inteiro é pagar
+    caro e frágil pelo que está a uma consulta de distância: no `RDK Logs` o SERP
+    devolveu zero resultados e o CNPJ estava aqui. Roda em segundos, não custa
+    nada, e o que não casar segue para a web — que passa a ser o resíduo, não a
+    porta de entrada."""
+    import cnpj_local as CL
+    prog["fase"] = "CNPJ local"
+    alvos = [r for r in regs if not r.get("cnpj")]
+    print(f"🏢 FASE 2/4 — CNPJ na base da Receita (local): {len(alvos)} POIs sem CNPJ",
+          flush=True)
+    if not alvos:
+        return {"casados": 0}
+    res = CL.casar(alvos)
+    for r in alvos:
+        if r.get("cnpj"):
+            r["_tocado"] = True
+            _ingerir(r, poligono)
+            prog["feitos"] += 1
+    salvar()
+    print(f"   ✅ {res['casados']} casados "
+          f"({res['casados'] - res.get('endereco_unico', 0)} por nome + "
+          f"{res.get('endereco_unico', 0)} por endereço único) · "
+          f"{res['fracos']} recusados (várias empresas na mesma porta) · "
+          f"{res['sem_endereco']} sem CEP/número no endereço", flush=True)
+    return res
+
+
+async def fase_web(regs, uf, cidade_arg, usar_proxy, workers, poligono, salvar,
+                   prog, visivel: bool = False):
     import aiohttp
-    ainda = [r for r in regs if _carente(r)]
+    ainda = [r for r in regs if _falta_web(r)]
     total = len(ainda)
     prog["fase"] = "Web"
-    print(f"🌐 FASE 2/3 — Web: {total} POIs ainda pobres", flush=True)
+    print(f"🌐 FASE 2/3 — Web: {total} POIs sem CNPJ ou sem telefone", flush=True)
     if not total:
         return
-    serp = await MW.SerpPool(min(workers, 6), usar_proxy=usar_proxy).start()
+    # visivel=True abre UM navegador por worker na tela: dá para acompanhar a
+    # digitação e o resultado, e comportamento de uso real atrapalha detector
+    serp = await MW.SerpPool(min(workers, 6), usar_proxy=usar_proxy,
+                             visivel=visivel).start()
     sem = asyncio.Semaphore(workers)
     counter = {"n": 0, "ok": 0}
     lock = asyncio.Lock()
@@ -232,9 +326,21 @@ async def fase_web(regs, uf, cidade_arg, usar_proxy, workers, poligono, salvar, 
         async with aiohttp.ClientSession(connector=conn) as session:
             async def _um(reg):
                 cidade = MW._cidade_do(reg, cidade_arg)
+                uf_reg = MW._uf_do(reg, uf)     # UF do POI, não a do primeiro
                 antes = (reg.get("telefone"), reg.get("endereco"), reg.get("cnpj"))
                 try:
-                    await MW._processar_poi(session, serp, reg, cidade, uf, sem)
+                    # WATCHDOG: qualquer await pendurado — SERP, fetch de página,
+                    # LLM, BrasilAPI — vira erro deste POI em vez de silêncio do
+                    # job inteiro. Sem ele, um `await` sem teto congela o
+                    # semáforo e nada mais anda.
+                    await asyncio.wait_for(
+                        MW._processar_poi(session, serp, reg, cidade, uf_reg, sem),
+                        timeout=TIMEOUT_POI_S)
+                except asyncio.TimeoutError:
+                    async with lock:
+                        counter["timeout"] = counter.get("timeout", 0) + 1
+                    print(f"   ⏱️  {(reg.get('nome') or '')[:30]} passou de "
+                          f"{TIMEOUT_POI_S:.0f}s — pulado", flush=True)
                 except Exception:
                     pass
                 if poligono:
@@ -251,7 +357,22 @@ async def fase_web(regs, uf, cidade_arg, usar_proxy, workers, poligono, salvar, 
                     print(f"🌐 [Web] POIs {counter['n']}/{total} | enriquecidos {counter['ok']} | "
                           f"tokens {MW._USO['in']+MW._USO['out']} (US${MW._custo():.3f}) | "
                           f"{(reg.get('nome') or '')[:28]}", flush=True)
-            await asyncio.gather(*[_um(r) for r in ainda])
+
+            # EM LOTES, não num `gather` de milhares. O gather único criava as
+            # 9.110 corrotinas de uma vez: sem ponto de parada, sem retomada, e
+            # um punhado de awaits presos parava tudo. Em lote, um problema
+            # custa no máximo um lote — e o `salvar()` no fim de cada um deixa o
+            # trabalho no disco.
+            for i in range(0, total, LOTE_WEB):
+                bloco = ainda[i:i + LOTE_WEB]
+                await asyncio.gather(*[_um(r) for r in bloco])
+                salvar()
+                print(f"   ── lote {i // LOTE_WEB + 1}/"
+                      f"{(total + LOTE_WEB - 1) // LOTE_WEB} concluído "
+                      f"({counter['n']}/{total}) ──", flush=True)
+            if counter.get("timeout"):
+                print(f"   ⏱️  {counter['timeout']} POIs estouraram o teto de "
+                      f"{TIMEOUT_POI_S:.0f}s", flush=True)
     finally:
         await serp.close()
 
@@ -259,11 +380,62 @@ async def fase_web(regs, uf, cidade_arg, usar_proxy, workers, poligono, salvar, 
 # ──────────────────────────────────────────────────────────────────────────
 # FASE 3 — Street View para todos os localizados sem print
 # ──────────────────────────────────────────────────────────────────────────
-async def fase_streetview(workers, prog):
+# Pobre para efeito de FACHADA: sem foto, sem telefone ou sem avaliação.
+# Não é o mesmo "carente" das fases Maps/Web — aquele inclui "sem CNPJ", e depois
+# que a Receita local preencheu milhares de CNPJs isso não separa mais ninguém.
+# A pergunta aqui é outra: de quem eu ainda não sei quase nada? De quem já tem
+# foto, telefone e nota, a fachada acrescenta pouco e custa o mesmo.
+_SQL_POBRE = """(NOT EXISTS (SELECT 1 FROM images_urls i WHERE i.poi_id = p.id)
+                 OR p.telefone IS NULL OR p.telefone = ''
+                 OR p.total_avaliacoes IS NULL OR p.total_avaliacoes = 0)"""
+
+
+def _sem_streetview_na_area(poligono, so_pobres: bool = False) -> list:
+    """IDs dos POIs DA ÁREA que ainda não têm foto de fachada.
+
+    Por padrão pega TODO POI da área: a fachada falta a POI completo também. Dos
+    28 POIs da área de Canoas, 22 tinham telefone, endereço e categoria — e
+    **zero** tinham Street View.
+
+    Com `so_pobres`, restringe a quem está mal documentado (sem foto, sem
+    telefone ou sem avaliação). Passou a fazer diferença quando a área saltou de
+    9 mil para 21,7 mil POIs: a 1.380 fachadas/hora, varrer tudo é ~15 h, e boa
+    parte disso é fotografar de novo a porta de quem já tem foto, telefone e
+    nota."""
+    conn = realtime_ingest.conectar()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"""
+                SELECT p.id, COALESCE(p.maps_lat, p.lat_origem),
+                       COALESCE(p.maps_lng, p.lng_origem)
+                  FROM pois p
+                 WHERE p.match_valido IS NOT FALSE
+                   AND COALESCE(p.maps_lat, p.lat_origem) IS NOT NULL
+                   AND (p.streetview_path IS NULL OR p.streetview_path = '')
+                   {f'AND {_SQL_POBRE}' if so_pobres else ''}""")
+            linhas = cur.fetchall()
+    finally:
+        conn.close()
+    if not poligono:
+        return [i for i, _, _ in linhas]
+    return [i for i, la, lo in linhas
+            if area_utils.ponto_no_poligono(la, lo, poligono)]
+
+
+async def fase_streetview(workers, prog, poligono, so_pobres: bool = False):
     prog["fase"] = "Street View"
-    print("📸 FASE 3/3 — Street View", flush=True)
-    # roda o capturador completo (grava streetview_path direto no banco)
-    await SV.run(workers=workers, limit=0, refazer=False)
+    ids = _sem_streetview_na_area(poligono, so_pobres)
+    # MARCADOR DE FASE: sem ele o painel continuava somando a fase Web. A barra
+    # anunciava "2.229 de 21.701" — 2.229 era o que a Web tinha gravado, 21.701
+    # é o total de fachadas: dois números de fases diferentes na mesma frase, e
+    # nenhum deles o andamento do Street View, que naquele instante era 31.
+    print("⟦fase⟧ streetview", flush=True)
+    alvo = "pobres (sem foto/telefone/avaliação)" if so_pobres else "da área"
+    print(f"📸 FASE 3/3 — Street View: {len(ids)} POIs {alvo} sem fachada", flush=True)
+    if not ids:
+        return
+    # grava streetview_path direto no banco
+    await SV.run(workers=workers, limit=0, refazer=False, ids=ids)
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -273,39 +445,44 @@ _PW = None
 
 
 async def run(out_json: Path, workers: int, usar_proxy: bool, limit: int, area_path: str,
-              pular_maps: bool, pular_web: bool, pular_sv: bool):
+              pular_maps: bool, pular_web: bool, pular_sv: bool,
+              pular_cnpj_local: bool = False, visivel: bool = False,
+              sv_so_pobres: bool = False):
     global _PW
     poligono = area_utils.carregar_area(area_path) if area_path else None
     regs = carregar_carentes(poligono, limit)
     total = len(regs)
-    # total = fase1(maps c/ url) + fase2(estimado) — a barra usa o total de POIs a tocar
-    uf = ""
-    for r in regs:
-        end = (r.get("endereco") or r.get("endereco_planilha") or "")
-        import re
-        m = re.search(r"\b([A-Z]{2})\b(?:,|\s|$)", end)
-        if m:
-            uf = m.group(1)
-            break
-    uf = uf or "PI"
-    print(f"💎 Enriquecimento em cascata: {total} POIs pobres | UF {uf} | "
+    # CIDADE E UF VÊM DA ÁREA DE TRABALHO — a mesma que o usuário definiu no
+    # painel (select de UF+município, clique no mapa ou polígono desenhado).
+    # É a fonte única da ferramenta; deduzir por POI, ou pior, cair num padrão
+    # fixo, foi o que fez a fase Web buscar "parnaiba RS" numa rodada de Canoas
+    # e a conferência do CNPJ rejeitar todo CNPJ por município divergente.
+    cidade, uf = area_utils.municipio_da_area(poligono)
+    print(f"💎 Enriquecimento em cascata: {total} POIs pobres | "
+          f"Área: {cidade or '?'}/{uf or '?'} | "
           f"Proxy: {'sim' if usar_proxy else 'NÃO'} | Workers: {workers}", flush=True)
     print(f"POIs : {total} | Pendentes: {total}", flush=True)  # p/ o server captar o total
+    # ANTES do desvio abaixo: o ramo "sem carente" também usa `prog`, e com ele
+    # declarado só adiante o processo morria de UnboundLocalError exatamente no
+    # caso em que a fachada era o único trabalho que restava.
+    prog = {"fase": "-", "feitos": 0}
     if not total:
-        print("✅ Nenhum POI pobre — banco já está completo.")
+        # Sem carente NÃO quer dizer sem trabalho: a fachada falta a POI
+        # completo, e sair aqui pularia a fase 3 justamente no caso em que ela
+        # é a única coisa que resta a fazer.
+        print("✅ Nenhum POI pobre para Maps/Web.", flush=True)
+        if not pular_sv:
+            await fase_streetview(min(workers, 4), prog, poligono, sv_so_pobres)
         return
 
     lock_io = asyncio.Lock()
-    prog = {"fase": "-", "feitos": 0}
 
     def salvar():
-        tmp = out_json.with_suffix(".tmp")
         # SÓ os que foram GENUINAMENTE enriquecidos AGORA (flag _tocado). Sem isso,
         # re-ingeriríamos registros que só "tinham telefone de antes" — e a re-ingestão
         # apagaria as fotos deles (a fase Maps que falhou volta com fotos=[]).
         payload = [r for r in regs if r.get("_tocado")]
-        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
-        tmp.replace(out_json)
+        io_atomico.escrever_json(out_json, payload)
 
     config.BROWSER_PROFILES_DIR.mkdir(parents=True, exist_ok=True)
     ini = time.time()
@@ -314,22 +491,40 @@ async def run(out_json: Path, workers: int, usar_proxy: bool, limit: int, area_p
         pool = ProxyPool().start() if usar_proxy else None
         if not pular_maps:
             await fase_maps(regs, pool, usar_proxy, poligono, salvar, prog)
+        # local antes da web: o que a Receita já responde não precisa de SERP
+        if not pular_cnpj_local:
+            fase_cnpj_local(regs, poligono, salvar, prog)
         if not pular_web:
-            await fase_web(regs, uf, "", usar_proxy, workers, poligono, salvar, prog)
+            await fase_web(regs, uf, cidade, usar_proxy, workers, poligono, salvar,
+                           prog, visivel=visivel)
         salvar()
     shutil.rmtree(config.BROWSER_PROFILES_DIR, ignore_errors=True)
 
     if not pular_sv:
-        await fase_streetview(min(workers, 4), prog)
+        await fase_streetview(min(workers, 4), prog, poligono, sv_so_pobres)
 
-    completos = sum(1 for r in regs if not _carente(r))
+    # O RESUMO SÓ FALA DAS FASES QUE RODARAM. "Completos/incompletos" mede o
+    # carente de Maps/Web; numa rodada só de Street View esses campos não podiam
+    # mudar, e o resumo anunciava "Ficaram completos: 0" — verdade aritmética
+    # lida como fracasso. Fase pulada não entra em linha nenhuma.
+    rodou_dados = not (pular_maps and pular_cnpj_local and pular_web)
     print(f"\n{'═'*52}")
     print(f"💎 Enriquecimento em cascata | Resumo")
     print(f"{'═'*52}")
-    print(f"   POIs pobres tratados : {total}")
-    print(f"   Ficaram completos    : {completos}")
-    print(f"   Ainda incompletos    : {total - completos}")
-    print(f"   Custo web (LLM)      : US$ {MW._custo():.4f}")
+    if rodou_dados:
+        completos = sum(1 for r in regs if not _carente(r))
+        tocados = sum(1 for r in regs if r.get("_tocado"))
+        print(f"   POIs pobres tratados : {total}")
+        print(f"   Enriquecidos (algo novo) : {tocados}")
+        print(f"   Ficaram completos    : {completos}")
+        print(f"   Ainda incompletos    : {total - completos}")
+    else:
+        print(f"   Fases Maps/CNPJ/Web  : puladas (rodada só de fachadas)")
+    if not pular_web:
+        print(f"   Custo web (LLM)      : US$ {MW._custo():.4f}")
+    if not pular_sv:
+        print(f"   Fachadas             : ver linhas '📸' acima "
+              f"(gravadas em streetview_imgs)")
     print(f"   Tempo                : {(time.time()-ini)/60:.1f} min")
     print(f"{'═'*52}", flush=True)
 
@@ -342,8 +537,14 @@ def main():
     p.add_argument("--limit", type=int, default=0)
     p.add_argument("--area", default="")
     p.add_argument("--pular-maps", action="store_true")
+    p.add_argument("--pular-cnpj-local", action="store_true")
+    p.add_argument("--visivel", action="store_true",
+                   help="abre os navegadores na TELA (1 por worker)")
     p.add_argument("--pular-web", action="store_true")
     p.add_argument("--pular-streetview", action="store_true")
+    p.add_argument("--sv-so-pobres", action="store_true",
+                   help="Street View só em POI mal documentado (sem foto, sem "
+                        "telefone ou sem avaliação).")
     p.add_argument("--sem-ingest", action="store_true",
                    help="Não ingere direto (rodando sob o server web, o watcher grava).")
     a = p.parse_args()
@@ -352,7 +553,8 @@ def main():
     out = Path(a.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     asyncio.run(run(out, a.workers, not a.no_proxy, a.limit, a.area,
-                    a.pular_maps, a.pular_web, a.pular_streetview))
+                    a.pular_maps, a.pular_web, a.pular_streetview,
+                    a.pular_cnpj_local, a.visivel, a.sv_so_pobres))
 
 
 if __name__ == "__main__":

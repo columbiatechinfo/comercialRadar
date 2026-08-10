@@ -538,19 +538,31 @@ async def run(session_path: Path, n_workers: int, max_dist: float, full=False, i
     todos = json.loads(crops_json.read_text(encoding="utf-8"))
     out_json = session_path.parent / "crops" / "search_resultado.json"
 
-    # Retomada
-    processados_idx = set()
+    # Retomada — a chave é a POSIÇÃO do recorte, não o `idx`.
+    #
+    # `idx` é um contador corrido que o detector atribui varrendo tile a tile:
+    # se a detecção mudar (ícone novo reconhecido, tile acrescentado), tudo o que
+    # vem depois DESLOCA. Retomando por `idx`, o resultado antigo do nº 57 seria
+    # dado como pronto para um recorte que agora é outro lugar — nome de um
+    # comércio grudado na coordenada de outro, sem erro nenhum aparecendo.
+    # `(tile, px, py)` descreve o recorte em si e não se move.
+    def _chave(r):
+        if r.get("tile") is not None and r.get("px") is not None:
+            return (r["tile"], r["px"], r["py"])
+        return ("idx", r.get("idx"), None)
+
+    processados = set()
     results_existentes = []
     if out_json.exists():
         try:
             results_existentes = json.loads(out_json.read_text(encoding="utf-8"))
-            processados_idx = {r["idx"] for r in results_existentes if "idx" in r}
-            print(f"\n♻️  Retomando: {len(processados_idx)} itens já processados.")
+            processados = {_chave(r) for r in results_existentes}
+            print(f"\n♻️  Retomando: {len(processados)} itens já processados.")
         except Exception:
             pass
 
     fila_completa = [r for r in todos if len(r.get("ocr_texto", "").strip()) >= config.MIN_OCR_LEN]
-    pendentes = [r for r in fila_completa if r.get("idx") not in processados_idx]
+    pendentes = [r for r in fila_completa if _chave(r) not in processados]
     ignorados = len(todos) - len(fila_completa)
 
     ocr_curtos = [
@@ -558,7 +570,7 @@ async def run(session_path: Path, n_workers: int, max_dist: float, full=False, i
          "distancia_m": None, "similaridade": 0, "erros": [], "poi": {}}
         for r in todos
         if len(r.get("ocr_texto", "").strip()) < config.MIN_OCR_LEN
-        and r.get("idx") not in processados_idx
+        and _chave(r) not in processados
     ]
 
     # Clustering espacial → lotes
@@ -577,7 +589,7 @@ async def run(session_path: Path, n_workers: int, max_dist: float, full=False, i
 
     state = {"results": list(results_existentes)}
     lock = asyncio.Lock()
-    counter = {"done": len(processados_idx)}
+    counter = {"done": len(processados)}
     total = len(fila_completa)
 
     if ocr_curtos:
