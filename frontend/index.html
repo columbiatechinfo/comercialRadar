@@ -40,6 +40,9 @@
     <button class="mode" data-mode="quadras">
       <span class="mode-ico">🏘️</span> Quadras + endereços
     </button>
+    <button class="mode" data-mode="dashboard">
+      <span class="mode-ico">📊</span> Dashboard
+    </button>
   </nav>
 
   <div class="top-right">
@@ -69,12 +72,22 @@
 <!-- Painel de controle (esquerda) -->
 <aside id="painel" class="card">
   <!-- PASSO 1: Área -->
-  <section class="p-sec">
+  <section class="p-sec" id="sec-area">
     <div class="p-title"><span class="p-step">1</span> Área de trabalho</div>
     <div class="p-body">
       <div class="row">
         <button class="btn" id="btn-desenhar">✏️ Desenhar área</button>
         <button class="btn ghost" id="btn-apagar-area" title="Remover polígono">🗑️</button>
+      </div>
+      <div class="opt">
+        <div style="font-weight:600;margin-bottom:4px">Ou escolha o município inteiro</div>
+        <div class="row" style="gap:6px">
+          <select id="mun-uf" style="flex:0 0 84px"><option value="">UF…</option></select>
+          <select id="mun-cod" style="flex:1" disabled><option value="">município…</option></select>
+        </div>
+        <div class="hint">Usa a divisa oficial do IBGE como área de trabalho — não
+          precisa desenhar ponto a ponto. Também dá para <b>clicar num município
+          no mapa</b>.</div>
       </div>
       <div class="hint" id="area-status">Nenhuma área definida — desenhe o polígono no mapa.</div>
       <button class="btn danger sm" id="btn-limpar-fora">🧹 Limpar banco fora da área</button>
@@ -86,11 +99,21 @@
     <div class="p-title"><span class="p-step">2</span> Planilha de POIs</div>
     <div class="p-body">
       <div class="row">
-        <a class="btn ghost" href="/api/template" download>⬇️ Baixar modelo</a>
+        <button class="btn ghost" id="btn-modelos">⬇️ Modelos</button>
         <button class="btn" id="btn-importar">📁 Importar…</button>
         <input type="file" id="file-input" accept=".xlsx,.csv" hidden>
       </div>
       <div class="hint" id="file-status">Nenhum arquivo importado.</div>
+      <div class="p-title" style="margin-top:14px"><span class="p-step">+</span>
+        Cadastro do cliente</div>
+      <div class="hint">A carteira de imóveis da empresa. Depois de importar, ela é
+        cruzada com os POIs e cada imóvel recebe a flag de campo.</div>
+      <div class="row">
+        <a class="btn ghost" href="/api/modelos/cadastro" download>⬇️ Modelo</a>
+        <button class="btn" id="btn-cadastro">🏢 Importar cadastro…</button>
+        <input type="file" id="file-cadastro" accept=".csv" hidden>
+      </div>
+      <div class="hint" id="cadastro-status"></div>
       <details class="opts">
         <summary>Opções avançadas</summary>
         <label class="opt"><input type="checkbox" id="op-recuperar" checked> Recuperação IA (vizinhos + OpenAI + Gemini)</label>
@@ -107,17 +130,23 @@
   <section class="p-sec hidden" id="sec-mineracao">
     <div class="p-title"><span class="p-step">2</span> Mineração</div>
     <div class="p-body">
-      <div class="opt">
-        <div style="font-weight:600;margin-bottom:4px">Ou escolha o município inteiro</div>
-        <div class="row" style="gap:6px">
-          <select id="mun-uf" style="flex:0 0 84px"><option value="">UF…</option></select>
-          <select id="mun-cod" style="flex:1" disabled><option value="">município…</option></select>
-        </div>
-        <div class="hint">Usa a divisa oficial do IBGE como área de trabalho — não
-          precisa desenhar ponto a ponto.</div>
-      </div>
       <label class="opt inline">Nome da sessão <input type="text" id="op-sessao" placeholder="ex.: parnaiba_centro"></label>
-      <label class="opt inline">Passo da grade
+      <label class="opt inline">Motor
+        <select id="op-motor">
+          <option value="captura" selected>Captura + OCR (padrão)</option>
+          <option value="places">Places API (paga)</option>
+        </select>
+      </label>
+      <div class="hint" id="hint-captura">Fotografa o Maps em tiles 4K com o estilo limpo
+        (só os markers), detecta os ícones, lê os nomes por <b>OCR</b> e busca cada um.
+        <b>Não custa por chamada</b> — só tempo de captura.</div>
+      <label class="opt inline" id="op-zoom-wrap">Zoom da captura
+        <select id="op-zoom">
+          <option value="19" selected>19 — rua com POIs (padrão)</option>
+          <option value="18">18 — quadra (mais área, menos POI)</option>
+        </select>
+      </label>
+      <label class="opt inline hidden" id="op-step-wrap">Passo da grade
         <select id="op-step">
           <option value="120">120 m (denso)</option>
           <option value="150" selected>150 m (padrão)</option>
@@ -125,7 +154,7 @@
           <option value="300">300 m (amplo)</option>
         </select>
       </label>
-      <label class="opt"><input type="checkbox" id="op-details"> Coleta profunda — telefone, horários e reviews <small>(Place Details, pago)</small></label>
+      <label class="opt hidden" id="op-details-wrap"><input type="checkbox" id="op-details"> Coleta profunda — telefone, horários e reviews <small>(Place Details, pago)</small></label>
       <div class="hint">Varre toda a área do polígono e traz <b>tudo que existir</b> de comércio/serviço.</div>
     </div>
   </section>
@@ -176,9 +205,23 @@
       </div>
       <details class="opts">
         <summary>Opções</summary>
-        <label class="opt"><input type="checkbox" id="enr-maps" checked> Fase 1 — Maps</label>
-        <label class="opt"><input type="checkbox" id="enr-web" checked> Fase 2 — Web + Receita</label>
-        <label class="opt"><input type="checkbox" id="enr-sv" checked> Fase 3 — Street View</label>
+        <label class="opt"><input type="checkbox" id="enr-maps" checked> Fase 1 — Maps
+          <small>(telefone, categoria, fotos · horas)</small></label>
+        <label class="opt"><input type="checkbox" id="enr-cnpj" checked> Fase 2 — CNPJ na Receita (local)
+          <small>(base rf_* já no banco · segundos, grátis)</small></label>
+        <label class="opt"><input type="checkbox" id="enr-web" checked> Fase 3 — Web
+          <small>(só o resíduo sem CNPJ · lenta e paga)</small></label>
+        <label class="opt"><input type="checkbox" id="enr-sv" checked> Fase 4 — Street View
+          <small>(fachada de cada ponto · grátis)</small></label>
+        <label class="opt sub"><input type="checkbox" id="enr-sv-pobres" checked>
+          ↳ só nos pobres
+          <small>(sem foto, sem telefone ou sem avaliação. De quem já tem os três
+          a fachada acrescenta pouco e custa o mesmo — são ~1.380 fachadas por
+          hora)</small></label>
+        <label class="opt"><input type="checkbox" id="enr-visivel">
+          👁️ Navegador visível na Fase 3
+          <small>(1 janela por worker, com a busca sendo digitada · use para
+          acompanhar; comportamento de uso real também atrapalha bloqueio)</small></label>
         <label class="opt"><input type="checkbox" id="enr-proxy" checked> Usar proxies</label>
         <label class="opt inline">Workers <input type="number" id="op-enr-workers" min="1" max="10" value="6"></label>
       </details>
@@ -192,7 +235,7 @@
   </section>
 
   <!-- PASSO 3: execução -->
-  <section class="p-sec">
+  <section class="p-sec" id="sec-execucao">
     <div class="p-title"><span class="p-step">3</span> Execução</div>
     <div class="p-body">
       <button class="btn primary big" id="btn-iniciar">▶ Iniciar processo</button>
@@ -200,7 +243,54 @@
       <div class="hint" id="job-status-txt"></div>
     </div>
   </section>
+
+  <!-- Dashboard: a coluna esquerda é a lista de cidades -->
+  <section class="p-sec hidden" id="sec-dashboard">
+    <div class="p-title"><span class="p-step">📊</span> Cidades</div>
+    <div class="p-body">
+      <input type="text" id="dash-busca" class="dash-busca" placeholder="filtrar cidade…">
+      <div id="dash-cidades" class="dash-cidades"></div>
+    </div>
+  </section>
 </aside>
+
+<!-- Dashboard: painel de conteúdo, por cima do mapa -->
+<div id="dashboard" class="hidden">
+  <div class="dash-head">
+    <div>
+      <h2 id="dash-titulo">Todas as cidades</h2>
+      <div class="dash-sub" id="dash-sub"></div>
+    </div>
+    <div class="dash-filtros" id="dash-filtros">
+      <button class="chip-f active" data-grupo="tudo">Tudo</button>
+      <button class="chip-f" data-grupo="cobertura">Cobertura</button>
+      <button class="chip-f" data-grupo="cnpj">CNPJ</button>
+      <button class="chip-f" data-grupo="cadastro">Cadastro do cliente</button>
+      <button class="chip-f" data-grupo="retorno">Retorno</button>
+      <button class="chip-f" data-grupo="custo">Custo</button>
+    </div>
+  </div>
+  <div class="dash-grid" id="dash-grid"></div>
+</div>
+
+<!-- Modal de conferência da importação de cadastro -->
+<div id="modal-cadastro" class="modal-bg hidden">
+  <div class="modal">
+    <div class="modal-head">
+      <h3 id="mc-titulo">Conferir importação</h3>
+      <button class="modal-x" id="mc-fechar">✕</button>
+    </div>
+    <div class="modal-body" id="mc-corpo"></div>
+    <div class="modal-pe" id="mc-acoes">
+      <label class="opt"><input type="checkbox" id="mc-cruzar" checked>
+        Cruzar com os POIs logo após importar</label>
+      <div class="row">
+        <button class="btn ghost" id="mc-cancelar">Cancelar</button>
+        <button class="btn primary" id="mc-confirmar">Confirmar importação</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <!-- Cards de progresso (direita) -->
 <aside id="stats">
@@ -213,7 +303,7 @@
   <div class="stat-card c-green"><div class="stat-ico">✅</div><div><div class="stat-val" id="st-validos">0</div><div class="stat-label">Encontrados</div></div></div>
   <div class="stat-card c-blue"><div class="stat-ico">🤖</div><div><div class="stat-val" id="st-recup">0</div><div class="stat-label">Recuperados (IA)</div></div></div>
   <div class="stat-card c-purple"><div class="stat-ico">🔎</div><div><div class="stat-val" id="st-desc">0</div><div class="stat-label">Descobertos</div></div></div>
-  <div class="stat-card c-orange"><div class="stat-ico">🚧</div><div><div class="stat-val" id="st-fora">0</div><div class="stat-label">Fora da área</div></div></div>
+  <div class="stat-card c-orange" title="Encontrados fora do polígono desenhado. São GRAVADOS no banco, com cidade e UF, mas não aparecem no mapa enquanto o foco é esta área — aparecem ao selecionar o município deles."><div class="stat-ico">🚧</div><div><div class="stat-val" id="st-fora">0</div><div class="stat-label">Fora da área <small>(gravados)</small></div></div></div>
   <div class="stat-card c-gray"><div class="stat-ico">❓</div><div><div class="stat-val" id="st-semmatch">0</div><div class="stat-label">Sem match</div></div></div>
   <div class="stat-card c-teal"><div class="stat-ico">🗄️</div><div><div class="stat-val" id="st-ingeridos">0</div><div class="stat-label">Gravados no banco</div></div></div>
 

@@ -30,6 +30,11 @@ button { font-family: inherit; }
   background: var(--surface); box-shadow: var(--shadow);
   display: flex; align-items: center; gap: 20px; padding: 0 18px;
 }
+/* O `z-index: 1300` do #base-menu não valia de nada: ele mora DENTRO do
+   #topbar, que é posicionado e cria o próprio contexto de empilhamento — o
+   menu nunca passava dos 1200 do pai, e o campo de busca (1310) o cobria.
+   Enquanto o menu está aberto, o header inteiro sobe acima da busca. */
+#topbar:has(#base-menu:not(.hidden)) { z-index: 1400; }
 .brand { display: flex; align-items: center; gap: 10px; }
 .brand-icon {
   width: 38px; height: 38px; border-radius: 11px; color: #fff;
@@ -40,9 +45,16 @@ button { font-family: inherit; }
 .brand-name { font-size: 19px; font-weight: 500; letter-spacing: -.3px; }
 .brand-name b { font-weight: 800; }
 
+/* As abas ficam CENTRADAS de verdade: `margin: 0 auto` só centra se os dois
+   vizinhos tiverem a mesma largura, e o badge da direita cresce conforme a lista
+   de cidades ("Canoas 21.699 · Parnaíba 4.237 · Esteio 299 · +25"). Cada
+   ampliação empurrava as abas para a esquerda. Com a marca e o bloco da direita
+   dividindo a sobra em partes iguais, o centro fica parado. */
+.brand, .top-right { flex: 1 1 0; min-width: 0; }
+.top-right { justify-content: flex-end; }
 .modes {
   display: flex; background: #f1f3f4; border-radius: 999px; padding: 4px; gap: 4px;
-  margin: 0 auto;
+  flex: 0 0 auto;
 }
 .mode {
   border: 0; background: transparent; cursor: pointer; border-radius: 999px;
@@ -52,14 +64,35 @@ button { font-family: inherit; }
 .mode:hover { color: var(--ink); }
 .mode.active { background: var(--surface); color: var(--blue); box-shadow: var(--shadow); }
 
-.top-right { display: flex; align-items: center; gap: 10px; }
+.top-right { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .db-badge, .ws-badge {
   display: flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 600;
   color: var(--ink-2); background: #f1f3f4; border-radius: 999px; padding: 7px 13px;
   white-space: nowrap;
 }
+/* O badge é o único que cresce sem limite — a lista de cidades entra inteira
+   nele. Ele cede em ETAPAS, da informação menos importante para a mais: primeiro
+   a lista entre parênteses vira reticências, depois some, e por último o badge
+   inteiro sai. Encolher tudo de uma vez o reduzia a 26 px numa tela de 1280 —
+   um badge vazio ocupando espaço não é melhor que nenhum badge. O "tempo real"
+   nunca encolhe: é indicador de estado, e cortado pela metade não indica nada. */
+.db-badge { flex: 0 1 auto; min-width: 0; }
+.db-badge small {
+  display: inline-block; min-width: 0; max-width: 22vw;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  vertical-align: bottom;
+}
+@media (max-width: 1560px) { .db-badge small { display: none; } }
+@media (max-width: 1340px) { .db-badge { display: none; } }
+.ws-badge { flex: 0 0 auto; }
+.brand { overflow: hidden; }
+.brand-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 1180px) { .brand-name { display: none; } }
 .db-badge .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--blue); }
 .db-badge { cursor: default; }
+/* a lista de municípios do estado vazio é contexto, não chamada: pesa menos que
+   o convite a clicar, e encolhe junto com a topbar em tela estreita */
+.db-badge small { font-weight: 500; opacity: .72; }
 .db-badge.sel { background: #dff1f5; color: #0b5566; }
 .db-badge.sel .dot { background: #0e7490; box-shadow: 0 0 0 3px rgba(14,116,144,.18); }
 .db-badge .muni-x {
@@ -130,6 +163,9 @@ button { font-family: inherit; }
 .opt small { color: var(--ink-2); }
 .opt input[type="checkbox"] { accent-color: var(--blue); width: 15px; height: 15px; }
 .opt.inline { justify-content: space-between; }
+/* opção que só existe dentro de outra: recuada e apagada, para ler como
+   detalhe da fase acima e não como uma quinta fase */
+.opt.sub { margin-left: 22px; padding-top: 0; color: var(--ink-2); }
 .opt input[type="number"], .opt input[type="text"], .opt select {
   border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; font-size: 12.5px;
   font-family: inherit; width: 150px; outline-color: var(--blue);
@@ -672,3 +708,191 @@ button { font-family: inherit; }
 .vis-item i.linha { height: 3px; border-radius: 2px; }
 .vis-item .vis-n { margin-left: auto; color: var(--ink-2); font-variant-numeric: tabular-nums; }
 .vis-item.off { opacity: .45; }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   DASHBOARD
+   Ocupa a área do mapa, deixando o painel da esquerda (a lista de cidades) no
+   lugar de sempre: quem navega não perde a referência de onde estão os
+   controles só porque trocou de aba.
+   ────────────────────────────────────────────────────────────────────────── */
+#dashboard {
+  position: fixed; top: var(--header-h); left: 342px; right: 0; bottom: 0;
+  z-index: 1050; overflow-y: auto; background: #eef1f4;
+  padding: 18px 22px 40px;
+}
+.dash-head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 18px; flex-wrap: wrap; margin-bottom: 16px;
+}
+.dash-head h2 { font-size: 21px; font-weight: 700; letter-spacing: -.2px; }
+.dash-sub { color: var(--ink-2); font-size: 13px; margin-top: 3px; }
+.dash-filtros { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip-f {
+  border: 1px solid var(--line); background: var(--surface); color: var(--ink-2);
+  border-radius: 999px; padding: 6px 14px; font-size: 12.5px; font-weight: 600;
+  cursor: pointer; transition: .12s;
+}
+.chip-f:hover { color: var(--ink); border-color: #d0d4d9; }
+.chip-f.active { background: var(--blue); border-color: var(--blue); color: #fff; }
+
+.dash-grid {
+  display: grid; gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(268px, 1fr));
+  align-items: start;
+}
+.d-card {
+  background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow);
+  padding: 15px 17px 16px; border-top: 3px solid var(--blue);
+}
+.d-card.wide { grid-column: span 2; }
+.d-card.g-verde { border-top-color: var(--green); }
+.d-card.g-laranja { border-top-color: var(--orange); }
+.d-card.g-roxo { border-top-color: var(--purple); }
+.d-card.g-teal { border-top-color: var(--teal); }
+.d-card.g-vermelho { border-top-color: var(--red); }
+.d-tit {
+  font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .6px;
+  color: var(--ink-2); margin-bottom: 11px;
+}
+.d-num { font-size: 30px; font-weight: 700; letter-spacing: -1px; line-height: 1; }
+.d-num small { font-size: 13px; font-weight: 600; color: var(--ink-2); margin-left: 5px; }
+.d-nota { color: var(--ink-2); font-size: 12px; margin-top: 8px; line-height: 1.5; }
+
+/* barra de cobertura: o número sozinho não diz se 9.881 é muito ou pouco */
+.d-lin { display: flex; align-items: center; gap: 9px; padding: 5px 0; font-size: 13px; }
+.d-lin .rot { flex: 0 0 104px; color: var(--ink-2); }
+.d-lin .barra { flex: 1; height: 7px; background: #f1f3f4; border-radius: 4px; overflow: hidden; }
+.d-lin .barra i { display: block; height: 100%; background: var(--blue); border-radius: 4px; }
+.d-lin .val { flex: 0 0 92px; text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+.d-lin .val em { font-style: normal; color: var(--ink-2); font-weight: 500; font-size: 11.5px; }
+.d-lin.alta .barra i { background: var(--green); }
+.d-lin.baixa .barra i { background: var(--orange); }
+
+.d-tab { width: 100%; border-collapse: collapse; font-size: 13px; }
+.d-tab td { padding: 5px 0; border-bottom: 1px solid var(--line); }
+.d-tab tr:last-child td { border-bottom: 0; }
+.d-tab td:last-child { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
+.d-tab .tag {
+  display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 7px;
+  border-radius: 5px; background: #f1f3f4; color: var(--ink-2);
+}
+.d-tab .tag.ok, .tag.ok { background: #e6f4ea; color: var(--green); }
+.d-tab .tag.med, .tag.med { background: #fef7e0; color: #b06000; }
+.d-tab .tag.baixo, .tag.baixo { background: #fce8e6; color: var(--red); }
+.d-card.g-azul { border-top-color: var(--blue); }
+
+/* subtítulo que separa naturezas dentro de um card (gasto variável × assinatura
+   × cenário Google): sem ele as três tabelas viravam uma lista só e o leitor
+   somava o que não devia ser somado */
+.d-sub {
+  font-size: 11.5px; font-weight: 700; color: var(--ink-2); margin: 15px 0 4px;
+  padding-top: 11px; border-top: 1px solid var(--line);
+}
+.d-sub:first-of-type { border-top: 0; padding-top: 0; }
+.d-sub em { font-style: normal; font-weight: 500; opacity: .8; }
+.d-tab .tr-forte td { font-weight: 700; border-top: 1px solid var(--line); border-bottom: 0; }
+
+/* a leitura que interessa, destacada do resto da tabela */
+.d-destaque {
+  margin-top: 12px; padding: 10px 12px; border-radius: 9px; background: #f1f3f4;
+  font-size: 13px; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+}
+.d-destaque b { font-size: 19px; font-weight: 700; letter-spacing: -.4px; }
+.d-destaque span { color: var(--ink-2); font-size: 12px; margin-left: auto; }
+.d-destaque.verde { background: #e6f4ea; color: #14683a; }
+.d-destaque.verde span { color: #2b7d51; }
+.d-destaque.vermelho { background: #fce8e6; color: #a52714; }
+.d-destaque.vermelho span { color: #b3574a; }
+
+/* CNPJ por confiança: nota agrupando os caminhos que levam a ela */
+.conf-grupo { margin-bottom: 9px; }
+.conf-cab {
+  display: flex; align-items: center; gap: 8px; padding-bottom: 3px;
+  border-bottom: 1px solid var(--line);
+}
+.conf-cab .conf-n {
+  margin-left: auto; font-weight: 700; font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.conf-lin {
+  display: flex; gap: 8px; font-size: 12.5px; color: var(--ink-2);
+  padding: 4px 0 4px 6px;
+}
+.conf-lin b { margin-left: auto; font-weight: 600; color: var(--ink);
+  font-variant-numeric: tabular-nums; }
+.tag {
+  display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 7px;
+  border-radius: 5px; background: #f1f3f4; color: var(--ink-2);
+}
+
+/* campos de premissa (preço por faixa, câmbio, assinatura, deduções) */
+.in-num {
+  width: 86px; border: 1px solid var(--line); border-radius: 7px; padding: 4px 7px;
+  font: inherit; font-size: 13px; font-weight: 600; text-align: right;
+  font-variant-numeric: tabular-nums; background: var(--surface); color: var(--ink);
+}
+.in-num:focus { outline: 2px solid var(--blue); outline-offset: -1px; border-color: transparent; }
+.tab-ret th {
+  font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px;
+  color: var(--ink-2); text-align: left; padding-bottom: 5px;
+  border-bottom: 1px solid var(--line);
+}
+.tab-ret th:not(:first-child), .tab-ret .c-n, .tab-ret .c-sub { text-align: right; }
+.tab-ret td { vertical-align: middle; }
+.tab-ret .c-n { font-variant-numeric: tabular-nums; color: var(--ink-2); }
+.tab-ret .c-sub { font-weight: 700; font-variant-numeric: tabular-nums; }
+.tab-ret td:last-child { width: 108px; }
+
+/* lista de cidades, no painel da esquerda */
+.dash-busca {
+  width: 100%; border: 1px solid var(--line); border-radius: 9px;
+  padding: 8px 11px; font-size: 13px; font-family: inherit; margin-bottom: 9px;
+}
+.dash-cidades { max-height: 54vh; overflow-y: auto; }
+.cid-item {
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  padding: 8px 10px; border-radius: 9px; cursor: pointer; font-size: 13px;
+  transition: .1s;
+}
+.cid-item:hover { background: #f1f3f4; }
+.cid-item.active { background: var(--blue); color: #fff; }
+.cid-item.active b { color: #fff; }
+.cid-item b { font-weight: 600; }
+.cid-item span { font-variant-numeric: tabular-nums; opacity: .75; font-size: 12px; }
+
+/* ── modal de conferência da importação ── */
+.modal-bg {
+  position: fixed; inset: 0; z-index: 2000; background: rgba(32,33,36,.5);
+  display: flex; align-items: center; justify-content: center; padding: 24px;
+}
+.modal {
+  background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow-lg);
+  width: min(860px, 100%); max-height: 88vh; display: flex; flex-direction: column;
+}
+.modal-head {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 16px 20px; border-bottom: 1px solid var(--line);
+}
+.modal-head h3 { font-size: 16px; font-weight: 700; }
+.modal-x { border: 0; background: none; font-size: 17px; cursor: pointer; color: var(--ink-2); }
+.modal-body { padding: 16px 20px; overflow-y: auto; font-size: 13px; }
+.modal-pe {
+  padding: 13px 20px; border-top: 1px solid var(--line);
+  display: flex; justify-content: space-between; align-items: center; gap: 14px;
+}
+.modal-pe .row { display: flex; gap: 8px; }
+.mc-aviso {
+  background: #fef7e0; border-left: 3px solid var(--orange); color: #7a4b00;
+  padding: 8px 11px; border-radius: 7px; margin-bottom: 8px; font-size: 12.5px;
+}
+.mc-resumo { display: flex; gap: 22px; flex-wrap: wrap; margin-bottom: 13px; }
+.mc-resumo div { font-size: 12px; color: var(--ink-2); }
+.mc-resumo b { display: block; font-size: 20px; color: var(--ink); font-weight: 700; }
+.mc-tab { width: 100%; border-collapse: collapse; font-size: 12px; }
+.mc-tab th {
+  text-align: left; padding: 6px 8px; background: #f8f9fa; color: var(--ink-2);
+  font-weight: 700; position: sticky; top: 0; white-space: nowrap;
+}
+.mc-tab td { padding: 5px 8px; border-bottom: 1px solid var(--line); white-space: nowrap;
+  max-width: 230px; overflow: hidden; text-overflow: ellipsis; }
+.mc-scroll { max-height: 300px; overflow: auto; border: 1px solid var(--line); border-radius: 9px; }

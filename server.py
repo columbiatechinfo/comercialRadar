@@ -25,6 +25,7 @@ Subir:  .venv\\Scripts\\python server.py   →  http://localhost:8765
 
 import io
 import json
+import math
 import os
 import re
 import sys
@@ -37,7 +38,8 @@ from pathlib import Path
 from datetime import datetime
 from collections import Counter
 
-from fastapi import FastAPI, UploadFile, File, Request, WebSocket, WebSocketDisconnect
+from fastapi import (FastAPI, UploadFile, File, Request, WebSocket,
+                     WebSocketDisconnect, Body)
 from fastapi.responses import FileResponse, StreamingResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
@@ -50,13 +52,14 @@ FRONT = BASE / "frontend"
 UPLOADS = BASE / "uploads"
 AREAS = BASE / "areas"
 MINERACAO = BASE / "mineracao"
+CAPTURAS = BASE / "capturas"     # saída do processo principal (captura + OCR)
 MALHAS = BASE / "malhas"
 # A área de trabalho mora na tabela `area_trabalho` (area_utils), não em
 # arquivo: ela é compartilhada entre o servidor e os coletores, que rodam
 # como subprocessos separados.
 PYTHON = str(BASE / ".venv" / "Scripts" / "python.exe")
 
-for d in (UPLOADS, AREAS, MINERACAO, MALHAS):
+for d in (UPLOADS, AREAS, MINERACAO, CAPTURAS, MALHAS):
     d.mkdir(exist_ok=True)
 
 
@@ -133,7 +136,12 @@ _JOB_LOCK = threading.Lock()
 
 
 def job_status() -> dict:
-    return {k: v for k, v in JOB.items() if k not in ("proc", "cat", "feitos")}
+    d = {k: v for k, v in JOB.items() if k not in ("proc", "cat", "feitos", "sv")}
+    # quem abre a página no meio do job recebe os rótulos da fase corrente —
+    # senão os cartões só se acertariam no próximo tick do WebSocket
+    d["rotulos"] = _ROTULOS_CARD.get(JOB.get("fase", ""), {})
+    d["fase_rotulo"] = _ROTULO_FASE.get(JOB.get("fase", ""), "")
+    return d
 
 
 def _novo_job(modo: str, out_json: Path, extra: dict) -> dict:
@@ -172,6 +180,30 @@ _RES_PROG = (
 )
 
 
+_RE_FASE = re.compile(r"⟦fase⟧\s*(\w+)")
+# Fases que processam POI. Nas outras a unidade da barra é TILE ou RECORTE, e
+# derivar "sem match" de um tile é inventar fracasso: com 90 de 264 tiles
+# capturados o painel anunciava "90 SEM MATCH" antes de buscar o primeiro POI.
+_FASES_POI = {"busca", "enriquecimento", ""}
+# "Sem match" só existe onde houve BUSCA de POI: procurar um nome no Maps e não
+# achar. É derivado (processados − sucessos), e em qualquer outro modo essa
+# subtração mede outra coisa: no download de imagens dava "4.250 SEM MATCH"
+# porque a barra conta FOTOS baixadas e o watcher não tem POI nenhum para
+# contar — todo processado virava "fracasso". Modo fora desta lista mostra 0.
+_MODOS_COM_MATCH = {"planilha", "mineracao", "minerar_web", "enriquecer_maps"}
+_ROTULO_FASE = {"captura": "fotografando o mapa", "deteccao": "detectando ícones",
+                "ocr": "lendo os nomes", "busca": "buscando cada nome no Maps",
+                "streetview": "fotografando a fachada de cada ponto"}
+# "📸 POIs 31/21701 | capturados 30 | sem pano 1 | Agelú Arte e Cia"
+_RE_SV = re.compile(r"capturados\s+(\d+)\s*\|\s*sem pano\s+(\d+)")
+# Na fase Street View os cartões medem outra coisa: não há "encontrado" nem
+# "sem match", há fachada capturada e ponto sem panorama. Sem trocar o rótulo, o
+# painel mostraria o número certo embaixo da palavra errada.
+_ROTULOS_CARD = {"streetview": {"validos": "Fachadas capturadas",
+                                "semmatch": "Sem panorama",
+                                "ingeridos": "Gravadas no banco"}}
+
+
 def _emitir_progresso():
     """Combina o progresso do log (feitos/total) com as categorias do watcher.
     'processados' vem do log (nunca passa do total); 'sem_match' é derivado, para
@@ -179,18 +211,43 @@ def _emitir_progresso():
     c = JOB.get("cat", {})
     feitos = JOB.get("feitos", 0)
     total = JOB.get("total", 0)
+    fase = JOB.get("fase", "")
+
+    if fase == "streetview":
+        # A fase não escreve no JSON — grava a foto direto em `streetview_imgs`.
+        # Então o watcher não tem o que contar, e os cartões ficavam parados no
+        # placar da fase Web enquanto milhares de fachadas entravam no banco.
+        # Aqui os números saem do próprio log da captura.
+        sv = JOB.get("sv", (0, 0))
+        cont = {"processados": min(feitos, total) if total else feitos,
+                "validos": sv[0], "recuperados": 0, "descobertos": 0,
+                "fora_area": 0, "sem_match": sv[1], "erros": 0, "ingeridos": sv[0]}
+        JOB["contadores"] = cont
+        manager.broadcast({"tipo": "progresso", "dados": {
+            "contadores": cont, "total": total, "fase": fase,
+            "fase_rotulo": _ROTULO_FASE.get(fase, ""),
+            "rotulos": _ROTULOS_CARD.get(fase, {})}})
+        return
+
     val, rec = c.get("validos", 0), c.get("recuperados", 0)
     desc, fora = c.get("descobertos", 0), c.get("fora_area", 0)
     sucessos = val + rec + desc + fora
     processados = max(feitos, sucessos)
     if total:
         processados = min(processados, total)
-    sem = max(0, processados - sucessos)
+    # só há "sem match" onde se procurou POI: o MODO tem de ser de busca E a
+    # fase tem de ser a de busca (em captura/detecção/OCR a barra conta tile e
+    # recorte, e o que ainda não foi buscado não fracassou)
+    sem = (max(0, processados - sucessos)
+           if JOB.get("modo") in _MODOS_COM_MATCH and fase in _FASES_POI else 0)
     cont = {"processados": processados, "validos": val, "recuperados": rec,
             "descobertos": desc, "fora_area": fora, "sem_match": sem,
             "erros": 0, "ingeridos": c.get("ingeridos", 0)}
     JOB["contadores"] = cont
-    manager.broadcast({"tipo": "progresso", "dados": {"contadores": cont, "total": total}})
+    manager.broadcast({"tipo": "progresso", "dados": {
+        "contadores": cont, "total": total,
+        "fase": fase, "fase_rotulo": _ROTULO_FASE.get(fase, ""),
+        "rotulos": _ROTULOS_CARD.get(fase, {})}})
 
 
 def _thread_logs(proc: subprocess.Popen):
@@ -199,6 +256,21 @@ def _thread_logs(proc: subprocess.Popen):
         linha = linha.replace("\r", "").rstrip()
         if not linha:
             continue
+        mf = _RE_FASE.search(linha)
+        if mf:
+            # fase nova zera o andamento: a unidade mudou (tile → recorte → POI)
+            JOB["fase"] = mf.group(1)
+            JOB["feitos"] = 0
+            JOB["sv"] = (0, 0)
+            # zerar as CATEGORIAS também: elas vêm do JSON da fase anterior e,
+            # como `processados = max(feitos, sucessos)`, o placar velho segurava
+            # a barra da fase nova num número que não era dela
+            JOB["cat"] = {}
+            _emitir_progresso()
+            continue
+        msv = _RE_SV.search(linha)
+        if msv:
+            JOB["sv"] = (int(msv.group(1)), int(msv.group(2)))
         m = _RE_TOTAL_SHEET.search(linha) or _RE_TOTAL_MINA.search(linha)
         if m:
             JOB["total"] = int(m.group(1))
@@ -206,7 +278,14 @@ def _thread_logs(proc: subprocess.Popen):
             mp = rgx.search(linha)
             if mp:
                 feitos, total = int(mp.group(1)), int(mp.group(2))
-                JOB["feitos"] = max(JOB.get("feitos", 0), feitos)
+                # Job de várias FASES (captura → OCR → busca) muda o total ao
+                # passar de uma para a outra. `max` é o certo DENTRO da fase
+                # (o log de 10 workers chega fora de ordem), mas segurar o
+                # número da fase anterior deixaria a barra travada no fim.
+                if total != JOB.get("total"):
+                    JOB["feitos"] = feitos
+                else:
+                    JOB["feitos"] = max(JOB.get("feitos", 0), feitos)
                 JOB["total"] = total
                 _emitir_progresso()
                 break
@@ -260,10 +339,19 @@ def _baseline_do_arquivo(out_json: Path) -> dict:
 def _classifica(status: str) -> str:
     if status in ("ok",):
         return "validos"
-    if status in ("recuperado_proximo", "recuperado_ia", "recuperado_gemini"):
+    # `recuperado_web` faltava aqui: todo POI que a fase Web enriquecia caía no
+    # `return "sem_match"` do fim. O painel anunciava "78 SEM MATCH · 0
+    # ENCONTRADOS" enquanto o banco recebia os 78 normalmente — o processo certo
+    # e o placar errado, que é o pior tipo de erro para quem acompanha.
+    if status in ("recuperado_proximo", "recuperado_ia", "recuperado_gemini",
+                  "recuperado_web"):
         return "recuperados"
     if status in ("descoberto", "minerado"):
         return "descobertos"
+    # Registro ANTIGO, de quando estar fora da área zerava o `match_valido` e o
+    # POI era descartado. Hoje `status` guarda COMO o POI foi encontrado e o
+    # "fora" vem do veredito da ingestão (`inserido_fora`), não daqui — mas o
+    # JSON de uma coleta velha ainda pode trazer isto.
     if status == "fora_da_area":
         return "fora_area"
     if status == "erro":
@@ -273,11 +361,31 @@ def _classifica(status: str) -> str:
 
 def _poi_leve(r: dict, poi_id) -> dict:
     la, lo = area_utils.coord_do_registro(r)
+    # CIDADE tem de vir junto. Todo filtro do painel é por município, e o POI que
+    # chega ao vivo sem ela some no instante em que o usuário seleciona um —
+    # aparecia no mapa durante o job e desaparecia depois. A regra de extração é
+    # a MESMA da ingestão, senão o POI vivo e o POI recarregado do banco cairiam
+    # em cidades diferentes.
+    cidade = realtime_ingest._s(r.get("cidade")) or realtime_ingest._cidade_uf(
+        r.get("endereco"), r.get("endereco_planilha"))[0]
     return {
         "id": poi_id, "nome": r.get("nome") or r.get("nome_planilha"),
         "categoria": r.get("categoria"), "endereco": r.get("endereco"),
         "lat": la, "lng": lo, "fonte": r.get("fonte"), "fonte_dado": r.get("fonte_dado"),
-        "status": r.get("status"),
+        "status": r.get("status"), "cidade": cidade,
+        # Os chips de ATRIBUTO (📞 com telefone, 📷 com foto, 🏢 com CNPJ,
+        # 📸 street view) leem estas flags. Sem elas o POI que chega ao vivo cai
+        # em "sem telefone": numa mineração de Canoas o painel anunciou
+        # "Com telefone 19 · Sem telefone 9.091" enquanto o banco tinha 7.130
+        # com telefone. O `/api/pois` já as devolve; faltava a via do WebSocket.
+        "tem_tel": bool(r.get("telefone")),
+        "tem_cnpj": bool(r.get("cnpj")),
+        "tem_foto": bool(r.get("fotos")),
+        "tem_sv": bool(r.get("streetview_path")
+                       and r.get("streetview_path") != "NA"),
+        # o ingestor faz delete+recreate por place_id: o POI reingerido ganha id
+        # NOVO, e sem esta chave o mapa fica com o marcador velho ao lado do novo
+        "place_id": r.get("place_id"),
         "avaliacao": r.get("avaliacao"), "total_avaliacoes": r.get("total_avaliacoes"),
     }
 
@@ -292,6 +400,12 @@ def _thread_watcher(proc: subprocess.Popen, out_json: Path, poligono, baseline: 
     """
     assinaturas: dict = {}     # key → última assinatura já ingerida (evita re-ingestão)
     ingeridos_keys: set = set()  # keys distintas já gravadas (conta 1x, não infla)
+    # Quem o GATE DE ÁREA recusou. Não dá para tirar isso do `status` do
+    # registro: o POI foi encontrado no Maps e o status é "ok" — ele só não é
+    # daqui. Sem contar o veredito da ingestão, o painel mostrava "fora da área
+    # 0" enquanto 19 de 31 POIs eram descartados por isso, e a única leitura
+    # possível era "o gravador está quebrado".
+    fora_keys: set = set()
     conn = None
 
     def _passada():
@@ -324,10 +438,19 @@ def _thread_watcher(proc: subprocess.Popen, out_json: Path, poligono, baseline: 
                     except Exception:
                         pass
                     conn = None
-                if resultado == "inserido":
+                # Os dois são GRAVADOS. O `_fora` é só onde ele caiu em relação
+                # ao polígono desenhado — e não vai para o mapa, porque o mapa
+                # mostra o que está em foco (a área, ou o município escolhido).
+                # Ele fica no banco esperando o dia em que aquela cidade for o
+                # foco; é justamente por isso que não se joga fora.
+                if resultado in ("inserido", "inserido_fora"):
                     ingeridos_keys.add(k)
-                    manager.broadcast({"tipo": "poi", "poi": _poi_leve(r, poi_id)})
+                    if resultado == "inserido":
+                        manager.broadcast({"tipo": "poi", "poi": _poi_leve(r, poi_id)})
+                    else:
+                        fora_keys.add(k)
 
+        cat["fora_area"] = max(cat["fora_area"], len(fora_keys))
         JOB["cat"] = {**cat, "ingeridos": len(ingeridos_keys)}
         _emitir_progresso()
 
@@ -812,7 +935,8 @@ def listar_pois():
                        (p.streetview_path IS NOT NULL AND p.streetview_path <> 'NA') AS tem_sv,
                        EXISTS (SELECT 1 FROM images_urls i WHERE i.poi_id = p.id) AS tem_foto,
                        a.veredito, a.motivo, a.recomendar_visita, a.tipo_construcao,
-                       COALESCE(p.revisar_manual, false) AS revisar_manual, p.cidade
+                       COALESCE(p.revisar_manual, false) AS revisar_manual, p.cidade,
+                       p.place_id
                 FROM pois p
                 LEFT JOIN analise_ia a ON a.poi_id = p.id
                 WHERE p.match_valido IS NOT FALSE
@@ -820,7 +944,8 @@ def listar_pois():
             cols = ["id", "nome", "categoria", "endereco", "telefone", "avaliacao",
                     "total_avaliacoes", "fonte", "fonte_dado", "status", "lat", "lng",
                     "tem_cnpj", "situacao_cadastral", "endereco_fonte", "tem_tel", "tem_sv", "tem_foto",
-                    "veredito", "motivo", "recomendar_visita", "tipo_construcao", "revisar_manual", "cidade"]
+                    "veredito", "motivo", "recomendar_visita", "tipo_construcao", "revisar_manual",
+                    "cidade", "place_id"]
             return {"pois": [dict(zip(cols, row)) for row in cur.fetchall()]}
     finally:
         conn.close()
@@ -1000,6 +1125,333 @@ def template_xlsx():
         headers={"Content-Disposition": 'attachment; filename="modelo_comercialradar.xlsx"'})
 
 
+# ──────────────────────────────────────────────────────────────────────────
+# Dashboard — o retrato de cada cidade e o que ela custou
+# ──────────────────────────────────────────────────────────────────────────
+# Preços praticados neste projeto, em US$. Só entra aqui o que TEM preço: a
+# captura+OCR, o Street View e a Receita local rodam na máquina e não custam
+# chamada — o que custa neles é tempo, e tempo aparece como horas, não como
+# dinheiro inventado.
+PRECO = {
+    "places_nearby": 0.032,   # Places API Nearby Search, por chamada (motor pago)
+    "llm_in": 0.15 / 1e6,     # gpt-4o-mini entrada, US$/token
+    "llm_out": 0.60 / 1e6,    # gpt-4o-mini saída
+    "proxy_mes": 45.0,        # Webshare, 100 IPs residenciais estáticos
+}
+# Tabela do Google Maps Platform, por chamada, para o CENÁRIO ALTERNATIVO: quanto
+# sairia fazer pela API paga o mesmo que a captura+OCR e o Street View fazem de
+# graça aqui. São preços de tabela publicados; o Google muda de tempos em tempos
+# e há camada gratuita mensal — por isso o número entra como COMPARATIVO, nunca
+# somado ao que foi realmente gasto.
+PRECO_GOOGLE = {
+    "nearby": 0.032,          # Nearby Search — descoberta dos POIs
+    "details": 0.017,         # Place Details — telefone, endereço, horário
+    "foto": 0.007,            # Place Photos
+    "streetview": 0.007,      # Street View Static
+}
+POIS_POR_NEARBY = 20          # o Nearby devolve no máximo 20 por chamada
+USD_BRL = 5.45
+# Ritmos MEDIDOS nesta base, para converter volume em horas de máquina.
+RITMO_H = {"streetview": 1380, "web": 540, "captura": 900}
+
+# ASSINATURAS: custo que corre no mês inteiro, rode-se muito ou nada. Não entra
+# rateado por hora — o proxy custa os mesmos US$ 45 se a máquina ficar parada, e
+# apresentar "US$ 1,68 de proxy" dava a impressão de que rodar mais sairia mais
+# caro. O valor da IA é editável no painel: é assinatura em dólar e muda de mês
+# para mês conforme o plano.
+ASSINATURAS = {
+    "webshare": {"usd": 45.0, "rotulo": "Webshare — 100 IPs residenciais estáticos"},
+    "ia": {"usd": 200.0, "rotulo": "Assinatura de IA (Claude)", "editavel": True},
+}
+
+# FAIXAS DE QUALIDADE, mutuamente exclusivas e na ordem em que são testadas: um
+# POI cai na PRIMEIRA que aceitar. É o que dá sentido a "valor por POI" — um
+# registro com telefone e CNPJ conferido não vale o mesmo que um ponto no mapa.
+#
+# `coalesce` em TODO campo de texto não é preciosismo: `cnpj <> ''` devolve NULL
+# quando o cnpj é NULL, e a exclusão das faixas seguintes usa `NOT (...)` —
+# `NOT NULL` é NULL, e a linha some. Sem isso as faixas C e D deram zero e a
+# soma das faixas batia 8.447 num total de 21.700.
+_TEL = "coalesce(p.telefone,'') <> ''"
+_CNPJ = "coalesce(p.cnpj,'') <> ''"
+_END = "p.endereco IS NOT NULL"
+_SV = "coalesce(p.streetview_path,'') NOT IN ('', 'NA')"
+FAIXAS = [
+    ("a", "Completo com CNPJ conferido",
+     f"{_TEL} AND {_CNPJ} AND coalesce(p.cnpj_conf,'') LIKE '4/4%%' AND {_END}"),
+    ("b", "Telefone + CNPJ (confiança menor)", f"{_TEL} AND {_CNPJ} AND {_END}"),
+    ("c", "Telefone + endereço, sem CNPJ", f"{_TEL} AND {_END}"),
+    ("d", "Localizado com fachada, sem telefone", f"{_END} AND {_SV}"),
+    ("e", "Só o ponto no mapa", "TRUE"),
+]
+
+
+# Os critérios saem do banco em snake_case somado ("dv+base_nacional+uf+municipio")
+# porque lá eles são feitos para filtro. Na tela, viram frase.
+_PT_CRIT = {
+    "dv": "dígito verificador",
+    "base_nacional": "existe na Receita",
+    "uf": "UF confere",
+    "municipio": "município confere",
+    "receita_local": "achado na Receita local",
+    "endereco": "pelo endereço",
+    "endereco_unico": "endereço com uma empresa só",
+    "nome": "nome confere",
+    "so_estrutura": "só tem forma de CNPJ",
+}
+
+
+def _CRITERIO_PT(bruto: str) -> str:
+    if not bruto:
+        return "origem não registrada"
+    return " · ".join(_PT_CRIT.get(p, p) for p in bruto.split("+"))
+
+
+def _ORD_NOTA(nota: str) -> int:
+    try:
+        return int(nota.split("/")[0])
+    except (ValueError, AttributeError):
+        return -1
+
+
+@app.get("/api/dashboard")
+def dashboard(cidade: str = ""):
+    """Retrato de uma cidade (ou de todas) + custo estimado do que foi feito."""
+    cidade = (cidade or "").strip()
+    w = "lower(p.cidade) = lower(%s)" if cidade else "TRUE"
+    pc = [cidade] if cidade else []
+    conn = realtime_ingest.conectar()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""SELECT cidade, count(*) FROM pois
+                            WHERE cidade IS NOT NULL AND cidade <> ''
+                            GROUP BY 1 ORDER BY 2 DESC""")
+            cidades = [{"cidade": c, "pois": n} for c, n in cur.fetchall()]
+
+            cur.execute(f"""
+                SELECT count(*),
+                  count(*) FILTER (WHERE p.telefone <> ''),
+                  count(*) FILTER (WHERE p.cnpj <> ''),
+                  count(*) FILTER (WHERE p.endereco IS NOT NULL),
+                  count(*) FILTER (WHERE p.email <> ''),
+                  count(*) FILTER (WHERE p.website <> ''),
+                  count(*) FILTER (WHERE p.instagram <> ''),
+                  count(*) FILTER (WHERE p.facebook <> ''),
+                  count(*) FILTER (WHERE p.streetview_path IS NOT NULL
+                                     AND p.streetview_path <> 'NA'),
+                  count(*) FILTER (WHERE p.streetview_path = 'NA'),
+                  count(*) FILTER (WHERE p.total_avaliacoes > 0),
+                  count(*) FILTER (WHERE EXISTS (SELECT 1 FROM images_urls i
+                                                  WHERE i.poi_id = p.id)),
+                  count(*) FILTER (WHERE p.place_id LIKE 'planilha:%%')
+                  FROM pois p WHERE {w}""", pc)
+            r = cur.fetchone()
+            campos = ["total", "telefone", "cnpj", "endereco", "email", "website",
+                      "instagram", "facebook", "streetview", "sem_panorama",
+                      "avaliacoes", "fotos", "importados"]
+            cob = dict(zip(campos, r))
+
+            # O rótulo cru do banco é "4/4 receita_local+endereco+nome" — bom para
+            # filtrar em SQL, ilegível numa tabela. Aqui ele é PARTIDO em nota
+            # (4/4) e critério legível, e a nota vira a chave de ordenação: antes
+            # a tabela vinha por quantidade e alternava 2/4, 4/4, 4/4, sem rótulo,
+            # 2/4 — uma escada sem degrau, impossível de ler de cima para baixo.
+            cur.execute(f"""SELECT coalesce(split_part(p.cnpj_conf,' (',1),''),
+                                   count(*) FROM pois p
+                             WHERE {w} AND p.cnpj <> '' GROUP BY 1 ORDER BY 2 DESC""", pc)
+            conf = []
+            for bruto, n in cur.fetchall():
+                nota, _, criterio = (bruto or "").partition(" ")
+                if "/" not in nota:
+                    nota, criterio = "?", "origem não registrada"
+                conf.append({"nota": nota, "criterio": _CRITERIO_PT(criterio), "n": n,
+                             "bruto": bruto})
+            conf.sort(key=lambda c: (-_ORD_NOTA(c["nota"]), -c["n"]))
+
+            # faixas de qualidade — cada POI numa faixa só, testadas em ordem
+            faixas, ja = [], []
+            for chave, rot, cond in FAIXAS:
+                antes = " AND NOT (" + " OR ".join(ja) + ")" if ja else ""
+                cur.execute(f"SELECT count(*) FROM pois p "
+                            f"WHERE {w} AND ({cond}){antes}", pc)
+                faixas.append({"chave": chave, "rotulo": rot, "n": cur.fetchone()[0]})
+                ja.append(f"({cond})")
+
+            cur.execute(f"""SELECT p.fonte, coalesce(p.fonte_dado,'-'), count(*)
+                              FROM pois p WHERE {w} GROUP BY 1,2 ORDER BY 3 DESC""", pc)
+            origem = [{"fonte": a, "dado": b, "n": c} for a, b, c in cur.fetchall()]
+
+            cur.execute(f"""SELECT p.status, count(*) FROM pois p WHERE {w}
+                             GROUP BY 1 ORDER BY 2 DESC""", pc)
+            status = [{"status": a, "n": b} for a, b in cur.fetchall()]
+
+            cur.execute(f"""SELECT count(*), coalesce(sum(s.bytes_tam),0)
+                              FROM streetview_imgs s JOIN pois p ON p.id = s.poi_id
+                             WHERE {w}""", pc)
+            sv_n, sv_bytes = cur.fetchone()
+
+            # cadastro do cliente, se já houver
+            cadastro = None
+            cur.execute("SELECT to_regclass('public.cadastro_cliente')")
+            if cur.fetchone()[0]:
+                wc = "lower(cidade) = lower(%s)" if cidade else "TRUE"
+                cur.execute(f"""SELECT coalesce(cruz_flag,'(não cruzado)'), count(*)
+                                  FROM cadastro_cliente WHERE {wc}
+                                 GROUP BY 1 ORDER BY 2 DESC""", pc)
+                flags = [{"flag": a, "n": b} for a, b in cur.fetchall()]
+                if flags:
+                    import cadastro_cliente as CC
+                    cadastro = {"flags": flags, "descricoes": CC.FLAGS,
+                                "total": sum(f["n"] for f in flags)}
+        # ── custo ──
+        # Só a fase Web tem preço por POI: ela abre navegador com proxy e chama
+        # o LLM. `recuperado_web` é a marca de quem passou por ela.
+        web = next((s["n"] for s in status if s["status"] == "recuperado_web"), 0)
+        places = next((o["n"] for o in origem
+                       if o["fonte"] == "pipeline" and o["dado"] == "maps"), 0)
+        # ~2,4 k tokens de entrada e ~180 de saída por POI, medido nas rodadas
+        llm = web * (2400 * PRECO["llm_in"] + 180 * PRECO["llm_out"])
+        horas = {
+            "street view": (cob["streetview"] + cob["sem_panorama"]) / RITMO_H["streetview"],
+            "fase web": web / RITMO_H["web"],
+            "captura + OCR": (cob["total"] - cob["importados"]) / RITMO_H["captura"],
+        }
+        h_total = sum(horas.values())
+        # CENÁRIO ALTERNATIVO: o mesmo trabalho pela API paga do Google. Preço de
+        # tabela, para dar escala ao que a captura+OCR economiza. Nunca somado ao
+        # gasto real — é o custo que NÃO foi pago.
+        proprios = cob["total"] - cob["importados"]
+        google = {
+            "nearby": math.ceil(proprios / POIS_POR_NEARBY) * PRECO_GOOGLE["nearby"],
+            "details": proprios * PRECO_GOOGLE["details"],
+            "foto": cob["fotos"] * PRECO_GOOGLE["foto"],
+            "streetview": (cob["streetview"] + cob["sem_panorama"]) * PRECO_GOOGLE["streetview"],
+        }
+        custo = {
+            # VARIÁVEL: só existe porque este volume rodou
+            "llm_usd": round(llm, 4),
+            "places_usd": 0.0,          # motor pago não foi usado nesta base
+            "places_chamadas": places,
+            # FIXO: corre no mês inteiro, rodando ou parado
+            "assinaturas": [
+                {"chave": k, "rotulo": v["rotulo"], "usd": v["usd"],
+                 "editavel": v.get("editavel", False)}
+                for k, v in ASSINATURAS.items()
+            ],
+            "google": {k: round(v, 2) for k, v in google.items()},
+            "google_total_usd": round(sum(google.values()), 2),
+            "horas": {k: round(v, 1) for k, v in horas.items()},
+            "horas_total": round(h_total, 1),
+            "usd_brl": USD_BRL,
+            "pois": cob["total"],
+        }
+        custo["variavel_usd"] = round(custo["llm_usd"] + custo["places_usd"], 2)
+        return {"cidade": cidade, "cidades": cidades, "cobertura": cob,
+                "cnpj_confianca": conf, "faixas": faixas, "origem": origem,
+                "status": status,
+                "streetview": {"imagens": sv_n, "bytes": int(sv_bytes or 0)},
+                "cadastro": cadastro, "custo": custo}
+    finally:
+        conn.close()
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Cadastro do cliente — modelo, prévia, confirmação e cruzamento
+# ──────────────────────────────────────────────────────────────────────────
+@app.get("/api/modelos")
+def modelos_disponiveis():
+    """Todo modelo de planilha que o sistema aceita, num lugar só.
+
+    Antes o modelo existia só para a aba de importação de POIs, e o de cadastro
+    não existia — quem fosse montar a planilha teria de adivinhar os nomes das
+    colunas a partir do erro de importação."""
+    import cadastro_cliente as CC
+    return {"modelos": [
+        {"id": "pois", "nome": "POIs para mineração",
+         "descricao": "Lista de estabelecimentos a procurar no Maps.",
+         "url": "/api/template", "formato": "xlsx",
+         "colunas": ["nome", "endereco_completo", "lat", "lon", "uf"]},
+        {"id": "cadastro", "nome": "Cadastro de clientes (base da empresa)",
+         "descricao": f"Carteira de imóveis/ligações. {len(CC.MAPA)} colunas; "
+                      f"só `num_ligacao` é obrigatória (é a chave).",
+         "url": "/api/modelos/cadastro", "formato": "csv",
+         "colunas": CC.COL_DB},
+    ]}
+
+
+@app.get("/api/modelos/cadastro")
+def modelo_cadastro():
+    import cadastro_cliente as CC
+    txt = CC.modelo_csv()
+    return Response(txt, media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition":
+                             'attachment; filename="modelo_cadastro_cliente.csv"'})
+
+
+@app.post("/api/cadastro/previa")
+async def cadastro_previa(file: UploadFile = File(...)):
+    """Lê o arquivo, NÃO grava, e devolve o que veio para conferência no modal.
+
+    Confirmar depois de ver é o ponto: são 102 mil linhas por arquivo, e um
+    cabeçalho fora do padrão gravaria a base inteira com colunas trocadas."""
+    import cadastro_cliente as CC
+    nome = Path(file.filename or "cadastro.csv").name
+    if not nome.lower().endswith(".csv"):
+        return JSONResponse({"erro": "Envie um .csv"}, status_code=400)
+    destino = UPLOADS / nome
+    destino.write_bytes(await file.read())
+    try:
+        linhas, ref, avisos = CC.ler_arquivo(str(destino))
+    except ValueError as e:
+        return JSONResponse({"erro": str(e)}, status_code=400)
+    if not linhas:
+        return JSONResponse({"erro": "nenhuma linha válida no arquivo"},
+                            status_code=400)
+    cidades = {}
+    com_coord = comerciais = 0
+    for d in linhas:
+        cidades[d.get("cidade") or "?"] = cidades.get(d.get("cidade") or "?", 0) + 1
+        com_coord += 1 if d.get("lat") is not None else 0
+        comerciais += 1 if d.get("e_comercial") else 0
+    amostra = [{k: linhas[i].get(k) for k in
+                ("num_ligacao", "cidade", "categoria", "endereco",
+                 "situacao_ligacao", "e_comercial", "lat", "lng")}
+               for i in range(min(12, len(linhas)))]
+    return {"arquivo": nome, "linhas": len(linhas), "referencia": ref,
+            "avisos": avisos, "com_coordenada": com_coord,
+            "comerciais": comerciais, "amostra": amostra,
+            "cidades": sorted(cidades.items(), key=lambda x: -x[1])[:8],
+            "colunas_tabela": CC.COL_DB}
+
+
+@app.post("/api/cadastro/confirmar")
+def cadastro_confirmar(body: dict = Body(...)):
+    """Grava de fato e já cruza com os POIs da cidade."""
+    import cadastro_cliente as CC
+    arquivo = UPLOADS / Path(str(body.get("arquivo") or "")).name
+    if not arquivo.exists():
+        return JSONResponse({"erro": "arquivo não encontrado"}, status_code=400)
+    cliente = (body.get("cliente") or "corsan").strip().lower()
+    linhas, ref, _av = CC.ler_arquivo(str(arquivo))
+    res = CC.importar(linhas, cliente, ref)
+    cruz = None
+    if body.get("cruzar", True):
+        cidade = (body.get("cidade") or
+                  (linhas[0].get("cidade") if linhas else "") or "").strip()
+        if cidade:
+            cruz = CC.cruzar(cidade)
+    return {"importacao": res, "cruzamento": cruz, "flags": CC.FLAGS}
+
+
+@app.post("/api/cadastro/cruzar")
+def cadastro_cruzar(body: dict = Body(...)):
+    import cadastro_cliente as CC
+    cidade = (body.get("cidade") or "").strip()
+    if not cidade:
+        return JSONResponse({"erro": "informe a cidade"}, status_code=400)
+    return {"cruzamento": CC.cruzar(cidade), "flags": CC.FLAGS}
+
+
 @app.post("/api/upload")
 async def upload(file: UploadFile = File(...)):
     nome = Path(file.filename or "planilha.xlsx").name
@@ -1063,14 +1515,39 @@ def iniciar_job(body: dict):
         elif modo == "mineracao":
             sessao = re.sub(r"[^\w-]", "_", str(op.get("sessao") or "mineracao"))
             sessao = f"{sessao}_{datetime.now().strftime('%Y%m%d_%H%M')}"
-            out_json = MINERACAO / f"{sessao}_db.json"
-            cmd = [PYTHON, "minerar_area.py", "--area", area_utils.AREA_PADRAO,
-                   "--sessao", sessao, "--out", str(out_json),
-                   "--step", str(float(op.get("step", 150))),
-                   "--radius", str(float(op.get("radius", 110)))]
-            if op.get("details"):
-                cmd.append("--details")
-            _novo_job("mineracao", out_json, {"sessao": sessao})
+            # O motor PADRÃO é a captura + OCR (`minerar_captura.py`): é o
+            # processo principal do projeto e não custa por chamada. A Places API
+            # continua disponível como `motor="places"`, mas é paga e depende de
+            # MAPS_API_KEY no .env — sem a chave ela devolve 0 POIs em silêncio.
+            if str(op.get("motor") or "captura") == "places":
+                out_json = MINERACAO / f"{sessao}_db.json"
+                cmd = [PYTHON, "minerar_area.py", "--area", area_utils.AREA_PADRAO,
+                       "--sessao", sessao, "--out", str(out_json),
+                       "--step", str(float(op.get("step", 150))),
+                       "--radius", str(float(op.get("radius", 110)))]
+                if op.get("details"):
+                    cmd.append("--details")
+                if not os.getenv("MAPS_API_KEY"):
+                    return JSONResponse(
+                        {"erro": "O motor 'places' precisa de MAPS_API_KEY no .env. "
+                                 "Sem ela o Google recusa cada célula e o job termina "
+                                 "com 0 POIs. Use o motor padrão (captura)."},
+                        status_code=400)
+                _novo_job("mineracao", out_json, {"sessao": sessao, "motor": "places"})
+            else:
+                # O watcher lê o arquivo NORMALIZADO, não o `search_resultado.json`:
+                # aquele guarda o POI aninhado em `poi:{...}` e o ingester procura
+                # `nome`/`maps_lat` no topo — leria tudo e gravaria nada. Quem achata
+                # é o `db_export`, chamado de 10 em 10 s pelo minerar_captura.
+                out_json = CAPTURAS / sessao / "crops" / f"{sessao}_db.json"
+                cmd = [PYTHON, "minerar_captura.py", "--area", area_utils.AREA_PADRAO,
+                       "--sessao", sessao,
+                       "--zoom", str(int(op.get("zoom", 19))),
+                       "--workers", str(int(op.get("workers", 10))),
+                       "--capture-workers", str(int(op.get("capture_workers", 10)))]
+                if op.get("no_proxy"):
+                    cmd.append("--no-proxy")
+                _novo_job("mineracao", out_json, {"sessao": sessao, "motor": "captura"})
 
         elif modo == "enriquecer_tudo":
             # CASCATA: cada POI pobre passa por Maps → Web → Street View até completar.
@@ -1084,8 +1561,17 @@ def iniciar_job(body: dict):
                 cmd.append("--no-proxy")
             if op.get("pular_maps"):
                 cmd.append("--pular-maps")
+            # a fase local (Receita no banco) tem chave própria: ela leva
+            # segundos e é grátis, a web leva horas e é paga — amarrar as duas
+            # no mesmo interruptor obriga a pagar a cara para ter a barata
+            if op.get("pular_cnpj_local"):
+                cmd.append("--pular-cnpj-local")
             if op.get("pular_web"):
                 cmd.append("--pular-web")
+            if op.get("visivel"):
+                cmd.append("--visivel")
+            if op.get("sv_so_pobres"):
+                cmd.append("--sv-so-pobres")
             if op.get("pular_streetview"):
                 cmd.append("--pular-streetview")
             _novo_job("enriquecer_tudo", out_json, {})

@@ -47,20 +47,23 @@ const _mut = (tipo) => (window.L && L.gridLayer && L.gridLayer.googleMutant)
   : L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
       { maxZoom: 20, subdomains: "abcd" });
 
+const _carto = (estilo) => L.tileLayer(
+  `https://{s}.basemaps.cartocdn.com/${estilo}/{z}/{x}/{y}{r}.png`,
+  { maxZoom: 20, subdomains: "abcd" });
+
+/* Cada base sabe se CRIAR. Antes as do Carto guardavam a camada pronta em
+   `.layer` e as do Google tinham `tipo`; quem recriava (`camadaBase`) só olhava
+   o `tipo` e caía no default "roadmap". Resultado: a base que estivesse ativa
+   quando a JS API do Google terminasse de carregar era zerada e RECRIADA como
+   Google — o "Claro (sem Google)" virava um mapa do Google, e se a API não
+   inicializasse direito ficava sem fundo nenhum. O `escuro` escapava só porque
+   nunca era o que estava ativo naquele instante. */
 const BASES = {
-  limpo:    { nome: "Mapa limpo",       ico: "🗺️", tipo: "roadmap" },
-  satelite: { nome: "Satélite",         ico: "🛰️", tipo: "satellite" },
-  hibrido:  { nome: "Satélite + ruas",  ico: "🛣️", tipo: "hybrid" },
-  claro: {
-    nome: "Claro (sem Google)", ico: "☁️",
-    layer: L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
-      { maxZoom: 20, subdomains: "abcd" }),
-  },
-  escuro: {
-    nome: "Escuro", ico: "🌙",
-    layer: L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
-      { maxZoom: 20, subdomains: "abcd" }),
-  },
+  limpo:    { nome: "Mapa limpo",      ico: "🗺️", google: true, criar: () => _mut("roadmap") },
+  satelite: { nome: "Satélite",        ico: "🛰️", google: true, criar: () => _mut("satellite") },
+  hibrido:  { nome: "Satélite + ruas", ico: "🛣️", google: true, criar: () => _mut("hybrid") },
+  claro:    { nome: "Claro (sem Google)", ico: "☁️", criar: () => _carto("light_all") },
+  escuro:   { nome: "Escuro",           ico: "🌙", criar: () => _carto("dark_all") },
 };
 let baseAtual = localStorage.getItem("cr_base") || "limpo";
 if (!BASES[baseAtual]) baseAtual = "limpo";
@@ -69,7 +72,7 @@ if (!BASES[baseAtual]) baseAtual = "limpo";
    que carrega depois. Criada uma vez, fica guardada em `.layer`. */
 function camadaBase(chave) {
   const b = BASES[chave];
-  if (!b.layer) b.layer = _mut(b.tipo || "roadmap");
+  if (!b.layer) b.layer = b.criar();
   return b.layer;
 }
 
@@ -93,6 +96,9 @@ function camadaBase(chave) {
   // O fundo do Google entra TROCANDO o provisório. Adicionar a camada só aqui,
   // de forma assíncrona, invertia a ordem de execução do resto do app.js e os
   // botões da topbar perdiam o onclick — o menu superior parava de funcionar.
+  // Só as bases DO GOOGLE são recriadas: as do Carto já nasceram certas, e
+  // trocá-las aqui só piscaria o fundo sem mudar nada.
+  if (!BASES[baseAtual].google) return;
   const antigo = BASES[baseAtual].layer;
   BASES[baseAtual].layer = null;               // força recriar, agora com Google
   const novo = camadaBase(baseAtual);
@@ -200,6 +206,11 @@ const allPois = new Map(); // poi_id -> poi (fonte de verdade p/ os filtros)
 
 /* Origem do dado — de qual camada do processo o POI veio */
 const ORIGENS = [
+  // Vem ANTES de "maps": o POI da captura também tem status "ok" (ele foi
+  // confirmado no Maps), então o teste de lá o pegaria primeiro e a origem
+  // sumiria. É o motor padrão da mineração — merece chip próprio, e não o
+  // balde cinza "Outros", onde ninguém procura o que acabou de minerar.
+  { key: "captura", label: "Captura + OCR", cor: "#0f766e", teste: (p) => p.fonte === "pipeline" },
   { key: "maps",    label: "Maps direto",  cor: "#1a73e8", teste: (p) => p.status === "ok" },
   { key: "proximo", label: "Vizinhos",     cor: "#00838f", teste: (p) => p.status === "recuperado_proximo" },
   { key: "ia",      label: "OpenAI",       cor: "#10a37f", teste: (p) => p.status === "recuperado_ia" },
@@ -241,13 +252,41 @@ const _VIA_ABREV = { r: "rua", av: "avenida", trav: "travessa", tv: "travessa", 
 const _VIA_RUIDO = new Set(["de", "da", "do", "das", "dos", "e"]);
 const _normVia = (s) => _normCidade(s).replace(/[.,\-/]/g, " ").split(/\s+/)
   .map((p) => _VIA_ABREV[p] || p).filter((p) => p && !_VIA_RUIDO.has(p)).join(" ");
-function poisBase() {              // POIs do município selecionado (base dos filtros e contagens)
-  if (!municipioSel) return [];
-  return [...allPois.values()].filter((p) => _normCidade(p.cidade) === municipioSel);
+/* Anel da área desenhada, em [[lat, lng], ...]. Memorizado por identidade da
+   camada: `dentroDaArea` roda por POI a cada render, e são milhares. */
+let _anelCache = { layer: null, anel: null };
+function anelArea() {
+  if (!areaLayer) return null;
+  if (_anelCache.layer !== areaLayer) {
+    const ll = (areaLayer.getLatLngs() || [])[0] || [];
+    _anelCache = { layer: areaLayer, anel: ll.map((p) => [p.lat, p.lng]) };
+  }
+  return _anelCache.anel;
+}
+
+function dentroDaArea(p) {
+  const a = anelArea();
+  if (!a || a.length < 3 || p.lat == null || p.lng == null) return false;
+  let dentro = false;                       // ray casting, igual ao do backend
+  for (let i = 0, j = a.length - 1; i < a.length; j = i++) {
+    const [yi, xi] = a[i], [yj, xj] = a[j];
+    if ((yi > p.lat) !== (yj > p.lat) &&
+        p.lng < ((xj - xi) * (p.lat - yi)) / ((yj - yi) || 1e-12) + xi) dentro = !dentro;
+  }
+  return dentro;
+}
+
+/* Base dos filtros e das contagens. O município continua mandando quando há um
+   escolhido; sem ele, vale a ÁREA DE TRABALHO desenhada — quem acabou de minerar
+   um polígono quer ver o que saiu dali, e exigir um clique a mais no município
+   fazia a tela inteira zerar em cima dos POIs recém-gravados. */
+function poisBase() {
+  const todos = [...allPois.values()];
+  if (municipioSel) return todos.filter((p) => _normCidade(p.cidade) === municipioSel);
+  return anelArea() ? todos.filter(dentroDaArea) : [];
 }
 
 function origemDe(p) {
-  if (p.fonte === "pipeline") return "outros";
   for (const o of ORIGENS) if (o.teste(p)) return o.key;
   return "outros";
 }
@@ -258,7 +297,8 @@ function passaAtributos(p) {
 }
 
 function visivel(p) {
-  if (!municipioSel || _normCidade(p.cidade) !== municipioSel) return false; // só o município selecionado
+  // mesma regra do poisBase: município escolhido manda; sem ele, a área desenhada
+  if (municipioSel ? _normCidade(p.cidade) !== municipioSel : !dentroDaArea(p)) return false;
   if (!filtrosAtivos.has(origemDe(p)) || !passaAtributos(p)) return false;
   if (vereditoFiltro && p.veredito !== vereditoFiltro) return false;
   if (flagsIA.has("recomendar") && !p.recomendar_visita) return false;
@@ -275,13 +315,26 @@ function _criarMarker(poi, novo) {
 
 function addPoi(poi, novo = false) {
   if (poi.lat == null || poi.lng == null || poi.id == null) return;
+  // O ingestor reingere por delete+recreate, então o MESMO lugar volta com id
+  // novo. Sem tirar a versão antiga, o mapa acumulava os dois: durante um job de
+  // 26 POIs o chip marcava 37, contando fantasmas de linhas que já não existem.
+  if (poi.place_id) {
+    for (const [id, p] of allPois) {
+      if (id !== poi.id && p.place_id === poi.place_id) {
+        allPois.delete(id);
+        if (markers.has(id)) { cluster.removeLayer(markers.get(id)); markers.delete(id); }
+      }
+    }
+  }
   allPois.set(poi.id, poi);
   if (markers.has(poi.id)) {
     cluster.removeLayer(markers.get(poi.id));
     markers.delete(poi.id);
   }
   if (visivel(poi)) _criarMarker(poi, novo);
-  if (novo) renderChips();
+  // o badge agora conta o banco por município: POI que chega durante o job
+  // muda essa conta, e sem isto ela ficaria congelada no total do carregamento
+  if (novo) { renderChips(); atualizarBannerMunicipio(); }
 }
 
 function aplicarFiltro() {
@@ -476,8 +529,32 @@ function atualizarBannerMunicipio() {
     badge.innerHTML = `<span class="dot"></span>📍 <b>${esc(municipioNome)}</b> · <span id="db-count">${n.toLocaleString("pt-BR")}</span> POIs`
       + ` <button class="muni-x" title="Limpar seleção" onclick="limparMunicipio()">✕</button>`;
   } else {
+    // O vazio precisa dizer que existe dado. Sem seleção, TODA contagem do
+    // painel zera (poisBase devolve []), e com o mapa parado em cima dos POIs
+    // recém-minerados a leitura natural é "não gravou nada" — foi o que
+    // aconteceu duas vezes. Aqui o badge deixa de esconder o que há no banco.
     badge.classList.remove("sel");
-    badge.innerHTML = `<span class="dot"></span>Clique num <b>município</b> no mapa`;
+    const porCidade = new Map();
+    for (const p of allPois.values()) {
+      const nome = (p.cidade || "").trim() || "sem cidade";
+      porCidade.set(nome, (porCidade.get(nome) || 0) + 1);
+    }
+    let extra = "";
+    if (allPois.size) {
+      const ord = [...porCidade].sort((a, b) => b[1] - a[1]);
+      const topo = ord.slice(0, 3)
+        .map(([c, n]) => `${esc(c)} ${n.toLocaleString("pt-BR")}`).join(" · ");
+      const resto = ord.length > 3 ? ` · +${ord.length - 3}` : "";
+      extra = ` — <b>${allPois.size.toLocaleString("pt-BR")}</b> no banco `
+            + `<small>(${topo}${resto})</small>`;
+    }
+    // havendo área desenhada, ela JÁ é o recorte em vigor: o badge tem de dizer
+    // o que está sendo mostrado, e não pedir um clique que não é mais necessário
+    const naArea = anelArea() ? poisBase().length : 0;
+    badge.innerHTML = anelArea()
+      ? `<span class="dot"></span>📐 <b>Área de trabalho</b> · `
+        + `<span id="db-count">${naArea.toLocaleString("pt-BR")}</span> POIs${extra}`
+      : `<span class="dot"></span>Clique num <b>município</b> no mapa${extra}`;
   }
 }
 
@@ -666,18 +743,32 @@ let areaLayer = null;
 let drawer = null;
 let modoDesenho = "area";        // só a área é desenhada pelo usuário
 const AREA_STYLE = { color: "#1a73e8", weight: 2.5, dashArray: "6 6", fillColor: "#1a73e8", fillOpacity: 0.06, className: "area-poly" };
+// acima disto a ligação até a coordenada original vira alerta no mapa: o teto
+// da régua é 10 m, então 25 m é o dobro e meio do que se considera aceitável
+const DESLOC_DESTAQUE_M = 25;
 
 function setAreaLayer(latlngs) {
   if (areaLayer) { map.removeLayer(areaLayer); areaLayer = null; }
   if (latlngs && latlngs.length >= 3) {
     areaLayer = L.polygon(latlngs, AREA_STYLE).addTo(map);
-    $("area-status").innerHTML = `Área definida <b>(${latlngs.length} vértices)</b> — pontos fora dela serão rejeitados.`;
+    // "rejeitados" era verdade quando o polígono barrava a gravação. Hoje ele
+    // define o FOCO: o que cai fora é gravado com cidade e UF e fica fora da
+    // tela, não fora do banco.
+    $("area-status").innerHTML = `Área definida <b>(${latlngs.length} vértices)</b> — `
+      + `é o foco do mapa. O que for achado fora dela também é gravado, `
+      + `identificado por cidade.`;
     $("area-status").className = "hint ok";
   } else {
     $("area-status").textContent = "Nenhuma área definida — desenhe o polígono no mapa.";
     $("area-status").className = "hint warn";
   }
   atualizarBotoes();
+  // a área virou recorte dos POIs: desenhar, redesenhar ou apagar muda o que
+  // aparece no mapa e nas contagens, então tudo se refaz aqui
+  if (typeof aplicarFiltro === "function") {
+    aplicarFiltro();
+    atualizarBannerMunicipio();
+  }
 }
 
 async function salvarArea(latlngs) {
@@ -759,11 +850,47 @@ document.querySelectorAll(".mode").forEach((b) => {
     $("sec-mineracao").classList.toggle("hidden", modo !== "mineracao");
     $("sec-enriquecimento").classList.toggle("hidden", modo !== "enriquecimento");
     $("sec-quadras").classList.toggle("hidden", modo !== "quadras");
+    // O DASHBOARD NÃO É UM PASSO DO PROCESSO — é tela de leitura. Some com tudo
+    // que serve para operar: área de trabalho, cards do processo atual, busca no
+    // mapa, chips de filtro e log. Deixados no lugar, eles ficam por cima do
+    // conteúdo, mostram "0 processados · aguardando processo" ao lado de números
+    // reais, e o "▶ Iniciar processo" sugere que aquele botão roda o que está
+    // sendo exibido. Na volta para qualquer outra aba tudo reaparece.
+    const dash = modo === "dashboard";
+    $("sec-dashboard").classList.toggle("hidden", !dash);
+    $("dashboard").classList.toggle("hidden", !dash);
+    for (const id of ["sec-area", "sec-execucao", "stats", "busca-wrap",
+                      "filtros", "log-panel"]) {
+      $(id)?.classList.toggle("hidden", dash);
+    }
     if (modo === "quadras") carregarUltimaQuadra();
     else { limparQuadras(); }
+    if (dash) carregarDashboard();
     atualizarBotoes();
   };
 });
+
+// os dois motores de mineração não compartilham opção nenhuma: a captura tem
+// zoom, a Places tem passo de grade e coleta profunda paga. Mostrar as duas
+// listas ao mesmo tempo sugeriria que a escolha de uma vale para a outra.
+function trocarMotorMineracao() {
+  const places = ($("op-motor")?.value || "captura") === "places";
+  $("op-step-wrap")?.classList.toggle("hidden", !places);
+  $("op-details-wrap")?.classList.toggle("hidden", !places);
+  $("op-zoom-wrap")?.classList.toggle("hidden", places);
+  const h = $("hint-captura");
+  if (h) {
+    h.innerHTML = places
+      ? "Consulta a <b>Places API paga</b> célula a célula. Precisa de "
+        + "<code>MAPS_API_KEY</code> no <code>.env</code>; sem ela o Google recusa "
+        + "cada chamada e o job termina com 0 POIs."
+      : "Fotografa o Maps em tiles 4K com o estilo limpo (só os markers), detecta "
+        + "os ícones, lê os nomes por <b>OCR</b> e busca cada um. "
+        + "<b>Não custa por chamada</b> — só tempo de captura.";
+  }
+}
+if ($("op-motor")) $("op-motor").onchange = trocarMotorMineracao;
+trocarMotorMineracao();
 
 $("btn-importar").onclick = () => $("file-input").click();
 $("file-input").onchange = async () => {
@@ -822,11 +949,14 @@ $("btn-iniciar").onclick = async () => {
       cidade: $("op-cidade").value.trim(),
     };
   } else if (modo === "mineracao") {
-    opcoes = {
-      sessao: $("op-sessao").value.trim() || "mineracao",
-      step: parseFloat($("op-step").value) || 150,
-      details: $("op-details").checked,
-    };
+    const motor = $("op-motor")?.value || "captura";
+    opcoes = { motor, sessao: $("op-sessao").value.trim() || "mineracao" };
+    if (motor === "places") {
+      opcoes.step = parseFloat($("op-step").value) || 150;
+      opcoes.details = $("op-details").checked;
+    } else {
+      opcoes.zoom = parseInt($("op-zoom").value) || 19;
+    }
   } else if (modo === "quadras") {
     opcoes = { com_maps: !!$("op-q-maps")?.checked,
                sem_proxy: !$("op-q-proxy")?.checked };
@@ -836,8 +966,11 @@ $("btn-iniciar").onclick = async () => {
       workers: parseInt($("op-enr-workers").value) || 6,
       no_proxy: !$("enr-proxy").checked,
       pular_maps: !$("enr-maps").checked,
+      pular_cnpj_local: !$("enr-cnpj")?.checked,
       pular_web: !$("enr-web").checked,
       pular_streetview: !$("enr-sv").checked,
+      sv_so_pobres: !!$("enr-sv-pobres")?.checked,
+      visivel: !!$("enr-visivel")?.checked,
     };
   }
   const body = { modo: modoJob, opcoes };
@@ -866,12 +999,14 @@ const MODO_LABEL = { planilha: "planilha", mineracao: "mineração", minerar_web
                      enriquecer_tudo: "enriquecimento (cascata)", baixar_imagens: "download de imagens" };
 function aplicarJob(j) {
   jobRodando = j && j.status === "rodando";
+  if (jobRodando) agendarStats();   // job em curso mantém o painel do banco vivo
   const labels = { rodando: "⚙️ Rodando", finalizado: "✅ Finalizado", parado: "⏹ Parado", erro: "❌ Erro", ocioso: "" };
   if (j && j.status && j.status !== "ocioso") {
     $("job-status-txt").innerHTML = `${labels[j.status] || j.status} — <b>${MODO_LABEL[j.modo] || j.modo}</b>` +
       (j.arquivo ? ` (${esc(j.arquivo)})` : "") + (j.fim ? ` às ${j.fim.slice(11, 16)}` : "");
   }
-  if (j && j.contadores) aplicarContadores(j.contadores, j.total || 0);
+  if (j && j.contadores) aplicarContadores(j.contadores, j.total || 0, j.fase,
+                                           j.fase_rotulo, j.rotulos);
   if (j && (j.status === "finalizado" || j.status === "parado" || j.status === "erro")) {
     carregarPois(); // sincroniza o mapa com o estado final do banco
     carregarStats();
@@ -894,16 +1029,35 @@ function setVal(id, v) {
 }
 /* Cards "Dados do banco" (separados do processo em tempo real) */
 let statsTimer = null;
+/* Cidade em foco para o painel do banco. O foco da ferramenta vem de TRÊS
+   lugares — o select de UF+município, o clique num município do mapa e a área
+   desenhada — mas isto aqui só enxergava os dois primeiros: quem trabalha com
+   polígono desenhado ficava com "DADOS DO BANCO" em traço permanente, que é
+   justamente o único painel que lê do banco ao vivo. Sem município escolhido,
+   a cidade sai da própria área, pela maioria dos POIs dentro dela. */
+function cidadeEmFoco() {
+  if (municipioNome) return municipioNome;
+  if (!anelArea()) return null;
+  const porCidade = new Map();
+  for (const p of poisBase()) {
+    const nome = (p.cidade || "").trim();
+    if (nome) porCidade.set(nome, (porCidade.get(nome) || 0) + 1);
+  }
+  if (!porCidade.size) return null;
+  return [...porCidade].sort((a, b) => b[1] - a[1])[0][0];
+}
+
 async function carregarStats() {
   const fmt = (v) => (v || 0).toLocaleString("pt-BR");
-  if (!municipioNome) { // nada selecionado → painel em branco até clicar num município
+  const cidade = cidadeEmFoco();
+  if (!cidade) { // sem município e sem área: não há foco, e traço é honesto
     ["db-validos", "db-tel", "db-cnpj", "db-sv", "db-fotos", "db-coments",
      "db-analisados", "db-aprov", "db-reprov", "db-rec"].forEach((id) => { if ($(id)) $(id).textContent = "—"; });
     dbCountLocal = 0;
     return;
   }
   try {
-    const s = await (await fetch("/api/stats?cidade=" + encodeURIComponent(municipioNome))).json();
+    const s = await (await fetch("/api/stats?cidade=" + encodeURIComponent(cidade))).json();
     const pct = (v) => s.validos ? ` (${Math.round(100 * (v || 0) / s.validos)}%)` : "";
     $("db-validos").textContent = fmt(s.validos);
     $("db-tel").textContent = fmt(s.com_telefone) + pct(s.com_telefone);
@@ -924,10 +1078,28 @@ async function carregarStats() {
 }
 function agendarStats() { // pontos chegando ao vivo → atualiza o grupo do banco a cada 10s
   if (statsTimer) return;
-  statsTimer = setTimeout(() => { statsTimer = null; carregarStats(); }, 10000);
+  statsTimer = setTimeout(() => {
+    statsTimer = null;
+    carregarStats();
+    // Fase que não manda POI pelo WebSocket não reagendava nada, e o painel
+    // parava: a de Street View grava a fachada direto em `streetview_imgs`, sem
+    // passar registro nenhum para o mapa. Enquanto houver job rodando, o grupo
+    // do banco continua se atualizando por conta própria.
+    if (jobRodando) agendarStats();
+  }, 10000);
 }
 
-function aplicarContadores(c, total) {
+// A mineração por captura tem 4 fases e a UNIDADE da barra muda em cada uma:
+// tile, recorte, POI. Sem dizer qual é, "90 de 264" parecia POI e o painel
+// passava a impressão de que a busca tinha achado pouco — quando ela nem tinha
+// começado.
+const UNIDADE_FASE = { captura: "tiles", deteccao: "tiles", ocr: "recortes", busca: "POIs" };
+
+// Rótulo padrão de cada cartão, para restaurar quando a fase sai do Street View.
+const ROTULO_PADRAO = { validos: "Encontrados", semmatch: "Sem match",
+                        ingeridos: "Gravados no banco" };
+
+function aplicarContadores(c, total, fase, faseRotulo, rotulos) {
   setVal("st-proc", c.processados);
   setVal("st-validos", c.validos);
   setVal("st-recup", c.recuperados);
@@ -935,13 +1107,25 @@ function aplicarContadores(c, total) {
   setVal("st-fora", c.fora_area);
   setVal("st-semmatch", c.sem_match + (c.erros || 0));
   setVal("st-ingeridos", c.ingeridos);
+  // Cada fase mede uma coisa. Na de fachadas, "Encontrados" e "Sem match" não
+  // querem dizer nada — o número certo debaixo da palavra errada é tão ruim
+  // quanto o número errado.
+  for (const [k, padrao] of Object.entries(ROTULO_PADRAO)) {
+    const el = $("st-" + k)?.parentElement?.querySelector(".stat-label");
+    if (el) el.textContent = (rotulos && rotulos[k]) || padrao;
+  }
+  const un = UNIDADE_FASE[fase] || "";
+  const etapa = faseRotulo ? ` · ${faseRotulo}` : "";
   if (total > 0) {
     const pct = Math.min(100, (c.processados / total) * 100);
     $("st-bar").style.width = pct.toFixed(1) + "%";
-    $("st-total-sub").textContent = `${(c.processados || 0).toLocaleString("pt-BR")} de ${total.toLocaleString("pt-BR")} (${pct.toFixed(0)}%)`;
+    $("st-total-sub").textContent =
+      `${(c.processados || 0).toLocaleString("pt-BR")} de ${total.toLocaleString("pt-BR")}`
+      + (un ? ` ${un}` : "") + ` (${pct.toFixed(0)}%)${etapa}`;
   } else {
     $("st-bar").style.width = c.processados ? "100%" : "0%";
-    $("st-total-sub").textContent = jobRodando ? "processando…" : "aguardando processo…";
+    $("st-total-sub").textContent = jobRodando
+      ? (faseRotulo || "processando…") : "aguardando processo…";
   }
 }
 
@@ -963,7 +1147,8 @@ function conectarWS() {
       $("db-count").textContent = dbCountLocal.toLocaleString("pt-BR");
       agendarStats();
     } else if (msg.tipo === "progresso" && msg.dados) {
-      aplicarContadores(msg.dados.contadores || {}, msg.dados.total || 0);
+      aplicarContadores(msg.dados.contadores || {}, msg.dados.total || 0,
+                        msg.dados.fase, msg.dados.fase_rotulo, msg.dados.rotulos);
     } else if (msg.tipo === "job") {
       aplicarJob(msg.dados || {});
     } else if (msg.tipo === "log" && msg.linha) {
@@ -1421,7 +1606,17 @@ async function carregarQuadras(sid, silencioso = false) {
                                   [f.properties.lng_alinhado, f.properties.lat_alinhado]] },
       })),
     }, { pane: "paneFaces", interactive: false,
-         style: { color: "#9aa4b0", weight: 1, opacity: 0.55, dashArray: "3,4" } })
+         // A ligação até a coordenada original é a prova da correção. Quando o
+         // movimento é grande ela deixa de ser um fio cinza: um endereço andar
+         // 40 m é coisa para CONFERIR, não para passar batido no mapa.
+         style: (f) => {
+           const p = f.properties;
+           if (p.alinhado_modo === "realocado")
+             return { color: "#d97706", weight: 2.6, opacity: 0.95, dashArray: "7,4" };
+           if ((p.desloc_m || 0) >= DESLOC_DESTAQUE_M)
+             return { color: "#dc2626", weight: 2, opacity: 0.85, dashArray: "5,4" };
+           return { color: "#9aa4b0", weight: 1, opacity: 0.55, dashArray: "3,4" };
+         } })
       .addTo(map));
     addCamada("alinhados", L.geoJSON({
       type: "FeatureCollection",
@@ -1453,11 +1648,15 @@ async function carregarQuadras(sid, silencioso = false) {
         const rua = p.alinhado_modo === "via_aberta"
                  || p.alinhado_modo === "via_aberta_perp";
         const ruaPerp = p.alinhado_modo === "via_aberta_perp";
+        // realocado = o número não era da série daquela face e o endereço foi
+        // levado para o trecho da rua onde ele se encaixa. Anel âmbar GROSSO:
+        // é a maior intervenção que o processo faz num ponto.
+        const real = p.alinhado_modo === "realocado";
         return L.circleMarker(latlng, {
           pane: "paneMarcadores", radius: 5 + Math.min(6, Math.sqrt(n - 1) * 3),
-          weight: perp || preso || rua ? 2.4 : (n > 1 ? 2.2 : 1.6),
+          weight: real ? 3.2 : (perp || preso || rua ? 2.4 : (n > 1 ? 2.2 : 1.6)),
           dashArray: perp || ruaPerp ? "3,3" : null,
-          color: preso ? "#38bdf8" : rua ? "#f59e0b"
+          color: real ? "#d97706" : preso ? "#38bdf8" : rua ? "#f59e0b"
                : perp ? "#111827" : (noTelhado ? "#ffffff" : "#0b0f14"),
           fillColor: c, fillOpacity: perp ? 0.75 : 1, opacity: 1 });
       },
@@ -1468,6 +1667,7 @@ async function carregarQuadras(sid, silencioso = false) {
           `<b>${esc(p.logradouro || "—")}, ${p.numero}</b>` +
           (p.grupo_n > 1 ? ` <b>· ${p.grupo_n} endereços nesta porta</b>` : "") +
           `<br><small>${perp ? "⚠ posto só na perpendicular"
+              : p.alinhado_modo === "realocado" ? "⚠ REALOCADO para outro trecho da rua"
               : p.alinhado_modo === "preservado" ? "📌 mantido onde estava"
               : p.alinhado_modo === "telhado" ? "🏠 casado com um telhado"
               : p.alinhado_modo === "interpolado" ? "interpolado entre telhados"
@@ -1920,3 +2120,474 @@ function acompanharQuadras() {
     } catch (e) { toast("falhou ao aplicar o município", "err"); }
   };
 })();
+
+/* ────────────────────────────────────────────────────────────
+   DASHBOARD
+   Uma cidade por vez na coluna da esquerda; à direita, o retrato dela.
+   Os cards respondem perguntas, não despejam colunas: "quanto da base tem
+   telefone", "quanto do CNPJ é confiável", "o que a equipe faz amanhã".
+──────────────────────────────────────────────────────────── */
+let dashCidade = "";
+let dashDados = null;
+let dashGrupo = "tudo";
+
+const nfmt = (v) => (v || 0).toLocaleString("pt-BR");
+const pctd = (v, t) => (t ? Math.round((100 * (v || 0)) / t) : 0);
+
+async function carregarDashboard(cidade) {
+  if (cidade !== undefined) dashCidade = cidade;
+  $("dash-grid").innerHTML = `<div class="d-card"><div class="d-nota">carregando…</div></div>`;
+  try {
+    const r = await fetch("/api/dashboard?cidade=" + encodeURIComponent(dashCidade));
+    dashDados = await r.json();
+  } catch {
+    $("dash-grid").innerHTML = `<div class="d-card g-vermelho"><div class="d-nota">
+      Não consegui falar com o servidor.</div></div>`;
+    return;
+  }
+  renderCidades();
+  renderDashboard();
+}
+
+function renderCidades() {
+  if (!dashDados) return;
+  const busca = ($("dash-busca").value || "").toLowerCase();
+  const lista = (dashDados.cidades || []).filter((c) =>
+    !busca || c.cidade.toLowerCase().includes(busca));
+  const total = (dashDados.cidades || []).reduce((s, c) => s + c.pois, 0);
+  let html = `<div class="cid-item ${dashCidade ? "" : "active"}" data-cid="">
+      <b>Todas as cidades</b><span>${nfmt(total)}</span></div>`;
+  for (const c of lista) {
+    const on = c.cidade.toLowerCase() === dashCidade.toLowerCase();
+    html += `<div class="cid-item ${on ? "active" : ""}" data-cid="${esc(c.cidade)}">
+      <b>${esc(c.cidade)}</b><span>${nfmt(c.pois)}</span></div>`;
+  }
+  $("dash-cidades").innerHTML = html;
+  document.querySelectorAll("#dash-cidades .cid-item").forEach((el) => {
+    el.onclick = () => carregarDashboard(el.dataset.cid);
+  });
+}
+
+function cardCobertura(cob) {
+  // A ordem é a da utilidade comercial, não a do banco: telefone e CNPJ vêm
+  // primeiro porque são o que permite ligar e faturar.
+  const linhas = [
+    ["telefone", cob.telefone], ["CNPJ", cob.cnpj], ["endereço", cob.endereco],
+    ["Street View", cob.streetview], ["facebook", cob.facebook],
+    ["website", cob.website], ["e-mail", cob.email],
+    ["avaliações", cob.avaliacoes], ["fotos do Maps", cob.fotos],
+    ["instagram", cob.instagram],
+  ];
+  const t = cob.total || 1;
+  return `<div class="d-card wide g-verde">
+    <div class="d-tit">Cobertura de dados</div>
+    <div class="d-num">${nfmt(cob.total)}<small>POIs</small></div>
+    ${linhas.map(([rot, v]) => {
+      const p = pctd(v, t);
+      const cls = p >= 70 ? "alta" : p < 40 ? "baixa" : "";
+      return `<div class="d-lin ${cls}"><span class="rot">${rot}</span>
+        <span class="barra"><i style="width:${p}%"></i></span>
+        <span class="val">${nfmt(v)} <em>${p}%</em></span></div>`;
+    }).join("")}
+    <div class="d-nota">${nfmt(cob.importados)} vieram de planilha externa —
+      esses nunca passaram pelo Maps, por isso não têm foto nem avaliação.</div>
+  </div>`;
+}
+
+// A tabela vinha ordenada por quantidade, alternando 2/4, 4/4, 4/4, sem rótulo,
+// 2/4 — uma escada sem degrau. Agora desce por NOTA, cada linha traz o critério
+// por extenso, e as notas iguais são AGRUPADAS: "4/4" aparece uma vez, com os
+// dois caminhos que levam a ela embaixo. O que interessa ler primeiro é quanto
+// dá para faturar sem discussão, e isso é a soma do 4/4, não uma linha dele.
+function cardCnpj(conf, cob) {
+  const cls = (nota) => nota === "4/4" ? "ok" : /^[23]\//.test(nota) ? "med" : "baixo";
+  const porNota = new Map();
+  for (const c of conf) {
+    if (!porNota.has(c.nota)) porNota.set(c.nota, { nota: c.nota, n: 0, itens: [] });
+    const g = porNota.get(c.nota);
+    g.n += c.n;
+    g.itens.push(c);
+  }
+  const grupos = [...porNota.values()];
+  const somaConf = porNota.get("4/4")?.n || 0;
+  return `<div class="d-card g-roxo">
+    <div class="d-tit">CNPJ por confiança</div>
+    <div class="d-num">${nfmt(cob.cnpj)}<small>${pctd(cob.cnpj, cob.total)}% da base</small></div>
+    <div class="d-destaque">
+      <b>${nfmt(somaConf)}</b> conferidos ponta a ponta
+      <span>${pctd(somaConf, cob.cnpj)}% dos CNPJs</span>
+    </div>
+    ${grupos.map((g) => `<div class="conf-grupo">
+      <div class="conf-cab">
+        <span class="tag ${cls(g.nota)}">${esc(g.nota)}</span>
+        <span class="conf-n">${nfmt(g.n)}</span>
+      </div>
+      ${g.itens.map((i) => `<div class="conf-lin">
+        <span>${esc(i.criterio)}</span><b>${nfmt(i.n)}</b></div>`).join("")}
+    </div>`).join("")}
+    <div class="d-nota"><b>4/4</b> = dígito verificador + existe na Receita + UF e
+      município conferem. É o corte para cobrança; o resto serve para prospecção.</div>
+  </div>`;
+}
+
+function cardCadastro(cad) {
+  if (!cad) {
+    return `<div class="d-card g-laranja">
+      <div class="d-tit">Cadastro do cliente</div>
+      <div class="d-nota">Nenhuma base de cadastro importada para esta cidade.
+        Importe na aba <b>Importar planilha</b> para ver o que visitar.</div></div>`;
+  }
+  const cor = { ja_cadastrado: "baixo", reclassificar_alta: "ok",
+                reclassificar_media: "med", reclassificar_baixa: "med",
+                novo_comercial: "ok", sem_poi: "" };
+  return `<div class="d-card wide g-laranja">
+    <div class="d-tit">Cadastro do cliente × POIs</div>
+    <div class="d-num">${nfmt(cad.total)}<small>imóveis na base</small></div>
+    <table class="d-tab">${cad.flags.map((f) => `<tr>
+      <td><span class="tag ${cor[f.flag] || ""}">${esc(f.flag)}</span></td>
+      <td style="text-align:left;color:var(--ink-2);font-size:12px">
+        ${esc(cad.descricoes[f.flag] || "")}</td>
+      <td>${nfmt(f.n)}</td></tr>`).join("")}</table>
+  </div>`;
+}
+
+/* Valores que o usuário digita (assinatura de IA, câmbio, preço por faixa,
+   deduções). Ficam no navegador: são premissas de negócio dele, mudam de mês
+   para mês, e não são dado coletado para virar tabela no banco. */
+const PARAM = {
+  ler: (k, padrao) => {
+    const v = parseFloat(localStorage.getItem("radar.param." + k));
+    return Number.isFinite(v) ? v : padrao;
+  },
+  gravar: (k, v) => localStorage.setItem("radar.param." + k, String(v)),
+};
+
+const brl = (v) => "R$ " + (v || 0).toLocaleString("pt-BR",
+  { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+/* CUSTO em duas naturezas, que antes estavam somadas e não deviam estar:
+   - VARIÁVEL: só existe porque este volume rodou (LLM por POI).
+   - ASSINATURA: corre no mês inteiro, rodando ou parado. Ratear os US$ 45 do
+     Webshare pelas horas usadas dava "US$ 1,68" e sugeria que rodar mais sairia
+     mais caro — é o contrário: a mensalidade é a mesma, então quanto mais roda,
+     menor o custo por POI.
+   E o cenário Google, que é o custo NÃO pago — nunca somado ao resto. */
+function cardCusto(c) {
+  const ia = PARAM.ler("ia_usd", c.assinaturas.find((a) => a.editavel)?.usd || 0);
+  const cambio = PARAM.ler("usd_brl", c.usd_brl);
+  const assin = c.assinaturas.reduce((s, a) => s + (a.editavel ? ia : a.usd), 0);
+  const varUsd = c.variavel_usd;
+  const mesUsd = assin + varUsd;
+  const porPoi = (mesUsd * cambio) / Math.max(1, c.pois);
+  const economia = c.google_total_usd - varUsd;
+  return `<div class="d-card wide g-teal">
+    <div class="d-tit">Quanto custou</div>
+    <div class="d-num">${brl(mesUsd * cambio)}<small>no mês · ≈ US$ ${mesUsd.toFixed(2)}
+      · ${brl(porPoi)} por POI</small></div>
+
+    <div class="d-sub">Gasto variável <em>— só existe porque rodou</em></div>
+    <table class="d-tab">
+      <tr><td>LLM (extração na fase Web)</td><td>US$ ${c.llm_usd.toFixed(4)}</td></tr>
+      <tr><td>Places API (motor pago)</td>
+        <td>${c.places_chamadas ? "US$ " + c.places_usd.toFixed(2) : "não usado"}</td></tr>
+    </table>
+
+    <div class="d-sub">Assinaturas <em>— correm no mês inteiro, rodando ou não</em></div>
+    <table class="d-tab">
+      ${c.assinaturas.map((a) => `<tr><td>${esc(a.rotulo)}</td><td>${a.editavel
+        ? `US$ <input class="in-num" id="par-ia" type="number" step="1" min="0"
+             value="${ia}">`
+        : "US$ " + a.usd.toFixed(2)}</td></tr>`).join("")}
+      <tr><td>Câmbio (US$ → R$)</td><td>R$ <input class="in-num" id="par-cambio"
+        type="number" step="0.01" min="0" value="${cambio}"></td></tr>
+    </table>
+
+    <div class="d-sub">Se fosse tudo pela API do Google</div>
+    <table class="d-tab">
+      <tr><td>Nearby Search (descoberta)</td><td>US$ ${c.google.nearby.toFixed(2)}</td></tr>
+      <tr><td>Place Details (telefone, endereço)</td><td>US$ ${c.google.details.toFixed(2)}</td></tr>
+      <tr><td>Place Photos</td><td>US$ ${c.google.foto.toFixed(2)}</td></tr>
+      <tr><td>Street View Static</td><td>US$ ${c.google.streetview.toFixed(2)}</td></tr>
+      <tr class="tr-forte"><td>total pela API</td>
+        <td>US$ ${c.google_total_usd.toFixed(2)} · ${brl(c.google_total_usd * cambio)}</td></tr>
+    </table>
+    <div class="d-destaque verde">
+      <b>${brl(economia * cambio)}</b> foi o que a captura+OCR deixou de gastar
+      <span>preço de tabela do Google, não somado acima</span>
+    </div>
+
+    <div class="d-sub">Horas de máquina</div>
+    <table class="d-tab">
+      ${Object.entries(c.horas).map(([k, v]) =>
+        `<tr><td>${esc(k)}</td><td>${v} h</td></tr>`).join("")}
+      <tr class="tr-forte"><td>total</td><td>${c.horas_total} h</td></tr>
+    </table>
+    <div class="d-nota">Captura+OCR, Receita local e Street View não têm preço por
+      chamada — rodam aqui. O que elas custam é tempo, e tempo está acima.</div>
+  </div>`;
+}
+
+/* RETORNO DIRETO: quanto a base vale, pelo preço que VOCÊ atribui a cada faixa
+   de qualidade. As faixas são exclusivas — um POI cai numa só —, então a soma
+   fecha com o total da cidade e não há dado contado duas vezes. */
+function cardRetorno(faixas, c) {
+  const cambio = PARAM.ler("usd_brl", c.usd_brl);
+  const ia = PARAM.ler("ia_usd", c.assinaturas.find((a) => a.editavel)?.usd || 0);
+  const custoMes = (c.assinaturas.reduce((s, a) => s + (a.editavel ? ia : a.usd), 0)
+                    + c.variavel_usd) * cambio;
+  const bruto = faixas.reduce((s, f) => s + f.n * PARAM.ler("val_" + f.chave, 0), 0);
+  const ded = PARAM.ler("deducoes", 0);
+  const liq = bruto - ded - custoMes;
+  return `<div class="d-card wide g-azul">
+    <div class="d-tit">Cálculo de retorno direto</div>
+    <div class="d-num"><span id="ret-bruto">${brl(bruto)}</span><small>valor bruto da base</small></div>
+    <table class="d-tab tab-ret">
+      <thead><tr><th>Faixa de qualidade</th><th>POIs</th><th>R$ por POI</th>
+        <th>Subtotal</th></tr></thead>
+      <tbody>${faixas.map((f) => `<tr>
+        <td>${esc(f.rotulo)}</td>
+        <td class="c-n">${nfmt(f.n)}</td>
+        <td><input class="in-num" data-faixa="${f.chave}" type="number" step="0.01"
+             min="0" value="${PARAM.ler("val_" + f.chave, 0)}"></td>
+        <td class="c-sub" data-sub="${f.chave}">${brl(f.n * PARAM.ler("val_" + f.chave, 0))}</td>
+      </tr>`).join("")}</tbody>
+    </table>
+    <table class="d-tab">
+      <tr><td>Deduções (impostos, comissão, retrabalho)</td>
+        <td>R$ <input class="in-num" id="par-deducoes" type="number" step="0.01"
+             min="0" value="${ded}"></td></tr>
+      <tr><td>Custo do processo (do card ao lado)</td>
+        <td id="ret-custo">${brl(custoMes)}</td></tr>
+    </table>
+    <div class="d-destaque ${liq >= 0 ? "verde" : "vermelho"}" id="ret-liq-box">
+      <b id="ret-liq">${brl(liq)}</b> retorno líquido
+      <span id="ret-liq-poi">${brl(liq / Math.max(1, c.pois))} por POI</span>
+    </div>
+    <div class="d-nota">As faixas são exclusivas: cada POI entra em uma só, então
+      a soma fecha com o total da cidade. Os valores digitados ficam salvos neste
+      navegador e valem para todas as cidades.</div>
+  </div>`;
+}
+
+function cardImagens(sv, cob) {
+  const mb = sv.bytes / 1048576;
+  return `<div class="d-card">
+    <div class="d-tit">Imagens no banco</div>
+    <div class="d-num">${nfmt(sv.imagens)}<small>fachadas</small></div>
+    <table class="d-tab">
+      <tr><td>tamanho</td><td>${mb > 1024 ? (mb / 1024).toFixed(1) + " GB" : mb.toFixed(0) + " MB"}</td></tr>
+      <tr><td>sem panorama</td><td>${nfmt(cob.sem_panorama)}</td></tr>
+      <tr><td>fotos do Maps</td><td>${nfmt(cob.fotos)}</td></tr>
+    </table>
+    <div class="d-nota">Gravadas em <code>streetview_imgs</code>, não em pasta.</div>
+  </div>`;
+}
+
+function cardOrigem(origem, status) {
+  return `<div class="d-card">
+    <div class="d-tit">Origem e status</div>
+    <table class="d-tab">
+      ${origem.slice(0, 6).map((o) => `<tr><td>${esc(o.fonte)} / ${esc(o.dado)}</td>
+        <td>${nfmt(o.n)}</td></tr>`).join("")}
+    </table>
+    <div class="d-tit" style="margin-top:13px">Status</div>
+    <table class="d-tab">
+      ${status.slice(0, 6).map((s) => `<tr><td>${esc(s.status)}</td>
+        <td>${nfmt(s.n)}</td></tr>`).join("")}
+    </table>
+  </div>`;
+}
+
+function renderDashboard() {
+  const d = dashDados;
+  if (!d || d.erro) { $("dash-grid").innerHTML = ""; return; }
+  $("dash-titulo").textContent = d.cidade || "Todas as cidades";
+  const c = d.cobertura;
+  $("dash-sub").textContent =
+    `${nfmt(c.total)} POIs · ${nfmt(c.cnpj)} com CNPJ · ${nfmt(c.telefone)} com telefone`
+    + (d.cadastro ? ` · ${nfmt(d.cadastro.total)} imóveis no cadastro do cliente` : "");
+  const g = dashGrupo;
+  let html = "";
+  if (g === "tudo" || g === "cobertura") html += cardCobertura(c);
+  if (g === "tudo" || g === "cnpj") html += cardCnpj(d.cnpj_confianca, c);
+  if (g === "tudo" || g === "cadastro") html += cardCadastro(d.cadastro);
+  if (g === "tudo" || g === "retorno") html += cardRetorno(d.faixas, d.custo);
+  if (g === "tudo" || g === "custo" || g === "retorno") html += cardCusto(d.custo);
+  if (g === "tudo") html += cardImagens(d.streetview, c) + cardOrigem(d.origem, d.status);
+  $("dash-grid").innerHTML = html;
+  ligarParametros();
+}
+
+/* Os inputs recalculam NA HORA e sem redesenhar o card: um `renderDashboard()`
+   a cada tecla recria o <input>, o cursor volta para o começo e digitar "12,50"
+   vira "0,5211". Só os números na tela são reescritos. */
+function ligarParametros() {
+  const d = dashDados;
+  if (!d) return;
+  const recalc = () => {
+    const cambio = PARAM.ler("usd_brl", d.custo.usd_brl);
+    const ia = PARAM.ler("ia_usd", d.custo.assinaturas.find((a) => a.editavel)?.usd || 0);
+    const custoMes = (d.custo.assinaturas.reduce((s, a) => s + (a.editavel ? ia : a.usd), 0)
+                      + d.custo.variavel_usd) * cambio;
+    let bruto = 0;
+    for (const f of d.faixas || []) {
+      const v = PARAM.ler("val_" + f.chave, 0);
+      bruto += f.n * v;
+      const cel = document.querySelector(`[data-sub="${f.chave}"]`);
+      if (cel) cel.textContent = brl(f.n * v);
+    }
+    const liq = bruto - PARAM.ler("deducoes", 0) - custoMes;
+    const set = (id, txt) => { const e = $(id); if (e) e.textContent = txt; };
+    set("ret-bruto", brl(bruto));
+    set("ret-custo", brl(custoMes));
+    set("ret-liq", brl(liq));
+    set("ret-liq-poi", brl(liq / Math.max(1, d.custo.pois)) + " por POI");
+    const box = $("ret-liq-box");
+    if (box) {
+      box.classList.toggle("vermelho", liq < 0);
+      box.classList.toggle("verde", liq >= 0);
+    }
+  };
+  document.querySelectorAll("#dash-grid .in-num").forEach((el) => {
+    el.oninput = () => {
+      const v = parseFloat(el.value) || 0;
+      if (el.dataset.faixa) PARAM.gravar("val_" + el.dataset.faixa, v);
+      else if (el.id === "par-ia") PARAM.gravar("ia_usd", v);
+      else if (el.id === "par-cambio") PARAM.gravar("usd_brl", v);
+      else if (el.id === "par-deducoes") PARAM.gravar("deducoes", v);
+      recalc();
+      // o card de custo depende de câmbio e assinatura: redesenha só ele
+      if (el.id === "par-ia" || el.id === "par-cambio") agendarRedesenhoCusto();
+    };
+  });
+}
+
+/* Câmbio e assinatura mudam o card de custo inteiro, mas redesenhá-lo a cada
+   tecla tiraria o foco do campo. Espera a digitação parar. */
+let timerCusto = null;
+function agendarRedesenhoCusto() {
+  clearTimeout(timerCusto);
+  timerCusto = setTimeout(() => renderDashboard(), 900);
+}
+
+document.querySelectorAll("#dash-filtros .chip-f").forEach((b) => {
+  b.onclick = () => {
+    document.querySelectorAll("#dash-filtros .chip-f").forEach((x) => x.classList.remove("active"));
+    b.classList.add("active");
+    dashGrupo = b.dataset.grupo;
+    renderDashboard();
+  };
+});
+$("dash-busca").oninput = () => renderCidades();
+
+/* ────────────────────────────────────────────────────────────
+   IMPORTAÇÃO DO CADASTRO DO CLIENTE
+   Duas etapas de propósito: lê e MOSTRA antes de gravar. São 100 mil linhas por
+   arquivo — um cabeçalho fora do padrão gravaria a base inteira com as colunas
+   trocadas, e só se descobriria no cruzamento.
+──────────────────────────────────────────────────────────── */
+let cadastroArquivo = null;
+
+$("btn-cadastro").onclick = () => $("file-cadastro").click();
+$("file-cadastro").onchange = async (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  $("cadastro-status").textContent = `lendo ${f.name}…`;
+  const fd = new FormData();
+  fd.append("file", f);
+  let d;
+  try {
+    d = await (await fetch("/api/cadastro/previa", { method: "POST", body: fd })).json();
+  } catch {
+    $("cadastro-status").textContent = "falha ao enviar o arquivo.";
+    return;
+  }
+  if (d.erro) {
+    $("cadastro-status").textContent = "⚠️ " + d.erro;
+    toast(d.erro, "err");
+    return;
+  }
+  cadastroArquivo = d.arquivo;
+  $("cadastro-status").textContent = `${nfmt(d.linhas)} linhas lidas — confira antes de gravar.`;
+  abrirModalCadastro(d);
+  e.target.value = "";
+};
+
+function abrirModalCadastro(d) {
+  const cols = ["num_ligacao", "cidade", "categoria", "endereco",
+                "situacao_ligacao", "e_comercial", "lat", "lng"];
+  $("mc-titulo").textContent = `Conferir importação — ${d.arquivo}`;
+  $("mc-acoes").classList.remove("hidden");
+  $("mc-corpo").innerHTML =
+    (d.avisos || []).map((a) => `<div class="mc-aviso">⚠️ ${esc(a)}</div>`).join("")
+    + `<div class="mc-resumo">
+        <div><b>${nfmt(d.linhas)}</b>linhas válidas</div>
+        <div><b>${nfmt(d.comerciais)}</b>comerciais</div>
+        <div><b>${nfmt(d.com_coordenada)}</b>com coordenada</div>
+        <div><b>${esc(d.referencia || "—")}</b>competência</div>
+        <div><b>${d.cidades.map((c) => esc(c[0])).slice(0, 3).join(", ")}</b>cidades</div>
+      </div>
+      <div class="mc-scroll"><table class="mc-tab">
+        <thead><tr>${cols.map((c) => `<th>${c}</th>`).join("")}</tr></thead>
+        <tbody>${d.amostra.map((r) => `<tr>${cols.map((c) =>
+          `<td>${esc(String(r[c] === null || r[c] === undefined ? "" : r[c]))}</td>`
+        ).join("")}</tr>`).join("")}</tbody>
+      </table></div>
+      <div class="hint" style="margin-top:9px">Amostra das ${d.amostra.length}
+        primeiras linhas, já com os nomes de coluna padronizados do banco.
+        A chave é <code>num_ligacao</code>: reimportar o mesmo arquivo atualiza,
+        não duplica.</div>`;
+  $("modal-cadastro").classList.remove("hidden");
+}
+
+function fecharModalCadastro() { $("modal-cadastro").classList.add("hidden"); }
+$("mc-fechar").onclick = fecharModalCadastro;
+$("mc-cancelar").onclick = fecharModalCadastro;
+
+$("mc-confirmar").onclick = async () => {
+  if (!cadastroArquivo) return;
+  const btn = $("mc-confirmar");
+  btn.disabled = true;
+  btn.textContent = "importando…";
+  try {
+    const r = await (await fetch("/api/cadastro/confirmar", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ arquivo: cadastroArquivo, cruzar: $("mc-cruzar").checked }),
+    })).json();
+    if (r.erro) { toast(r.erro, "err"); return; }
+    const i = r.importacao;
+    let msg = `${nfmt(i.novas)} novas · ${nfmt(i.atualizadas)} atualizadas`;
+    if (r.cruzamento) {
+      const cz = r.cruzamento;
+      const rec = cz.reclassificar_alta + cz.reclassificar_media + cz.reclassificar_baixa;
+      msg += ` · cruzado: ${nfmt(cz.ja_cadastrado)} já cadastrados, `
+           + `${nfmt(rec)} a reclassificar, ${nfmt(cz.novo_comercial)} novos`;
+    }
+    $("cadastro-status").textContent = msg;
+    toast("Cadastro importado.", "ok");
+    fecharModalCadastro();
+    if (modo === "dashboard") carregarDashboard();
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Confirmar importação";
+  }
+};
+
+/* Modelos de planilha aceitos — todos num lugar só, de qualquer aba. */
+$("btn-modelos").onclick = async () => {
+  const d = await (await fetch("/api/modelos")).json();
+  $("mc-titulo").textContent = "Modelos de planilha aceitos";
+  $("mc-acoes").classList.add("hidden");   // aqui não há nada a confirmar
+  $("mc-corpo").innerHTML = d.modelos.map((m) => `
+    <div style="padding:11px 0;border-bottom:1px solid var(--line)">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
+        <div><b>${esc(m.nome)}</b>
+          <div class="hint">${esc(m.descricao)}</div></div>
+        <a class="btn ghost" href="${m.url}" download>⬇️ .${m.formato}</a>
+      </div>
+      <div class="hint" style="margin-top:6px"><code>${
+        m.colunas.slice(0, 14).map(esc).join(", ")
+      }${m.colunas.length > 14 ? `, … (+${m.colunas.length - 14})` : ""}</code></div>
+    </div>`).join("");
+  $("modal-cadastro").classList.remove("hidden");
+};
