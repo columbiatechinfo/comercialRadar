@@ -28,6 +28,7 @@ import aiohttp
 
 import config  # carrega o .env e força UTF-8
 import area_utils
+import io_atomico
 
 MAPS_API_KEY = os.environ.get("MAPS_API_KEY", "").strip()
 
@@ -144,8 +145,11 @@ def _monta_registro(p, sessao, poligono, det=None):
         "lat_origem": lat, "lng_origem": lng,
         "maps_lat": lat, "maps_lng": lng,
         "place_id": p.get("place_id"),
-        "status": "minerado" if dentro else "fora_da_area",
-        "match_valido": bool(dentro and p.get("name")),
+        "status": "minerado",
+        # fora da área NÃO invalida: o POI é gravado com cidade/UF e só fica
+        # fora do foco da tela (ver `area_utils.gate_registro`)
+        "fora_da_area": not dentro,
+        "match_valido": bool(p.get("name")),
         "fotos": [], "comentarios": [], "horarios": {},
     }
 
@@ -198,9 +202,7 @@ async def minerar(poligono, sessao, out_json: Path, step_m: float, radius: float
     inicio = time.time()
 
     def _salvar():
-        tmp = out_json.with_suffix(".tmp")
-        tmp.write_text(json.dumps(registros, ensure_ascii=False, indent=1), encoding="utf-8")
-        tmp.replace(out_json)
+        io_atomico.escrever_json(out_json, registros)
 
     async def _celula(session, i, lat, lng):
         async with sem:

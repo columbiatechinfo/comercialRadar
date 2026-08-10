@@ -14,6 +14,10 @@ export interface CaptureConfig {
   viewportWidth: number;
   viewportHeight: number;
   delayBetweenTiles: number; // ms
+  // Área REAL de trabalho, [[lat, lng], ...] — a mesma que o painel desenha.
+  // A caixa envolvente de um município é muito maior que ele: sem este recorte,
+  // a captura paga tiles de mato. Quando ausente, captura a caixa inteira.
+  polygon?: { lat: number; lng: number }[];
 }
 
 export interface TileCoord {

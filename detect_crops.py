@@ -40,6 +40,63 @@ PAD_V      = 35    # margem vertical
 MIN_RADIUS = 6
 MAX_RADIUS = 40
 
+# ── Ícone GENÉRICO (o circulozinho cinza) ────────────────────────────────────
+# As faixas acima exigem saturação ≥ 60, e o ícone que a MAIORIA dos comércios
+# tem no Maps é cinza-claro com um ponto escuro — saturação ~0. Ele nunca entrava
+# na máscara, o HoughCircles não tinha o que achar e o POI simplesmente não
+# existia para o processo. Medido num tile de Canoas: 43 ícones coloridos
+# detectados contra 97 genéricos ignorados — 38% de cobertura.
+#
+# O desenho é SEMPRE o mesmo (o estilo do mapa é fixo pelo MAPS_MAP_ID em
+# src/capture.ts, e a captura é sempre 3840×2160), então casar por template
+# resolve. Se o estilo ou a resolução mudarem, o template tem de ser refeito:
+#   py detect_crops.py <session.json> --refazer-template <px> <py>
+TEMPLATE_POI  = Path(__file__).resolve().parent / "assets" / "icone_poi_generico.png"
+TEMPLATE_MIN  = 0.72   # correlação mínima (TM_CCOEFF_NORMED)
+DEDUP_PX      = 22     # dois centros a menos disto são o MESMO ícone
+
+
+_TPL = None
+
+
+def _template():
+    """Carrega o template uma vez por processo. Ausente, o detector segue só com
+    as cores — perde os genéricos, mas não quebra."""
+    global _TPL
+    if _TPL is None:
+        _TPL = (cv2.imread(str(TEMPLATE_POI), cv2.IMREAD_GRAYSCALE)
+                if TEMPLATE_POI.exists() else False)
+        if _TPL is False:
+            print(f"      ⚠️  {TEMPLATE_POI.name} não encontrado — só ícones "
+                  f"coloridos serão detectados", flush=True)
+    return _TPL if _TPL is not False else None
+
+
+def detect_genericos(gray) -> list:
+    """Centros dos ícones cinza, por correlação com o template.
+
+    Devolve (px, py). O raio não sai daqui: o template tem tamanho fixo, então
+    o raio é sempre o mesmo — e é só o que `make_crop` usa para desenhar o
+    círculo de conferência."""
+    tpl = _template()
+    if tpl is None:
+        return []
+    r = tpl.shape[0] // 2
+    res = cv2.matchTemplate(gray, tpl, cv2.TM_CCOEFF_NORMED)
+    ys, xs = np.where(res >= TEMPLATE_MIN)
+    if not len(xs):
+        return []
+    # do mais forte para o mais fraco, para o vencedor de cada aglomerado ser o
+    # de melhor correlação e não o que aparecer primeiro na varredura
+    ordem = sorted(zip(xs, ys), key=lambda p: -res[p[1], p[0]])
+    achados = []
+    for x, y in ordem:
+        cx, cy = int(x + r), int(y + r)
+        if any((cx - ax) ** 2 + (cy - ay) ** 2 < DEDUP_PX ** 2 for ax, ay in achados):
+            continue
+        achados.append((cx, cy))
+    return achados
+
 
 def detect_icons(image_path: Path) -> list:
     img = cv2.imread(str(image_path))
@@ -88,6 +145,23 @@ def detect_icons(image_path: Path) -> list:
             "px": int(px), "py": int(py), "raio": int(r),
             "cor": color, "img_w": img_w, "img_h": img_h,
         })
+
+    # segunda passada: os cinzas, que a máscara de cor não enxerga
+    tpl = _template()
+    if tpl is not None:
+        raio = tpl.shape[0] // 2
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        for cx, cy in detect_genericos(gray):
+            # o ícone colorido também tem um anel claro em volta e casa com o
+            # template: sem esta checagem o mesmo POI entraria duas vezes e
+            # viraria duas buscas no Maps
+            if any((cx - i["px"]) ** 2 + (cy - i["py"]) ** 2 < DEDUP_PX ** 2
+                   for i in icons):
+                continue
+            icons.append({
+                "px": cx, "py": cy, "raio": raio,
+                "cor": "generico", "img_w": img_w, "img_h": img_h,
+            })
 
     return icons
 

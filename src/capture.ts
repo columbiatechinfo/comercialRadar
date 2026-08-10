@@ -4,8 +4,13 @@ import * as path from 'path';
 import { CaptureConfig, TileCoord, CaptureSession } from './types';
 import { calculateGrid } from './geo';
 
-const WORKERS               = 10;
-const MAPS_API_KEY          = 'AIzaSyA0BLzeqU8_-ksq8QSfKbm0ObmMyRqoSmY';
+const WORKERS               = Number(process.env.CAPTURE_WORKERS || 10);
+// A chave vem SÓ do ambiente (.env → MAPS_JS_KEY ou MAPS_API_KEY). Esta é a Maps
+// JavaScript API, não a Places. Havia um literal aqui como fallback, e ele saiu:
+// o arquivo é versionado, então cada commit reexpunha a chave. A que estava no
+// código continua no histórico (commit 1c7f081) e PRECISA ser girada — trocar
+// aqui não desfaz o que já foi publicado.
+const MAPS_API_KEY          = process.env.MAPS_JS_KEY || process.env.MAPS_API_KEY || '';
 const MAPS_MAP_ID           = '33696f50cbe8e2d228094f61'; // estilo vetorial clean (só POIs)
 const TILE_WAIT_MS          = 6000;  // espera extra para labels/POIs depois do carregamento
 const EXTRA_WAIT_MS         = 2500;  // colchão adicional antes do screenshot
@@ -249,8 +254,37 @@ async function runWorker(
   await browser.close();
 }
 
+type LatLng = { lat: number; lng: number };
+
+function pointInPolygon(lat: number, lng: number, poly: LatLng[]): boolean {
+  let dentro = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const yi = poly[i].lat, xi = poly[i].lng;
+    const yj = poly[j].lat, xj = poly[j].lng;
+    if ((yi > lat) !== (yj > lat) &&
+        lng < ((xj - xi) * (lat - yi)) / ((yj - yi) || 1e-12) + xi) {
+      dentro = !dentro;
+    }
+  }
+  return dentro;
+}
+
+// O tile é um retângulo, não um ponto: basta ele ENCOSTAR na área para valer a
+// captura. Testa o centro, os quatro cantos e os vértices do polígono que caem
+// dentro do tile. Escapa só o sliver que atravessa o tile sem vértice nem canto
+// dentro — geometria que uma área desenhada à mão não produz.
+function tileNaArea(lat: number, lng: number, dLat: number, dLng: number,
+                    poly: LatLng[]): boolean {
+  if (pointInPolygon(lat, lng, poly)) return true;
+  const h = dLat / 2, w = dLng / 2;
+  for (const [sy, sx] of [[-1, -1], [-1, 1], [1, -1], [1, 1]]) {
+    if (pointInPolygon(lat + sy * h, lng + sx * w, poly)) return true;
+  }
+  return poly.some(p => Math.abs(p.lat - lat) <= h && Math.abs(p.lng - lng) <= w);
+}
+
 export function generateTiles(config: CaptureConfig): TileCoord[] {
-  const { boundingBox, zoomLevel, tileOverlapPercent } = config;
+  const { boundingBox, zoomLevel, tileOverlapPercent, polygon } = config;
   const { rows, cols, latStep, lngStep } = calculateGrid(boundingBox, zoomLevel, tileOverlapPercent);
   const tiles: TileCoord[] = [];
 
@@ -261,6 +295,10 @@ export function generateTiles(config: CaptureConfig): TileCoord[] {
       let lng = boundingBox.west + actualCol * lngStep + lngStep / 2;
       lat = Math.max(boundingBox.south, Math.min(boundingBox.north, lat));
       lng = Math.max(boundingBox.west, Math.min(boundingBox.east, lng));
+      if (polygon && polygon.length >= 3 &&
+          !tileNaArea(lat, lng, latStep, lngStep, polygon)) {
+        continue;
+      }
       tiles.push({
         row, col: actualCol,
         lat: parseFloat(lat.toFixed(7)),
@@ -293,6 +331,16 @@ export async function runCaptureSession(config: CaptureConfig): Promise<CaptureS
     failedTiles: [],
     status: 'running',
   };
+
+  // PARA AQUI se não houver chave. Sem ela o mapa carrega cinza e a captura
+  // termina "com sucesso" gerando centenas de PNGs vazios — o OCR não acha nada
+  // e o erro só aparece horas depois, como "0 POIs". É o mesmo silêncio que a
+  // Places API produzia antes de o servidor passar a exigir MAPS_API_KEY.
+  if (!MAPS_API_KEY) {
+    throw new Error(
+      'Sem chave da Maps JavaScript API. Ponha MAPS_JS_KEY (ou MAPS_API_KEY) ' +
+      'no .env — sem ela o mapa carrega em branco e a captura gera imagens vazias.');
+  }
 
   fs.mkdirSync(config.outputDir, { recursive: true });
   fs.writeFileSync(sessionFile, JSON.stringify(session, null, 2));
