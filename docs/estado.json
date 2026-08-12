@@ -4,9 +4,9 @@
   "perfil": "saas-multi-cliente",
   "versao": "0.1.0",
   "ambiente": "wsl-dev",
-  "atualizado_em": "2026-08-12T20:30:00-03:00",
+  "atualizado_em": "2026-08-12T16:05:00-03:00",
   "atualizado_por": "/infra",
-  "commit": "779ee69",
+  "commit": "9a85c12",
   "seguranca": {
     "nota": null,
     "corte": 70,
@@ -25,6 +25,14 @@
       {
         "item": "66 GB de dado real sem rotina de backup",
         "acao": "pgBackRest com full semanal + WAL continuo, e restauracao testada em maquina limpa"
+      },
+      {
+        "item": "Storage da pilha grava em disco local; disco cheio derruba o Postgres junto",
+        "acao": "apontar STORAGE_BACKEND para R2 antes de mover os 6,3 GB de imagem"
+      },
+      {
+        "item": "SMTP do Auth aponta para o container de desenvolvimento (admin@example.com)",
+        "acao": "configurar SMTP real antes de qualquer fluxo que dependa de e-mail"
       }
     ]
   },
@@ -124,7 +132,7 @@
   ],
   "operacional": {
     "cobertura_testes": 0,
-    "tabelas_sem_rls": 38,
+    "tabelas_sem_rls": 0,
     "indice_tenant": false,
     "ultimo_backup": null,
     "restauracao_validada": false
@@ -259,6 +267,20 @@
       "nivel": "aviso",
       "evento": "networkingMode=mirrored tentado e revertido; fragilidade do portproxy resolvida por tarefa agendada",
       "detalhe": "A maquina atende os requisitos do modo espelhado (Windows 11 build 26200, WSL 2.2.4), mas em mirrored a entrada passa pelo firewall do Hyper-V, que e outra camada: das 10 portas testadas do notebook so Ollama e Nominatim responderam, e as outras 8 — que funcionavam — pararam. Revertido com o backup do .wslconfig e as regras reconstruidas com o IP corrente: voltou 11/11. No lugar, uma tarefa agendada na inicializacao reconstroi as 12 regras com o IP atual da distro, o que conserta tambem as regras antigas do i9. O sintoma que ela evita e cruel: servico sobe, log limpo, e nada responde de fora."
+    },
+    {
+      "data": "2026-08-12",
+      "skill": "infra",
+      "nivel": "erro",
+      "evento": "A chave anon lia a base de POIs pelo PostgREST — fechado no mesmo dia",
+      "detalhe": "Teste funcional da pilha (nao o healthcheck) mostrou GET /rest/v1/pois devolvendo linhas com a chave anon, que e PUBLICA por natureza: vai embutida no navegador. O Supabase concede SELECT a anon no schema public por padrao, contando que a RLS seja o portao — e sem policy 'sem RLS' nao significa fechado, significa ABERTO. Revogados os grants, alterados os default privileges para a proxima tabela nao nascer aberta, e RLS ligada nas 9 tabelas. Conferido depois: anon recebe 401, service_role segue funcionando, pipeline direto intacto."
+    },
+    {
+      "data": "2026-08-12",
+      "skill": "infra",
+      "nivel": "ok",
+      "evento": "Banco reorganizado em schema por ferramenta; cadastro publico fechado",
+      "detalhe": "As 9 tabelas sairam do public para o schema `comercialradar`, e os papeis cr_* viraram comercialradar_app/migrator/readonly, cada um com USAGE so no proprio schema. Isolamento PROVADO, nao afirmado: o papel recebeu 'permission denied for schema radartelhados' ao tentar atravessar. DISABLE_SIGNUP=true testado com tentativa real (HTTP 422 signup_disabled). Convencao documentada no SKILLS.md da raiz para os proximos sistemas nascerem sabendo."
     }
   ]
 }
