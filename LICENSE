@@ -1,0 +1,32 @@
+Copyright (c) 2026 Columbia Tech. Todos os direitos reservados.
+
+SOFTWARE PROPRIETÁRIO — NÃO LICENCIADO PARA TERCEIROS
+
+Este repositório e todo o seu conteúdo — código-fonte, documentação, contratos
+de anotação, esquemas e artefatos derivados — são propriedade da Columbia Tech.
+
+Não é concedida qualquer licença de uso, cópia, modificação, distribuição,
+sublicenciamento, engenharia reversa ou exploração comercial, no todo ou em
+parte, sem autorização prévia e por escrito da Columbia Tech.
+
+O acesso a este repositório, quando concedido, destina-se exclusivamente ao
+desenvolvimento e à operação do sistema para os clientes contratantes, e não
+transfere qualquer direito sobre o software.
+
+DADOS DE TERCEIROS
+
+O sistema consome bases públicas e serviços de terceiros — IBGE (CNEFE e malha
+municipal), Receita Federal, OpenStreetMap, Overture Maps, Google Maps Platform,
+OpenAI — cada um sob os seus próprios termos de uso e licença. Esta licença não
+se estende a eles, e nada aqui autoriza uso desses dados fora do que as
+respectivas licenças permitem.
+
+Dados de cadastro fornecidos por clientes permanecem propriedade dos clientes.
+
+SEM GARANTIA
+
+O SOFTWARE É FORNECIDO "COMO ESTÁ", SEM GARANTIA DE QUALQUER NATUREZA, EXPRESSA
+OU IMPLÍCITA, INCLUINDO ADEQUAÇÃO A UM FIM ESPECÍFICO. EM NENHUMA HIPÓTESE A
+COLUMBIA TECH RESPONDERÁ POR QUALQUER DANO DECORRENTE DO USO DESTE SOFTWARE.
+
+Contato: columbiatechinfo@gmail.com

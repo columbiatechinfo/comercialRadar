@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+
+# Um PR que recebe push novo cancela a execução anterior: fila de CI parada em
+# revisão obsoleta é minuto de runner gasto para nada.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Python — sintaxe e lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'   # a versão do venv do projeto
+
+      - name: Compila tudo
+        # Não há suíte de testes ainda (checklist req. 9). Compilar pega o erro
+        # de sintaxe, que é o que mais some num arquivo de 1.800 linhas.
+        run: python -m compileall -q . -x '(\.venv|node_modules|__pycache__)'
+
+      - name: Ruff
+        run: |
+          pip install ruff
+          ruff check . --exclude .venv,node_modules --output-format=github
+
+  contratos:
+    name: Contratos das skills
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Validador da skill de fachada
+        # O runner LÊ os enums e as regras destes arquivos. Se a skill quebrar,
+        # toda anotação é reprovada em produção — e a falha aparece só no lote.
+        run: |
+          pip install jsonschema
+          python skills/leitura-fachada-cadastral/tests/selftest.py
+
+  estado:
+    name: Painel — estado.json válido
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: node scripts/painel.mjs --check

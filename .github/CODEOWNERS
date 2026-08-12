@@ -1,0 +1,19 @@
+# Dono padrão de tudo
+*                                   @columbiatechinfo
+
+# Contratos de IA: enum, teto de confiança e regra de coerência saem DESTES
+# arquivos. Mudar um termo aqui reprova anotação em produção.
+/skills/                            @columbiatechinfo
+
+# Derivação de oportunidade — é o que vira visita de campo
+/avaliar_fachada.py                 @columbiatechinfo
+/coletivas_importar.py              @columbiatechinfo
+
+# Segurança e segredo
+/.gitleaks.toml                     @columbiatechinfo
+/.env.example                        @columbiatechinfo
+/SECURITY.md                        @columbiatechinfo
+/.github/workflows/                 @columbiatechinfo
+
+# Documentação de produto e decisões
+/docs/                              @columbiatechinfo

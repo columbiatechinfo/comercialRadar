@@ -1,0 +1,64 @@
+name: Segurança
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+  schedule:
+    # Segunda, 06:00 UTC. Dependência não fica insegura quando você mexe nela —
+    # fica insegura quando alguém publica o CVE, num dia em que você não mexeu.
+    - cron: '0 6 * * 1'
+
+concurrency:
+  group: sec-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  segredos:
+    name: gitleaks — segredo no diff e no histórico
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # histórico inteiro: segredo antigo continua sendo segredo
+
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: .gitleaks.toml
+
+  dependencias:
+    name: Dependências com CVE
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: pip-audit
+        run: |
+          pip install pip-audit
+          # `|| true` de propósito: CVE em dependência transitiva não deve
+          # travar o PR de quem não a introduziu. O relatório fica no log e
+          # vira issue; travar aqui só ensina a ignorar o CI.
+          pip-audit -r requirements.txt --desc || true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm audit --audit-level=high || true
+
+  codeql:
+    name: CodeQL
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: python, javascript
+      - uses: github/codeql-action/analyze@v3

@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>comercialRadar — painel do projeto</title>
+<style>
+:root{--bg:#0a0a0b;--card:#141416;--line:#26262a;--tx:#e8e8ea;--tx2:#a1a1aa;--tx3:#6b6b73;
+--red:#e11d2e;--green:#22c55e;--amber:#f59e0b;--blue:#60a5fa;--gray:#3f3f46;
+--mono:ui-monospace,"Cascadia Code","SF Mono",Consolas,monospace}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.6 -apple-system,"Segoe UI",Roboto,sans-serif;padding:0 0 60px}
+body.envelhecido{filter:saturate(.45)}
+.wrap{max-width:1240px;margin:0 auto;padding:0 20px}
+code{font:12.5px var(--mono);color:#f0a8b0;background:#1e1216;padding:1px 5px;border-radius:4px}
+header{border-bottom:1px solid var(--line);padding:28px 0 24px;margin-bottom:28px;background:linear-gradient(160deg,#160406 0%,#0a0a0b 70%)}
+.htop{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px}
+h1{font-size:26px;margin:0;letter-spacing:-.02em;font-weight:800}
+.tag{font:600 11px/1 var(--mono);padding:5px 9px;border-radius:5px;background:#1e1e22;border:1px solid var(--line);color:var(--tx2)}
+.tag.dev{background:#0d1a2b;border-color:#1e3a5f;color:var(--blue)}
+.tag.prod{background:#1a0709;border-color:#4a1119;color:#f0a8b0}
+.freshness{margin-top:12px;font-size:13px;color:var(--tx3)}.freshness b{color:var(--green)}
+.stale{background:#1a1207;border:1px solid #7c4a05;color:#f0c674;padding:10px 14px;border-radius:8px;margin-top:12px;font-size:13.5px}
+.top{display:grid;grid-template-columns:300px 1fr;gap:18px;margin-bottom:6px}
+@media(max-width:860px){.top{grid-template-columns:1fr}}
+.score,.crit{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px}
+.crit{border-color:#4a1119}.crit.vazio{border-color:var(--line)}
+.lbl,.crit h2{font:700 10px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--tx3);margin:0}
+.crit h2{color:var(--red);margin-bottom:14px}.crit.vazio h2{color:var(--tx3)}
+.nada{color:var(--tx3);font-size:13.5px}
+.score .n{font:800 60px/1 sans-serif;letter-spacing:-.04em;margin:12px 0 2px}
+.score .n small{font-size:21px;color:var(--tx3);font-weight:700}
+.score .n.good{color:var(--green)}.score .n.warn{color:var(--amber)}.score .n.bad{color:var(--red)}.score .n.na{color:var(--tx3)}
+.verd{font-size:13.5px;font-weight:600;margin-bottom:16px;color:var(--tx2)}
+.verd.good{color:var(--green)}.verd.warn{color:var(--amber)}.verd.bad{color:var(--red)}
+.sparkwrap{margin-bottom:26px}
+.spark{display:flex;align-items:flex-end;gap:5px;height:44px}
+.spark div{flex:1;background:#2c2c31;border-radius:3px 3px 0 0;position:relative}
+.spark div.cur.good{background:var(--green)}.spark div.cur.warn{background:var(--amber)}.spark div.cur.bad{background:var(--red)}
+.spark span{position:absolute;bottom:-17px;left:0;right:0;text-align:center;font:9.5px var(--mono);color:var(--tx3)}
+.cats{border-top:1px solid var(--line);padding-top:14px;margin-bottom:14px}
+.cat{display:grid;grid-template-columns:1fr 54px 44px;gap:8px;align-items:center;margin-bottom:7px}
+.cn{font-size:12px;color:var(--tx2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cb{height:5px;background:#26262a;border-radius:3px;overflow:hidden}
+.cb i{display:block;height:100%;border-radius:3px}
+.cb i.good{background:var(--green)}.cb i.warn{background:var(--amber)}.cb i.bad{background:var(--red)}
+.cv{font:600 11px var(--mono);color:var(--tx2);text-align:right}.cv em{color:var(--tx3);font-style:normal}
+.rodape{font-size:12.5px;color:var(--tx3);border-top:1px solid var(--line);padding-top:14px}
+.critrow{display:flex;gap:12px;padding:11px 0;border-bottom:1px solid #1c1c1f;align-items:flex-start}
+.critrow:last-child{border:0;padding-bottom:0}.critrow.feito{opacity:.5}
+.critrow .x{color:var(--red);font:700 13px var(--mono);flex-shrink:0;margin-top:1px}
+.critrow .x.ok{color:var(--green)}
+.critrow .t{font-weight:600;font-size:14px}
+.critrow .d{color:var(--tx2);font-size:13px;margin-top:2px}
+.critrow .d em{color:var(--tx3)}
+.critrow .fix{margin-left:auto;flex-shrink:0;font:600 11px var(--mono);color:var(--green);border:1px solid #14532d;background:#08170f;padding:4px 8px;border-radius:5px;white-space:nowrap}
+h2.sec{font:700 11px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--tx3);margin:34px 0 16px;border-top:1px solid var(--line);padding-top:22px}
+.reqs{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:11px}
+.req{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:13px 15px;display:flex;gap:11px;align-items:flex-start}
+.req .ic{font:700 12px var(--mono);flex-shrink:0;width:15px;text-align:center;margin-top:2px}
+.req.ok{border-left:3px solid var(--green)}.req.ok .ic{color:var(--green)}
+.req.pa{border-left:3px solid var(--amber)}.req.pa .ic{color:var(--amber)}
+.req.pe{border-left:3px solid var(--red)}.req.pe .ic{color:var(--red)}
+.req.na{border-left:3px solid var(--gray);opacity:.45}.req.na .ic{color:var(--gray)}
+.req .nm{font-weight:600;font-size:14px}
+.req .dt{color:var(--tx3);font-size:12.5px;margin-top:2px;line-height:1.45}
+.tbl{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13.5px;min-width:560px}
+th{text-align:left;font:700 10px/1 var(--mono);letter-spacing:.11em;text-transform:uppercase;color:var(--tx3);padding:0 12px 11px;border-bottom:1px solid var(--line)}
+td{padding:11px 12px;border-bottom:1px solid #1a1a1d;color:var(--tx2);vertical-align:top}
+td.sk{font:600 13px var(--mono);color:#f0a8b0;white-space:nowrap}
+td.velho{color:var(--amber)}
+.pill{font:600 11px var(--mono);padding:3px 8px;border-radius:20px;white-space:nowrap}
+.p-ok{background:#08170f;color:var(--green);border:1px solid #14532d}
+.p-wa{background:#1a1207;color:var(--amber);border:1px solid #78350f}
+.p-no{background:#1a0709;color:var(--red);border:1px solid #4a1119}
+.p-ne{background:#18181b;color:var(--tx3);border:1px solid var(--line)}
+.hint{color:var(--tx3);font-size:12.5px;margin-top:12px}
+.ops{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
+.op{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px 18px}
+.op .k{font:700 10px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--tx3)}
+.op .v{font-size:23px;font-weight:800;margin:9px 0 3px;letter-spacing:-.02em}
+.op .s{font-size:12.5px;color:var(--tx3)}
+.op.bad .v{color:var(--red)}.op.warn .v{color:var(--amber)}.op.good .v{color:var(--green)}
+.cd{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px}
+.painelbox{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px}
+.painelbox .k{font:700 10px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--tx3)}
+.painelbox .big{font-size:28px;font-weight:800;margin:10px 0 14px;letter-spacing:-.02em}
+.painelbox .big em{font-size:14px;font-weight:600;color:var(--tx3);font-style:normal}
+.itens{border-top:1px solid var(--line);padding-top:12px}
+.item{display:flex;justify-content:space-between;font-size:13px;color:var(--tx2);padding:4px 0}
+.item b{color:var(--tx);font-weight:600}
+.bar{display:grid;grid-template-columns:1fr 90px 80px;gap:10px;align-items:center;padding:4px 0;font-size:12.5px}
+.bn{color:var(--tx2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bb{height:6px;background:#26262a;border-radius:3px;overflow:hidden}
+.bb i{display:block;height:100%;background:var(--blue);border-radius:3px}
+.bar b{text-align:right;color:var(--tx);font:600 12px var(--mono)}
+.tl{position:relative;padding-left:26px}
+.tl::before{content:"";position:absolute;left:6px;top:6px;bottom:6px;width:2px;background:var(--line)}
+.ev{position:relative;padding:0 0 20px}
+.ev::before{content:"";position:absolute;left:-24px;top:6px;width:9px;height:9px;border-radius:50%;background:var(--card);border:2px solid var(--gray)}
+.ev.g::before{border-color:var(--green)}.ev.a::before{border-color:var(--amber)}.ev.r::before{border-color:var(--red)}
+.ev .when{font:11px var(--mono);color:var(--tx3)}
+.ev .what{font-size:14px;margin-top:2px}
+.ev .what b{font-family:var(--mono);font-size:13px;color:#f0a8b0;font-weight:600}
+.ev .det{color:var(--tx3);font-size:12.5px;margin-top:2px}
+footer{margin-top:44px;border-top:1px solid var(--line);padding-top:18px;color:var(--tx3);font-size:12.5px}
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <div class="htop">
+      <h1>comercialRadar</h1>
+      <span class="tag">saas multi cliente</span>
+      <span class="tag dev">WSL · desenvolvimento</span>
+      <span class="tag">v0.1.0</span>
+    </div>
+    <div class="freshness">Atualizado <b>agora</b> — por <code>/projeto-novo</code> · commit <code>c93d538</code></div>
+    
+  </div>
+</header>
+<div class="wrap">
+  <div class="top"><div class="score vazio">
+      <div class="lbl">Nota de segurança</div>
+      <div class="n na">—</div>
+      <div class="verd">A skill <code>/seguranca</code> ainda não foi executada</div>
+    </div><div class="crit vazio">
+      <h2>Críticos</h2>
+      <div class="nada">Nenhum crítico registrado. Rode <code>/seguranca</code> para auditar.</div>
+    </div></div>
+  <h2 class="sec">Requisitos — perfil saas multi cliente</h2>
+  <div class="reqs"><div class="req ok"><span class="ic">●</span><div>
+      <div class="nm">PRD</div>
+      <div class="dt">docs/PRD.md com &#39;fora de escopo&#39; preenchido pelo dono do produto</div></div></div><div class="req ok"><span class="ic">●</span><div>
+      <div class="nm">UML</div>
+      <div class="dt">docs/ARQUITETURA.md — classDiagram das entidades + sequenceDiagram do fluxo critico</div></div></div><div class="req pa"><span class="ic">◐</span><div>
+      <div class="nm">Repo + docs padrão</div>
+      <div class="dt">repo, CODEOWNERS, templates e CI existem; master ainda sem protecao de branch</div></div></div><div class="req pa"><span class="ic">◐</span><div>
+      <div class="nm">Matriz RBAC</div>
+      <div class="dt">docs/RBAC.md e PROPOSTA: nao ha login, papel nem usuario no codigo</div></div></div><div class="req pe"><span class="ic">○</span><div>
+      <div class="nm">tenant_id + RLS</div>
+      <div class="dt">nenhuma tabela tem tenant_id; nenhuma policy existe. Maior buraco do perfil</div></div></div><div class="req pa"><span class="ic">◐</span><div>
+      <div class="nm">Segredos</div>
+      <div class="dt">.env fora do git, .env.example e .gitleaks.toml prontos; falta pre-commit e ROTACIONAR a chave Google do commit 1c7f081</div></div></div><div class="req pe"><span class="ic">○</span><div>
+      <div class="nm">Módulos + flags</div>
+      <div class="dt">10 modulos catalogados em docs/MODULOS.md; tabela tenant_features nao existe</div></div></div><div class="req pe"><span class="ic">○</span><div>
+      <div class="nm">Botão de erro</div>
+      <div class="dt">sem captura de erro do usuario e sem log correlacionado por requisicao</div></div></div><div class="req pe"><span class="ic">○</span><div>
+      <div class="nm">Testes</div>
+      <div class="dt">sem suite propria; CI compila e roda o selftest da skill de fachada (verde)</div></div></div><div class="req pe"><span class="ic">○</span><div>
+      <div class="nm">Backup</div>
+      <div class="dt">banco de 60 GB sem rotina verificada de backup/restauracao</div></div></div><div class="req pe"><span class="ic">○</span><div>
+      <div class="nm">WAF / TLS / rate limit</div>
+      <div class="dt">roda em 127.0.0.1:8765, HTTP, sem autenticacao</div></div></div><div class="req pa"><span class="ic">◐</span><div>
+      <div class="nm">LGPD</div>
+      <div class="dt">guarda socios da Receita e imagens de fachada; a skill ja proibe transcrever dado pessoal. Falta avaliacao formal</div></div></div></div>
+  <h2 class="sec">Skills</h2>
+  <div class="tbl"><table>
+    <thead><tr><th>Skill</th><th>Última execução</th><th>Resultado</th><th>O que produziu</th></tr></thead>
+    <tbody><tr>
+      <td class="sk">projeto-novo</td>
+      <td>—</td>
+      <td><span class="pill p-ok">ok</span></td>
+      <td>—</td></tr></tbody>
+  </table></div>
+  <h2 class="sec">Saúde operacional</h2>
+  <div class="ops"><div class="op bad"><div class="k">Último backup</div>
+     <div class="v">nunca</div><div class="s">nenhum registrado</div></div><div class="op bad"><div class="k">Restauração validada</div>
+     <div class="v">nunca</div><div class="s">crítico aberto</div></div><div class="op bad"><div class="k">Cobertura de teste</div>
+     <div class="v">0%</div><div class="s">meta 70%</div></div><div class="op bad"><div class="k">Tabelas sem RLS</div>
+     <div class="v">38</div><div class="s"></div></div></div>
+  
+  <h2 class="sec">Serviços externos</h2>
+  <div class="tbl"><table>
+    <thead><tr><th>Serviço</th><th>Endpoint</th><th>Estado</th><th>Idade do dado</th></tr></thead>
+    <tbody><tr>
+        <td class="sk">Ollama (i9)</td>
+        <td><code>http://100.115.117.49:11434</code></td>
+        <td><span class="pill p-ok">ok</span></td>
+        <td class="">há 13 horas</td>
+      </tr><tr>
+        <td class="sk">SearXNG (i9)</td>
+        <td><code>i9</code></td>
+        <td><span class="pill p-ne">desconhecido</span></td>
+        <td class="">há 13 horas</td>
+      </tr><tr>
+        <td class="sk">OpenAI</td>
+        <td><code>api.openai.com</code></td>
+        <td><span class="pill p-ok">ok</span></td>
+        <td class="">há 13 horas</td>
+      </tr><tr>
+        <td class="sk">PostgreSQL + PostGIS</td>
+        <td><code>localhost:5432/comercialradar</code></td>
+        <td><span class="pill p-ok">ok</span></td>
+        <td class="">há 13 horas</td>
+      </tr></tbody>
+  </table></div>
+  <p class="hint">Dado de OSM com mais de 60 dias produz rota errada e geocodificação furada — sem o serviço dar nenhum sinal de erro.</p>
+  <h2 class="sec">Linha do tempo</h2>
+  <div class="tl"><div class="ev a">
+    <div class="when">11/08/2026, 21:00</div>
+    <div class="what"><b>projeto-novo</b> Perfil classificado como saas-multi-cliente, contra o que o codigo mostra</div>
+    <div class="det">O codigo hoje nao tem login nem tenant_id, o que classificaria como script-interno. O dono do produto decidiu saas-multi-cliente porque a intencao e ter empresas clientes com usuarios vinculados. Consequencia deliberada: RBAC, RLS e modulos por flag entram como pendentes e o checklist nasce vermelho. Marcar &#39;na&#39; produziria painel verde sobre sistema que nao isola cliente nenhum.</div>
+  </div><div class="ev g">
+    <div class="when">11/08/2026, 21:00</div>
+    <div class="what"><b>projeto-novo</b> Documentacao de projeto criada e 61 alteracoes pendentes commitadas em 5 commits tematicos</div>
+    <div class="det">PRD, ARQUITETURA (mermaid), RBAC, MODULOS, CHECKLIST, ADR 0001 (perfil e caminho de dados) e ADR 0002 (Prisma e legado: cobre 6 de 38 tabelas, migration parada em 30/06/2026).</div>
+  </div></div>
+  <footer>
+    Gerado por <code>scripts/painel.mjs</code> a partir de <code>docs/estado.json</code> ·
+    12/08/2026, 10:43 · dados embutidos, abre sem servidor
+  </footer>
+</div>
+<script type="application/json" id="estado">{"schema":1,"projeto":"comercialRadar","perfil":"saas-multi-cliente","versao":"0.1.0","ambiente":"wsl-dev","atualizado_em":"2026-08-12T14:00:00-03:00","atualizado_por":"/projeto-novo","commit":"c93d538","seguranca":{"nota":null,"corte":70,"historico":[],"categorias":[],"criticos":[],"recomendados":[]},"requisitos":[{"id":"prd","nome":"PRD","status":"ok","detalhe":"docs/PRD.md com 'fora de escopo' preenchido pelo dono do produto"},{"id":"uml","nome":"UML","status":"ok","detalhe":"docs/ARQUITETURA.md — classDiagram das entidades + sequenceDiagram do fluxo critico"},{"id":"repo","nome":"Repo + docs padrão","status":"parcial","detalhe":"repo, CODEOWNERS, templates e CI existem; master ainda sem protecao de branch"},{"id":"rbac","nome":"Matriz RBAC","status":"parcial","detalhe":"docs/RBAC.md e PROPOSTA: nao ha login, papel nem usuario no codigo"},{"id":"rls","nome":"tenant_id + RLS","status":"pendente","detalhe":"nenhuma tabela tem tenant_id; nenhuma policy existe. Maior buraco do perfil"},{"id":"segredos","nome":"Segredos","status":"parcial","detalhe":".env fora do git, .env.example e .gitleaks.toml prontos; falta pre-commit e ROTACIONAR a chave Google do commit 1c7f081"},{"id":"modulos","nome":"Módulos + flags","status":"pendente","detalhe":"10 modulos catalogados em docs/MODULOS.md; tabela tenant_features nao existe"},{"id":"erro","nome":"Botão de erro","status":"pendente","detalhe":"sem captura de erro do usuario e sem log correlacionado por requisicao"},{"id":"testes","nome":"Testes","status":"pendente","detalhe":"sem suite propria; CI compila e roda o selftest da skill de fachada (verde)"},{"id":"backup","nome":"Backup","status":"pendente","detalhe":"banco de 60 GB sem rotina verificada de backup/restauracao"},{"id":"borda","nome":"WAF / TLS / rate limit","status":"pendente","detalhe":"roda em 127.0.0.1:8765, HTTP, sem autenticacao"},{"id":"lgpd","nome":"LGPD","status":"parcial","detalhe":"guarda socios da Receita e imagens de fachada; a skill ja proibe transcrever dado pessoal. Falta avaliacao formal"}],"skills":[{"nome":"projeto-novo","resultado":"ok","data":"2026-08-12","detalhe":"perfil saas-multi-cliente, PRD, UML, RBAC, modulos, checklist, 2 ADRs, CI e CODEOWNERS"}],"operacional":{"cobertura_testes":0,"tabelas_sem_rls":38,"indice_tenant":false,"ultimo_backup":null,"restauracao_validada":false},"custo":{"mensal_estimado":null,"itens":[{"item":"leitura de fachada (gpt-4o)","detalhe":"US$ 0,0172/POI medido; US$ 356 para as 20.698 fachadas ja capturadas"},{"item":"Ollama no i9","detalhe":"US$ 0 — porem ~149 h de GPU para a mesma base, e le 0 numeros de 12"},{"item":"proxies Webshare","detalhe":"US$ 45/mes — 100 proxies residenciais estaticos"}]},"dados_por_cliente":[],"servicos_externos":[{"nome":"Ollama (i9)","endpoint":"http://100.115.117.49:11434","status":"ok","versao":"qwen2.5vl:7b","dado_em":"2026-08-12"},{"nome":"SearXNG (i9)","endpoint":"i9","status":"desconhecido","dado_em":"2026-08-12"},{"nome":"OpenAI","endpoint":"api.openai.com","status":"ok","versao":"gpt-4o","dado_em":"2026-08-12"},{"nome":"PostgreSQL + PostGIS","endpoint":"localhost:5432/comercialradar","status":"ok","dado_em":"2026-08-12"}],"timeline":[{"data":"2026-08-12","skill":"projeto-novo","nivel":"aviso","evento":"Perfil classificado como saas-multi-cliente, contra o que o codigo mostra","detalhe":"O codigo hoje nao tem login nem tenant_id, o que classificaria como script-interno. O dono do produto decidiu saas-multi-cliente porque a intencao e ter empresas clientes com usuarios vinculados. Consequencia deliberada: RBAC, RLS e modulos por flag entram como pendentes e o checklist nasce vermelho. Marcar 'na' produziria painel verde sobre sistema que nao isola cliente nenhum."},{"data":"2026-08-12","skill":"projeto-novo","nivel":"ok","evento":"Documentacao de projeto criada e 61 alteracoes pendentes commitadas em 5 commits tematicos","detalhe":"PRD, ARQUITETURA (mermaid), RBAC, MODULOS, CHECKLIST, ADR 0001 (perfil e caminho de dados) e ADR 0002 (Prisma e legado: cobre 6 de 38 tabelas, migration parada em 30/06/2026)."}]}</script>
+</body>
+</html>

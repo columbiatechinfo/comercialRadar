@@ -1,0 +1,44 @@
+title = "gitleaks — comercialRadar"
+
+[extend]
+useDefault = true
+
+# ── Regras próprias: as chaves que este projeto realmente usa ───────────────
+[[rules]]
+id = "google-api-key"
+description = "Chave de API do Google (Maps, Places, Street View)"
+regex = '''AIza[0-9A-Za-z\-_]{35}'''
+tags = ["chave", "google"]
+
+[[rules]]
+id = "openai-api-key"
+description = "Chave da OpenAI"
+regex = '''sk-[A-Za-z0-9_\-]{20,}'''
+tags = ["chave", "openai"]
+
+[[rules]]
+id = "webshare-token"
+description = "Token da API Webshare (proxies)"
+regex = '''(?i)webshare[_-]?api[_-]?key\s*[=:]\s*['"]?[A-Za-z0-9]{20,}'''
+tags = ["chave", "proxy"]
+
+[[rules]]
+id = "postgres-url-com-senha"
+description = "URL de Postgres com senha embutida"
+regex = '''postgres(ql)?://[^:\s]+:[^@\s]+@'''
+tags = ["credencial", "banco"]
+
+[allowlist]
+description = "Caminhos que não carregam segredo real"
+paths = [
+  '''\.venv/''',
+  '''node_modules/''',
+  '''__pycache__/''',
+  '''\.env\.example$''',
+  '''docs/painel\.html$''',
+  # Fixtures da skill de fachada: JSON de anotação, sem credencial
+  '''skills/leitura-fachada-cadastral/tests/''',
+]
+# `.env.example` existe para mostrar o FORMATO das chaves. Se um valor real
+# aparecer nele, é erro — mas o arquivo em si não é achado.
+regexTarget = "match"
