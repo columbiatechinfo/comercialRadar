@@ -79,3 +79,9 @@ malhas/
 
 # A área de trabalho mora na tabela area_trabalho, não em arquivo
 areas/
+
+# Radar Coletivo — saidas de trabalho (CSV do municipio, xlsx e RCC)
+coletivas/
+
+# Cache de malhas/CNEFE do IBGE (135 MB, reconstruivel sob demanda)
+cache_ibge/
