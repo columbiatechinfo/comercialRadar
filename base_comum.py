@@ -30,7 +30,39 @@ UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
 
 
 def conectar():
+    """Banco do PRODUTO: POIs, cadastro do cliente, anotações, coletivas."""
     return realtime_ingest.conectar()
+
+
+def conectar_referencia():
+    """Banco de REFERÊNCIA: CNEFE, Receita Federal, OSM — 60 GB de base pública.
+
+    Instância separada de propósito, e não capricho de organização: uma varredura
+    na `ibge_cnefe` (111 milhões de linhas) disputaria o page cache com o Auth, o
+    PostgREST e o Realtime da instância que atende usuário. É a regra da casa —
+    analítico pesado não divide Postgres com quem serve requisição. Ver o
+    ADR 0003.
+
+    Consequência que o chamador precisa saber: **não existe JOIN entre os dois
+    bancos.** Cruzar POI com CNEFE é consulta aqui, recorte, e junção no Python —
+    que é como o `coletivas_importar.py` já faz, por casamento de coordenada.
+
+    Enquanto `REF_POSTGRES_HOST` não estiver no `.env`, devolve a conexão do
+    banco do produto. Isso mantém quem ainda não migrou funcionando sem tocar em
+    nada — a migração de cada módulo é independente.
+    """
+    import psycopg2
+    host = (os.environ.get("REF_POSTGRES_HOST") or "").strip()
+    if not host:
+        return conectar()
+    return psycopg2.connect(
+        host=host,
+        port=os.environ.get("REF_POSTGRES_PORT", "5443"),
+        user=os.environ.get("REF_POSTGRES_USER", "postgres"),
+        password=os.environ.get("REF_POSTGRES_PASSWORD", ""),
+        dbname=os.environ.get("REF_POSTGRES_DB", "referencia"),
+        connect_timeout=int(os.environ.get("PG_CONNECT_TIMEOUT", "20")),
+    )
 
 
 # ── Controle de arquivos já carregados (idempotência) ───────────────────────────

@@ -26,13 +26,43 @@ _LOCK = threading.Lock()
 
 
 def conectar():
-    return psycopg2.connect(
-        host=os.environ.get("POSTGRES_HOST", "localhost"),
-        port=os.environ.get("POSTGRES_PORT", "5432"),
-        user=os.environ.get("POSTGRES_USER", "postgres"),
-        password=os.environ.get("POSTGRES_PASSWORD", ""),
-        dbname=os.environ.get("POSTGRES_DB", "comercialradar"),
-    )
+    """Conexão com o banco do PRODUTO.
+
+    A partir de 12/08/2026 o banco mora no i9, dentro da pilha Supabase, no
+    schema `comercialradar`. As variáveis `I9_*` mandam quando existem; sem elas,
+    cai no Postgres local de antes. É isso que permite voltar atrás mudando uma
+    linha do `.env`, sem tocar em código — e o banco antigo continua intacto no
+    notebook até o pipeline se provar contra o i9.
+
+    O `search_path` já vem do papel (`alter role ... set search_path`), então o
+    código segue escrevendo `pois` sem qualificar o schema. Definir aqui também
+    protege quem conectar com outro papel.
+    """
+    host = (os.environ.get("I9_POSTGRES_HOST") or "").strip()
+    if host:
+        cfg = dict(
+            host=host,
+            # Porta 5444: o Postgres da pilha escuta na 5442 DENTRO do container
+            # (POSTGRES_PORT define a porta interna também), e a 5444 é a
+            # publicada. Não é o pooler de propósito: worker de ETL faz poucas
+            # conexões com trabalho longo, e o modo transação do Supavisor perde
+            # tabela temporária, prepared statement e lock de sessão.
+            port=os.environ.get("I9_POSTGRES_PORT", "5444"),
+            user=os.environ.get("I9_POSTGRES_USER", "comercialradar_worker"),
+            password=os.environ.get("I9_POSTGRES_PASSWORD", ""),
+            dbname=os.environ.get("I9_POSTGRES_DB", "postgres"),
+            options="-c search_path=comercialradar,public",
+        )
+    else:
+        cfg = dict(
+            host=os.environ.get("POSTGRES_HOST", "localhost"),
+            port=os.environ.get("POSTGRES_PORT", "5432"),
+            user=os.environ.get("POSTGRES_USER", "postgres"),
+            password=os.environ.get("POSTGRES_PASSWORD", ""),
+            dbname=os.environ.get("POSTGRES_DB", "comercialradar"),
+        )
+    cfg["connect_timeout"] = int(os.environ.get("PG_CONNECT_TIMEOUT", "20"))
+    return psycopg2.connect(**cfg)
 
 
 def _f(v):

@@ -904,18 +904,19 @@ def detalhe_poi(poi_id: int):
 
 @app.get("/api/sv/{poi_id}/{angulo}")
 def sv_img(poi_id: int, angulo: str):
-    """Serve a imagem do Street View (fachada/giro 360/panorama) direto do banco."""
+    """Serve a imagem do Street View (fachada/giro 360/panorama).
+
+    O byte vem do Storage desde 12/08/2026, com queda para a coluna `dados`
+    enquanto ela existir. O navegador continua pedindo a mesma URL — quem mudou
+    foi de onde o servidor busca, e é por isso que o front não precisou saber."""
+    import imagens
     conn = realtime_ingest.conectar()
     try:
-        with conn.cursor() as cur:
-            cur.execute("""SELECT dados FROM streetview_imgs
-                           WHERE poi_id=%s AND angulo=%s AND dados IS NOT NULL
-                           ORDER BY id DESC LIMIT 1""", (poi_id, angulo))
-            r = cur.fetchone()
-            if not r or not r[0]:
-                return JSONResponse({"erro": "sem imagem"}, status_code=404)
-            return Response(content=bytes(r[0]), media_type="image/jpeg",
-                            headers={"Cache-Control": "public, max-age=86400"})
+        b = imagens.streetview_do_poi(poi_id, conn, angulo, limite=1)
+        if not b:
+            return JSONResponse({"erro": "sem imagem"}, status_code=404)
+        return Response(content=b[0], media_type="image/jpeg",
+                        headers={"Cache-Control": "public, max-age=86400"})
     finally:
         conn.close()
 

@@ -335,12 +335,10 @@ def _resize_b64(raw: bytes, largura: int, qualidade: int = 80, mascarar: bool = 
 
 
 def _fotos_maps_bytes(poi_id: int, conn, limit: int = MAX_FOTOS_MAPS) -> list:
+    # Storage desde 12/08/2026, com queda para a coluna `dados` enquanto existir.
     try:
-        with conn.cursor() as cur:
-            cur.execute("""SELECT dados FROM images_urls
-                           WHERE poi_id = %s AND dados IS NOT NULL ORDER BY id LIMIT %s""",
-                        (poi_id, limit))
-            return [bytes(r[0]) for r in cur.fetchall()]
+        import imagens
+        return imagens.fotos_do_poi(poi_id, conn, limite=limit)
     except Exception:
         return []
 

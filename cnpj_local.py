@@ -153,7 +153,12 @@ def casar(regs: list, con=None) -> dict:
     Não inventa: sem CEP+número não tenta, e nome fraco com VÁRIAS empresas na
     mesma porta é recusado — esses vão para a fase Web, o caminho caro."""
     fechar = con is None
-    con = con or bc.conectar()
+    # `_candidatos` e `_empresas` consultam `rf_estabelecimentos` e `rf_empresas`,
+    # que desde 12/08/2026 vivem no banco de REFERÊNCIA — instância separada, para
+    # que uma varredura de 72 milhões de linhas não dispute cache com o Auth e o
+    # PostgREST (ADR 0003). Chamar `bc.conectar()` aqui daria "relation does not
+    # exist" no meio de uma rodada, com cara de tabela apagada.
+    con = con or bc.conectar_referencia()
     try:
         chaves = {}
         for r in regs:
@@ -249,8 +254,14 @@ def rodar_no_banco(cidade: str, aplicar: bool = False) -> dict:
     """Passa a Receita local em TODO POI da cidade que ainda não tem CNPJ.
 
     Existe para rodar sozinho, sem subir o enriquecimento inteiro: é uma consulta
-    ao banco que já está aqui, leva segundos e não usa rede."""
+    ao banco que já está aqui, leva segundos e não usa rede.
+
+    DUAS conexões, de propósito. Os POIs estão no banco do produto; a Receita, no
+    de referência. Passar a conexão do produto para o `casar()` — que era o que
+    esta função fazia — anula o padrão dele e faz a consulta cair no banco errado.
+    """
     con = bc.conectar()
+    ref = bc.conectar_referencia()
     try:
         with con.cursor() as cur:
             cur.execute("""SELECT id, nome, endereco FROM pois
@@ -259,7 +270,7 @@ def rodar_no_banco(cidade: str, aplicar: bool = False) -> dict:
                               AND endereco IS NOT NULL""", (cidade,))
             regs = [{"_id": i, "nome": n, "endereco": e} for i, n, e in cur.fetchall()]
         print(f"{len(regs)} POIs de {cidade} sem CNPJ e com endereço", flush=True)
-        res = casar(regs, con)
+        res = casar(regs, ref)   # Receita: banco de referência
         print(f"  casados {res['casados']} "
               f"({res['casados'] - res['endereco_unico']} por nome + "
               f"{res['endereco_unico']} por endereço único) · "
@@ -280,6 +291,7 @@ def rodar_no_banco(cidade: str, aplicar: bool = False) -> dict:
         return res
     finally:
         con.close()
+        ref.close()
 
 
 if __name__ == "__main__":

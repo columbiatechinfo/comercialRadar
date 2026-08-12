@@ -600,11 +600,14 @@ def limpar_interface(dados: bytes) -> bytes:
 def _imagens(poi_id: int, sv_id: int, con) -> list:
     """Bytes da fachada. Uma imagem por chamada é o padrão: duas fotos de fachada
     continuam sendo UMA fonte independente, então a segunda encarece sem mudar o
-    teto de confiança de nada."""
-    with con.cursor() as cur:
-        cur.execute("SELECT dados FROM streetview_imgs WHERE id = %s", (sv_id,))
-        r = cur.fetchone()
-    return [limpar_interface(bytes(r[0]))] if r and r[0] else []
+    teto de confiança de nada.
+
+    Os bytes vêm do Storage desde 12/08/2026; `imagens.py` cai para a coluna
+    `dados` enquanto ela existir, o que mantém esta função funcionando nos dois
+    mundos durante a troca."""
+    import imagens
+    b = imagens.streetview_por_id(sv_id, con)
+    return [limpar_interface(b)] if b else []
 
 
 # ──────────────────────────────────────────────────────────────────────────
