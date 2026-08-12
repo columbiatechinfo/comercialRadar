@@ -138,10 +138,25 @@ def municipio_da_area(poligono=None, ref=AREA_PADRAO) -> tuple:
         return _MUN_CACHE[chave]
     lat = sum(p[0] for p in poly) / len(poly)
     lng = sum(p[1] for p in poly) / len(poly)
+    # A consulta é feita AQUI, e não mais em `quadras_br`. O módulo de quadras
+    # mudou-se para o radarTelhados em 11/08/2026, junto com todo o território;
+    # o comercialRadar continua precisando resolver município por ponto porque
+    # cidade e UF são a fonte única de toda a ferramenta. A tabela `ibge_malha`
+    # fica nas duas — são 8,6 MB de divisa oficial, e duplicar dado de
+    # referência público é mais barato que acoplar duas ferramentas.
     try:
-        import quadras_br as QB
-        nome, uf, _cod = QB.municipio_do_ponto(lat, lng)
-        out = (nome or "", (uf or "").upper())
+        import base_comum as bc
+        con = bc.conectar()
+        try:
+            with con.cursor() as cur:
+                cur.execute("""SELECT nome, uf FROM ibge_malha
+                                WHERE ST_Contains(geom,
+                                        ST_SetSRID(ST_Point(%s, %s), 4326))
+                                LIMIT 1""", (lng, lat))
+                r = cur.fetchone()
+            out = ((r[0] or ""), (r[1] or "").upper()) if r else ("", "")
+        finally:
+            con.close()
     except Exception:
         out = ("", "")
     _MUN_CACHE[chave] = out
