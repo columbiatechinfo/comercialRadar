@@ -23,10 +23,23 @@ jobs:
         with:
           fetch-depth: 0   # histórico inteiro: segredo antigo continua sendo segredo
 
-      - uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_CONFIG: .gitleaks.toml
+      # Binário direto, e não `gitleaks/gitleaks-action@v2`.
+      #
+      # A ação falhava com HTTP 403 em `GET /repos/.../pulls/1/commits` — nem
+      # chegava a varrer nada. Ela precisa de permissão de leitura no PR e, em
+      # conta de organização, de licença paga. Trocar isso por um binário
+      # elimina os dois problemas e traz uma propriedade melhor: **o comando do
+      # CI é o mesmo que roda no pre-commit e na máquina de quem desenvolve**.
+      # Quando o CI reprovar, dá para reproduzir localmente em um comando.
+      - name: Instalar gitleaks
+        run: |
+          VERSAO=8.30.1
+          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${VERSAO}/gitleaks_${VERSAO}_linux_x64.tar.gz" \
+            | tar -xz -C /usr/local/bin gitleaks
+          gitleaks version
+
+      - name: Varrer o histórico inteiro
+        run: gitleaks git . --log-opts=--all -c .gitleaks.toml --redact --no-banner
 
   dependencias:
     name: Dependências com CVE
