@@ -116,7 +116,7 @@ footer{margin-top:44px;border-top:1px solid var(--line);padding-top:18px;color:v
       <span class="tag dev">WSL · desenvolvimento</span>
       <span class="tag">v0.1.0</span>
     </div>
-    <div class="freshness">Atualizado <b>agora</b> — por <code>/projeto-novo</code> · commit <code>c93d538</code></div>
+    <div class="freshness">Atualizado <b>agora</b> — por <code>/segredos</code> · commit <code>7b771b0</code></div>
     
   </div>
 </header>
@@ -125,10 +125,17 @@ footer{margin-top:44px;border-top:1px solid var(--line);padding-top:18px;color:v
       <div class="lbl">Nota de segurança</div>
       <div class="n na">—</div>
       <div class="verd">A skill <code>/seguranca</code> ainda não foi executada</div>
-    </div><div class="crit vazio">
-      <h2>Críticos</h2>
-      <div class="nada">Nenhum crítico registrado. Rode <code>/seguranca</code> para auditar.</div>
-    </div></div>
+    </div><div class="crit">
+    <h2>Críticos — travam deploy em produção</h2>
+    <div class="critrow">
+        <span class="x">✕</span>
+        <div>
+          <div class="t"></div>
+          <div class="d"></div>
+        </div>
+        
+      </div>
+  </div></div>
   <h2 class="sec">Requisitos — perfil saas multi cliente</h2>
   <div class="reqs"><div class="req ok"><span class="ic">●</span><div>
       <div class="nm">PRD</div>
@@ -142,7 +149,7 @@ footer{margin-top:44px;border-top:1px solid var(--line);padding-top:18px;color:v
       <div class="nm">tenant_id + RLS</div>
       <div class="dt">nenhuma tabela tem tenant_id; nenhuma policy existe. Maior buraco do perfil</div></div></div><div class="req pa"><span class="ic">◐</span><div>
       <div class="nm">Segredos</div>
-      <div class="dt">.env fora do git, .env.example e .gitleaks.toml prontos; falta pre-commit e ROTACIONAR a chave Google do commit 1c7f081</div></div></div><div class="req pe"><span class="ic">○</span><div>
+      <div class="dt">gitleaks 8.30.1 no pre-commit (core.hooksPath=.githooks, testado: bloqueia) e no CI sobre o historico; .env.example conferido contra o codigo; chaves do Supabase geradas fora do repo. FALTA: revogar a chave Google do commit 1c7f081 no console (unico item aberto).</div></div></div><div class="req pe"><span class="ic">○</span><div>
       <div class="nm">Módulos + flags</div>
       <div class="dt">10 modulos catalogados em docs/MODULOS.md; tabela tenant_features nao existe</div></div></div><div class="req pe"><span class="ic">○</span><div>
       <div class="nm">Botão de erro</div>
@@ -162,6 +169,10 @@ footer{margin-top:44px;border-top:1px solid var(--line);padding-top:18px;color:v
       <td class="sk">projeto-novo</td>
       <td>—</td>
       <td><span class="pill p-ok">ok</span></td>
+      <td>—</td></tr><tr>
+      <td class="sk">segredos</td>
+      <td>—</td>
+      <td><span class="pill p-wa">parcial</span></td>
       <td>—</td></tr></tbody>
   </table></div>
   <h2 class="sec">Saúde operacional</h2>
@@ -178,22 +189,22 @@ footer{margin-top:44px;border-top:1px solid var(--line);padding-top:18px;color:v
         <td class="sk">Ollama (i9)</td>
         <td><code>http://100.115.117.49:11434</code></td>
         <td><span class="pill p-ok">ok</span></td>
-        <td class="">há 13 horas</td>
+        <td class="">há 14 horas</td>
       </tr><tr>
         <td class="sk">SearXNG (i9)</td>
         <td><code>i9</code></td>
         <td><span class="pill p-ne">desconhecido</span></td>
-        <td class="">há 13 horas</td>
+        <td class="">há 14 horas</td>
       </tr><tr>
         <td class="sk">OpenAI</td>
         <td><code>api.openai.com</code></td>
         <td><span class="pill p-ok">ok</span></td>
-        <td class="">há 13 horas</td>
+        <td class="">há 14 horas</td>
       </tr><tr>
         <td class="sk">PostgreSQL + PostGIS</td>
         <td><code>localhost:5432/comercialradar</code></td>
         <td><span class="pill p-ok">ok</span></td>
-        <td class="">há 13 horas</td>
+        <td class="">há 14 horas</td>
       </tr></tbody>
   </table></div>
   <p class="hint">Dado de OSM com mais de 60 dias produz rota errada e geocodificação furada — sem o serviço dar nenhum sinal de erro.</p>
@@ -206,12 +217,20 @@ footer{margin-top:44px;border-top:1px solid var(--line);padding-top:18px;color:v
     <div class="when">11/08/2026, 21:00</div>
     <div class="what"><b>projeto-novo</b> Documentacao de projeto criada e 61 alteracoes pendentes commitadas em 5 commits tematicos</div>
     <div class="det">PRD, ARQUITETURA (mermaid), RBAC, MODULOS, CHECKLIST, ADR 0001 (perfil e caminho de dados) e ADR 0002 (Prisma e legado: cobre 6 de 38 tabelas, migration parada em 30/06/2026).</div>
+  </div><div class="ev a">
+    <div class="when">11/08/2026, 21:00</div>
+    <div class="what"><b>segredos</b> Varredura do historico: 7 achados, 1 vazamento real</div>
+    <div class="det">A chave do Google esta no historico desde 27/04/2026 e a arvore atual ja esta limpa — so a revogacao no provedor corrige. Os outros 6 achados sao falso positivo e ficaram justificados na allowlist: o token de compartilhamento PUBLICO dos Dados Abertos CNPJ, e os marcadores &lt;senha&gt; da documentacao, que o gitleaks contou como senha de 7, 17 e 19 caracteres. Sem a excecao, o hook falharia em todo commit e a equipe aprenderia a usar --no-verify — que e como um portao deixa de existir.</div>
+  </div><div class="ev g">
+    <div class="when">11/08/2026, 21:00</div>
+    <div class="what"><b>segredos</b> Portao de segredo instalado e testado; chaves do Supabase geradas</div>
+    <div class="det">Hook em .githooks/ e nao em .git/hooks, porque .git nao e versionado: hook la protege so a maquina de quem o criou. Testado com uma chave falsa: bloqueou. ANON_KEY e SERVICE_ROLE_KEY sao JWT assinados com o JWT_SECRET novo e gravados fora do repositorio — os valores do compose oficial do Supabase sao publicos e varridos por scanner.</div>
   </div></div>
   <footer>
     Gerado por <code>scripts/painel.mjs</code> a partir de <code>docs/estado.json</code> ·
-    12/08/2026, 10:43 · dados embutidos, abre sem servidor
+    12/08/2026, 11:22 · dados embutidos, abre sem servidor
   </footer>
 </div>
-<script type="application/json" id="estado">{"schema":1,"projeto":"comercialRadar","perfil":"saas-multi-cliente","versao":"0.1.0","ambiente":"wsl-dev","atualizado_em":"2026-08-12T14:00:00-03:00","atualizado_por":"/projeto-novo","commit":"c93d538","seguranca":{"nota":null,"corte":70,"historico":[],"categorias":[],"criticos":[],"recomendados":[]},"requisitos":[{"id":"prd","nome":"PRD","status":"ok","detalhe":"docs/PRD.md com 'fora de escopo' preenchido pelo dono do produto"},{"id":"uml","nome":"UML","status":"ok","detalhe":"docs/ARQUITETURA.md — classDiagram das entidades + sequenceDiagram do fluxo critico"},{"id":"repo","nome":"Repo + docs padrão","status":"parcial","detalhe":"repo, CODEOWNERS, templates e CI existem; master ainda sem protecao de branch"},{"id":"rbac","nome":"Matriz RBAC","status":"parcial","detalhe":"docs/RBAC.md e PROPOSTA: nao ha login, papel nem usuario no codigo"},{"id":"rls","nome":"tenant_id + RLS","status":"pendente","detalhe":"nenhuma tabela tem tenant_id; nenhuma policy existe. Maior buraco do perfil"},{"id":"segredos","nome":"Segredos","status":"parcial","detalhe":".env fora do git, .env.example e .gitleaks.toml prontos; falta pre-commit e ROTACIONAR a chave Google do commit 1c7f081"},{"id":"modulos","nome":"Módulos + flags","status":"pendente","detalhe":"10 modulos catalogados em docs/MODULOS.md; tabela tenant_features nao existe"},{"id":"erro","nome":"Botão de erro","status":"pendente","detalhe":"sem captura de erro do usuario e sem log correlacionado por requisicao"},{"id":"testes","nome":"Testes","status":"pendente","detalhe":"sem suite propria; CI compila e roda o selftest da skill de fachada (verde)"},{"id":"backup","nome":"Backup","status":"pendente","detalhe":"banco de 60 GB sem rotina verificada de backup/restauracao"},{"id":"borda","nome":"WAF / TLS / rate limit","status":"pendente","detalhe":"roda em 127.0.0.1:8765, HTTP, sem autenticacao"},{"id":"lgpd","nome":"LGPD","status":"parcial","detalhe":"guarda socios da Receita e imagens de fachada; a skill ja proibe transcrever dado pessoal. Falta avaliacao formal"}],"skills":[{"nome":"projeto-novo","resultado":"ok","data":"2026-08-12","detalhe":"perfil saas-multi-cliente, PRD, UML, RBAC, modulos, checklist, 2 ADRs, CI e CODEOWNERS"}],"operacional":{"cobertura_testes":0,"tabelas_sem_rls":38,"indice_tenant":false,"ultimo_backup":null,"restauracao_validada":false},"custo":{"mensal_estimado":null,"itens":[{"item":"leitura de fachada (gpt-4o)","detalhe":"US$ 0,0172/POI medido; US$ 356 para as 20.698 fachadas ja capturadas"},{"item":"Ollama no i9","detalhe":"US$ 0 — porem ~149 h de GPU para a mesma base, e le 0 numeros de 12"},{"item":"proxies Webshare","detalhe":"US$ 45/mes — 100 proxies residenciais estaticos"}]},"dados_por_cliente":[],"servicos_externos":[{"nome":"Ollama (i9)","endpoint":"http://100.115.117.49:11434","status":"ok","versao":"qwen2.5vl:7b","dado_em":"2026-08-12"},{"nome":"SearXNG (i9)","endpoint":"i9","status":"desconhecido","dado_em":"2026-08-12"},{"nome":"OpenAI","endpoint":"api.openai.com","status":"ok","versao":"gpt-4o","dado_em":"2026-08-12"},{"nome":"PostgreSQL + PostGIS","endpoint":"localhost:5432/comercialradar","status":"ok","dado_em":"2026-08-12"}],"timeline":[{"data":"2026-08-12","skill":"projeto-novo","nivel":"aviso","evento":"Perfil classificado como saas-multi-cliente, contra o que o codigo mostra","detalhe":"O codigo hoje nao tem login nem tenant_id, o que classificaria como script-interno. O dono do produto decidiu saas-multi-cliente porque a intencao e ter empresas clientes com usuarios vinculados. Consequencia deliberada: RBAC, RLS e modulos por flag entram como pendentes e o checklist nasce vermelho. Marcar 'na' produziria painel verde sobre sistema que nao isola cliente nenhum."},{"data":"2026-08-12","skill":"projeto-novo","nivel":"ok","evento":"Documentacao de projeto criada e 61 alteracoes pendentes commitadas em 5 commits tematicos","detalhe":"PRD, ARQUITETURA (mermaid), RBAC, MODULOS, CHECKLIST, ADR 0001 (perfil e caminho de dados) e ADR 0002 (Prisma e legado: cobre 6 de 38 tabelas, migration parada em 30/06/2026)."}]}</script>
+<script type="application/json" id="estado">{"schema":1,"projeto":"comercialRadar","perfil":"saas-multi-cliente","versao":"0.1.0","ambiente":"wsl-dev","atualizado_em":"2026-08-12T15:30:00-03:00","atualizado_por":"/segredos","commit":"7b771b0","seguranca":{"nota":null,"corte":70,"historico":[],"categorias":[],"criticos":[{"item":"Chave do Google Maps exposta no commit 1c7f081 desde 27/04/2026","acao":"revogar no console do Google Cloud e gerar tres chaves novas com restricao (IP, referrer)"}],"recomendados":[]},"requisitos":[{"id":"prd","nome":"PRD","status":"ok","detalhe":"docs/PRD.md com 'fora de escopo' preenchido pelo dono do produto"},{"id":"uml","nome":"UML","status":"ok","detalhe":"docs/ARQUITETURA.md — classDiagram das entidades + sequenceDiagram do fluxo critico"},{"id":"repo","nome":"Repo + docs padrão","status":"parcial","detalhe":"repo, CODEOWNERS, templates e CI existem; master ainda sem protecao de branch"},{"id":"rbac","nome":"Matriz RBAC","status":"parcial","detalhe":"docs/RBAC.md e PROPOSTA: nao ha login, papel nem usuario no codigo"},{"id":"rls","nome":"tenant_id + RLS","status":"pendente","detalhe":"nenhuma tabela tem tenant_id; nenhuma policy existe. Maior buraco do perfil"},{"id":"segredos","nome":"Segredos","status":"parcial","detalhe":"gitleaks 8.30.1 no pre-commit (core.hooksPath=.githooks, testado: bloqueia) e no CI sobre o historico; .env.example conferido contra o codigo; chaves do Supabase geradas fora do repo. FALTA: revogar a chave Google do commit 1c7f081 no console (unico item aberto)."},{"id":"modulos","nome":"Módulos + flags","status":"pendente","detalhe":"10 modulos catalogados em docs/MODULOS.md; tabela tenant_features nao existe"},{"id":"erro","nome":"Botão de erro","status":"pendente","detalhe":"sem captura de erro do usuario e sem log correlacionado por requisicao"},{"id":"testes","nome":"Testes","status":"pendente","detalhe":"sem suite propria; CI compila e roda o selftest da skill de fachada (verde)"},{"id":"backup","nome":"Backup","status":"pendente","detalhe":"banco de 60 GB sem rotina verificada de backup/restauracao"},{"id":"borda","nome":"WAF / TLS / rate limit","status":"pendente","detalhe":"roda em 127.0.0.1:8765, HTTP, sem autenticacao"},{"id":"lgpd","nome":"LGPD","status":"parcial","detalhe":"guarda socios da Receita e imagens de fachada; a skill ja proibe transcrever dado pessoal. Falta avaliacao formal"}],"skills":[{"nome":"projeto-novo","resultado":"ok","data":"2026-08-12","detalhe":"perfil saas-multi-cliente, PRD, UML, RBAC, modulos, checklist, 2 ADRs, CI e CODEOWNERS"},{"nome":"segredos","resultado":"parcial","data":"2026-08-12","detalhe":"1 vazamento real em 7 achados; portao instalado; rotacao pendente com o usuario"}],"operacional":{"cobertura_testes":0,"tabelas_sem_rls":38,"indice_tenant":false,"ultimo_backup":null,"restauracao_validada":false},"custo":{"mensal_estimado":null,"itens":[{"item":"leitura de fachada (gpt-4o)","detalhe":"US$ 0,0172/POI medido; US$ 356 para as 20.698 fachadas ja capturadas"},{"item":"Ollama no i9","detalhe":"US$ 0 — porem ~149 h de GPU para a mesma base, e le 0 numeros de 12"},{"item":"proxies Webshare","detalhe":"US$ 45/mes — 100 proxies residenciais estaticos"}]},"dados_por_cliente":[],"servicos_externos":[{"nome":"Ollama (i9)","endpoint":"http://100.115.117.49:11434","status":"ok","versao":"qwen2.5vl:7b","dado_em":"2026-08-12"},{"nome":"SearXNG (i9)","endpoint":"i9","status":"desconhecido","dado_em":"2026-08-12"},{"nome":"OpenAI","endpoint":"api.openai.com","status":"ok","versao":"gpt-4o","dado_em":"2026-08-12"},{"nome":"PostgreSQL + PostGIS","endpoint":"localhost:5432/comercialradar","status":"ok","dado_em":"2026-08-12"}],"timeline":[{"data":"2026-08-12","skill":"projeto-novo","nivel":"aviso","evento":"Perfil classificado como saas-multi-cliente, contra o que o codigo mostra","detalhe":"O codigo hoje nao tem login nem tenant_id, o que classificaria como script-interno. O dono do produto decidiu saas-multi-cliente porque a intencao e ter empresas clientes com usuarios vinculados. Consequencia deliberada: RBAC, RLS e modulos por flag entram como pendentes e o checklist nasce vermelho. Marcar 'na' produziria painel verde sobre sistema que nao isola cliente nenhum."},{"data":"2026-08-12","skill":"projeto-novo","nivel":"ok","evento":"Documentacao de projeto criada e 61 alteracoes pendentes commitadas em 5 commits tematicos","detalhe":"PRD, ARQUITETURA (mermaid), RBAC, MODULOS, CHECKLIST, ADR 0001 (perfil e caminho de dados) e ADR 0002 (Prisma e legado: cobre 6 de 38 tabelas, migration parada em 30/06/2026)."},{"data":"2026-08-12","skill":"segredos","nivel":"aviso","evento":"Varredura do historico: 7 achados, 1 vazamento real","detalhe":"A chave do Google esta no historico desde 27/04/2026 e a arvore atual ja esta limpa — so a revogacao no provedor corrige. Os outros 6 achados sao falso positivo e ficaram justificados na allowlist: o token de compartilhamento PUBLICO dos Dados Abertos CNPJ, e os marcadores \u003csenha> da documentacao, que o gitleaks contou como senha de 7, 17 e 19 caracteres. Sem a excecao, o hook falharia em todo commit e a equipe aprenderia a usar --no-verify — que e como um portao deixa de existir."},{"data":"2026-08-12","skill":"segredos","nivel":"ok","evento":"Portao de segredo instalado e testado; chaves do Supabase geradas","detalhe":"Hook em .githooks/ e nao em .git/hooks, porque .git nao e versionado: hook la protege so a maquina de quem o criou. Testado com uma chave falsa: bloqueou. ANON_KEY e SERVICE_ROLE_KEY sao JWT assinados com o JWT_SECRET novo e gravados fora do repositorio — os valores do compose oficial do Supabase sao publicos e varridos por scanner."}]}</script>
 </body>
 </html>

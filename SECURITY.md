@@ -31,6 +31,21 @@ Quem for avaliar precisa saber o que está em jogo:
   endereço e categoria tarifária. É dado do cliente, não nosso.
 - **Chaves de API** em `.env`, fora do git.
 
+## Registro de segredos expostos
+
+| Segredo | Exposto em | Desde | Situação |
+|---|---|---|---|
+| Chave do Google Maps Platform `AIzaSyA0BL…oSmY` | commit `1c7f081`, em `recover_pois.py` e `src/capture.ts` | 27/04/2026 | **aguardando revogação no console do Google** |
+
+A chave saiu do código, mas continua no histórico do git e em todo clone
+existente. Reescrever o histórico não corrige — quem clonou já tem. A única
+correção é revogar no provedor.
+
+Varredura completa em 12/08/2026 (gitleaks 8.30.1, 51 commits, 50,8 MB): 7
+achados brutos, **1 vazamento real**. Os demais são o token de compartilhamento
+público dos Dados Abertos CNPJ e marcadores `<senha>` na documentação, ambos
+justificados na allowlist do `.gitleaks.toml`.
+
 ## Estado conhecido
 
 Registrado por honestidade, não por conformidade:
@@ -40,5 +55,7 @@ Registrado por honestidade, não por conformidade:
   serve a base de um cliente para outro**.
 - **Não há isolamento por cliente.** Nenhuma tabela tem `tenant_id` e não há RLS.
   Ver [docs/CHECKLIST.md](docs/CHECKLIST.md), requisito 5.
-- **Uma chave do Google foi exposta no histórico** (commit `1c7f081`) e ainda não
-  foi rotacionada. Reescrever o histórico não corrige — só a rotação corrige.
+- **Uma chave do Google foi exposta no histórico** — ver o registro acima.
+- **O portão de segredo está ativo**: gitleaks no pre-commit (`.githooks/pre-commit`,
+  ligado por `git config core.hooksPath .githooks`) e no CI sobre o histórico
+  inteiro. O hook local pode ser pulado com `--no-verify`; o CI não pode.

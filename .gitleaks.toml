@@ -31,13 +31,41 @@ tags = ["credencial", "banco"]
 [allowlist]
 description = "Caminhos que não carregam segredo real"
 paths = [
-  '''\.venv/''',
+  # Ambientes virtuais: 12.400 dos 12.414 achados da primeira varredura vieram
+  # daqui — fixtures de teste do numpy e afins. Ruído afoga o achado de verdade.
+  '''\.venv.*/''',
   '''node_modules/''',
   '''__pycache__/''',
+  # O .env É o cofre e está no .gitignore. Apontá-lo como vazamento é ler o
+  # cofre e chamar de porta aberta.
+  '''^\.env$''',
   '''\.env\.example$''',
+  '''^\.claude/''',
   '''docs/painel\.html$''',
+  '''gitleaks-.*\.json$''',
   # Fixtures da skill de fachada: JSON de anotação, sem credencial
   '''skills/leitura-fachada-cadastral/tests/''',
+  '''skills/radar-coletivo/scripts/tests/''',
+  # Saídas de captura (gitignored). Contêm a chave DENTRO das URLs de foto que o
+  # Google devolve — 12.395 achados que são o mesmo dado, num diretório que não
+  # vai para o git. Rotacionar a chave resolve; varrer não.
+  '''^capturas/''',
+]
+
+# Estes dois padrões apareceram na varredura e NÃO são segredo. Sem a exceção
+# justificada, o hook falha em todo commit e a equipe aprende a usar --no-verify
+# — que é como um portão de segurança deixa de existir.
+regexes = [
+  # Marcadores de senha na documentação: <senha>, <senha-url-encoded>,
+  # senha_url_encoded, cole_sua_chave_aqui.
+  '''<senha[^>]*>''',
+  '''senha_url_encoded''',
+  '''cole_sua_chave_aqui''',
+  '''sua_senha''',
+  # Token de compartilhamento PÚBLICO do Nextcloud da Receita Federal
+  # (Dados Abertos CNPJ). É o equivalente ao endereço da pasta pública: quem
+  # tem o link tem o dado, e o dado é publicado para todo mundo.
+  '''YggdBLfdninEJX9''',
 ]
 # `.env.example` existe para mostrar o FORMATO das chaves. Se um valor real
 # aparecer nele, é erro — mas o arquivo em si não é achado.

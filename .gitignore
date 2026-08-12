@@ -4,7 +4,11 @@ __pycache__/
 *.pyc
 
 # Segredos — NUNCA commitar
+# O padrao cobre .env.local, .env.producao e afins: a variante e o que
+# costuma escapar, porque a regra so listava o nome exato.
 .env
+.env.*
+!.env.example
 
 # Cache de proxies (contém credenciais)
 .proxy_cache.json

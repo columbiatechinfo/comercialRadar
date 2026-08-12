@@ -4,15 +4,20 @@
   "perfil": "saas-multi-cliente",
   "versao": "0.1.0",
   "ambiente": "wsl-dev",
-  "atualizado_em": "2026-08-12T14:00:00-03:00",
-  "atualizado_por": "/projeto-novo",
-  "commit": "c93d538",
+  "atualizado_em": "2026-08-12T15:30:00-03:00",
+  "atualizado_por": "/segredos",
+  "commit": "7b771b0",
   "seguranca": {
     "nota": null,
     "corte": 70,
     "historico": [],
     "categorias": [],
-    "criticos": [],
+    "criticos": [
+      {
+        "item": "Chave do Google Maps exposta no commit 1c7f081 desde 27/04/2026",
+        "acao": "revogar no console do Google Cloud e gerar tres chaves novas com restricao (IP, referrer)"
+      }
+    ],
     "recomendados": []
   },
   "requisitos": [
@@ -50,7 +55,7 @@
       "id": "segredos",
       "nome": "Segredos",
       "status": "parcial",
-      "detalhe": ".env fora do git, .env.example e .gitleaks.toml prontos; falta pre-commit e ROTACIONAR a chave Google do commit 1c7f081"
+      "detalhe": "gitleaks 8.30.1 no pre-commit (core.hooksPath=.githooks, testado: bloqueia) e no CI sobre o historico; .env.example conferido contra o codigo; chaves do Supabase geradas fora do repo. FALTA: revogar a chave Google do commit 1c7f081 no console (unico item aberto)."
     },
     {
       "id": "modulos",
@@ -95,6 +100,12 @@
       "resultado": "ok",
       "data": "2026-08-12",
       "detalhe": "perfil saas-multi-cliente, PRD, UML, RBAC, modulos, checklist, 2 ADRs, CI e CODEOWNERS"
+    },
+    {
+      "nome": "segredos",
+      "resultado": "parcial",
+      "data": "2026-08-12",
+      "detalhe": "1 vazamento real em 7 achados; portao instalado; rotacao pendente com o usuario"
     }
   ],
   "operacional": {
@@ -164,6 +175,20 @@
       "nivel": "ok",
       "evento": "Documentacao de projeto criada e 61 alteracoes pendentes commitadas em 5 commits tematicos",
       "detalhe": "PRD, ARQUITETURA (mermaid), RBAC, MODULOS, CHECKLIST, ADR 0001 (perfil e caminho de dados) e ADR 0002 (Prisma e legado: cobre 6 de 38 tabelas, migration parada em 30/06/2026)."
+    },
+    {
+      "data": "2026-08-12",
+      "skill": "segredos",
+      "nivel": "aviso",
+      "evento": "Varredura do historico: 7 achados, 1 vazamento real",
+      "detalhe": "A chave do Google esta no historico desde 27/04/2026 e a arvore atual ja esta limpa — so a revogacao no provedor corrige. Os outros 6 achados sao falso positivo e ficaram justificados na allowlist: o token de compartilhamento PUBLICO dos Dados Abertos CNPJ, e os marcadores <senha> da documentacao, que o gitleaks contou como senha de 7, 17 e 19 caracteres. Sem a excecao, o hook falharia em todo commit e a equipe aprenderia a usar --no-verify — que e como um portao deixa de existir."
+    },
+    {
+      "data": "2026-08-12",
+      "skill": "segredos",
+      "nivel": "ok",
+      "evento": "Portao de segredo instalado e testado; chaves do Supabase geradas",
+      "detalhe": "Hook em .githooks/ e nao em .git/hooks, porque .git nao e versionado: hook la protege so a maquina de quem o criou. Testado com uma chave falsa: bloqueou. ANON_KEY e SERVICE_ROLE_KEY sao JWT assinados com o JWT_SECRET novo e gravados fora do repositorio — os valores do compose oficial do Supabase sao publicos e varridos por scanner."
     }
   ]
 }

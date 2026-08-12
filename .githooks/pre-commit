@@ -1,0 +1,50 @@
+#!/bin/sh
+# Portão de segredo. Documentar "não comite chave" não impede nada — o que
+# impede é algo bloqueando o commit.
+#
+# Instalação (uma vez por clone):
+#   git config core.hooksPath .githooks
+#
+# O hook mora no repositório, e não em .git/hooks, porque .git/ não é
+# versionado: um hook lá protege só a máquina de quem o criou.
+
+# O winget instala o gitleaks fora do PATH do Git Bash; procurar nos dois
+# lugares evita que o hook "passe" simplesmente por não achar o binário.
+GITLEAKS="$(command -v gitleaks 2>/dev/null)"
+if [ -z "$GITLEAKS" ]; then
+  for C in \
+    "$LOCALAPPDATA/Microsoft/WinGet/Packages/Gitleaks.Gitleaks_Microsoft.Winget.Source_8wekyb3d8bbwe/gitleaks.exe" \
+    "/c/Users/$USERNAME/AppData/Local/Microsoft/WinGet/Links/gitleaks.exe"; do
+    [ -x "$C" ] && GITLEAKS="$C" && break
+  done
+fi
+
+if [ -z "$GITLEAKS" ]; then
+  echo "⚠️  gitleaks não encontrado — o commit NÃO foi verificado."
+  echo "    winget install --id Gitleaks.Gitleaks -e"
+  echo "    Prosseguindo, mas o CI vai barrar se houver segredo."
+  exit 0        # não travar quem ainda não instalou; o CI é a rede de baixo
+fi
+
+"$GITLEAKS" protect --staged --redact --no-banner -c .gitleaks.toml
+CODIGO=$?
+
+if [ $CODIGO -ne 0 ]; then
+  cat <<'FIM'
+
+╭──────────────────────────────────────────────────────────────╮
+│  SEGREDO DETECTADO — commit bloqueado                        │
+╰──────────────────────────────────────────────────────────────╯
+
+  1. Tire o valor do arquivo e ponha o NOME em .env.example.
+  2. O valor vai para .env, que está no .gitignore.
+  3. Se a chave já circulou, ROTACIONE — reescrever histórico não
+     resolve, porque quem clonou já tem.
+
+  Falso positivo? Acrescente o padrão em .gitleaks.toml, com o
+  comentário dizendo POR QUE não é segredo.
+
+FIM
+  exit 1
+fi
+exit 0
