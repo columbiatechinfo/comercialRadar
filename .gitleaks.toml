@@ -30,6 +30,23 @@ tags = ["credencial", "banco"]
 
 [allowlist]
 description = "Caminhos que não carregam segredo real"
+
+# Commits com a chave do Google que ficou exposta de 27/04 a 12/08/2026 e foi
+# REVOGADA — conferido no endpoint: "The provided API key is expired".
+#
+# Estão aqui porque o histórico não muda. Reescrevê-lo quebraria todo clone e
+# todo PR aberto sem tirar a chave de quem já clonou; a revogação é que resolve,
+# e está feita. Sem esta exceção o CI reprovaria para sempre pelo mesmo achado
+# já tratado — e portão que sempre falha é portão que ninguém lê.
+#
+# Registro completo em SECURITY.md. NÃO acrescente commits aqui sem antes
+# revogar a credencial e registrar lá.
+commits = [
+  "1c7f081040636a0b2ae402217ce5c6c181f54b6a",  # versao inicial 1.0.0
+  "af4adb9f01a401d892edd99d1a5d554fd7a201f8",  # ComercialRadar v2.0
+  "92066cdb9a273311a99551db9b0a6388bb831c89",  # modulos de extracao de bases
+  "fd46ab0fa8feaa2ad097cc91a2d7edb1538373a1",  # captura+OCR como motor do painel
+]
 paths = [
   # Ambientes virtuais: 12.400 dos 12.414 achados da primeira varredura vieram
   # daqui — fixtures de teste do numpy e afins. Ruído afoga o achado de verdade.

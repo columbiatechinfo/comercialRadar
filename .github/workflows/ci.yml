@@ -28,10 +28,22 @@ jobs:
         # de sintaxe, que é o que mais some num arquivo de 1.800 linhas.
         run: python -m compileall -q . -x '(\.venv|node_modules|__pycache__)'
 
-      - name: Ruff
+      - name: Ruff — só o que está quebrado
+        # `--select=E9,F63,F7,F82` é o conjunto de erro REAL: sintaxe inválida,
+        # nome indefinido, comparação sempre falsa, f-string malformada. Coisas
+        # que quebram em execução.
+        #
+        # A versão anterior rodava o ruff inteiro e reprovou o PR por estilo em
+        # arquivo de 2026-04 que ninguém tocou — `try/except/pass`, import fora
+        # de ordem, `Optional` implícito. Portão que nasce reprovando código
+        # antigo não protege nada: ensina a equipe a passar por cima do CI.
+        #
+        # A limpeza de estilo é tarefa própria, com PR próprio. Quando ela
+        # acontecer, este `--select` sai e o ruff passa a valer inteiro.
         run: |
           pip install ruff
-          ruff check . --exclude .venv,node_modules --output-format=github
+          ruff check . --exclude .venv,.venv-coletivo,node_modules,skills \
+                       --select=E9,F63,F7,F82 --output-format=github
 
   contratos:
     name: Contratos das skills

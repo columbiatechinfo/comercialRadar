@@ -50,15 +50,24 @@ jobs:
           node-version: '20'
       - run: npm audit --audit-level=high || true
 
-  codeql:
-    name: CodeQL
-    runs-on: ubuntu-latest
-    permissions:
-      security-events: write
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-      - uses: github/codeql-action/init@v3
-        with:
-          languages: python, javascript
-      - uses: github/codeql-action/analyze@v3
+  # ── CodeQL: removido, e o motivo importa ──────────────────────────────────
+  # Ele analisou o código sem erro, mas falhou ao publicar o resultado:
+  # "Code scanning is not enabled for this repository". Em repositório PRIVADO,
+  # publicar exige GitHub Advanced Security, que é pago — e eu tinha posto o job
+  # sem verificar isso, então a esteira nascia vermelha.
+  #
+  # Para reativar: habilite o Advanced Security em Settings → Code security,
+  # e devolva o job abaixo.
+  #
+  #   codeql:
+  #     name: CodeQL
+  #     runs-on: ubuntu-latest
+  #     permissions: { security-events: write, contents: read }
+  #     steps:
+  #       - uses: actions/checkout@v4
+  #       - uses: github/codeql-action/init@v3
+  #         with: { languages: python, javascript-typescript }
+  #       - uses: github/codeql-action/analyze@v3
+  #
+  # Enquanto não houver, o `pip-audit`, o `npm audit` e o gitleaks acima seguem
+  # cobrindo dependência vulnerável e segredo, que é o que mais aparece aqui.
