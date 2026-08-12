@@ -492,7 +492,13 @@ def carregar_alvos(poligono, limit: int, refazer: bool, con) -> list:
 # motor Places, que é PAGO — defini-la para usar um endpoint grátis ligaria a
 # mineração paga de lado.
 def _chave_maps() -> str:
-    for nome in ("MAPS_JS_KEY", "GOOGLE_TILES_KEY", "MAPS_API_KEY"):
+    # `MAPS_SERVER_KEY` vem PRIMEIRO porque esta chamada sai do Python, não do
+    # navegador. Chave restrita por referrer HTTP — que é a restrição correta
+    # para `MAPS_JS_KEY` e `GOOGLE_TILES_KEY` — devolve REQUEST_DENIED aqui:
+    # requisição de servidor não manda referrer. Sem esta variável, restringir a
+    # chave do mapa (o certo a fazer) quebraria a data do panorama no meio do
+    # lote, com erro que parece de rede.
+    for nome in ("MAPS_SERVER_KEY", "MAPS_JS_KEY", "GOOGLE_TILES_KEY", "MAPS_API_KEY"):
         k = (os.environ.get(nome) or "").strip()
         if k:
             return k
