@@ -4,9 +4,9 @@
   "perfil": "saas-multi-cliente",
   "versao": "0.1.0",
   "ambiente": "wsl-dev",
-  "atualizado_em": "2026-08-12T19:00:00-03:00",
+  "atualizado_em": "2026-08-12T20:30:00-03:00",
   "atualizado_por": "/infra",
-  "commit": "116ffbb",
+  "commit": "779ee69",
   "seguranca": {
     "nota": null,
     "corte": 70,
@@ -21,10 +21,6 @@
       {
         "item": "Chaves de navegador tambem tem a Street View Static API liberada",
         "acao": "ela e cobrada; deixar so a Maps JavaScript API nas chaves de navegador reduz o estrago de um vazamento"
-      },
-      {
-        "item": "portproxy do i9 aponta para o IP da distro WSL, que muda ao reiniciar",
-        "acao": "networkingMode=mirrored no .wslconfig, em janela combinada (derruba Ollama/OSRM/Nominatim junto)"
       },
       {
         "item": "66 GB de dado real sem rotina de backup",
@@ -256,6 +252,13 @@
       "nivel": "aviso",
       "evento": "setup.sh imprimiu os segredos na saida; todos os sete foram regerados",
       "detalhe": "O script do proprio Supabase ecoa JWT_SECRET, SERVICE_ROLE_KEY, POSTGRES_PASSWORD e outros. Foram parar na transcricao da sessao. Como nenhum servico tinha nascido ainda, regerar custou zero — depois de a pilha subir, custaria recriar o volume."
+    },
+    {
+      "data": "2026-08-12",
+      "skill": "infra",
+      "nivel": "aviso",
+      "evento": "networkingMode=mirrored tentado e revertido; fragilidade do portproxy resolvida por tarefa agendada",
+      "detalhe": "A maquina atende os requisitos do modo espelhado (Windows 11 build 26200, WSL 2.2.4), mas em mirrored a entrada passa pelo firewall do Hyper-V, que e outra camada: das 10 portas testadas do notebook so Ollama e Nominatim responderam, e as outras 8 — que funcionavam — pararam. Revertido com o backup do .wslconfig e as regras reconstruidas com o IP corrente: voltou 11/11. No lugar, uma tarefa agendada na inicializacao reconstroi as 12 regras com o IP atual da distro, o que conserta tambem as regras antigas do i9. O sintoma que ela evita e cruel: servico sobe, log limpo, e nada responde de fora."
     }
   ]
 }
