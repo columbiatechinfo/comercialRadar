@@ -1,0 +1,120 @@
+{
+  "schema_versao": "1.4.0",
+  "imagem": {
+    "arquivo": "drone/1234567_obliqua.jpg",
+    "fonte": "drone",
+    "data_captura": "2026-06",
+    "idade_meses": 2,
+    "coordenada": null,
+    "azimute_visada_graus": null,
+    "enquadramento": "aereo_vertical",
+    "qualidade": {
+      "nitidez": "boa",
+      "iluminacao": "boa",
+      "obstrucao": [
+        "nenhuma"
+      ],
+      "resolucao_px": "3024x4032"
+    },
+    "apta_para_leitura": true,
+    "motivo_inaptidao": null,
+    "ano_captura": 2026,
+    "data_captura_origem": "api_fonte"
+  },
+  "vinculo": {
+    "matricula": "1234567",
+    "imovel_id": null,
+    "logradouro_base": "RUA GENERAL LIMA E SILVA",
+    "numero_base": "0125",
+    "municipio_ibge": "4314902"
+  },
+  "triagem": {
+    "conteudo_imagem": "fachada_imovel",
+    "e_imovel": true,
+    "apto_para_cadastro": true,
+    "uso_parcial_permitido": null,
+    "motivo_descarte": null,
+    "atividade_economica_aparente": "nenhuma_aparente",
+    "sinais_atividade_economica": "nenhum",
+    "atividade_no_alvo": null,
+    "natureza_atividade": null,
+    "formalidade_aparente": null,
+    "confianca_triagem": 0.35,
+    "evidencia_triagem": "testada sem letreiro, toldo, vitrine ou mercadoria exposta"
+  },
+  "varredura": [
+    {
+      "celula": "CC",
+      "itens": [
+        "telhado cerâmico principal",
+        "volume de fundos com laje",
+        "pátio impermeabilizado"
+      ]
+    }
+  ],
+  "atributos": {
+    "edificacao": {
+      "pavimentos_visiveis": {
+        "valor": 2,
+        "juizo": "observado",
+        "confianca": 0.7,
+        "evidencia": "volume dos fundos com segundo pavimento e laje, invisível da rua",
+        "regra": null,
+        "bbox": null,
+        "celula": "CC"
+      },
+      "cobertura": {
+        "valor": "telha_ceramica",
+        "juizo": "observado",
+        "confianca": 0.7,
+        "evidencia": "telhado cerâmico em duas águas sobre o corpo principal",
+        "regra": null,
+        "bbox": null,
+        "celula": "CC"
+      },
+      "area_permeavel": {
+        "valor": "pequena",
+        "juizo": "observado",
+        "confianca": 0.7,
+        "evidencia": "pátio de fundos majoritariamente impermeabilizado",
+        "regra": null,
+        "bbox": null,
+        "celula": "CC"
+      },
+      "piscina_visivel": {
+        "valor": false,
+        "juizo": "ausente_confirmado",
+        "confianca": 0.7,
+        "evidencia": "nenhum espelho d'água no lote",
+        "regra": null,
+        "bbox": null,
+        "celula": "CC"
+      }
+    }
+  },
+  "economias": {
+    "estimativa": null,
+    "faixa": null,
+    "metodo": "indeterminado",
+    "evidencias_contadas": {},
+    "confianca": 0.3,
+    "divergencia": false,
+    "justificativa": "Vertical não mostra portas, medidores nem numeração."
+  },
+  "alertas": [],
+  "oportunidades": [],
+  "lgpd": {
+    "pessoas_visiveis": false,
+    "placas_veiculo_visiveis": false,
+    "dado_pessoal_transcrito": false,
+    "acao": "nenhuma"
+  },
+  "auditoria": {
+    "passes_executados": 6,
+    "rodadas_verificacao": 1,
+    "confianca_media": 0.7,
+    "teto_fonte_aplicado": true,
+    "anotador": "leitura-fachada-cadastral/1.3.0",
+    "timestamp": "2026-08-09T10:00:00-03:00"
+  }
+}

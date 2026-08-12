@@ -1,0 +1,105 @@
+{
+  "schema_versao": "1.4.0",
+  "imagem": {
+    "arquivo": "fotos/1234567_tela.jpg",
+    "fonte": "campo",
+    "data_captura": "2026-07-22",
+    "idade_meses": 0,
+    "coordenada": {
+      "lat": -30.0331,
+      "lon": -51.23,
+      "srid": 4674,
+      "origem": "exif"
+    },
+    "azimute_visada_graus": 95,
+    "enquadramento": "muito_proximo",
+    "qualidade": {
+      "nitidez": "boa",
+      "iluminacao": "boa",
+      "obstrucao": [
+        "nenhuma"
+      ],
+      "resolucao_px": "1080x1920"
+    },
+    "apta_para_leitura": true,
+    "motivo_inaptidao": null,
+    "ano_captura": 2026,
+    "data_captura_origem": "informada_cliente"
+  },
+  "vinculo": {
+    "matricula": "1234567",
+    "imovel_id": null,
+    "logradouro_base": null,
+    "numero_base": null,
+    "municipio_ibge": "4314902"
+  },
+  "triagem": {
+    "conteudo_imagem": "documento_ou_tela",
+    "e_imovel": false,
+    "apto_para_cadastro": false,
+    "uso_parcial_permitido": "nenhum",
+    "motivo_descarte": "foto de tela de sistema anexada por engano no lugar da fachada",
+    "atividade_economica_aparente": "nenhuma_aparente",
+    "sinais_atividade_economica": "nenhum",
+    "atividade_no_alvo": null,
+    "natureza_atividade": null,
+    "formalidade_aparente": null,
+    "confianca_triagem": 0.78,
+    "evidencia_triagem": "captura de tela de sistema comercial, com campos de formulário e cursor; nenhuma cena física"
+  },
+  "varredura": [
+    {
+      "celula": "CC",
+      "itens": [
+        "captura de tela de sistema com formulário de matrícula"
+      ]
+    }
+  ],
+  "atributos": {
+    "entorno": {
+      "pavimentacao_via": {
+        "valor": null,
+        "juizo": "nao_observavel",
+        "confianca": 0.0,
+        "evidencia": "a imagem não retrata cena física",
+        "regra": null,
+        "bbox": null,
+        "celula": null
+      }
+    }
+  },
+  "economias": {
+    "estimativa": null,
+    "faixa": null,
+    "metodo": "indeterminado",
+    "evidencias_contadas": {},
+    "confianca": 0.0,
+    "divergencia": false,
+    "justificativa": "Imagem fora de escopo cadastral."
+  },
+  "alertas": [
+    {
+      "codigo": "IMAGEM_FORA_DE_ESCOPO",
+      "severidade": "atencao",
+      "descricao": "Imagem não retrata imóvel; recoleta necessária.",
+      "campo_relacionado": "triagem.conteudo_imagem"
+    }
+  ],
+  "oportunidades": [],
+  "lgpd": {
+    "pessoas_visiveis": false,
+    "placas_veiculo_visiveis": false,
+    "dado_pessoal_transcrito": false,
+    "acao": "nenhuma"
+  },
+  "auditoria": {
+    "passes_executados": 1,
+    "rodadas_verificacao": 0,
+    "campos_preenchidos": null,
+    "campos_nao_observaveis": null,
+    "confianca_media": 0.0,
+    "teto_fonte_aplicado": true,
+    "anotador": "leitura-fachada-cadastral/1.1.0",
+    "timestamp": "2026-07-23T09:12:00-03:00"
+  }
+}

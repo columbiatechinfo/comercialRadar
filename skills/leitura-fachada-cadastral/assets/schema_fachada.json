@@ -1,0 +1,2100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://a2l.local/schema/leitura-fachada-cadastral/1.2.0",
+  "title": "Leitura de Fachada Cadastral A2L v1.2.0",
+  "type": "object",
+  "required": [
+    "schema_versao",
+    "imagem",
+    "atributos",
+    "economias",
+    "oportunidades",
+    "auditoria"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "juizo": {
+      "type": "string",
+      "enum": [
+        "observado",
+        "inferido",
+        "ausente_confirmado",
+        "nao_observavel"
+      ],
+      "description": "observado = o pixel mostra; inferido = derivado de evidência indireta; ausente_confirmado = olhei e não há; nao_observavel = a fonte/enquadramento não permite ver"
+    },
+    "campo_texto": {
+      "type": "object",
+      "required": [
+        "valor",
+        "juizo",
+        "confianca"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "valor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "juizo": {
+          "$ref": "#/$defs/juizo"
+        },
+        "confianca": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "evidencia": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Evidência verificável na imagem; obrigatória quando juizo != nao_observavel."
+        },
+        "regra": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Identificador da regra de derivação quando juizo=inferido."
+        },
+        "bbox": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "minItems": 4,
+          "maxItems": 4,
+          "description": "[x,y,w,h] normalizado 0-1."
+        },
+        "celula": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "SE",
+            "SC",
+            "SD",
+            "CE",
+            "CC",
+            "CD",
+            "IE",
+            "IC",
+            "ID",
+            null
+          ]
+        }
+      }
+    },
+    "campo_inteiro": {
+      "type": "object",
+      "required": [
+        "valor",
+        "juizo",
+        "confianca"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "valor": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "juizo": {
+          "$ref": "#/$defs/juizo"
+        },
+        "confianca": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "evidencia": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Evidência verificável na imagem; obrigatória quando juizo != nao_observavel."
+        },
+        "regra": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Identificador da regra de derivação quando juizo=inferido."
+        },
+        "bbox": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "minItems": 4,
+          "maxItems": 4,
+          "description": "[x,y,w,h] normalizado 0-1."
+        },
+        "celula": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "SE",
+            "SC",
+            "SD",
+            "CE",
+            "CC",
+            "CD",
+            "IE",
+            "IC",
+            "ID",
+            null
+          ]
+        }
+      }
+    },
+    "campo_numero": {
+      "type": "object",
+      "required": [
+        "valor",
+        "juizo",
+        "confianca"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "valor": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "juizo": {
+          "$ref": "#/$defs/juizo"
+        },
+        "confianca": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "evidencia": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Evidência verificável na imagem; obrigatória quando juizo != nao_observavel."
+        },
+        "regra": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Identificador da regra de derivação quando juizo=inferido."
+        },
+        "bbox": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "minItems": 4,
+          "maxItems": 4,
+          "description": "[x,y,w,h] normalizado 0-1."
+        },
+        "celula": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "SE",
+            "SC",
+            "SD",
+            "CE",
+            "CC",
+            "CD",
+            "IE",
+            "IC",
+            "ID",
+            null
+          ]
+        }
+      }
+    },
+    "campo_booleano": {
+      "type": "object",
+      "required": [
+        "valor",
+        "juizo",
+        "confianca"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "valor": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "juizo": {
+          "$ref": "#/$defs/juizo"
+        },
+        "confianca": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "evidencia": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Evidência verificável na imagem; obrigatória quando juizo != nao_observavel."
+        },
+        "regra": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Identificador da regra de derivação quando juizo=inferido."
+        },
+        "bbox": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "minItems": 4,
+          "maxItems": 4,
+          "description": "[x,y,w,h] normalizado 0-1."
+        },
+        "celula": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "SE",
+            "SC",
+            "SD",
+            "CE",
+            "CC",
+            "CD",
+            "IE",
+            "IC",
+            "ID",
+            null
+          ]
+        }
+      }
+    }
+  },
+  "properties": {
+    "schema_versao": {
+      "type": "string",
+      "enum": [
+        "1.2.0",
+        "1.4.0",
+        "1.5.0"
+      ],
+      "description": "1.2.0 legado; 1.4.0 exige triagem; 1.5.0 exige triagem e estrutura_imovel"
+    },
+    "imagem": {
+      "type": "object",
+      "required": [
+        "arquivo",
+        "fonte",
+        "enquadramento",
+        "apta_para_leitura"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "arquivo": {
+          "type": "string"
+        },
+        "fonte": {
+          "type": "string",
+          "enum": [
+            "campo",
+            "streetview",
+            "mapillary",
+            "drone",
+            "desconhecida"
+          ]
+        },
+        "data_captura": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^\\d{4}-\\d{2}(-\\d{2})?$"
+        },
+        "idade_meses": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Idade da imagem na data do processamento. Campos voláteis descrevem a realidade na data da imagem, não o presente."
+        },
+        "coordenada": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "lat": {
+              "type": "number",
+              "minimum": -90,
+              "maximum": 90
+            },
+            "lon": {
+              "type": "number",
+              "minimum": -180,
+              "maximum": 180
+            },
+            "srid": {
+              "type": "integer",
+              "default": 4674
+            },
+            "origem": {
+              "type": "string",
+              "enum": [
+                "exif",
+                "api",
+                "manual",
+                "cadastro"
+              ]
+            }
+          },
+          "required": [
+            "lat",
+            "lon",
+            "srid",
+            "origem"
+          ]
+        },
+        "azimute_visada_graus": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 360
+        },
+        "enquadramento": {
+          "type": "string",
+          "enum": [
+            "fachada_completa",
+            "parcial_lateral",
+            "parcial_superior",
+            "parcial_inferior",
+            "muito_proximo",
+            "muito_distante",
+            "obliquo_severo",
+            "aereo_vertical"
+          ]
+        },
+        "qualidade": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "nitidez": {
+              "type": "string",
+              "enum": [
+                "boa",
+                "regular",
+                "ruim"
+              ]
+            },
+            "iluminacao": {
+              "type": "string",
+              "enum": [
+                "boa",
+                "contraluz",
+                "sombra_profunda",
+                "noturna",
+                "estourada"
+              ]
+            },
+            "obstrucao": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "nenhuma",
+                  "veiculo",
+                  "vegetacao",
+                  "poste",
+                  "muro_alto",
+                  "pedestre",
+                  "tapume",
+                  "reflexo",
+                  "outro"
+                ]
+              }
+            },
+            "resolucao_px": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "apta_para_leitura": {
+          "type": "boolean"
+        },
+        "motivo_inaptidao": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ano_captura": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1900,
+          "maximum": 2100,
+          "description": "Ano explícito da imagem. Deve ser consistente com data_captura."
+        },
+        "data_captura_origem": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "exif",
+            "api_fonte",
+            "metadado_arquivo",
+            "informada_cliente",
+            "estimada",
+            null
+          ]
+        }
+      }
+    },
+    "vinculo": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "matricula": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "imovel_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "logradouro_base": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "numero_base": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "municipio_ibge": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "uso_base": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "categoria_tarifaria_base": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "economias_agua_base": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "ucs_energia_base": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "metodo_vinculo": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "id_direto",
+            "gps_numero",
+            "gps_heading_testada",
+            "endereco_textual",
+            "manual",
+            "indeterminado",
+            null
+          ]
+        },
+        "confianca_vinculo": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "distancia_imovel_m": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "numero_confere": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "logradouro_confere": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "ambiguidade": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "esgoto_cobrado_base": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "area_construida_base_m2": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        }
+      }
+    },
+    "varredura": {
+      "type": "array",
+      "description": "Passe 1: inventário bruto por célula da grade 3x3. Serve de âncora antifalha — o que não aparece aqui não deve aparecer em atributos.",
+      "items": {
+        "type": "object",
+        "required": [
+          "celula",
+          "itens"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "celula": {
+            "type": "string",
+            "enum": [
+              "SE",
+              "SC",
+              "SD",
+              "CE",
+              "CC",
+              "CD",
+              "IE",
+              "IC",
+              "ID"
+            ]
+          },
+          "itens": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "atributos": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enderecamento": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "numero_fachada": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "numero_porta": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "numero_portao": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "numero_caixa_correio": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "numero_placa_comercial": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "numero_endereco_consolidado": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "origem_numero_consolidado": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "complementos_unidades_visiveis": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "divergencia_numero_base": {
+              "$ref": "#/$defs/campo_booleano"
+            },
+            "numeros_adicionais": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "complemento_visivel": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "placa_logradouro": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "cep_visivel": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "paridade": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "lado_via": {
+              "$ref": "#/$defs/campo_texto"
+            }
+          }
+        },
+        "edificacao": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "tipo_edificacao": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "pavimentos_visiveis": {
+              "$ref": "#/$defs/campo_inteiro"
+            },
+            "area_footprint_estimada_m2": {
+              "$ref": "#/$defs/campo_numero"
+            },
+            "area_construida_estimativa_m2": {
+              "$ref": "#/$defs/campo_numero"
+            },
+            "alinhamento_testada": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "testada_estimada_m": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "recuo_frontal": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "padrao_construtivo": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "estrutura_vedacao": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "acabamento_fachada": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "cobertura": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "esquadrias": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "estado_conservacao": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "fechamento_frontal": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "altura_muro_m": {
+              "$ref": "#/$defs/campo_numero"
+            },
+            "portao_veicular": {
+              "$ref": "#/$defs/campo_booleano"
+            },
+            "vagas_garagem_visiveis": {
+              "$ref": "#/$defs/campo_inteiro"
+            },
+            "area_permeavel": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "piscina_visivel": {
+              "$ref": "#/$defs/campo_booleano"
+            },
+            "obra_em_andamento": {
+              "$ref": "#/$defs/campo_booleano"
+            }
+          }
+        },
+        "uso": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "uso_predominante": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "usos_secundarios": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "atividade_letreiro": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "segmento_inferido": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "cnae_sugerido": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "porte_aparente": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "nome_estabelecimento_visivel": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "descricao_atividade_funcional": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "situacao_estabelecimento_na_data_imagem": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "sinais_atividade_comercial": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "validade_temporal_uso": {
+              "$ref": "#/$defs/campo_texto"
+            }
+          }
+        },
+        "ocupacao": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "situacao_ocupacao": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "indicios_ocupacao": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "indicios_vacancia": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "placa_venda_aluguel": {
+              "$ref": "#/$defs/campo_booleano"
+            },
+            "acesso_bloqueado": {
+              "$ref": "#/$defs/campo_booleano"
+            },
+            "risco_impedimento_leitura": {
+              "$ref": "#/$defs/campo_texto"
+            }
+          }
+        },
+        "agua": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "hidrometro_presente": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "hidrometros_visiveis_qtd": {
+              "$ref": "#/$defs/campo_inteiro"
+            },
+            "posicao_medicao": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "tipo_abrigo": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "estado_abrigo": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "acessibilidade_medicao": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "cavalete_material": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "leitura_remota_aparente": {
+              "$ref": "#/$defs/campo_booleano"
+            },
+            "suspeita_irregularidade_agua": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "leitura_mostrador": {
+              "$ref": "#/$defs/campo_texto"
+            }
+          }
+        },
+        "energia": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "medidores_energia_qtd": {
+              "$ref": "#/$defs/campo_inteiro"
+            },
+            "tipo_padrao_entrada": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "ramal_entrada": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "caixa_medicao_coletiva": {
+              "$ref": "#/$defs/campo_booleano"
+            },
+            "medidor_removido": {
+              "$ref": "#/$defs/campo_booleano"
+            },
+            "suspeita_irregularidade_energia": {
+              "$ref": "#/$defs/campo_texto"
+            }
+          }
+        },
+        "esgoto": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "caixa_inspecao_aparente": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "caixa_gordura_aparente": {
+              "$ref": "#/$defs/campo_booleano"
+            },
+            "pv_rede_em_frente": {
+              "$ref": "#/$defs/campo_booleano"
+            },
+            "indicio_fossa": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "lancamento_sarjeta_aparente": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "conectividade_esgoto_inferida": {
+              "$ref": "#/$defs/campo_texto"
+            }
+          }
+        },
+        "acessos": {
+          "type": "object",
+          "description": "Contagens que sustentam a derivação de economias. Contar apenas o que está na testada enquadrada.",
+          "additionalProperties": false,
+          "properties": {
+            "portas_acesso_independentes": {
+              "$ref": "#/$defs/campo_inteiro"
+            },
+            "campainhas_interfones": {
+              "$ref": "#/$defs/campo_inteiro"
+            },
+            "caixas_correio": {
+              "$ref": "#/$defs/campo_inteiro"
+            },
+            "numeracoes_distintas": {
+              "$ref": "#/$defs/campo_inteiro"
+            },
+            "letreiros_comerciais": {
+              "$ref": "#/$defs/campo_inteiro"
+            },
+            "unidades_por_pavimento_estimada": {
+              "$ref": "#/$defs/campo_inteiro"
+            },
+            "portaria_condominio": {
+              "$ref": "#/$defs/campo_booleano"
+            }
+          }
+        },
+        "entorno": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "pavimentacao_via": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "calcada": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "meio_fio": {
+              "$ref": "#/$defs/campo_booleano"
+            },
+            "rede_agua_aparente": {
+              "$ref": "#/$defs/campo_booleano"
+            },
+            "iluminacao_publica": {
+              "$ref": "#/$defs/campo_booleano"
+            },
+            "classe_urbana_aparente": {
+              "$ref": "#/$defs/campo_texto"
+            },
+            "declividade_terreno": {
+              "$ref": "#/$defs/campo_texto"
+            }
+          }
+        }
+      },
+      "minProperties": 1
+    },
+    "economias": {
+      "type": "object",
+      "required": [
+        "estimativa",
+        "metodo",
+        "confianca",
+        "divergencia"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "estimativa": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "faixa": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "metodo": {
+          "type": "string",
+          "enum": [
+            "medidor_energia",
+            "hidrometro_bateria",
+            "portas_independentes",
+            "campainhas",
+            "caixas_correio",
+            "numeracoes",
+            "pavimentos_x_unidades",
+            "unitario_default",
+            "indeterminado"
+          ]
+        },
+        "evidencias_contadas": {
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "confianca": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "divergencia": {
+          "type": "boolean",
+          "description": "true quando duas evidências de força >= media discordam; obriga rebaixar confianca e sinalizar revisão"
+        },
+        "justificativa": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "alertas": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "codigo",
+          "severidade",
+          "descricao"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "codigo": {
+            "type": "string",
+            "enum": [
+              "IMAGEM_INAPTA",
+              "ENQUADRAMENTO_PARCIAL",
+              "DIVERGENCIA_ECONOMIAS",
+              "NUMERO_DIVERGE_CADASTRO",
+              "SUSPEITA_IMOVEL_INEXISTENTE",
+              "SUSPEITA_VACANCIA",
+              "IMPEDIMENTO_LEITURA",
+              "MEDICAO_NAO_LOCALIZADA",
+              "USO_DIVERGE_CADASTRO",
+              "SUSPEITA_IRREGULARIDADE",
+              "IMAGEM_DEFASADA",
+              "DADO_PESSOAL_PRESENTE",
+              "COLETIVA_DETECTADA",
+              "REVISAO_HUMANA",
+              "MULTIPLAS_UCS_MESMO_ENDERECO",
+              "DIVERGENCIA_UC_ECONOMIAS",
+              "COMERCIO_TEMPORALMENTE_DEFASADO",
+              "VINCULO_IMOVEL_AMBIGUO",
+              "DIVERGENCIA_NUMERO_ENDERECO",
+              "IMAGEM_FORA_DE_ESCOPO",
+              "ATIVIDADE_ECONOMICA_APARENTE",
+              "ATIVIDADE_DOMICILIAR_APARENTE",
+              "ATIVIDADE_DE_VIZINHO",
+              "ESTRUTURA_VERTICAL_DETECTADA",
+              "DIVERGENCIA_UNIDADES_ECONOMIAS",
+              "MUDANCA_ESTRUTURAL_FORTE",
+              "MULTIPLAS_EDIFICACOES_NO_LOTE"
+            ]
+          },
+          "severidade": {
+            "type": "string",
+            "enum": [
+              "info",
+              "atencao",
+              "critico"
+            ]
+          },
+          "descricao": {
+            "type": "string"
+          },
+          "campo_relacionado": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "lgpd": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pessoas_visiveis": {
+          "type": "boolean"
+        },
+        "placas_veiculo_visiveis": {
+          "type": "boolean"
+        },
+        "dado_pessoal_transcrito": {
+          "type": "boolean",
+          "description": "deve ser sempre false — nome de pessoa física, telefone particular e placa não são transcritos"
+        },
+        "acao": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "nenhuma",
+            "blur_recomendado",
+            "descarte_recomendado",
+            null
+          ]
+        }
+      }
+    },
+    "auditoria": {
+      "type": "object",
+      "required": [
+        "passes_executados",
+        "rodadas_verificacao",
+        "confianca_media"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "passes_executados": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 6
+        },
+        "rodadas_verificacao": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2
+        },
+        "campos_preenchidos": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "campos_nao_observaveis": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "confianca_media": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Métrica recalculável pelo pipeline; não deve ser aceita como prova isolada do próprio modelo."
+        },
+        "teto_fonte_aplicado": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "anotador": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "timestamp": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "alvo_fachada": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "bbox_imovel_alvo": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "minItems": 4,
+          "maxItems": 4
+        },
+        "multiplos_imoveis_na_imagem": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "contaminacao_vizinhos": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "nenhuma",
+            "baixa",
+            "media",
+            "alta",
+            "indeterminada",
+            null
+          ]
+        },
+        "confianca_segmentacao": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "oportunidades": {
+      "type": "array",
+      "description": "Achados que merecem cruzamento, vistoria ou recadastramento. Oportunidade não é alteração automática.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "codigo",
+          "classe",
+          "prioridade",
+          "confianca",
+          "evidencia",
+          "acao_sugerida",
+          "data_referencia",
+          "automatizavel",
+          "nivel_evidencia",
+          "fontes_independentes"
+        ],
+        "properties": {
+          "codigo": {
+            "type": "string",
+            "enum": [
+              "MULTIPLAS_UCS_MESMO_ENDERECO",
+              "DIVERGENCIA_UC_ECONOMIAS",
+              "MULTIPLAS_UNIDADES_FISICAS",
+              "USO_COMERCIAL_NAO_CADASTRADO",
+              "USO_MISTO_POTENCIAL",
+              "ATIVIDADE_COMERCIAL_MUDOU",
+              "COMERCIO_APARENTA_DESATIVADO",
+              "RECADASTRAMENTO_NUMERACAO",
+              "DIVERGENCIA_NUMERO_ENDERECO",
+              "ECONOMIAS_OCULTAS_POTENCIAL",
+              "ESGOTO_SEM_COBRANCA_POTENCIAL",
+              "AREA_DIVERGENTE_POTENCIAL",
+              "ATIVIDADE_DOMICILIAR_POTENCIAL",
+              "PREDIO_MULTIPLAS_UNIDADES_CADASTRO_UNITARIO",
+              "VERTICALIZACAO_NAO_CADASTRADA",
+              "CONDOMINIO_HORIZONTAL_CADASTRO_UNITARIO",
+              "GALERIA_COMERCIAL_SUBDIVIDIDA"
+            ]
+          },
+          "classe": {
+            "type": "string",
+            "enum": [
+              "receita",
+              "cadastro",
+              "operacao",
+              "qualidade_dado"
+            ]
+          },
+          "prioridade": {
+            "type": "string",
+            "enum": [
+              "baixa",
+              "media",
+              "alta",
+              "critica"
+            ]
+          },
+          "confianca": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "evidencia": {
+            "type": "string",
+            "minLength": 1
+          },
+          "acao_sugerida": {
+            "type": "string",
+            "minLength": 1
+          },
+          "data_referencia": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^\\d{4}(-\\d{2})?(-\\d{2})?$"
+          },
+          "impacto_estimado": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "automatizavel": {
+            "type": "boolean",
+            "const": false
+          },
+          "nivel_evidencia": {
+            "type": "string",
+            "enum": [
+              "sinal_imagem",
+              "achado_convergente",
+              "contradicao"
+            ],
+            "description": "sinal_imagem = uma fonte; achado_convergente = pelo menos duas fontes independentes apontam o mesmo fato; contradicao = fontes discordam e o caso deve ser bloqueado/revisado."
+          },
+          "fontes_independentes": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "imagem_fachada",
+                "imagem_aerea",
+                "cadastro_companhia",
+                "bdgd_energia",
+                "cnpj_estado",
+                "cnefe",
+                "internet_poi",
+                "rede_social",
+                "rede_esgoto",
+                "historico_operacao",
+                "campo_vistoria",
+                "outro"
+              ]
+            },
+            "description": "Duas pistas na mesma foto continuam sendo uma única fonte independente."
+          }
+        }
+      }
+    },
+    "proveniencia": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "imagem_sha256": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "modelo": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "modelo_versao": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "skill_versao": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "run_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lote_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "convergencia": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "somente_sinais",
+            "ha_achados_convergentes",
+            "ha_contradicoes",
+            "indeterminado",
+            null
+          ]
+        },
+        "fontes_independentes_usadas": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string"
+          }
+        },
+        "observacao": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "triagem": {
+      "type": "object",
+      "description": "Passe de triagem: o que a imagem retrata e se há sinal de atividade econômica. Obrigatório a partir de schema_versao 1.4.0 — é o primeiro filtro de custo da campanha e o gate anti-contaminação por vizinho.",
+      "required": [
+        "conteudo_imagem",
+        "e_imovel",
+        "apto_para_cadastro",
+        "atividade_economica_aparente",
+        "confianca_triagem"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "conteudo_imagem": {
+          "type": "string",
+          "enum": [
+            "fachada_imovel",
+            "imovel_parcial",
+            "terreno_sem_edificacao",
+            "edificacao_em_obra",
+            "interior_imovel",
+            "detalhe_medicao",
+            "logradouro_sem_imovel",
+            "rede_infraestrutura",
+            "documento_ou_tela",
+            "mapa_ou_croqui",
+            "veiculo_ou_pessoa",
+            "area_rural_vegetacao",
+            "ininteligivel",
+            "outro"
+          ]
+        },
+        "e_imovel": {
+          "type": "boolean",
+          "description": "a imagem retrata um imóvel identificável (edificado ou lote), e não um objeto, documento, tela ou cena sem imóvel"
+        },
+        "apto_para_cadastro": {
+          "type": "boolean",
+          "description": "a imagem sustenta anotação cadastral de fachada; detalhe de medição e interior podem ser úteis sem serem aptos"
+        },
+        "uso_parcial_permitido": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "medicao",
+            "interior",
+            "entorno",
+            "nenhum",
+            null
+          ],
+          "description": "quando apto_para_cadastro=false, para que a imagem ainda serve"
+        },
+        "motivo_descarte": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "atividade_economica_aparente": {
+          "type": "string",
+          "enum": [
+            "nenhuma_aparente",
+            "sinal_fraco",
+            "sinal_forte",
+            "indeterminado"
+          ]
+        },
+        "sinais_atividade_economica": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "lista separada por ; do vocabulário fechado"
+        },
+        "atividade_no_alvo": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "no_imovel_alvo",
+            "em_vizinho",
+            "ambulante_via_publica",
+            "indeterminado",
+            null
+          ]
+        },
+        "natureza_atividade": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "comercio",
+            "servico",
+            "industria",
+            "agropecuaria",
+            "institucional",
+            "religiosa",
+            "educacional",
+            "saude",
+            "hospedagem",
+            "logistica_deposito",
+            "misto",
+            "indeterminada",
+            null
+          ]
+        },
+        "formalidade_aparente": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "estabelecimento_formal_aparente",
+            "atividade_domiciliar",
+            "ambulante_informal",
+            "indeterminada",
+            null
+          ]
+        },
+        "confianca_triagem": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "evidencia_triagem": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "estrutura_imovel": {
+      "type": "object",
+      "description": "Estrutura física provável do imóvel. Para casa, a fachada basta; para prédio, vila e condomínio é preciso RECONSTRUIR a estrutura de unidades. Quatro medidas permanecem separadas por princípio: unidades físicas != UCs elétricas != economias de água != hidrômetros. O achado nasce da divergência entre elas, não da fusão.",
+      "required": [
+        "tipologia",
+        "unidades_fisicas_estimadas",
+        "metodo_estimativa",
+        "confianca_estrutural"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "tipologia": {
+          "type": "string",
+          "enum": [
+            "casa_isolada",
+            "casas_geminadas",
+            "sobrado_subdividido",
+            "vila_corredor",
+            "condominio_horizontal",
+            "edificio_vertical",
+            "condominio_vertical_multitorre",
+            "predio_misto",
+            "galeria_comercial",
+            "centro_comercial",
+            "complexo_industrial",
+            "lote_multiplas_edificacoes",
+            "terreno",
+            "indeterminada"
+          ]
+        },
+        "torres_qtd": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "pavimentos_qtd": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "pavimentos_residenciais": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "pavimentos_comerciais": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "prumadas_aparentes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "repetições verticais de janela/sacada/shaft na fachada — base da contagem no prumo"
+        },
+        "unidades_por_pavimento_estimadas": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "unidades_residenciais_estimadas": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "unidades_comerciais_estimadas": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "unidades_fisicas_estimadas": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "faixa_unidades_fisicas": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "metodo_estimativa": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "contagem_prumo",
+              "interfone",
+              "caixas_correio",
+              "medidores_energia",
+              "hidrometros_bateria",
+              "portas_terreo",
+              "placa_edificio",
+              "acessos_independentes",
+              "pavimentos_x_unidades",
+              "cnefe",
+              "indeterminado"
+            ]
+          }
+        },
+        "identificadores_unidades": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "lista ; de identificadores lidos em interfone/caixa de correio/placa (101;102;201) — NUNCA nomes de moradores"
+        },
+        "nome_edificio": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "blocos_identificados": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "lista ; de blocos/torres identificados (A;B;C)"
+        },
+        "ucs_energia_visiveis": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "hidrometros_visiveis": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "composicao_uso_terreo": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "residencial",
+            "comercial",
+            "servicos",
+            "garagem",
+            "misto",
+            "vazio",
+            "indeterminado",
+            null
+          ]
+        },
+        "composicao_uso_superiores": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "residencial",
+            "comercial",
+            "servicos",
+            "misto",
+            "vazio",
+            "indeterminado",
+            "nao_aplicavel",
+            null
+          ]
+        },
+        "acessos_residenciais": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "acessos_comerciais": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "entradas_garagem": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "score_multiplas_unidades": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "score_divergencia_cadastral": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "score_verticalizacao": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "mudanca_estrutural": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "nenhuma_aparente",
+            "casa_para_edificio",
+            "lote_para_edificacao",
+            "edificacao_para_terreno",
+            "unidade_para_multiplas",
+            "indeterminada",
+            null
+          ]
+        },
+        "confianca_estrutural": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "evidencia_estrutura": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "mapeamento": {
+      "type": "object",
+      "description": "Atributos CARTOGRAFAVEIS. A skill de fachada preenche o que a imagem sustenta (origem-imagem) e deixa nulos os campos de origem-territorial, que sao preenchidos pelo modulo pgv-mapeamento-cadastral ao agregar milhares de imoveis. Esta skill NAO desenha mapa; ela produz o insumo do mapa.",
+      "additionalProperties": false,
+      "properties": {
+        "geom_imovel_wkt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "srid": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "default": 4674
+        },
+        "face_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "origem territorial — preenchido pelo modulo"
+        },
+        "quadra_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "origem territorial"
+        },
+        "logradouro_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "origem territorial"
+        },
+        "bairro": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "numero_observado": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "numero_base": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status_endereco": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "confere",
+            "diverge",
+            "sem_numero",
+            "multiplos_numeros",
+            "complemento_encontrado",
+            "ambiguo",
+            "hipotese_sequencia",
+            "sem_cadastro",
+            null
+          ]
+        },
+        "numero_estimado_contextual": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fonte_numero_estimado": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "sequencia_face",
+            "caixa_correio",
+            "cnefe",
+            "interfone",
+            "convergencia_multifonte",
+            null
+          ]
+        },
+        "confianca_numero_estimado": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "uso_base": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "uso_observado": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "mudanca_uso": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "transicao_uso": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "RES_PARA_COM",
+            "RES_PARA_MISTO",
+            "COM_PARA_RES",
+            "TERRENO_PARA_EDIFICACAO",
+            "EDIFICACAO_PARA_TERRENO",
+            "CASA_PARA_PREDIO",
+            "UNIDADE_PARA_MULTIPLAS",
+            "SEM_MUDANCA",
+            "INDETERMINADA",
+            null
+          ]
+        },
+        "economias_base": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "economias_estimadas": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "ucs_energia": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "gap_uc_economias": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "score_subdivisao": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "score_oportunidade": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "score_convergencia": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "probabilidade_confirmacao": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "impacto_anual_estimado": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "valor_esperado_anual": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "idade_evidencia_meses": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "vigencia_evidencia": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "0_12m",
+            "13_24m",
+            "25_36m",
+            "37_60m",
+            "acima_60m",
+            "desconhecida",
+            null
+          ]
+        },
+        "cluster_oportunidade": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "origem territorial"
+        }
+      }
+    }
+  }
+}

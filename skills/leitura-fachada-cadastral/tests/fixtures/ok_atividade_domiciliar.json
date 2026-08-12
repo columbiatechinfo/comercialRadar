@@ -1,0 +1,551 @@
+{
+  "schema_versao": "1.4.0",
+  "imagem": {
+    "arquivo": "fotos/2233445_frente.jpg",
+    "fonte": "campo",
+    "data_captura": "2026-07-22",
+    "idade_meses": 0,
+    "coordenada": {
+      "lat": -30.0331,
+      "lon": -51.23,
+      "srid": 4674,
+      "origem": "exif"
+    },
+    "azimute_visada_graus": 95,
+    "enquadramento": "fachada_completa",
+    "qualidade": {
+      "nitidez": "boa",
+      "iluminacao": "boa",
+      "obstrucao": [
+        "nenhuma"
+      ],
+      "resolucao_px": "3024x4032"
+    },
+    "apta_para_leitura": true,
+    "motivo_inaptidao": null,
+    "ano_captura": 2026,
+    "data_captura_origem": "informada_cliente"
+  },
+  "vinculo": {
+    "matricula": "2233445",
+    "imovel_id": null,
+    "logradouro_base": "RUA GENERAL LIMA E SILVA",
+    "numero_base": "0087",
+    "municipio_ibge": "4314902"
+  },
+  "triagem": {
+    "conteudo_imagem": "fachada_imovel",
+    "e_imovel": true,
+    "apto_para_cadastro": true,
+    "uso_parcial_permitido": null,
+    "motivo_descarte": null,
+    "atividade_economica_aparente": "sinal_forte",
+    "sinais_atividade_economica": "placa_profissional_liberal;horario_funcionamento",
+    "atividade_no_alvo": "no_imovel_alvo",
+    "natureza_atividade": "servico",
+    "formalidade_aparente": "atividade_domiciliar",
+    "confianca_triagem": 0.85,
+    "evidencia_triagem": "placa de acrílico de salão de beleza fixada no muro da residência, com horário de atendimento; edificação e acesso permanecem residenciais"
+  },
+  "varredura": [
+    {
+      "celula": "SC",
+      "itens": [
+        "telhado de telha cerâmica com beiral",
+        "caixa d'água de polietileno azul"
+      ]
+    },
+    {
+      "celula": "CC",
+      "itens": [
+        "fachada em alvenaria rebocada e pintada em bege",
+        "duas janelas de alumínio"
+      ]
+    },
+    {
+      "celula": "CE",
+      "itens": [
+        "muro baixo com gradil metálico",
+        "portão pedestre 0,80 m"
+      ]
+    },
+    {
+      "celula": "CD",
+      "itens": [
+        "portão de garagem basculante"
+      ]
+    },
+    {
+      "celula": "IE",
+      "itens": [
+        "caixa de polímero embutida no muro, tampa cinza fechada, logo da companhia"
+      ]
+    },
+    {
+      "celula": "IC",
+      "itens": [
+        "calçada em concreto",
+        "tampa circular de concreto rente ao piso, Ø ~40 cm"
+      ]
+    },
+    {
+      "celula": "ID",
+      "itens": [
+        "meio-fio pintado",
+        "asfalto"
+      ]
+    },
+    {
+      "celula": "SD",
+      "itens": [
+        "caixa de medição de energia no muro, um medidor com mostrador"
+      ]
+    }
+  ],
+  "atributos": {
+    "enderecamento": {
+      "numero_fachada": {
+        "valor": "0087",
+        "juizo": "observado",
+        "confianca": 0.95,
+        "evidencia": "numeral em relevo no muro frontal",
+        "regra": null,
+        "bbox": null,
+        "celula": "CE"
+      },
+      "placa_logradouro": {
+        "valor": "RUA GENERAL LIMA E SILVA",
+        "juizo": "observado",
+        "confianca": 0.9,
+        "evidencia": "placa azul de esquina no canto superior esquerdo",
+        "regra": null,
+        "bbox": null,
+        "celula": "SC"
+      },
+      "paridade": {
+        "valor": "impar",
+        "juizo": "inferido",
+        "confianca": 0.9,
+        "evidencia": "numeração 0125 é ímpar",
+        "regra": "R-END-01",
+        "bbox": null,
+        "celula": "CE"
+      },
+      "complemento_visivel": {
+        "valor": "sem_complemento",
+        "juizo": "ausente_confirmado",
+        "confianca": 0.9,
+        "evidencia": "nenhum complemento afixado junto à numeração",
+        "regra": null,
+        "bbox": null,
+        "celula": "CE"
+      }
+    },
+    "edificacao": {
+      "tipo_edificacao": {
+        "valor": "casa_terrea",
+        "juizo": "observado",
+        "confianca": 0.9,
+        "evidencia": "edificação de um pavimento com telhado aparente, sem laje superior habitável",
+        "regra": null,
+        "bbox": null,
+        "celula": "CC"
+      },
+      "pavimentos_visiveis": {
+        "valor": 1,
+        "juizo": "observado",
+        "confianca": 0.8,
+        "evidencia": "uma linha de esquadrias e beiral logo acima",
+        "regra": null,
+        "bbox": null,
+        "celula": "CC"
+      },
+      "alinhamento_testada": {
+        "valor": "recuado_com_garagem",
+        "juizo": "observado",
+        "confianca": 0.85,
+        "evidencia": "recuo frontal com garagem coberta entre o muro e a fachada",
+        "regra": null,
+        "bbox": null,
+        "celula": "CD"
+      },
+      "testada_estimada_m": {
+        "valor": "5_a_10",
+        "juizo": "inferido",
+        "confianca": 0.7,
+        "evidencia": "testada equivale a cerca de 3 larguras de portão de carro (~2,5 m cada)",
+        "regra": "R-EDI-01",
+        "bbox": null,
+        "celula": "CC"
+      },
+      "padrao_construtivo": {
+        "valor": "normal",
+        "juizo": "inferido",
+        "confianca": 0.8,
+        "evidencia": "alvenaria revestida e pintada, esquadria de alumínio, garagem coberta, gradil regular",
+        "regra": "R-PAD-01",
+        "bbox": null,
+        "celula": "CC"
+      },
+      "acabamento_fachada": {
+        "valor": "pintura_simples",
+        "juizo": "observado",
+        "confianca": 0.9,
+        "evidencia": "reboco liso pintado em bege, sem revestimento cerâmico",
+        "regra": null,
+        "bbox": null,
+        "celula": "CC"
+      },
+      "cobertura": {
+        "valor": "telha_ceramica",
+        "juizo": "observado",
+        "confianca": 0.6,
+        "evidencia": "telhas cerâmicas visíveis no beiral frontal",
+        "regra": null,
+        "bbox": null,
+        "celula": "SC"
+      },
+      "esquadrias": {
+        "valor": "aluminio",
+        "juizo": "observado",
+        "confianca": 0.85,
+        "evidencia": "janelas de correr com perfil de alumínio",
+        "regra": null,
+        "bbox": null,
+        "celula": "CC"
+      },
+      "estado_conservacao": {
+        "valor": "bom",
+        "juizo": "inferido",
+        "confianca": 0.85,
+        "evidencia": "pintura íntegra, sem trinca aparente, telhado alinhado",
+        "regra": "R-PAD-02",
+        "bbox": null,
+        "celula": "CC"
+      },
+      "fechamento_frontal": {
+        "valor": "muro_com_gradil",
+        "juizo": "observado",
+        "confianca": 0.95,
+        "evidencia": "muro baixo em alvenaria encimado por gradil metálico",
+        "regra": null,
+        "bbox": null,
+        "celula": "CE"
+      },
+      "portao_veicular": {
+        "valor": true,
+        "juizo": "observado",
+        "confianca": 0.95,
+        "evidencia": "portão basculante metálico à direita da testada",
+        "regra": null,
+        "bbox": null,
+        "celula": "CD"
+      },
+      "piscina_visivel": {
+        "valor": null,
+        "juizo": "nao_observavel",
+        "confianca": 0.0,
+        "evidencia": "fundos não enquadrados em foto de nível de rua",
+        "regra": null,
+        "bbox": null,
+        "celula": null
+      }
+    },
+    "uso": {
+      "uso_predominante": {
+        "valor": "misto_res_com",
+        "juizo": "inferido",
+        "confianca": 0.85,
+        "evidencia": "residência com placa de serviço de beleza no muro e horário de atendimento; sem vitrine nem porta comercial",
+        "regra": "R-USO-02",
+        "bbox": null,
+        "celula": "CC"
+      },
+      "atividade_letreiro": {
+        "valor": "STUDIO DE UNHAS",
+        "juizo": "observado",
+        "confianca": 0.9,
+        "evidencia": "placa de acrílico fixada no muro",
+        "regra": null,
+        "bbox": null,
+        "celula": "CE"
+      }
+    },
+    "ocupacao": {
+      "situacao_ocupacao": {
+        "valor": "ocupado",
+        "juizo": "inferido",
+        "confianca": 0.85,
+        "evidencia": "veículo na garagem, cortina na janela e vaso de planta cuidado; nenhum indício de vacância",
+        "regra": "R-OCU-01",
+        "bbox": null,
+        "celula": "CC"
+      },
+      "indicios_ocupacao": {
+        "valor": "veiculo_na_garagem;cortina_persiana;planta_cuidada",
+        "juizo": "observado",
+        "confianca": 0.9,
+        "evidencia": "veículo sob a garagem, cortina visível na janela esquerda, vasos com planta viva junto ao portão",
+        "regra": null,
+        "bbox": null,
+        "celula": "CC"
+      },
+      "risco_impedimento_leitura": {
+        "valor": "nenhum",
+        "juizo": "inferido",
+        "confianca": 0.85,
+        "evidencia": "abrigo de medição embutido no muro, acessível da calçada sem entrar no lote",
+        "regra": "R-AGU-03",
+        "bbox": null,
+        "celula": "IE"
+      }
+    },
+    "agua": {
+      "hidrometro_presente": {
+        "valor": "abrigo_visivel_medidor_nao",
+        "juizo": "observado",
+        "confianca": 0.9,
+        "evidencia": "caixa de polímero embutida no muro com tampa fechada; medidor não visível sem abrir",
+        "regra": null,
+        "bbox": [
+          0.12,
+          0.72,
+          0.07,
+          0.06
+        ],
+        "celula": "IE"
+      },
+      "posicao_medicao": {
+        "valor": "caixa_embutida_no_muro",
+        "juizo": "observado",
+        "confianca": 0.9,
+        "evidencia": "nicho na alvenaria do muro frontal, a ~0,4 m do piso",
+        "regra": null,
+        "bbox": null,
+        "celula": "IE"
+      },
+      "tipo_abrigo": {
+        "valor": "caixa_polimero_com_tampa",
+        "juizo": "observado",
+        "confianca": 0.9,
+        "evidencia": "caixa cinza de polímero com tampa articulada e logo da companhia",
+        "regra": null,
+        "bbox": null,
+        "celula": "IE"
+      },
+      "estado_abrigo": {
+        "valor": "integro",
+        "juizo": "observado",
+        "confianca": 0.88,
+        "evidencia": "tampa presente, sem quebra, sem obstrução",
+        "regra": null,
+        "bbox": null,
+        "celula": "IE"
+      },
+      "acessibilidade_medicao": {
+        "valor": "livre_com_abertura_de_tampa",
+        "juizo": "inferido",
+        "confianca": 0.88,
+        "evidencia": "abrigo voltado para a calçada, fora do portão, exige apenas abrir a tampa",
+        "regra": "R-AGU-03",
+        "bbox": null,
+        "celula": "IE"
+      },
+      "suspeita_irregularidade_agua": {
+        "valor": "nenhuma_aparente",
+        "juizo": "observado",
+        "confianca": 0.7,
+        "evidencia": "nenhuma tubulação aparente contornando o abrigo",
+        "regra": null,
+        "bbox": null,
+        "celula": "IE"
+      },
+      "leitura_mostrador": {
+        "valor": null,
+        "juizo": "nao_observavel",
+        "confianca": 0.0,
+        "evidencia": "tampa do abrigo fechada",
+        "regra": null,
+        "bbox": null,
+        "celula": "IE"
+      }
+    },
+    "energia": {
+      "medidores_energia_qtd": {
+        "valor": 1,
+        "juizo": "observado",
+        "confianca": 0.9,
+        "evidencia": "uma caixa de medição no muro, com um medidor e mostrador visível",
+        "regra": null,
+        "bbox": null,
+        "celula": "SD"
+      },
+      "tipo_padrao_entrada": {
+        "valor": "caixa_individual_no_muro",
+        "juizo": "observado",
+        "confianca": 0.9,
+        "evidencia": "caixa de padrão individual embutida no muro frontal",
+        "regra": null,
+        "bbox": null,
+        "celula": "SD"
+      },
+      "medidor_removido": {
+        "valor": false,
+        "juizo": "observado",
+        "confianca": 0.85,
+        "evidencia": "medidor presente e íntegro na base",
+        "regra": null,
+        "bbox": null,
+        "celula": "SD"
+      }
+    },
+    "esgoto": {
+      "caixa_inspecao_aparente": {
+        "valor": "sim_na_calcada",
+        "juizo": "observado",
+        "confianca": 0.85,
+        "evidencia": "tampa circular de concreto Ø ~40 cm rente ao piso da calçada, entre a testada e o meio-fio, sem logo de energia ou telecom",
+        "regra": null,
+        "bbox": null,
+        "celula": "IC"
+      },
+      "lancamento_sarjeta_aparente": {
+        "valor": "nao_aparente",
+        "juizo": "observado",
+        "confianca": 0.85,
+        "evidencia": "nenhuma tubulação atravessando a calçada nem mancha de umidade na sarjeta",
+        "regra": null,
+        "bbox": null,
+        "celula": "IC"
+      },
+      "conectividade_esgoto_inferida": {
+        "valor": "provavelmente_conectado",
+        "juizo": "inferido",
+        "confianca": 0.6,
+        "evidencia": "caixa de inspeção na calçada e ausência de lançamento em sarjeta",
+        "regra": "R-ESG-01",
+        "bbox": null,
+        "celula": "IC"
+      }
+    },
+    "acessos": {
+      "portas_acesso_independentes": {
+        "valor": 1,
+        "juizo": "observado",
+        "confianca": 0.9,
+        "evidencia": "um portão pedestre e um portão veicular dando no mesmo lote",
+        "regra": null,
+        "bbox": null,
+        "celula": "CE"
+      },
+      "campainhas_interfones": {
+        "valor": 1,
+        "juizo": "observado",
+        "confianca": 0.9,
+        "evidencia": "uma botoeira única ao lado do portão pedestre",
+        "regra": null,
+        "bbox": null,
+        "celula": "CE"
+      },
+      "numeracoes_distintas": {
+        "valor": 1,
+        "juizo": "observado",
+        "confianca": 0.95,
+        "evidencia": "somente a numeração 0125 na testada",
+        "regra": null,
+        "bbox": null,
+        "celula": "CE"
+      }
+    },
+    "entorno": {
+      "pavimentacao_via": {
+        "valor": "asfalto",
+        "juizo": "observado",
+        "confianca": 0.9,
+        "evidencia": "leito carroçável asfaltado com meio-fio",
+        "regra": null,
+        "bbox": null,
+        "celula": "ID"
+      },
+      "calcada": {
+        "valor": "pavimentada_regular",
+        "juizo": "observado",
+        "confianca": 0.9,
+        "evidencia": "passeio em concreto contínuo e nivelado",
+        "regra": null,
+        "bbox": null,
+        "celula": "IC"
+      },
+      "classe_urbana_aparente": {
+        "valor": "urbano_consolidado",
+        "juizo": "inferido",
+        "confianca": 0.7,
+        "evidencia": "via asfaltada, calçada regular, rede de energia e iluminação pública",
+        "regra": "R-ENT-01",
+        "bbox": null,
+        "celula": "ID"
+      }
+    }
+  },
+  "economias": {
+    "estimativa": 1,
+    "faixa": null,
+    "metodo": "medidor_energia",
+    "evidencias_contadas": {
+      "medidor_energia": 1,
+      "portas_independentes": 1,
+      "campainhas": 1,
+      "numeracoes": 1
+    },
+    "confianca": 0.88,
+    "divergencia": false,
+    "justificativa": "Quatro evidências independentes convergem para uma unidade (R-ECO-01, concordância plena)."
+  },
+  "alertas": [
+    {
+      "codigo": "ATIVIDADE_ECONOMICA_APARENTE",
+      "severidade": "info",
+      "descricao": "Serviço prestado no imóvel residencial.",
+      "campo_relacionado": "triagem.atividade_economica_aparente"
+    },
+    {
+      "codigo": "ATIVIDADE_DOMICILIAR_APARENTE",
+      "severidade": "atencao",
+      "descricao": "Atividade econômica exercida dentro de residência — categoria tarifária pode divergir.",
+      "campo_relacionado": "triagem.formalidade_aparente"
+    }
+  ],
+  "oportunidades": [
+    {
+      "codigo": "ATIVIDADE_DOMICILIAR_POTENCIAL",
+      "classe": "receita",
+      "prioridade": "media",
+      "confianca": 0.7,
+      "evidencia": "Placa de studio de unhas no muro da residência, com horário de atendimento, em foto de campo de 22/07/2026.",
+      "acao_sugerida": "Cruzar com categoria cadastral e CNPJ no endereço antes de propor revisão de categoria.",
+      "data_referencia": "2026-07-22",
+      "impacto_estimado": null,
+      "automatizavel": false,
+      "nivel_evidencia": "sinal_imagem",
+      "fontes_independentes": [
+        "imagem_fachada"
+      ]
+    }
+  ],
+  "lgpd": {
+    "pessoas_visiveis": false,
+    "placas_veiculo_visiveis": false,
+    "dado_pessoal_transcrito": false,
+    "acao": "nenhuma"
+  },
+  "auditoria": {
+    "passes_executados": 6,
+    "rodadas_verificacao": 1,
+    "campos_preenchidos": 38,
+    "campos_nao_observaveis": 2,
+    "confianca_media": 0.856,
+    "teto_fonte_aplicado": true,
+    "anotador": "leitura-fachada-cadastral/1.1.0",
+    "timestamp": "2026-07-23T09:12:00-03:00"
+  }
+}

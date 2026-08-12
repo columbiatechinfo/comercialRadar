@@ -27,21 +27,17 @@
     <div class="brand-name">Comercial<b>Radar</b></div>
   </div>
 
+  <!-- Menu único: o nome da etapa em que se está, e o painel que abre por baixo
+       com todas as etapas agrupadas por natureza. Seis abas lado a lado já não
+       cabiam sem espremer, e nada dizia que "Quadras" e "Dashboard" são coisas
+       de momentos diferentes do trabalho. -->
   <nav class="modes" id="modes">
-    <button class="mode active" data-mode="planilha">
-      <span class="mode-ico">📄</span> Importar planilha
-    </button>
-    <button class="mode" data-mode="mineracao">
-      <span class="mode-ico">⛏️</span> Mineração de área
-    </button>
-    <button class="mode" data-mode="enriquecimento">
-      <span class="mode-ico">💎</span> Enriquecimento
-    </button>
-    <button class="mode" data-mode="quadras">
-      <span class="mode-ico">🏘️</span> Quadras + endereços
-    </button>
-    <button class="mode" data-mode="dashboard">
-      <span class="mode-ico">📊</span> Dashboard
+    <button class="menu-btn" id="menu-btn" aria-expanded="false" aria-controls="flyout">
+      <span class="menu-ico" id="menu-ico">📄</span>
+      <span class="menu-rot" id="menu-rot">Importar planilha</span>
+      <svg class="menu-seta" viewBox="0 0 20 20" width="16" height="16" fill="none"
+           stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+           stroke-linejoin="round"><path d="M6 8l4 4 4-4"/></svg>
     </button>
   </nav>
 
@@ -54,6 +50,68 @@
     </div>
   </div>
 </header>
+
+<!-- Painel do menu: largura inteira, abre POR BAIXO do cabeçalho. As etapas
+     agrupadas na ordem em que o trabalho acontece — junta o dado, melhora o
+     dado, entende o território, lê o resultado. -->
+<div id="flyout-fundo" class="hidden"></div>
+<div id="flyout" class="hidden" role="menu" aria-labelledby="menu-btn">
+  <div class="fly-cols">
+    <div class="fly-col">
+      <div class="fly-tit">Coleta</div>
+      <button class="fly-item active" data-mode="planilha">
+        <span class="fly-ico">📄</span>
+        <span><b>Importar planilha</b>
+          <small>POIs de um arquivo, ou o cadastro de imóveis do cliente</small></span>
+      </button>
+      <button class="fly-item" data-mode="mineracao">
+        <span class="fly-ico">⛏️</span>
+        <span><b>Mineração de área</b>
+          <small>varre o mapa e descobre o que existe — captura + OCR, grátis</small></span>
+      </button>
+    </div>
+
+    <div class="fly-col">
+      <div class="fly-tit">Qualificação</div>
+      <button class="fly-item" data-mode="enriquecimento">
+        <span class="fly-ico">💎</span>
+        <span><b>Enriquecimento</b>
+          <small>telefone, CNPJ, redes e a fachada de cada ponto</small></span>
+      </button>
+      <button class="fly-item" data-mode="avaliar">
+        <span class="fly-ico">🔍</span>
+        <span><b>Avaliar candidatos</b>
+          <small>a IA lê as fachadas e aponta uso real, economias ocultas e área</small></span>
+      </button>
+    </div>
+
+    <div class="fly-col">
+      <div class="fly-tit">Território e leitura</div>
+      <button class="fly-item" data-mode="dashboard">
+        <span class="fly-ico">📊</span>
+        <span><b>Dashboard</b>
+          <small>cobertura, custo e retorno — só leitura</small></span>
+      </button>
+    </div>
+
+    <!-- coluna de contexto: o que está valendo agora. No exemplo são posts em
+         destaque; aqui o que interessa saber antes de escolher a etapa é qual
+         área está em foco e o que o último processo fez. -->
+    <div class="fly-col fly-ctx">
+      <div class="fly-tit">Agora</div>
+      <div class="fly-card" id="fly-area">
+        <div class="fly-card-rot">Área de trabalho</div>
+        <div class="fly-card-val" id="fly-area-val">nenhuma definida</div>
+        <div class="fly-card-sub" id="fly-area-sub">desenhe no mapa ou escolha o município</div>
+      </div>
+      <div class="fly-card" id="fly-job">
+        <div class="fly-card-rot">Último processo</div>
+        <div class="fly-card-val" id="fly-job-val">nenhum nesta sessão</div>
+        <div class="fly-card-sub" id="fly-job-sub">—</div>
+      </div>
+    </div>
+  </div>
+</div>
 
 <div id="map"></div>
 
@@ -79,8 +137,8 @@
         <button class="btn" id="btn-desenhar">✏️ Desenhar área</button>
         <button class="btn ghost" id="btn-apagar-area" title="Remover polígono">🗑️</button>
       </div>
-      <div class="opt">
-        <div style="font-weight:600;margin-bottom:4px">Ou escolha o município inteiro</div>
+      <div class="opt bloco">
+        <div style="font-weight:600">Ou escolha o município inteiro</div>
         <div class="row" style="gap:6px">
           <select id="mun-uf" style="flex:0 0 84px"><option value="">UF…</option></select>
           <select id="mun-cod" style="flex:1" disabled><option value="">município…</option></select>
@@ -160,36 +218,9 @@
   </section>
 
   <!-- PASSO 2: modo quadras (área → vias → quadras → pontos → faces) -->
-  <section class="p-sec hidden" id="sec-quadras">
-    <div class="p-title"><span class="p-step">2</span> Quadras + endereços</div>
-    <div class="p-body">
-      <div class="hint">Monta as <b>quadras</b> da área pelas vias do OSM, dá a cada face o
-        <b>nome majoritário</b> dos endereços dela, acha a <b>borda real</b> do quarteirão e traz os
-        <b>endereços do CNEFE</b> a 20&nbsp;m das vias e de dentro da quadra — dizendo a
-        <b>via e a paridade</b> de cada face.</div>
-      <div class="hint"><b>Nenhum ponto é movido.</b> A posição é sempre a original do
-        cadastro — o processo classifica, não corrige a base.</div>
-      <label class="opt"><input type="checkbox" id="op-q-maps">
-        Ler o nome da via no Maps
-        <small>(desligado: custa ~10&nbsp;s por via. Sem isso o nome da face vem da
-        maioria dos endereços dela, que é instantâneo)</small></label>
-      <label class="opt"><input type="checkbox" id="op-q-proxy" checked>
-        Usar o pool de proxies <small>(só vale com a leitura no Maps ligada)</small></label>
-
-      <div class="row">
-        <button class="btn sm" id="btn-q-tratadas">📋 Quadras tratadas</button>
-        <button class="btn sm" id="btn-q-ver">👁 Visualização</button>
-        <button class="btn sm" id="btn-q-limpar">✖ Limpar mapa</button>
-      </div>
-
-      <div class="p-sub">Faces da quadra</div>
-      <div class="conf-leg" id="q-legenda"></div>
-      <div class="hint">A cor do ponto é a da face a que ele pertence;
-        <b style="color:#ef4444">vermelho</b> = numeração destoa da paridade daquela face
-        (é o outro lado da rua). Clique numa face para isolá-la.</div>
-      <div class="hint" id="q-estado">nenhum resultado carregado</div>
-    </div>
-  </section>
+  <!-- Quadras + endereços mudou-se para o radarTelhados em 11/08/2026:
+     território e alinhamento à via são outra ferramenta, com banco
+     próprio. Sobe em http://127.0.0.1:8770 -->
 
   <!-- PASSO 2: modo enriquecimento (CASCATA) -->
   <section class="p-sec hidden" id="sec-enriquecimento">
@@ -234,6 +265,48 @@
     </div>
   </section>
 
+  <!-- PASSO 2: avaliação de fachada pela IA -->
+  <section class="p-sec hidden" id="sec-avaliar">
+    <div class="p-title"><span class="p-step">2</span> Avaliar candidatos</div>
+    <div class="p-body">
+      <div class="hint">A IA lê a <b>fachada de cada ponto da área</b> e devolve sinal
+        cadastral auditável: uso real, unidades independentes, número na fachada e
+        água/esgoto. Cada campo vem com evidência, juízo e confiança.</div>
+
+      <div class="cascata">
+        <div class="casc-step"><span class="casc-n">1</span><div><b>🔎 Triagem</b><br>
+          <small>é imóvel? há atividade econômica? é do alvo ou do vizinho?</small></div></div>
+        <div class="casc-arrow">↓ se é imóvel</div>
+        <div class="casc-step"><span class="casc-n">2</span><div><b>🏠 Leitura</b><br>
+          <small>número, letreiro, medidores, portas, tipologia, hidrômetro</small></div></div>
+        <div class="casc-arrow">↓ cruzado com o cadastro</div>
+        <div class="casc-step"><span class="casc-n">3</span><div><b>⚖️ Oportunidades</b><br>
+          <small>uso divergente, economias ocultas, esgoto — com nível de evidência</small></div></div>
+      </div>
+
+      <details class="opts" open>
+        <summary>▾ Opções</summary>
+        <label class="opt inline">Modelo
+          <select id="av-modelo">
+            <option value="gpt-4o-mini" selected>gpt-4o-mini (barato)</option>
+            <option value="gpt-4o">gpt-4o (caro, lê melhor)</option>
+            <option value="qwen2.5vl:7b">qwen2.5vl 7b — i9 local (grátis)</option>
+            <option value="qwen2.5vl:3b">qwen2.5vl 3b — i9 local (grátis, pior)</option>
+          </select></label>
+        <label class="opt inline">Workers
+          <input type="number" id="av-workers" min="1" max="8" value="4"></label>
+        <label class="opt inline">Teto de gasto US$
+          <input type="number" id="av-teto" min="0" step="1" value="20"></label>
+        <label class="opt"><input type="checkbox" id="av-refazer">
+          Reavaliar quem já tem leitura
+          <small>(por padrão só entra quem ainda não foi lido)</small></label>
+      </details>
+
+      <div class="hint" id="av-estimativa">calculando o que há para avaliar…</div>
+      <button class="btn sm" id="btn-av-estimar">↻ Recalcular estimativa</button>
+    </div>
+  </section>
+
   <!-- PASSO 3: execução -->
   <section class="p-sec" id="sec-execucao">
     <div class="p-title"><span class="p-step">3</span> Execução</div>
@@ -266,6 +339,7 @@
       <button class="chip-f" data-grupo="cobertura">Cobertura</button>
       <button class="chip-f" data-grupo="cnpj">CNPJ</button>
       <button class="chip-f" data-grupo="cadastro">Cadastro do cliente</button>
+      <button class="chip-f" data-grupo="fachada">Fachada</button>
       <button class="chip-f" data-grupo="retorno">Retorno</button>
       <button class="chip-f" data-grupo="custo">Custo</button>
     </div>
@@ -294,6 +368,17 @@
 
 <!-- Cards de progresso (direita) -->
 <aside id="stats">
+  <!-- Cards da leitura de fachada. Substituem os do processo genérico quando a
+       aba é "Avaliar candidatos": "Encontrados"/"Sem match" não medem nada aqui,
+       e mostravam zero ao lado de 94 fachadas já lidas. Cada um abre a lista do
+       seu recorte sobre o mapa. -->
+  <div id="stats-fachada" class="hidden">
+    <div class="stats-title">🔍 Leitura de fachada</div>
+    <div id="fa-cards"></div>
+    <div class="stat-nota">Clique num card para ver a lista e navegar ponto a ponto.</div>
+  </div>
+
+  <div id="stats-processo">
   <div class="stats-title">⚡ Processo atual</div>
   <div class="stat-card wide" id="card-progresso">
     <div class="stat-top"><span class="stat-label">Processados</span><span class="stat-val" id="st-proc">0</span></div>
@@ -306,6 +391,7 @@
   <div class="stat-card c-orange" title="Encontrados fora do polígono desenhado. São GRAVADOS no banco, com cidade e UF, mas não aparecem no mapa enquanto o foco é esta área — aparecem ao selecionar o município deles."><div class="stat-ico">🚧</div><div><div class="stat-val" id="st-fora">0</div><div class="stat-label">Fora da área <small>(gravados)</small></div></div></div>
   <div class="stat-card c-gray"><div class="stat-ico">❓</div><div><div class="stat-val" id="st-semmatch">0</div><div class="stat-label">Sem match</div></div></div>
   <div class="stat-card c-teal"><div class="stat-ico">🗄️</div><div><div class="stat-val" id="st-ingeridos">0</div><div class="stat-label">Gravados no banco</div></div></div>
+  </div>
 
   <div class="stats-title">🗄️ Dados do banco</div>
   <div class="stat-card wide db-card">
@@ -343,6 +429,48 @@
 <div id="modal-overlay" class="hidden">
   <div id="modal-card"></div>
 </div>
+
+<!-- Lista de um recorte da leitura, SOBRE o mapa e sem escurecê-lo: o mapa é
+     parte da leitura aqui — a cada item escolhido ele voa até o ponto. Um
+     overlay escuro esconderia justamente o que se quer ver. -->
+<div id="fa-lista" class="hidden">
+  <div id="fa-lista-cab">
+    <div>
+      <div id="fa-lista-tit">—</div>
+      <div id="fa-lista-sub" class="fa-lista-sub">—</div>
+    </div>
+    <button id="fa-lista-fechar" title="Fechar">✕</button>
+  </div>
+  <div id="fa-lista-itens"></div>
+</div>
+
+<!-- Ficha da leitura: quase tela cheia, com o mapa desfocado atrás. O detalhe
+     não cabia embaixo da lista — imagem de fachada precisa de tamanho para
+     alguém conferir número e letreiro. -->
+<div id="fa-ficha" class="hidden">
+  <div id="fa-ficha-card">
+    <div id="fa-ficha-cab">
+      <div class="fa-ficha-tit">
+        <div id="fa-ficha-nome">—</div>
+        <div id="fa-ficha-end">—</div>
+      </div>
+      <div class="fa-ficha-acoes">
+        <button class="btn ghost sm" id="fa-ficha-prev" title="Anterior (←)">←</button>
+        <span id="fa-ficha-pos" class="fa-pos">—</span>
+        <button class="btn ghost sm" id="fa-ficha-next" title="Próximo (→)">→</button>
+        <a class="btn ghost sm" id="fa-ficha-maps" target="_blank" rel="noopener">🗺️ Abrir no Maps</a>
+        <button class="btn ghost sm" id="fa-ficha-fechar" title="Fechar (Esc)">✕</button>
+      </div>
+    </div>
+    <div id="fa-ficha-corpo">
+      <div id="fa-ficha-imgs"></div>
+      <div id="fa-ficha-dados"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Imagem em tela cheia -->
+<div id="fa-zoom" class="hidden"><img id="fa-zoom-img" alt=""></div>
 
 <!-- Confirmação genérica -->
 <div id="confirm-overlay" class="hidden">

@@ -1,0 +1,65 @@
+{
+  "schema_versao": "1.4.0",
+  "imagem": {
+    "arquivo": "sv_comercio.jpg",
+    "fonte": "streetview",
+    "enquadramento": "fachada_completa",
+    "apta_para_leitura": true
+  },
+  "triagem": {
+    "conteudo_imagem": "fachada_imovel",
+    "e_imovel": true,
+    "apto_para_cadastro": true,
+    "uso_parcial_permitido": null,
+    "motivo_descarte": null,
+    "atividade_economica_aparente": "sinal_forte",
+    "sinais_atividade_economica": "letreiro_fachada;porta_de_aco_comercial",
+    "atividade_no_alvo": "no_imovel_alvo",
+    "natureza_atividade": "comercio",
+    "formalidade_aparente": "estabelecimento_formal_aparente",
+    "confianca_triagem": 0.28,
+    "evidencia_triagem": "letreiro e vitrine ocupando a testada do imóvel-alvo"
+  },
+  "atributos": {
+    "uso": {
+      "atividade_letreiro": {
+        "valor": "MERCADO CENTRAL",
+        "juizo": "observado",
+        "confianca": 0.6,
+        "evidencia": "letreiro legível sobre a porta principal",
+        "regra": null,
+        "bbox": null,
+        "celula": "CC"
+      },
+      "descricao_atividade_funcional": {
+        "valor": "mercado de bairro com venda de alimentos e bebidas",
+        "juizo": "inferido",
+        "confianca": 0.55,
+        "evidencia": "letreiro de mercado e vitrine com produtos",
+        "regra": "R-USO-05",
+        "bbox": null,
+        "celula": "CC"
+      }
+    }
+  },
+  "economias": {
+    "estimativa": 1,
+    "metodo": "unitario_default",
+    "confianca": 0.5,
+    "divergencia": false
+  },
+  "alertas": [
+    {
+      "codigo": "ATIVIDADE_ECONOMICA_APARENTE",
+      "severidade": "info",
+      "descricao": "Sinais de atividade econômica na testada do imóvel-alvo.",
+      "campo_relacionado": "triagem.atividade_economica_aparente"
+    }
+  ],
+  "oportunidades": [],
+  "auditoria": {
+    "passes_executados": 6,
+    "rodadas_verificacao": 1,
+    "confianca_media": 0.575
+  }
+}

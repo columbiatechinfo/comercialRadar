@@ -1,0 +1,825 @@
+{
+  "versao": "1.2.0",
+  "nota": "Vocabulário fechado por campo. v1.2 adiciona endereçamento visual auditável e separa sinal de imagem de achado convergente.",
+  "listas": {
+    "enderecamento.complemento_visivel": [
+      "casa",
+      "fundos",
+      "apto",
+      "loja",
+      "sala",
+      "bloco",
+      "quadra_lote",
+      "sem_complemento"
+    ],
+    "enderecamento.paridade": [
+      "par",
+      "impar",
+      "indeterminada"
+    ],
+    "enderecamento.lado_via": [
+      "direito",
+      "esquerdo",
+      "indeterminado"
+    ],
+    "edificacao.tipo_edificacao": [
+      "casa_terrea",
+      "casa_sobreposta",
+      "sobrado",
+      "geminada",
+      "edificio_residencial",
+      "edificio_misto",
+      "edificio_comercial",
+      "galpao",
+      "barracao",
+      "loja_terrea",
+      "quiosque_banca",
+      "posto_combustivel",
+      "condominio_horizontal",
+      "templo",
+      "escola",
+      "unidade_saude",
+      "predio_publico",
+      "estrutura_rural",
+      "terreno_sem_edificacao",
+      "edificacao_em_construcao",
+      "edificacao_em_demolicao",
+      "ruina"
+    ],
+    "edificacao.alinhamento_testada": [
+      "no_alinhamento",
+      "recuado_com_jardim",
+      "recuado_com_garagem",
+      "recuado_amplo",
+      "indeterminado"
+    ],
+    "edificacao.testada_estimada_m": [
+      "ate_5",
+      "5_a_10",
+      "10_a_20",
+      "20_a_50",
+      "acima_50"
+    ],
+    "edificacao.recuo_frontal": [
+      "nulo",
+      "ate_3m",
+      "3_a_10m",
+      "acima_10m",
+      "indeterminado"
+    ],
+    "edificacao.padrao_construtivo": [
+      "precario",
+      "popular",
+      "normal",
+      "superior",
+      "alto",
+      "indeterminado"
+    ],
+    "edificacao.estrutura_vedacao": [
+      "alvenaria",
+      "concreto_armado",
+      "pre_moldado",
+      "metalica",
+      "madeira",
+      "mista",
+      "taipa_adobe",
+      "improvisada",
+      "indeterminada"
+    ],
+    "edificacao.acabamento_fachada": [
+      "sem_reboco",
+      "reboco_sem_pintura",
+      "pintura_simples",
+      "textura",
+      "ceramica_pastilha",
+      "porcelanato_pedra",
+      "acm_vidro",
+      "madeira",
+      "indeterminado"
+    ],
+    "edificacao.cobertura": [
+      "telha_ceramica",
+      "telha_fibrocimento",
+      "telha_metalica",
+      "laje_impermeabilizada",
+      "telha_ceramica_com_platibanda",
+      "improvisada",
+      "sem_cobertura",
+      "nao_visivel"
+    ],
+    "edificacao.esquadrias": [
+      "madeira",
+      "ferro",
+      "aluminio",
+      "pvc",
+      "vidro_temperado",
+      "vao_sem_esquadria",
+      "mista",
+      "nao_visivel"
+    ],
+    "edificacao.estado_conservacao": [
+      "novo",
+      "bom",
+      "regular",
+      "ruim",
+      "em_ruina",
+      "indeterminado"
+    ],
+    "edificacao.fechamento_frontal": [
+      "sem_fechamento",
+      "muro_baixo",
+      "muro_alto",
+      "gradil",
+      "muro_com_gradil",
+      "cerca_viva",
+      "cerca_arame",
+      "tapume",
+      "indeterminado"
+    ],
+    "edificacao.area_permeavel": [
+      "inexistente",
+      "pequena",
+      "media",
+      "ampla",
+      "nao_visivel"
+    ],
+    "uso.uso_predominante": [
+      "residencial",
+      "comercial",
+      "industrial",
+      "servicos",
+      "publico",
+      "religioso",
+      "educacional",
+      "saude",
+      "rural_agropecuario",
+      "misto_res_com",
+      "terreno",
+      "indeterminado"
+    ],
+    "uso.segmento_inferido": [
+      "alimentacao",
+      "mercado_conveniencia",
+      "vestuario",
+      "farmacia_saude",
+      "oficina_autopecas",
+      "construcao_material",
+      "beleza_estetica",
+      "servicos_profissionais",
+      "educacao",
+      "hospedagem",
+      "financeiro",
+      "industria_transformacao",
+      "logistica_deposito",
+      "agropecuario",
+      "outro",
+      "indeterminado"
+    ],
+    "uso.porte_aparente": [
+      "micro",
+      "pequeno",
+      "medio",
+      "grande",
+      "indeterminado"
+    ],
+    "ocupacao.situacao_ocupacao": [
+      "ocupado",
+      "provavelmente_ocupado",
+      "fechado_no_momento",
+      "provavelmente_vago",
+      "vago_evidente",
+      "abandonado",
+      "em_obra",
+      "demolido",
+      "terreno_sem_edificacao",
+      "indeterminado"
+    ],
+    "ocupacao.risco_impedimento_leitura": [
+      "nenhum",
+      "portao_trancado",
+      "cao_solto",
+      "medicao_interna",
+      "obstrucao_veiculo",
+      "obstrucao_vegetacao",
+      "medicao_em_altura",
+      "acesso_por_terceiro",
+      "indeterminado"
+    ],
+    "agua.hidrometro_presente": [
+      "sim_visivel",
+      "abrigo_visivel_medidor_nao",
+      "ausente_confirmado",
+      "nao_observavel",
+      "bateria_coletiva"
+    ],
+    "agua.posicao_medicao": [
+      "caixa_embutida_no_muro",
+      "caixa_no_passeio",
+      "cavalete_aparente_externo",
+      "cavalete_interno_ao_lote",
+      "bateria_agrupada_na_testada",
+      "abrigo_em_pilar",
+      "interna_edificacao",
+      "nao_localizada"
+    ],
+    "agua.tipo_abrigo": [
+      "caixa_polimero_com_tampa",
+      "caixa_metalica",
+      "caixa_alvenaria",
+      "nicho_no_muro",
+      "sem_abrigo",
+      "improvisado",
+      "nao_visivel"
+    ],
+    "agua.estado_abrigo": [
+      "integro",
+      "tampa_ausente",
+      "tampa_quebrada",
+      "obstruido",
+      "soterrado",
+      "nao_visivel"
+    ],
+    "agua.acessibilidade_medicao": [
+      "livre_via_publica",
+      "livre_com_abertura_de_tampa",
+      "atras_de_portao",
+      "obstruido_veiculo",
+      "obstruido_vegetacao",
+      "interno_requer_morador",
+      "inacessivel",
+      "indeterminada"
+    ],
+    "agua.cavalete_material": [
+      "pvc",
+      "ferro_galvanizado",
+      "cobre",
+      "misto",
+      "nao_visivel"
+    ],
+    "agua.suspeita_irregularidade_agua": [
+      "nenhuma_aparente",
+      "lacre_rompido",
+      "ligacao_aparente_sem_medidor",
+      "derivacao_antes_do_medidor",
+      "medidor_invertido_aparente",
+      "abrigo_violado",
+      "indeterminada"
+    ],
+    "energia.tipo_padrao_entrada": [
+      "caixa_individual_no_muro",
+      "caixa_em_poste_particular",
+      "bateria_coletiva",
+      "cabine_primaria",
+      "entrada_subterranea",
+      "nao_visivel"
+    ],
+    "energia.ramal_entrada": [
+      "aereo",
+      "subterraneo",
+      "nao_visivel"
+    ],
+    "energia.suspeita_irregularidade_energia": [
+      "nenhuma_aparente",
+      "medidor_removido",
+      "derivacao_aparente",
+      "lacre_rompido",
+      "indeterminada"
+    ],
+    "esgoto.caixa_inspecao_aparente": [
+      "sim_na_calcada",
+      "sim_no_recuo_interno",
+      "sim_posicao_indefinida",
+      "ausente_confirmada",
+      "nao_observavel"
+    ],
+    "esgoto.indicio_fossa": [
+      "respiro_aparente",
+      "tampa_em_area_permeavel_sem_rede",
+      "sem_indicio",
+      "nao_observavel"
+    ],
+    "esgoto.lancamento_sarjeta_aparente": [
+      "sim_tubulacao_visivel",
+      "sim_mancha_umidade_permanente",
+      "nao_aparente",
+      "nao_observavel"
+    ],
+    "esgoto.conectividade_esgoto_inferida": [
+      "provavelmente_conectado",
+      "provavelmente_nao_conectado",
+      "indeterminado"
+    ],
+    "entorno.pavimentacao_via": [
+      "asfalto",
+      "paralelepipedo",
+      "bloquete",
+      "concreto",
+      "terra_cascalho",
+      "nao_visivel"
+    ],
+    "entorno.calcada": [
+      "pavimentada_regular",
+      "pavimentada_irregular",
+      "parcial",
+      "inexistente",
+      "nao_visivel"
+    ],
+    "entorno.classe_urbana_aparente": [
+      "urbano_consolidado",
+      "urbano_periferico",
+      "expansao_urbana",
+      "assentamento_precario",
+      "industrial_logistico",
+      "rural",
+      "indeterminado"
+    ],
+    "entorno.declividade_terreno": [
+      "plano",
+      "aclive",
+      "declive",
+      "acentuado",
+      "indeterminado"
+    ],
+    "uso.situacao_estabelecimento_na_data_imagem": [
+      "em_atividade_aparente",
+      "fechado_no_momento",
+      "desativado_aparente",
+      "em_implantacao",
+      "em_reforma",
+      "indeterminado"
+    ],
+    "uso.validade_temporal_uso": [
+      "atual_ate_6m",
+      "recente_7a18m",
+      "historica_19a36m",
+      "defasada_acima_36m",
+      "data_desconhecida"
+    ],
+    "enderecamento.origem_numero_consolidado": [
+      "fachada",
+      "porta",
+      "portao",
+      "caixa_correio",
+      "placa_endereco",
+      "placa_comercial",
+      "interfone",
+      "outro",
+      "indeterminado"
+    ],
+    "triagem.conteudo_imagem": [
+      "fachada_imovel",
+      "imovel_parcial",
+      "terreno_sem_edificacao",
+      "edificacao_em_obra",
+      "interior_imovel",
+      "detalhe_medicao",
+      "logradouro_sem_imovel",
+      "rede_infraestrutura",
+      "documento_ou_tela",
+      "mapa_ou_croqui",
+      "veiculo_ou_pessoa",
+      "area_rural_vegetacao",
+      "ininteligivel",
+      "outro"
+    ],
+    "triagem.atividade_economica_aparente": [
+      "nenhuma_aparente",
+      "sinal_fraco",
+      "sinal_forte",
+      "indeterminado"
+    ],
+    "triagem.atividade_no_alvo": [
+      "no_imovel_alvo",
+      "em_vizinho",
+      "ambulante_via_publica",
+      "indeterminado"
+    ],
+    "triagem.natureza_atividade": [
+      "comercio",
+      "servico",
+      "industria",
+      "agropecuaria",
+      "institucional",
+      "religiosa",
+      "educacional",
+      "saude",
+      "hospedagem",
+      "logistica_deposito",
+      "misto",
+      "indeterminada"
+    ],
+    "triagem.formalidade_aparente": [
+      "estabelecimento_formal_aparente",
+      "atividade_domiciliar",
+      "ambulante_informal",
+      "indeterminada"
+    ],
+    "triagem.uso_parcial_permitido": [
+      "medicao",
+      "interior",
+      "entorno",
+      "nenhum"
+    ],
+    "estrutura_imovel.tipologia": [
+      "casa_isolada",
+      "casas_geminadas",
+      "sobrado_subdividido",
+      "vila_corredor",
+      "condominio_horizontal",
+      "edificio_vertical",
+      "condominio_vertical_multitorre",
+      "predio_misto",
+      "galeria_comercial",
+      "centro_comercial",
+      "complexo_industrial",
+      "lote_multiplas_edificacoes",
+      "terreno",
+      "indeterminada"
+    ],
+    "estrutura_imovel.composicao_uso_terreo": [
+      "residencial",
+      "comercial",
+      "servicos",
+      "garagem",
+      "misto",
+      "vazio",
+      "indeterminado"
+    ],
+    "estrutura_imovel.composicao_uso_superiores": [
+      "residencial",
+      "comercial",
+      "servicos",
+      "misto",
+      "vazio",
+      "indeterminado",
+      "nao_aplicavel"
+    ],
+    "estrutura_imovel.mudanca_estrutural": [
+      "nenhuma_aparente",
+      "casa_para_edificio",
+      "lote_para_edificacao",
+      "edificacao_para_terreno",
+      "unidade_para_multiplas",
+      "indeterminada"
+    ],
+    "mapeamento.status_endereco": [
+      "confere",
+      "diverge",
+      "sem_numero",
+      "multiplos_numeros",
+      "complemento_encontrado",
+      "ambiguo",
+      "hipotese_sequencia",
+      "sem_cadastro"
+    ],
+    "mapeamento.transicao_uso": [
+      "RES_PARA_COM",
+      "RES_PARA_MISTO",
+      "COM_PARA_RES",
+      "TERRENO_PARA_EDIFICACAO",
+      "EDIFICACAO_PARA_TERRENO",
+      "CASA_PARA_PREDIO",
+      "UNIDADE_PARA_MULTIPLAS",
+      "SEM_MUDANCA",
+      "INDETERMINADA"
+    ],
+    "mapeamento.vigencia_evidencia": [
+      "0_12m",
+      "13_24m",
+      "25_36m",
+      "37_60m",
+      "acima_60m",
+      "desconhecida"
+    ]
+  },
+  "listas_multivaloradas": {
+    "ocupacao.indicios_ocupacao": [
+      "cortina_persiana",
+      "ar_condicionado",
+      "antena_parabolica",
+      "veiculo_na_garagem",
+      "roupa_no_varal",
+      "lixeira_em_uso",
+      "planta_cuidada",
+      "grama_aparada",
+      "luz_acesa",
+      "portao_aberto",
+      "movimentacao_pessoas",
+      "animal_domestico",
+      "brinquedo_mobiliario",
+      "caixa_dagua_recente",
+      "medidor_com_lacre_integro"
+    ],
+    "ocupacao.indicios_vacancia": [
+      "mato_alto",
+      "tapume",
+      "janela_quebrada",
+      "porta_lacrada",
+      "pichacao_extensa",
+      "entulho",
+      "sem_esquadrias",
+      "caixa_correio_transbordando",
+      "medidor_removido",
+      "telhado_desabado",
+      "placa_venda_aluguel",
+      "acumulo_folhas_poeira",
+      "hidrometro_removido"
+    ],
+    "uso.usos_secundarios": [
+      "residencial",
+      "comercial",
+      "industrial",
+      "servicos",
+      "publico",
+      "religioso",
+      "educacional",
+      "saude",
+      "rural_agropecuario",
+      "deposito",
+      "nenhum"
+    ],
+    "uso.sinais_atividade_comercial": [
+      "letreiro_ativo",
+      "fachada_identificada",
+      "vitrine_montada",
+      "porta_aberta",
+      "clientes_visiveis",
+      "produtos_expostos",
+      "mesas_cadeiras",
+      "veiculo_operacional",
+      "horario_funcionamento_visivel",
+      "iluminacao_interna",
+      "placa_aberto",
+      "placa_fechado",
+      "porta_aco_baixada",
+      "letreiro_removido",
+      "fachada_descaracterizada",
+      "imovel_em_reforma",
+      "sem_sinal_conclusivo"
+    ],
+    "triagem.sinais_atividade_economica": [
+      "letreiro_fachada",
+      "toldo_comercial",
+      "vitrine",
+      "porta_de_aco_comercial",
+      "mercadoria_exposta",
+      "veiculo_servico_identificado",
+      "placa_profissional_liberal",
+      "banner_faixa",
+      "menu_cardapio",
+      "estacionamento_clientes",
+      "galpao_carga_doca",
+      "equipamento_produtivo",
+      "fachada_padronizada_franquia",
+      "horario_funcionamento",
+      "movimento_clientes",
+      "caixa_dagua_ou_reservatorio_produtivo",
+      "antena_ou_camera_comercial",
+      "nenhum"
+    ],
+    "estrutura_imovel.metodo_estimativa": [
+      "contagem_prumo",
+      "interfone",
+      "caixas_correio",
+      "medidores_energia",
+      "hidrometros_bateria",
+      "portas_terreo",
+      "placa_edificio",
+      "acessos_independentes",
+      "pavimentos_x_unidades",
+      "cnefe",
+      "indeterminado"
+    ]
+  },
+  "campos_texto_livre": [
+    "enderecamento.numero_fachada",
+    "enderecamento.numeros_adicionais",
+    "enderecamento.placa_logradouro",
+    "enderecamento.cep_visivel",
+    "uso.atividade_letreiro",
+    "uso.cnae_sugerido",
+    "agua.leitura_mostrador",
+    "uso.nome_estabelecimento_visivel",
+    "uso.descricao_atividade_funcional",
+    "enderecamento.numero_porta",
+    "enderecamento.numero_portao",
+    "enderecamento.numero_caixa_correio",
+    "enderecamento.numero_placa_comercial",
+    "enderecamento.numero_endereco_consolidado",
+    "enderecamento.complementos_unidades_visiveis"
+  ],
+  "termos_proibidos_em_valor": [
+    "fraude",
+    "gato",
+    "furto",
+    "roubo",
+    "ladrao",
+    "clandestin"
+  ],
+  "coerencia": [
+    {
+      "id": "C-01",
+      "descricao": "terreno_sem_edificacao / demolido / ruina não convive com pavimentos > 0",
+      "se": {
+        "campo": "edificacao.tipo_edificacao",
+        "em": [
+          "terreno_sem_edificacao",
+          "edificacao_em_demolicao"
+        ]
+      },
+      "entao_nao": {
+        "campo": "edificacao.pavimentos_visiveis",
+        "maior_que": 0
+      }
+    },
+    {
+      "id": "C-02",
+      "descricao": "vago_evidente/abandonado não convive com indício forte de ocupação",
+      "se": {
+        "campo": "ocupacao.situacao_ocupacao",
+        "em": [
+          "vago_evidente",
+          "abandonado"
+        ]
+      },
+      "entao_nao": {
+        "campo": "ocupacao.indicios_ocupacao",
+        "contem_algum": [
+          "veiculo_na_garagem",
+          "roupa_no_varal",
+          "luz_acesa",
+          "movimentacao_pessoas"
+        ]
+      }
+    },
+    {
+      "id": "C-03",
+      "descricao": "leitura de mostrador exige fonte de campo",
+      "se": {
+        "campo": "agua.leitura_mostrador",
+        "preenchido": true
+      },
+      "entao_exige": {
+        "imagem_fonte_em": [
+          "campo"
+        ]
+      }
+    },
+    {
+      "id": "C-04",
+      "descricao": "economias > 1 exige ao menos uma evidência contada",
+      "se": {
+        "economias_estimativa_maior_que": 1
+      },
+      "entao_exige": {
+        "evidencias_contadas_nao_vazia": true
+      }
+    },
+    {
+      "id": "C-05",
+      "descricao": "uso terreno não convive com tipo edificado",
+      "se": {
+        "campo": "uso.uso_predominante",
+        "em": [
+          "terreno"
+        ]
+      },
+      "entao_nao": {
+        "campo": "edificacao.tipo_edificacao",
+        "em": [
+          "casa_terrea",
+          "sobrado",
+          "edificio_residencial",
+          "edificio_comercial",
+          "edificio_misto",
+          "galpao",
+          "loja_terrea"
+        ]
+      }
+    },
+    {
+      "id": "C-06",
+      "descricao": "juizo nao_observavel exige valor nulo",
+      "regra_estrutural": "juizo_nao_observavel_valor_nulo"
+    },
+    {
+      "id": "C-07",
+      "descricao": "juizo observado/inferido exige evidencia não vazia",
+      "regra_estrutural": "juizo_com_evidencia"
+    },
+    {
+      "id": "C-08",
+      "descricao": "juizo inferido exige regra nomeada",
+      "regra_estrutural": "inferido_com_regra"
+    },
+    {
+      "id": "C-09",
+      "descricao": "campo observado deve ter âncora na varredura quando a varredura foi preenchida",
+      "regra_estrutural": "observado_ancorado_na_varredura"
+    },
+    {
+      "id": "C-10",
+      "descricao": "hidrometro ausente_confirmado exige posicao_medicao nao_localizada ou coerente",
+      "se": {
+        "campo": "agua.hidrometro_presente",
+        "em": [
+          "ausente_confirmado"
+        ]
+      },
+      "entao_nao": {
+        "campo": "agua.posicao_medicao",
+        "em": [
+          "caixa_embutida_no_muro",
+          "caixa_no_passeio",
+          "cavalete_aparente_externo",
+          "bateria_agrupada_na_testada"
+        ]
+      }
+    },
+    {
+      "id": "C-11",
+      "descricao": "situação/atividade comercial em Street View ou Mapillary exige data de captura conhecida",
+      "regra_estrutural": "uso_comercial_com_referencia_temporal"
+    },
+    {
+      "id": "C-12",
+      "descricao": "mais de um medidor de energia no mesmo endereço exige oportunidade MULTIPLAS_UCS_MESMO_ENDERECO",
+      "regra_estrutural": "multiplas_ucs_gera_oportunidade"
+    },
+    {
+      "id": "C-13",
+      "descricao": "ano_captura deve coincidir com data_captura quando ambos existem",
+      "regra_estrutural": "ano_consistente_com_data"
+    },
+    {
+      "id": "C-14",
+      "descricao": "número visual divergente do cadastro bloqueia vínculo por endereço e exige tratamento explícito",
+      "regra_estrutural": "numero_divergente_bloqueia_vinculo"
+    },
+    {
+      "id": "C-15",
+      "descricao": "achado_convergente exige pelo menos duas fontes independentes; duas pistas na mesma imagem contam como uma",
+      "regra_estrutural": "achado_exige_duas_fontes"
+    },
+    {
+      "id": "C-16",
+      "descricao": "imagem sem imóvel não produz atributo cadastral nem oportunidade",
+      "regra_estrutural": "triagem_nao_imovel_sem_atributos"
+    },
+    {
+      "id": "C-17",
+      "descricao": "sinal forte de atividade no imóvel-alvo exige uso não residencial puro ou oportunidade de categoria",
+      "regra_estrutural": "triagem_atividade_coerente_com_uso"
+    },
+    {
+      "id": "C-18",
+      "descricao": "atividade declarada exige sinais listados e alvo identificado",
+      "regra_estrutural": "triagem_atividade_com_sinais"
+    },
+    {
+      "id": "C-19",
+      "descricao": "atividade de vizinho ou ambulante não sustenta uso comercial do alvo",
+      "regra_estrutural": "triagem_anticontaminacao"
+    },
+    {
+      "id": "C-20",
+      "descricao": "conteúdo ininteligível exige imagem inapta",
+      "regra_estrutural": "triagem_inintelegivel_inapta"
+    },
+    {
+      "id": "C-21",
+      "descricao": "mais de uma unidade física exige método de estimativa declarado",
+      "regra_estrutural": "estrutura_metodo_declarado"
+    },
+    {
+      "id": "C-22",
+      "descricao": "tipologia vertical/condominial exige pavimentos e unidades por pavimento ou identificadores",
+      "regra_estrutural": "estrutura_vertical_dimensionada"
+    },
+    {
+      "id": "C-23",
+      "descricao": "unidades físicas acima das economias cadastradas exige oportunidade correspondente",
+      "regra_estrutural": "estrutura_divergencia_com_oportunidade"
+    },
+    {
+      "id": "C-24",
+      "descricao": "status de endereço confere/diverge exige número observado e número base",
+      "regra_estrutural": "mapeamento_status_endereco"
+    },
+    {
+      "id": "C-25",
+      "descricao": "mudança de uso exige uso base e observado distintos e oportunidade de categoria",
+      "regra_estrutural": "mapeamento_mudanca_uso"
+    },
+    {
+      "id": "C-26",
+      "descricao": "valor esperado deve ser probabilidade vezes impacto",
+      "regra_estrutural": "mapeamento_valor_esperado"
+    },
+    {
+      "id": "C-27",
+      "descricao": "campos de origem territorial não são preenchidos pela skill de fachada",
+      "regra_estrutural": "mapeamento_origem_territorial"
+    }
+  ]
+}

@@ -1,0 +1,615 @@
+{
+  "schema_versao": "1.5.0",
+  "imagem": {
+    "arquivo": "fotos/5566779_predio.jpg",
+    "fonte": "campo",
+    "data_captura": "2026-07-22",
+    "idade_meses": 0,
+    "coordenada": {
+      "lat": -30.0331,
+      "lon": -51.23,
+      "srid": 4674,
+      "origem": "exif"
+    },
+    "azimute_visada_graus": 95,
+    "enquadramento": "fachada_completa",
+    "qualidade": {
+      "nitidez": "boa",
+      "iluminacao": "boa",
+      "obstrucao": [
+        "nenhuma"
+      ],
+      "resolucao_px": "3024x4032"
+    },
+    "apta_para_leitura": true,
+    "motivo_inaptidao": null,
+    "ano_captura": 2026,
+    "data_captura_origem": "informada_cliente"
+  },
+  "vinculo": {
+    "matricula": "5566779",
+    "imovel_id": null,
+    "logradouro_base": "RUA GENERAL LIMA E SILVA",
+    "numero_base": "0450",
+    "municipio_ibge": "4314902",
+    "uso_base": "residencial",
+    "categoria_tarifaria_base": "residencial",
+    "economias_agua_base": 1,
+    "ucs_energia_base": null,
+    "metodo_vinculo": null,
+    "confianca_vinculo": null,
+    "numero_confere": true,
+    "ambiguidade": false
+  },
+  "triagem": {
+    "conteudo_imagem": "fachada_imovel",
+    "e_imovel": true,
+    "apto_para_cadastro": true,
+    "uso_parcial_permitido": null,
+    "motivo_descarte": null,
+    "atividade_economica_aparente": "sinal_forte",
+    "sinais_atividade_economica": "letreiro_fachada;vitrine",
+    "atividade_no_alvo": "no_imovel_alvo",
+    "natureza_atividade": "comercio",
+    "formalidade_aparente": "estabelecimento_formal_aparente",
+    "confianca_triagem": 0.9,
+    "evidencia_triagem": "loja com vitrine e letreiro no térreo; quatro pavimentos residenciais acima"
+  },
+  "varredura": [
+    {
+      "celula": "SC",
+      "itens": [
+        "quatro pavimentos com duas prumadas de sacada",
+        "aparelhos de ar-condicionado repetidos"
+      ]
+    },
+    {
+      "celula": "CC",
+      "itens": [
+        "fachada em pintura clara",
+        "duas prumadas de janela alinhadas"
+      ]
+    },
+    {
+      "celula": "IE",
+      "itens": [
+        "botoeira de interfone com oito botões numerados 101 a 402",
+        "oito caixas de correio"
+      ]
+    },
+    {
+      "celula": "IC",
+      "itens": [
+        "acesso social do edifício",
+        "placa 'Edifício Solar'"
+      ]
+    },
+    {
+      "celula": "ID",
+      "itens": [
+        "loja com vitrine e letreiro no térreo",
+        "bateria com nove medidores de energia",
+        "portão de garagem"
+      ]
+    }
+  ],
+  "atributos": {
+    "enderecamento": {
+      "numero_fachada": {
+        "valor": "0450",
+        "juizo": "observado",
+        "confianca": 0.95,
+        "evidencia": "numeral em relevo ao lado do acesso social",
+        "regra": null,
+        "bbox": null,
+        "celula": "IC"
+      },
+      "placa_logradouro": {
+        "valor": "RUA GENERAL LIMA E SILVA",
+        "juizo": "observado",
+        "confianca": 0.9,
+        "evidencia": "placa azul de esquina no canto superior esquerdo",
+        "regra": null,
+        "bbox": null,
+        "celula": "SC"
+      },
+      "paridade": {
+        "valor": "impar",
+        "juizo": "inferido",
+        "confianca": 0.9,
+        "evidencia": "numeração 0125 é ímpar",
+        "regra": "R-END-01",
+        "bbox": null,
+        "celula": "CE"
+      },
+      "complemento_visivel": {
+        "valor": "sem_complemento",
+        "juizo": "ausente_confirmado",
+        "confianca": 0.9,
+        "evidencia": "nenhum complemento afixado junto à numeração",
+        "regra": null,
+        "bbox": null,
+        "celula": "CE"
+      }
+    },
+    "edificacao": {
+      "tipo_edificacao": {
+        "valor": "edificio_misto",
+        "juizo": "observado",
+        "confianca": 0.9,
+        "evidencia": "quatro pavimentos residenciais sobre térreo comercial",
+        "regra": null,
+        "bbox": null,
+        "celula": "CC"
+      },
+      "pavimentos_visiveis": {
+        "valor": 5,
+        "juizo": "observado",
+        "confianca": 0.8,
+        "evidencia": "térreo comercial mais quatro pavimentos",
+        "regra": null,
+        "bbox": null,
+        "celula": "CC"
+      },
+      "alinhamento_testada": {
+        "valor": "recuado_com_garagem",
+        "juizo": "observado",
+        "confianca": 0.85,
+        "evidencia": "recuo frontal com garagem coberta entre o muro e a fachada",
+        "regra": null,
+        "bbox": null,
+        "celula": "CD"
+      },
+      "testada_estimada_m": {
+        "valor": "5_a_10",
+        "juizo": "inferido",
+        "confianca": 0.7,
+        "evidencia": "testada equivale a cerca de 3 larguras de portão de carro (~2,5 m cada)",
+        "regra": "R-EDI-01",
+        "bbox": null,
+        "celula": "CC"
+      },
+      "padrao_construtivo": {
+        "valor": "normal",
+        "juizo": "inferido",
+        "confianca": 0.8,
+        "evidencia": "alvenaria revestida e pintada, esquadria de alumínio, garagem coberta, gradil regular",
+        "regra": "R-PAD-01",
+        "bbox": null,
+        "celula": "CC"
+      },
+      "acabamento_fachada": {
+        "valor": "pintura_simples",
+        "juizo": "observado",
+        "confianca": 0.9,
+        "evidencia": "reboco liso pintado em bege, sem revestimento cerâmico",
+        "regra": null,
+        "bbox": null,
+        "celula": "CC"
+      },
+      "cobertura": {
+        "valor": "telha_ceramica",
+        "juizo": "observado",
+        "confianca": 0.6,
+        "evidencia": "telhas cerâmicas visíveis no beiral frontal",
+        "regra": null,
+        "bbox": null,
+        "celula": "SC"
+      },
+      "esquadrias": {
+        "valor": "aluminio",
+        "juizo": "observado",
+        "confianca": 0.85,
+        "evidencia": "janelas de correr com perfil de alumínio",
+        "regra": null,
+        "bbox": null,
+        "celula": "CC"
+      },
+      "estado_conservacao": {
+        "valor": "bom",
+        "juizo": "inferido",
+        "confianca": 0.85,
+        "evidencia": "pintura íntegra, sem trinca aparente, telhado alinhado",
+        "regra": "R-PAD-02",
+        "bbox": null,
+        "celula": "CC"
+      },
+      "fechamento_frontal": {
+        "valor": "muro_com_gradil",
+        "juizo": "observado",
+        "confianca": 0.95,
+        "evidencia": "muro baixo em alvenaria encimado por gradil metálico",
+        "regra": null,
+        "bbox": null,
+        "celula": "CE"
+      },
+      "portao_veicular": {
+        "valor": true,
+        "juizo": "observado",
+        "confianca": 0.95,
+        "evidencia": "portão basculante metálico à direita da testada",
+        "regra": null,
+        "bbox": null,
+        "celula": "CD"
+      },
+      "piscina_visivel": {
+        "valor": null,
+        "juizo": "nao_observavel",
+        "confianca": 0.0,
+        "evidencia": "fundos não enquadrados em foto de nível de rua",
+        "regra": null,
+        "bbox": null,
+        "celula": null
+      }
+    },
+    "uso": {
+      "uso_predominante": {
+        "valor": "misto_res_com",
+        "juizo": "inferido",
+        "confianca": 0.9,
+        "evidencia": "loja com vitrine no térreo e quatro pavimentos residenciais com sacada e ar-condicionado",
+        "regra": "R-USO-02",
+        "bbox": null,
+        "celula": "CC"
+      },
+      "atividade_letreiro": {
+        "valor": "PADARIA DO EDIFICIO",
+        "juizo": "observado",
+        "confianca": 0.9,
+        "evidencia": "letreiro sobre a vitrine do térreo",
+        "regra": null,
+        "bbox": null,
+        "celula": "ID"
+      }
+    },
+    "ocupacao": {
+      "situacao_ocupacao": {
+        "valor": "ocupado",
+        "juizo": "inferido",
+        "confianca": 0.85,
+        "evidencia": "veículo na garagem, cortina na janela e vaso de planta cuidado; nenhum indício de vacância",
+        "regra": "R-OCU-01",
+        "bbox": null,
+        "celula": "CC"
+      },
+      "indicios_ocupacao": {
+        "valor": "veiculo_na_garagem;cortina_persiana;planta_cuidada",
+        "juizo": "observado",
+        "confianca": 0.9,
+        "evidencia": "veículo sob a garagem, cortina visível na janela esquerda, vasos com planta viva junto ao portão",
+        "regra": null,
+        "bbox": null,
+        "celula": "CC"
+      },
+      "risco_impedimento_leitura": {
+        "valor": "nenhum",
+        "juizo": "inferido",
+        "confianca": 0.85,
+        "evidencia": "abrigo de medição embutido no muro, acessível da calçada sem entrar no lote",
+        "regra": "R-AGU-03",
+        "bbox": null,
+        "celula": "IE"
+      }
+    },
+    "agua": {
+      "hidrometro_presente": {
+        "valor": "sim_visivel",
+        "juizo": "observado",
+        "confianca": 0.9,
+        "evidencia": "um único hidrômetro em abrigo junto ao acesso",
+        "regra": null,
+        "bbox": null,
+        "celula": "IE"
+      },
+      "posicao_medicao": {
+        "valor": "caixa_embutida_no_muro",
+        "juizo": "observado",
+        "confianca": 0.9,
+        "evidencia": "nicho na alvenaria do muro frontal, a ~0,4 m do piso",
+        "regra": null,
+        "bbox": null,
+        "celula": "IE"
+      },
+      "tipo_abrigo": {
+        "valor": "caixa_polimero_com_tampa",
+        "juizo": "observado",
+        "confianca": 0.9,
+        "evidencia": "caixa cinza de polímero com tampa articulada e logo da companhia",
+        "regra": null,
+        "bbox": null,
+        "celula": "IE"
+      },
+      "estado_abrigo": {
+        "valor": "integro",
+        "juizo": "observado",
+        "confianca": 0.88,
+        "evidencia": "tampa presente, sem quebra, sem obstrução",
+        "regra": null,
+        "bbox": null,
+        "celula": "IE"
+      },
+      "acessibilidade_medicao": {
+        "valor": "livre_com_abertura_de_tampa",
+        "juizo": "inferido",
+        "confianca": 0.88,
+        "evidencia": "abrigo voltado para a calçada, fora do portão, exige apenas abrir a tampa",
+        "regra": "R-AGU-03",
+        "bbox": null,
+        "celula": "IE"
+      },
+      "suspeita_irregularidade_agua": {
+        "valor": "nenhuma_aparente",
+        "juizo": "observado",
+        "confianca": 0.7,
+        "evidencia": "nenhuma tubulação aparente contornando o abrigo",
+        "regra": null,
+        "bbox": null,
+        "celula": "IE"
+      },
+      "leitura_mostrador": {
+        "valor": null,
+        "juizo": "nao_observavel",
+        "confianca": 0.0,
+        "evidencia": "tampa do abrigo fechada",
+        "regra": null,
+        "bbox": null,
+        "celula": "IE"
+      },
+      "hidrometros_visiveis_qtd": {
+        "valor": 1,
+        "juizo": "observado",
+        "confianca": 0.9,
+        "evidencia": "apenas um relógio no abrigo",
+        "regra": null,
+        "bbox": null,
+        "celula": "IE"
+      }
+    },
+    "energia": {
+      "medidores_energia_qtd": {
+        "valor": 9,
+        "juizo": "observado",
+        "confianca": 0.9,
+        "evidencia": "bateria coletiva com nove medidores completos",
+        "regra": null,
+        "bbox": null,
+        "celula": "ID"
+      },
+      "tipo_padrao_entrada": {
+        "valor": "bateria_coletiva",
+        "juizo": "observado",
+        "confianca": 0.9,
+        "evidencia": "caixa coletiva única com nove posições",
+        "regra": null,
+        "bbox": null,
+        "celula": "ID"
+      },
+      "medidor_removido": {
+        "valor": false,
+        "juizo": "observado",
+        "confianca": 0.85,
+        "evidencia": "medidor presente e íntegro na base",
+        "regra": null,
+        "bbox": null,
+        "celula": "SD"
+      }
+    },
+    "esgoto": {
+      "caixa_inspecao_aparente": {
+        "valor": "sim_na_calcada",
+        "juizo": "observado",
+        "confianca": 0.85,
+        "evidencia": "tampa circular de concreto Ø ~40 cm rente ao piso da calçada, entre a testada e o meio-fio, sem logo de energia ou telecom",
+        "regra": null,
+        "bbox": null,
+        "celula": "IC"
+      },
+      "lancamento_sarjeta_aparente": {
+        "valor": "nao_aparente",
+        "juizo": "observado",
+        "confianca": 0.85,
+        "evidencia": "nenhuma tubulação atravessando a calçada nem mancha de umidade na sarjeta",
+        "regra": null,
+        "bbox": null,
+        "celula": "IC"
+      },
+      "conectividade_esgoto_inferida": {
+        "valor": "provavelmente_conectado",
+        "juizo": "inferido",
+        "confianca": 0.6,
+        "evidencia": "caixa de inspeção na calçada e ausência de lançamento em sarjeta",
+        "regra": "R-ESG-01",
+        "bbox": null,
+        "celula": "IC"
+      }
+    },
+    "acessos": {
+      "portas_acesso_independentes": {
+        "valor": 2,
+        "juizo": "observado",
+        "confianca": 0.9,
+        "evidencia": "acesso social do edifício e porta da loja",
+        "regra": null,
+        "bbox": null,
+        "celula": "IC"
+      },
+      "campainhas_interfones": {
+        "valor": 8,
+        "juizo": "observado",
+        "confianca": 0.92,
+        "evidencia": "botoeira com oito botões numerados",
+        "regra": null,
+        "bbox": null,
+        "celula": "IE"
+      },
+      "numeracoes_distintas": {
+        "valor": 1,
+        "juizo": "observado",
+        "confianca": 0.95,
+        "evidencia": "somente a numeração 0125 na testada",
+        "regra": null,
+        "bbox": null,
+        "celula": "CE"
+      },
+      "caixas_correio": {
+        "valor": 8,
+        "juizo": "observado",
+        "confianca": 0.92,
+        "evidencia": "oito caixas individualizadas no hall externo",
+        "regra": null,
+        "bbox": null,
+        "celula": "IE"
+      }
+    },
+    "entorno": {
+      "pavimentacao_via": {
+        "valor": "asfalto",
+        "juizo": "observado",
+        "confianca": 0.9,
+        "evidencia": "leito carroçável asfaltado com meio-fio",
+        "regra": null,
+        "bbox": null,
+        "celula": "ID"
+      },
+      "calcada": {
+        "valor": "pavimentada_regular",
+        "juizo": "observado",
+        "confianca": 0.9,
+        "evidencia": "passeio em concreto contínuo e nivelado",
+        "regra": null,
+        "bbox": null,
+        "celula": "IC"
+      },
+      "classe_urbana_aparente": {
+        "valor": "urbano_consolidado",
+        "juizo": "inferido",
+        "confianca": 0.7,
+        "evidencia": "via asfaltada, calçada regular, rede de energia e iluminação pública",
+        "regra": "R-ENT-01",
+        "bbox": null,
+        "celula": "ID"
+      }
+    }
+  },
+  "economias": {
+    "estimativa": 9,
+    "faixa": [
+      8,
+      9
+    ],
+    "metodo": "campainhas",
+    "evidencias_contadas": {
+      "campainhas": 8,
+      "caixas_correio": 8,
+      "medidor_energia": 9,
+      "portas_independentes": 2
+    },
+    "confianca": 0.8,
+    "divergencia": false,
+    "justificativa": "Oito identificadores de interfone e oito caixas de correio convergem (R-ECO-04/05); a nona UC elétrica é a loja do térreo ou área comum, por isso a faixa 8-9."
+  },
+  "alertas": [
+    {
+      "codigo": "DIVERGENCIA_UNIDADES_ECONOMIAS",
+      "severidade": "critico",
+      "descricao": "Nove unidades físicas estimadas contra uma economia cadastrada.",
+      "campo_relacionado": "mapeamento.gap_uc_economias"
+    },
+    {
+      "codigo": "COLETIVA_DETECTADA",
+      "severidade": "info",
+      "descricao": "Imóvel coletivo com cadastro unitário.",
+      "campo_relacionado": "economias.estimativa"
+    },
+    {
+      "codigo": "MULTIPLAS_UCS_MESMO_ENDERECO",
+      "severidade": "atencao",
+      "descricao": "Nove medidores de energia no mesmo endereço.",
+      "campo_relacionado": "energia.medidores_energia_qtd"
+    },
+    {
+      "codigo": "ATIVIDADE_ECONOMICA_APARENTE",
+      "severidade": "info",
+      "descricao": "Padaria em operação no térreo.",
+      "campo_relacionado": "triagem.atividade_economica_aparente"
+    }
+  ],
+  "oportunidades": [],
+  "lgpd": {
+    "pessoas_visiveis": false,
+    "placas_veiculo_visiveis": false,
+    "dado_pessoal_transcrito": false,
+    "acao": "nenhuma"
+  },
+  "auditoria": {
+    "passes_executados": 6,
+    "rodadas_verificacao": 1,
+    "campos_preenchidos": 40,
+    "campos_nao_observaveis": 2,
+    "confianca_media": 0.86,
+    "teto_fonte_aplicado": true,
+    "anotador": "leitura-fachada-cadastral/1.1.0",
+    "timestamp": "2026-07-23T09:12:00-03:00"
+  },
+  "estrutura_imovel": {
+    "tipologia": "edificio_vertical",
+    "torres_qtd": null,
+    "pavimentos_qtd": null,
+    "pavimentos_residenciais": null,
+    "pavimentos_comerciais": null,
+    "prumadas_aparentes": null,
+    "unidades_por_pavimento_estimadas": null,
+    "unidades_residenciais_estimadas": null,
+    "unidades_comerciais_estimadas": null,
+    "unidades_fisicas_estimadas": 9,
+    "faixa_unidades_fisicas": null,
+    "metodo_estimativa": [],
+    "identificadores_unidades": null,
+    "nome_edificio": null,
+    "blocos_identificados": null,
+    "ucs_energia_visiveis": 9,
+    "hidrometros_visiveis": 1,
+    "composicao_uso_terreo": null,
+    "composicao_uso_superiores": null,
+    "acessos_residenciais": null,
+    "acessos_comerciais": null,
+    "entradas_garagem": null,
+    "score_multiplas_unidades": 0.9,
+    "score_divergencia_cadastral": 0.9,
+    "score_verticalizacao": null,
+    "mudanca_estrutural": null,
+    "confianca_estrutural": 0.8,
+    "evidencia_estrutura": "prédio alto"
+  },
+  "mapeamento": {
+    "geom_imovel_wkt": null,
+    "srid": 4674,
+    "face_id": "RUA X|par|400",
+    "quadra_id": null,
+    "logradouro_id": null,
+    "bairro": null,
+    "numero_observado": "0450",
+    "numero_base": "0450",
+    "status_endereco": "confere",
+    "numero_estimado_contextual": null,
+    "fonte_numero_estimado": null,
+    "confianca_numero_estimado": null,
+    "uso_base": "residencial",
+    "uso_observado": "misto_res_com",
+    "mudanca_uso": true,
+    "transicao_uso": "RES_PARA_MISTO",
+    "economias_base": 1,
+    "economias_estimadas": 9,
+    "ucs_energia": 9,
+    "gap_uc_economias": 8,
+    "score_subdivisao": 0.96,
+    "score_oportunidade": 0.9,
+    "score_convergencia": 0.35,
+    "probabilidade_confirmacao": 0.75,
+    "impacto_anual_estimado": 9600.0,
+    "valor_esperado_anual": 9600.0,
+    "idade_evidencia_meses": 0,
+    "vigencia_evidencia": "0_12m",
+    "cluster_oportunidade": "CTB-000127"
+  }
+}

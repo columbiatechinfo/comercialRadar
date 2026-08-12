@@ -1,0 +1,157 @@
+{
+  "schema_versao": "1.4.0",
+  "imagem": {
+    "arquivo": "fotos/vila_fundos.jpg",
+    "fonte": "campo",
+    "data_captura": "2026-06-02",
+    "idade_meses": 1,
+    "enquadramento": "fachada_completa",
+    "qualidade": {
+      "nitidez": "boa",
+      "iluminacao": "boa",
+      "obstrucao": [
+        "nenhuma"
+      ]
+    },
+    "apta_para_leitura": true,
+    "motivo_inaptidao": null,
+    "ano_captura": 2026,
+    "data_captura_origem": "informada_cliente"
+  },
+  "vinculo": {
+    "matricula": "7788990",
+    "numero_base": "0340"
+  },
+  "triagem": {
+    "conteudo_imagem": "fachada_imovel",
+    "e_imovel": true,
+    "apto_para_cadastro": true,
+    "uso_parcial_permitido": null,
+    "motivo_descarte": null,
+    "atividade_economica_aparente": "nenhuma_aparente",
+    "sinais_atividade_economica": "nenhum",
+    "atividade_no_alvo": null,
+    "natureza_atividade": null,
+    "formalidade_aparente": null,
+    "confianca_triagem": 0.9,
+    "evidencia_triagem": "testada sem letreiro, toldo, vitrine ou mercadoria exposta"
+  },
+  "varredura": [
+    {
+      "celula": "CE",
+      "itens": [
+        "portão único de pedestre",
+        "corredor lateral estreito"
+      ]
+    },
+    {
+      "celula": "IE",
+      "itens": [
+        "bateria com quatro hidrômetros agrupados na testada"
+      ]
+    },
+    {
+      "celula": "SD",
+      "itens": [
+        "caixa coletiva com quatro medidores de energia"
+      ]
+    }
+  ],
+  "atributos": {
+    "edificacao": {
+      "tipo_edificacao": {
+        "valor": "casa_terrea",
+        "juizo": "observado",
+        "confianca": 0.85,
+        "evidencia": "edificação frontal térrea, corredor lateral dando para os fundos",
+        "regra": null,
+        "bbox": null,
+        "celula": "CC"
+      }
+    },
+    "agua": {
+      "hidrometro_presente": {
+        "valor": "bateria_coletiva",
+        "juizo": "observado",
+        "confianca": 0.92,
+        "evidencia": "quatro hidrômetros agrupados em bateria junto ao muro",
+        "regra": null,
+        "bbox": null,
+        "celula": "IE"
+      },
+      "hidrometros_visiveis_qtd": {
+        "valor": 4,
+        "juizo": "observado",
+        "confianca": 0.9,
+        "evidencia": "quatro relógios individualizados na bateria",
+        "regra": null,
+        "bbox": null,
+        "celula": "IE"
+      }
+    },
+    "energia": {
+      "medidores_energia_qtd": {
+        "valor": 4,
+        "juizo": "observado",
+        "confianca": 0.9,
+        "evidencia": "caixa coletiva com quatro medidores, todos com mostrador",
+        "regra": null,
+        "bbox": null,
+        "celula": "SD"
+      }
+    },
+    "acessos": {
+      "portas_acesso_independentes": {
+        "valor": 1,
+        "juizo": "observado",
+        "confianca": 0.88,
+        "evidencia": "apenas um portão de pedestre na testada",
+        "regra": null,
+        "bbox": null,
+        "celula": "CE"
+      }
+    }
+  },
+  "economias": {
+    "estimativa": 4,
+    "faixa": null,
+    "metodo": "medidor_energia",
+    "evidencias_contadas": {
+      "medidor_energia": 4,
+      "hidrometro_bateria": 4,
+      "portas_independentes": 1
+    },
+    "confianca": 0.8,
+    "divergencia": false,
+    "justificativa": "Bateria de medição indica quatro unidades."
+  },
+  "alertas": [],
+  "oportunidades": [
+    {
+      "codigo": "MULTIPLAS_UCS_MESMO_ENDERECO",
+      "classe": "cadastro",
+      "prioridade": "alta",
+      "confianca": 0.9,
+      "evidencia": "4 medidores de energia completos e individualizados visíveis no imóvel-alvo",
+      "acao_sugerida": "Cruzar UCs elétricas com economias de água e cadastro de unidades; vistoriar se houver divergência.",
+      "data_referencia": "2026-06-02",
+      "impacto_estimado": null,
+      "automatizavel": false,
+      "nivel_evidencia": "sinal_imagem",
+      "fontes_independentes": [
+        "imagem_fachada"
+      ]
+    }
+  ],
+  "lgpd": {
+    "pessoas_visiveis": false,
+    "placas_veiculo_visiveis": false,
+    "dado_pessoal_transcrito": false,
+    "acao": "nenhuma"
+  },
+  "auditoria": {
+    "passes_executados": 5,
+    "rodadas_verificacao": 1,
+    "confianca_media": 0.89
+  }
+}

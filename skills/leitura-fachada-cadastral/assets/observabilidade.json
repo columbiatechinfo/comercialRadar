@@ -1,0 +1,705 @@
+{
+  "versao": "1.2.0",
+  "descricao": "Teto de confiança por atributo x fonte de imagem. Nenhum campo pode declarar confiança acima do teto da sua fonte. Teto 0 significa não observável — o campo deve sair como juizo=nao_observavel e valor=null.",
+  "teto_default": {
+    "campo": 0.95,
+    "streetview": 0.8,
+    "mapillary": 0.75,
+    "drone": 0.7,
+    "desconhecida": 0.5
+  },
+  "tetos": {
+    "enderecamento.numero_fachada": {
+      "campo": 0.98,
+      "streetview": 0.75,
+      "mapillary": 0.65,
+      "drone": 0.15
+    },
+    "enderecamento.numeros_adicionais": {
+      "campo": 0.95,
+      "streetview": 0.7,
+      "mapillary": 0.6,
+      "drone": 0.1
+    },
+    "enderecamento.complemento_visivel": {
+      "campo": 0.95,
+      "streetview": 0.65,
+      "mapillary": 0.55,
+      "drone": 0.1
+    },
+    "enderecamento.placa_logradouro": {
+      "campo": 0.95,
+      "streetview": 0.9,
+      "mapillary": 0.85,
+      "drone": 0.1
+    },
+    "enderecamento.cep_visivel": {
+      "campo": 0.9,
+      "streetview": 0.4,
+      "mapillary": 0.35,
+      "drone": 0.0
+    },
+    "enderecamento.paridade": {
+      "campo": 0.95,
+      "streetview": 0.9,
+      "mapillary": 0.85,
+      "drone": 0.6
+    },
+    "enderecamento.lado_via": {
+      "campo": 0.85,
+      "streetview": 0.9,
+      "mapillary": 0.85,
+      "drone": 0.9
+    },
+    "edificacao.tipo_edificacao": {
+      "campo": 0.9,
+      "streetview": 0.92,
+      "mapillary": 0.88,
+      "drone": 0.8
+    },
+    "edificacao.pavimentos_visiveis": {
+      "campo": 0.8,
+      "streetview": 0.92,
+      "mapillary": 0.9,
+      "drone": 0.95
+    },
+    "edificacao.alinhamento_testada": {
+      "campo": 0.85,
+      "streetview": 0.92,
+      "mapillary": 0.88,
+      "drone": 0.9
+    },
+    "edificacao.testada_estimada_m": {
+      "campo": 0.7,
+      "streetview": 0.75,
+      "mapillary": 0.7,
+      "drone": 0.92
+    },
+    "edificacao.recuo_frontal": {
+      "campo": 0.75,
+      "streetview": 0.85,
+      "mapillary": 0.8,
+      "drone": 0.92
+    },
+    "edificacao.padrao_construtivo": {
+      "campo": 0.85,
+      "streetview": 0.8,
+      "mapillary": 0.75,
+      "drone": 0.55
+    },
+    "edificacao.estrutura_vedacao": {
+      "campo": 0.85,
+      "streetview": 0.75,
+      "mapillary": 0.7,
+      "drone": 0.4
+    },
+    "edificacao.acabamento_fachada": {
+      "campo": 0.92,
+      "streetview": 0.78,
+      "mapillary": 0.72,
+      "drone": 0.35
+    },
+    "edificacao.cobertura": {
+      "campo": 0.6,
+      "streetview": 0.7,
+      "mapillary": 0.65,
+      "drone": 0.95
+    },
+    "edificacao.esquadrias": {
+      "campo": 0.92,
+      "streetview": 0.72,
+      "mapillary": 0.68,
+      "drone": 0.25
+    },
+    "edificacao.estado_conservacao": {
+      "campo": 0.9,
+      "streetview": 0.78,
+      "mapillary": 0.72,
+      "drone": 0.55
+    },
+    "edificacao.fechamento_frontal": {
+      "campo": 0.95,
+      "streetview": 0.9,
+      "mapillary": 0.85,
+      "drone": 0.6
+    },
+    "edificacao.altura_muro_m": {
+      "campo": 0.8,
+      "streetview": 0.75,
+      "mapillary": 0.7,
+      "drone": 0.4
+    },
+    "edificacao.portao_veicular": {
+      "campo": 0.95,
+      "streetview": 0.9,
+      "mapillary": 0.85,
+      "drone": 0.5
+    },
+    "edificacao.vagas_garagem_visiveis": {
+      "campo": 0.8,
+      "streetview": 0.72,
+      "mapillary": 0.65,
+      "drone": 0.6
+    },
+    "edificacao.area_permeavel": {
+      "campo": 0.7,
+      "streetview": 0.7,
+      "mapillary": 0.65,
+      "drone": 0.95
+    },
+    "edificacao.piscina_visivel": {
+      "campo": 0.2,
+      "streetview": 0.2,
+      "mapillary": 0.15,
+      "drone": 0.95
+    },
+    "edificacao.obra_em_andamento": {
+      "campo": 0.92,
+      "streetview": 0.88,
+      "mapillary": 0.85,
+      "drone": 0.88
+    },
+    "uso.uso_predominante": {
+      "campo": 0.92,
+      "streetview": 0.85,
+      "mapillary": 0.8,
+      "drone": 0.45
+    },
+    "uso.usos_secundarios": {
+      "campo": 0.85,
+      "streetview": 0.75,
+      "mapillary": 0.7,
+      "drone": 0.3
+    },
+    "uso.atividade_letreiro": {
+      "campo": 0.95,
+      "streetview": 0.7,
+      "mapillary": 0.6,
+      "drone": 0.05
+    },
+    "uso.segmento_inferido": {
+      "campo": 0.85,
+      "streetview": 0.7,
+      "mapillary": 0.62,
+      "drone": 0.15
+    },
+    "uso.cnae_sugerido": {
+      "campo": 0.6,
+      "streetview": 0.5,
+      "mapillary": 0.45,
+      "drone": 0.1
+    },
+    "uso.porte_aparente": {
+      "campo": 0.75,
+      "streetview": 0.72,
+      "mapillary": 0.68,
+      "drone": 0.75
+    },
+    "ocupacao.situacao_ocupacao": {
+      "campo": 0.88,
+      "streetview": 0.65,
+      "mapillary": 0.6,
+      "drone": 0.45
+    },
+    "ocupacao.indicios_ocupacao": {
+      "campo": 0.92,
+      "streetview": 0.7,
+      "mapillary": 0.65,
+      "drone": 0.45
+    },
+    "ocupacao.indicios_vacancia": {
+      "campo": 0.92,
+      "streetview": 0.72,
+      "mapillary": 0.68,
+      "drone": 0.6
+    },
+    "ocupacao.placa_venda_aluguel": {
+      "campo": 0.95,
+      "streetview": 0.75,
+      "mapillary": 0.68,
+      "drone": 0.1
+    },
+    "ocupacao.acesso_bloqueado": {
+      "campo": 0.92,
+      "streetview": 0.72,
+      "mapillary": 0.68,
+      "drone": 0.3
+    },
+    "ocupacao.risco_impedimento_leitura": {
+      "campo": 0.9,
+      "streetview": 0.6,
+      "mapillary": 0.55,
+      "drone": 0.2
+    },
+    "agua.hidrometro_presente": {
+      "campo": 0.95,
+      "streetview": 0.4,
+      "mapillary": 0.35,
+      "drone": 0.0
+    },
+    "agua.hidrometros_visiveis_qtd": {
+      "campo": 0.92,
+      "streetview": 0.35,
+      "mapillary": 0.3,
+      "drone": 0.0
+    },
+    "agua.posicao_medicao": {
+      "campo": 0.92,
+      "streetview": 0.45,
+      "mapillary": 0.4,
+      "drone": 0.0
+    },
+    "agua.tipo_abrigo": {
+      "campo": 0.92,
+      "streetview": 0.4,
+      "mapillary": 0.35,
+      "drone": 0.0
+    },
+    "agua.estado_abrigo": {
+      "campo": 0.9,
+      "streetview": 0.3,
+      "mapillary": 0.25,
+      "drone": 0.0
+    },
+    "agua.acessibilidade_medicao": {
+      "campo": 0.9,
+      "streetview": 0.45,
+      "mapillary": 0.4,
+      "drone": 0.0
+    },
+    "agua.cavalete_material": {
+      "campo": 0.88,
+      "streetview": 0.25,
+      "mapillary": 0.2,
+      "drone": 0.0
+    },
+    "agua.leitura_remota_aparente": {
+      "campo": 0.8,
+      "streetview": 0.15,
+      "mapillary": 0.1,
+      "drone": 0.0
+    },
+    "agua.suspeita_irregularidade_agua": {
+      "campo": 0.7,
+      "streetview": 0.2,
+      "mapillary": 0.15,
+      "drone": 0.0
+    },
+    "agua.leitura_mostrador": {
+      "campo": 0.9,
+      "streetview": 0.0,
+      "mapillary": 0.0,
+      "drone": 0.0
+    },
+    "energia.medidores_energia_qtd": {
+      "campo": 0.92,
+      "streetview": 0.6,
+      "mapillary": 0.52,
+      "drone": 0.05
+    },
+    "energia.tipo_padrao_entrada": {
+      "campo": 0.9,
+      "streetview": 0.6,
+      "mapillary": 0.52,
+      "drone": 0.05
+    },
+    "energia.ramal_entrada": {
+      "campo": 0.85,
+      "streetview": 0.8,
+      "mapillary": 0.75,
+      "drone": 0.6
+    },
+    "energia.caixa_medicao_coletiva": {
+      "campo": 0.9,
+      "streetview": 0.58,
+      "mapillary": 0.5,
+      "drone": 0.05
+    },
+    "energia.medidor_removido": {
+      "campo": 0.85,
+      "streetview": 0.35,
+      "mapillary": 0.3,
+      "drone": 0.0
+    },
+    "energia.suspeita_irregularidade_energia": {
+      "campo": 0.65,
+      "streetview": 0.2,
+      "mapillary": 0.15,
+      "drone": 0.0
+    },
+    "esgoto.caixa_inspecao_aparente": {
+      "campo": 0.85,
+      "streetview": 0.35,
+      "mapillary": 0.3,
+      "drone": 0.1
+    },
+    "esgoto.caixa_gordura_aparente": {
+      "campo": 0.75,
+      "streetview": 0.25,
+      "mapillary": 0.2,
+      "drone": 0.05
+    },
+    "esgoto.pv_rede_em_frente": {
+      "campo": 0.85,
+      "streetview": 0.65,
+      "mapillary": 0.6,
+      "drone": 0.45
+    },
+    "esgoto.indicio_fossa": {
+      "campo": 0.65,
+      "streetview": 0.25,
+      "mapillary": 0.2,
+      "drone": 0.15
+    },
+    "esgoto.lancamento_sarjeta_aparente": {
+      "campo": 0.85,
+      "streetview": 0.45,
+      "mapillary": 0.4,
+      "drone": 0.1
+    },
+    "esgoto.conectividade_esgoto_inferida": {
+      "campo": 0.6,
+      "streetview": 0.4,
+      "mapillary": 0.35,
+      "drone": 0.2
+    },
+    "acessos.portas_acesso_independentes": {
+      "campo": 0.9,
+      "streetview": 0.85,
+      "mapillary": 0.8,
+      "drone": 0.3
+    },
+    "acessos.campainhas_interfones": {
+      "campo": 0.92,
+      "streetview": 0.45,
+      "mapillary": 0.38,
+      "drone": 0.0
+    },
+    "acessos.caixas_correio": {
+      "campo": 0.92,
+      "streetview": 0.5,
+      "mapillary": 0.42,
+      "drone": 0.0
+    },
+    "acessos.numeracoes_distintas": {
+      "campo": 0.95,
+      "streetview": 0.7,
+      "mapillary": 0.6,
+      "drone": 0.1
+    },
+    "acessos.letreiros_comerciais": {
+      "campo": 0.95,
+      "streetview": 0.85,
+      "mapillary": 0.78,
+      "drone": 0.15
+    },
+    "acessos.unidades_por_pavimento_estimada": {
+      "campo": 0.65,
+      "streetview": 0.72,
+      "mapillary": 0.68,
+      "drone": 0.55
+    },
+    "acessos.portaria_condominio": {
+      "campo": 0.92,
+      "streetview": 0.88,
+      "mapillary": 0.82,
+      "drone": 0.4
+    },
+    "entorno.pavimentacao_via": {
+      "campo": 0.9,
+      "streetview": 0.95,
+      "mapillary": 0.92,
+      "drone": 0.9
+    },
+    "entorno.calcada": {
+      "campo": 0.92,
+      "streetview": 0.92,
+      "mapillary": 0.88,
+      "drone": 0.75
+    },
+    "entorno.meio_fio": {
+      "campo": 0.92,
+      "streetview": 0.92,
+      "mapillary": 0.88,
+      "drone": 0.7
+    },
+    "entorno.rede_agua_aparente": {
+      "campo": 0.7,
+      "streetview": 0.55,
+      "mapillary": 0.5,
+      "drone": 0.3
+    },
+    "entorno.iluminacao_publica": {
+      "campo": 0.85,
+      "streetview": 0.92,
+      "mapillary": 0.88,
+      "drone": 0.8
+    },
+    "entorno.classe_urbana_aparente": {
+      "campo": 0.7,
+      "streetview": 0.85,
+      "mapillary": 0.8,
+      "drone": 0.92
+    },
+    "entorno.declividade_terreno": {
+      "campo": 0.7,
+      "streetview": 0.8,
+      "mapillary": 0.75,
+      "drone": 0.85
+    },
+    "uso.nome_estabelecimento_visivel": {
+      "campo": 0.95,
+      "streetview": 0.75,
+      "mapillary": 0.68,
+      "drone": 0.05
+    },
+    "uso.descricao_atividade_funcional": {
+      "campo": 0.88,
+      "streetview": 0.72,
+      "mapillary": 0.65,
+      "drone": 0.1
+    },
+    "uso.situacao_estabelecimento_na_data_imagem": {
+      "campo": 0.85,
+      "streetview": 0.72,
+      "mapillary": 0.65,
+      "drone": 0.2
+    },
+    "uso.sinais_atividade_comercial": {
+      "campo": 0.92,
+      "streetview": 0.78,
+      "mapillary": 0.7,
+      "drone": 0.2
+    },
+    "uso.validade_temporal_uso": {
+      "campo": 0.99,
+      "streetview": 0.99,
+      "mapillary": 0.99,
+      "drone": 0.99
+    },
+    "enderecamento.numero_porta": {
+      "campo": 0.98,
+      "streetview": 0.82,
+      "mapillary": 0.72,
+      "drone": 0.05
+    },
+    "enderecamento.numero_portao": {
+      "campo": 0.98,
+      "streetview": 0.82,
+      "mapillary": 0.72,
+      "drone": 0.05
+    },
+    "enderecamento.numero_caixa_correio": {
+      "campo": 0.96,
+      "streetview": 0.68,
+      "mapillary": 0.58,
+      "drone": 0.0
+    },
+    "enderecamento.numero_placa_comercial": {
+      "campo": 0.96,
+      "streetview": 0.78,
+      "mapillary": 0.68,
+      "drone": 0.02
+    },
+    "enderecamento.numero_endereco_consolidado": {
+      "campo": 0.98,
+      "streetview": 0.85,
+      "mapillary": 0.75,
+      "drone": 0.05
+    },
+    "enderecamento.origem_numero_consolidado": {
+      "campo": 0.99,
+      "streetview": 0.95,
+      "mapillary": 0.92,
+      "drone": 0.1
+    },
+    "enderecamento.complementos_unidades_visiveis": {
+      "campo": 0.96,
+      "streetview": 0.7,
+      "mapillary": 0.6,
+      "drone": 0.0
+    },
+    "enderecamento.divergencia_numero_base": {
+      "campo": 0.98,
+      "streetview": 0.85,
+      "mapillary": 0.75,
+      "drone": 0.05
+    },
+    "edificacao.area_footprint_estimada_m2": {
+      "campo": 0.15,
+      "streetview": 0.1,
+      "mapillary": 0.1,
+      "drone": 0.92
+    },
+    "edificacao.area_construida_estimativa_m2": {
+      "campo": 0.1,
+      "streetview": 0.08,
+      "mapillary": 0.08,
+      "drone": 0.82
+    },
+    "triagem.conteudo_imagem": {
+      "campo": 0.98,
+      "streetview": 0.95,
+      "mapillary": 0.92,
+      "drone": 0.9
+    },
+    "triagem.e_imovel": {
+      "campo": 0.98,
+      "streetview": 0.95,
+      "mapillary": 0.92,
+      "drone": 0.9
+    },
+    "triagem.apto_para_cadastro": {
+      "campo": 0.95,
+      "streetview": 0.92,
+      "mapillary": 0.9,
+      "drone": 0.85
+    },
+    "triagem.atividade_economica_aparente": {
+      "campo": 0.92,
+      "streetview": 0.8,
+      "mapillary": 0.75,
+      "drone": 0.35
+    },
+    "triagem.sinais_atividade_economica": {
+      "campo": 0.92,
+      "streetview": 0.78,
+      "mapillary": 0.72,
+      "drone": 0.25
+    },
+    "triagem.atividade_no_alvo": {
+      "campo": 0.9,
+      "streetview": 0.7,
+      "mapillary": 0.65,
+      "drone": 0.45
+    },
+    "triagem.natureza_atividade": {
+      "campo": 0.85,
+      "streetview": 0.7,
+      "mapillary": 0.65,
+      "drone": 0.25
+    },
+    "triagem.formalidade_aparente": {
+      "campo": 0.8,
+      "streetview": 0.62,
+      "mapillary": 0.58,
+      "drone": 0.2
+    },
+    "estrutura_imovel.tipologia": {
+      "campo": 0.9,
+      "streetview": 0.9,
+      "mapillary": 0.85,
+      "drone": 0.85
+    },
+    "estrutura_imovel.pavimentos_qtd": {
+      "campo": 0.8,
+      "streetview": 0.92,
+      "mapillary": 0.9,
+      "drone": 0.95
+    },
+    "estrutura_imovel.prumadas_aparentes": {
+      "campo": 0.75,
+      "streetview": 0.88,
+      "mapillary": 0.85,
+      "drone": 0.6
+    },
+    "estrutura_imovel.unidades_fisicas_estimadas": {
+      "campo": 0.8,
+      "streetview": 0.75,
+      "mapillary": 0.7,
+      "drone": 0.55
+    },
+    "estrutura_imovel.identificadores_unidades": {
+      "campo": 0.92,
+      "streetview": 0.35,
+      "mapillary": 0.28,
+      "drone": 0.0
+    },
+    "estrutura_imovel.ucs_energia_visiveis": {
+      "campo": 0.92,
+      "streetview": 0.6,
+      "mapillary": 0.52,
+      "drone": 0.05
+    },
+    "estrutura_imovel.hidrometros_visiveis": {
+      "campo": 0.92,
+      "streetview": 0.35,
+      "mapillary": 0.3,
+      "drone": 0.0
+    },
+    "estrutura_imovel.torres_qtd": {
+      "campo": 0.7,
+      "streetview": 0.8,
+      "mapillary": 0.75,
+      "drone": 0.95
+    },
+    "estrutura_imovel.composicao_uso_terreo": {
+      "campo": 0.92,
+      "streetview": 0.85,
+      "mapillary": 0.8,
+      "drone": 0.3
+    }
+  },
+  "volateis": [
+    "ocupacao.situacao_ocupacao",
+    "ocupacao.indicios_ocupacao",
+    "ocupacao.indicios_vacancia",
+    "ocupacao.placa_venda_aluguel",
+    "ocupacao.acesso_bloqueado",
+    "ocupacao.risco_impedimento_leitura",
+    "uso.uso_predominante",
+    "uso.usos_secundarios",
+    "uso.atividade_letreiro",
+    "uso.segmento_inferido",
+    "uso.cnae_sugerido",
+    "uso.porte_aparente",
+    "edificacao.obra_em_andamento",
+    "edificacao.estado_conservacao",
+    "agua.leitura_mostrador",
+    "agua.estado_abrigo",
+    "energia.medidor_removido",
+    "acessos.letreiros_comerciais",
+    "uso.nome_estabelecimento_visivel",
+    "uso.descricao_atividade_funcional",
+    "uso.situacao_estabelecimento_na_data_imagem",
+    "uso.sinais_atividade_comercial",
+    "triagem.atividade_economica_aparente",
+    "triagem.sinais_atividade_economica",
+    "triagem.natureza_atividade",
+    "triagem.formalidade_aparente",
+    "triagem.atividade_no_alvo",
+    "estrutura_imovel.composicao_uso_terreo"
+  ],
+  "decaimento_temporal": {
+    "aplica_a": "volateis",
+    "modelo": "exponencial_meia_vida",
+    "meia_vida_meses": 24,
+    "piso": 0.3,
+    "formula": "teto_efetivo = teto_fonte * max(piso, 0.5 ** (idade_meses / meia_vida_meses))",
+    "nota": "Sem data de captura conhecida, imagem de streetview/mapillary assume idade_meses = 36 (mediana conservadora de recobrimento em cidades médias brasileiras). Foto de campo sem data assume 0 apenas se a coleta é da campanha corrente; caso contrário informe a data."
+  },
+  "penalidade_enquadramento": {
+    "fachada_completa": 1.0,
+    "parcial_lateral": 0.85,
+    "parcial_superior": 0.85,
+    "parcial_inferior": 0.8,
+    "muito_proximo": 0.8,
+    "muito_distante": 0.7,
+    "obliquo_severo": 0.7,
+    "aereo_vertical": 0.75
+  },
+  "penalidade_qualidade": {
+    "nitidez": {
+      "boa": 1.0,
+      "regular": 0.85,
+      "ruim": 0.6
+    },
+    "iluminacao": {
+      "boa": 1.0,
+      "contraluz": 0.75,
+      "sombra_profunda": 0.8,
+      "noturna": 0.6,
+      "estourada": 0.7
+    }
+  }
+}

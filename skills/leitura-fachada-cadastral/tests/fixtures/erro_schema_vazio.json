@@ -1,0 +1,40 @@
+{
+  "schema_versao": "1.4.0",
+  "imagem": {
+    "arquivo": "x.jpg",
+    "fonte": "campo",
+    "data_captura": "2026-08-09",
+    "ano_captura": 2026,
+    "data_captura_origem": "informada_cliente",
+    "idade_meses": 0,
+    "enquadramento": "fachada_completa",
+    "apta_para_leitura": true
+  },
+  "triagem": {
+    "conteudo_imagem": "fachada_imovel",
+    "e_imovel": true,
+    "apto_para_cadastro": true,
+    "uso_parcial_permitido": null,
+    "motivo_descarte": null,
+    "atividade_economica_aparente": "nenhuma_aparente",
+    "sinais_atividade_economica": "nenhum",
+    "atividade_no_alvo": null,
+    "natureza_atividade": null,
+    "formalidade_aparente": null,
+    "confianca_triagem": 0.9,
+    "evidencia_triagem": "testada sem letreiro, toldo, vitrine ou mercadoria exposta"
+  },
+  "atributos": {},
+  "economias": {
+    "estimativa": 1,
+    "metodo": "unitario_default",
+    "confianca": 0.5,
+    "divergencia": false
+  },
+  "oportunidades": [],
+  "auditoria": {
+    "passes_executados": 0,
+    "rodadas_verificacao": 0,
+    "confianca_media": 0.0
+  }
+}

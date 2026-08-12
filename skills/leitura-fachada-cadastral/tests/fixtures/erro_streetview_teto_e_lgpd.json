@@ -1,0 +1,130 @@
+{
+  "schema_versao": "1.4.0",
+  "imagem": {
+    "arquivo": "sv/rua_x_98.jpg",
+    "fonte": "streetview",
+    "data_captura": "2019-11",
+    "idade_meses": 80,
+    "enquadramento": "obliquo_severo",
+    "qualidade": {
+      "nitidez": "regular",
+      "iluminacao": "contraluz",
+      "obstrucao": [
+        "veiculo"
+      ]
+    },
+    "apta_para_leitura": true,
+    "motivo_inaptidao": null,
+    "ano_captura": 2019,
+    "data_captura_origem": "informada_cliente"
+  },
+  "triagem": {
+    "conteudo_imagem": "fachada_imovel",
+    "e_imovel": true,
+    "apto_para_cadastro": true,
+    "uso_parcial_permitido": null,
+    "motivo_descarte": null,
+    "atividade_economica_aparente": "nenhuma_aparente",
+    "sinais_atividade_economica": "nenhum",
+    "atividade_no_alvo": null,
+    "natureza_atividade": null,
+    "formalidade_aparente": null,
+    "confianca_triagem": 0.42,
+    "evidencia_triagem": "testada sem letreiro, toldo, vitrine ou mercadoria exposta"
+  },
+  "atributos": {
+    "edificacao": {
+      "tipo_edificacao": {
+        "valor": "sobrado",
+        "juizo": "inferido",
+        "confianca": 0.6,
+        "evidencia": "duas fileiras de janelas",
+        "regra": null,
+        "bbox": null,
+        "celula": "CC"
+      }
+    },
+    "ocupacao": {
+      "situacao_ocupacao": {
+        "valor": "ocupado",
+        "juizo": "inferido",
+        "confianca": 0.62,
+        "evidencia": "cortina na janela superior",
+        "regra": "R-OCU-01",
+        "bbox": null,
+        "celula": "CC"
+      }
+    },
+    "agua": {
+      "hidrometro_presente": {
+        "valor": "sim_visivel",
+        "juizo": "observado",
+        "confianca": 0.9,
+        "evidencia": "caixa no muro",
+        "regra": null,
+        "bbox": null,
+        "celula": "IE"
+      },
+      "leitura_mostrador": {
+        "valor": "01234",
+        "juizo": "observado",
+        "confianca": 0.3,
+        "evidencia": "mostrador ampliado",
+        "regra": null,
+        "bbox": null,
+        "celula": "IE"
+      },
+      "suspeita_irregularidade_agua": {
+        "valor": "outro:gato na entrada",
+        "juizo": "inferido",
+        "confianca": 0.2,
+        "evidencia": "tubulação contornando a caixa",
+        "regra": "R-AGU-02",
+        "bbox": null,
+        "celula": "IE"
+      }
+    },
+    "entorno": {
+      "pavimentacao_via": {
+        "valor": "asfalto_novo",
+        "juizo": "observado",
+        "confianca": 0.8,
+        "evidencia": "leito escuro e uniforme",
+        "regra": null,
+        "bbox": null,
+        "celula": "ID"
+      },
+      "calcada": {
+        "valor": "pavimentada_regular",
+        "juizo": "nao_observavel",
+        "confianca": 0.4,
+        "evidencia": null,
+        "regra": null,
+        "bbox": null,
+        "celula": null
+      }
+    }
+  },
+  "economias": {
+    "estimativa": 1,
+    "faixa": null,
+    "metodo": "unitario_default",
+    "evidencias_contadas": {},
+    "confianca": 0.8,
+    "divergencia": false,
+    "justificativa": null
+  },
+  "alertas": [],
+  "oportunidades": [],
+  "lgpd": {
+    "pessoas_visiveis": true,
+    "placas_veiculo_visiveis": true,
+    "dado_pessoal_transcrito": true,
+    "acao": "nenhuma"
+  },
+  "auditoria": {
+    "passes_executados": 3,
+    "rodadas_verificacao": 0,
+    "confianca_media": 0.546
+  }
+}

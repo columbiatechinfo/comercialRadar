@@ -1,0 +1,268 @@
+{
+  "schema_versao": "1.4.0",
+  "imagem": {
+    "arquivo": "sv_auto_center.jpg",
+    "fonte": "streetview",
+    "data_captura": "2024-08",
+    "ano_captura": 2024,
+    "data_captura_origem": "api_fonte",
+    "idade_meses": 24,
+    "enquadramento": "fachada_completa",
+    "qualidade": {
+      "nitidez": "boa",
+      "iluminacao": "boa",
+      "obstrucao": [
+        "nenhuma"
+      ]
+    },
+    "apta_para_leitura": true,
+    "motivo_inaptidao": null
+  },
+  "vinculo": {
+    "matricula": "998877",
+    "numero_base": "350",
+    "uso_base": "residencial",
+    "economias_agua_base": 1,
+    "metodo_vinculo": "id_direto",
+    "confianca_vinculo": 0.99,
+    "ambiguidade": false,
+    "numero_confere": true
+  },
+  "triagem": {
+    "conteudo_imagem": "fachada_imovel",
+    "e_imovel": true,
+    "apto_para_cadastro": true,
+    "uso_parcial_permitido": null,
+    "motivo_descarte": null,
+    "atividade_economica_aparente": "sinal_forte",
+    "sinais_atividade_economica": "letreiro_fachada;porta_de_aco_comercial",
+    "atividade_no_alvo": "no_imovel_alvo",
+    "natureza_atividade": "comercio",
+    "formalidade_aparente": "estabelecimento_formal_aparente",
+    "confianca_triagem": 0.4,
+    "evidencia_triagem": "letreiro e vitrine ocupando a testada do imóvel-alvo"
+  },
+  "atributos": {
+    "uso": {
+      "uso_predominante": {
+        "valor": "misto_res_com",
+        "juizo": "inferido",
+        "confianca": 0.4,
+        "evidencia": "térreo identificado como auto center e pavimento superior com acesso residencial independente",
+        "regra": "R-USO-08",
+        "bbox": null,
+        "celula": "CC"
+      },
+      "nome_estabelecimento_visivel": {
+        "valor": "AUTO CENTER AVENIDA",
+        "juizo": "observado",
+        "confianca": 0.36,
+        "evidencia": "letreiro frontal legível",
+        "regra": null,
+        "bbox": null,
+        "celula": "CC"
+      },
+      "atividade_letreiro": {
+        "valor": "PNEUS • ALINHAMENTO • TROCA DE ÓLEO",
+        "juizo": "observado",
+        "confianca": 0.34,
+        "evidencia": "texto do letreiro sob o nome do estabelecimento",
+        "regra": null,
+        "bbox": null,
+        "celula": "CC"
+      },
+      "segmento_inferido": {
+        "valor": "oficina_autopecas",
+        "juizo": "inferido",
+        "confianca": 0.32,
+        "evidencia": "letreiro anuncia pneus, alinhamento e troca de óleo",
+        "regra": "R-USO-05",
+        "bbox": null,
+        "celula": "CC"
+      },
+      "descricao_atividade_funcional": {
+        "valor": "serviços automotivos de pneus, alinhamento e troca de óleo",
+        "juizo": "inferido",
+        "confianca": 0.34,
+        "evidencia": "atividade descrita literalmente no letreiro",
+        "regra": "R-USO-05",
+        "bbox": null,
+        "celula": "CC"
+      },
+      "situacao_estabelecimento_na_data_imagem": {
+        "valor": "em_atividade_aparente",
+        "juizo": "inferido",
+        "confianca": 0.34,
+        "evidencia": "porta aberta, fachada identificada e pneus expostos na data da captura",
+        "regra": "R-USO-06",
+        "bbox": null,
+        "celula": "CC"
+      },
+      "sinais_atividade_comercial": {
+        "valor": "letreiro_ativo;fachada_identificada;porta_aberta;produtos_expostos",
+        "juizo": "observado",
+        "confianca": 0.36,
+        "evidencia": "letreiro íntegro, porta aberta e pneus expostos",
+        "regra": null,
+        "bbox": null,
+        "celula": "CC"
+      },
+      "validade_temporal_uso": {
+        "valor": "historica_19a36m",
+        "juizo": "inferido",
+        "confianca": 0.9,
+        "evidencia": "imagem capturada em agosto de 2024, 24 meses antes do processamento",
+        "regra": "R-TEM-01",
+        "bbox": null,
+        "celula": null
+      }
+    },
+    "energia": {
+      "medidores_energia_qtd": {
+        "valor": 3,
+        "juizo": "observado",
+        "confianca": 0.58,
+        "evidencia": "três medidores completos individualizados na mesma testada",
+        "regra": null,
+        "bbox": null,
+        "celula": "CD"
+      }
+    },
+    "acessos": {
+      "portas_acesso_independentes": {
+        "valor": 3,
+        "juizo": "observado",
+        "confianca": 0.8,
+        "evidencia": "três acessos independentes alinhados na testada",
+        "regra": null,
+        "bbox": null,
+        "celula": "CE"
+      }
+    },
+    "enderecamento": {
+      "numero_portao": {
+        "valor": "350",
+        "juizo": "observado",
+        "confianca": 0.78,
+        "evidencia": "número 350 afixado no portão do imóvel-alvo",
+        "regra": null,
+        "bbox": null,
+        "celula": "CE"
+      },
+      "numero_caixa_correio": {
+        "valor": "350",
+        "juizo": "observado",
+        "confianca": 0.64,
+        "evidencia": "número 350 legível na caixa de correio junto ao portão",
+        "regra": null,
+        "bbox": null,
+        "celula": "CE"
+      },
+      "numero_endereco_consolidado": {
+        "valor": "350",
+        "juizo": "inferido",
+        "confianca": 0.75,
+        "evidencia": "o mesmo número 350 aparece no portão e na caixa de correio",
+        "regra": "R-END-03",
+        "bbox": null,
+        "celula": "CE"
+      },
+      "origem_numero_consolidado": {
+        "valor": "portao",
+        "juizo": "observado",
+        "confianca": 0.9,
+        "evidencia": "número consolidado tem leitura principal no portão, corroborada pela caixa de correio",
+        "regra": null,
+        "bbox": null,
+        "celula": "CE"
+      }
+    }
+  },
+  "economias": {
+    "estimativa": 1,
+    "faixa": null,
+    "metodo": "unitario_default",
+    "evidencias_contadas": {
+      "medidor_energia": 3,
+      "portas_independentes": 3
+    },
+    "confianca": 0.5,
+    "divergencia": false,
+    "justificativa": "Há forte evidência de três unidades independentes, mas a quantidade de economias de água requer verificação específica."
+  },
+  "alertas": [
+    {
+      "codigo": "REVISAO_HUMANA",
+      "severidade": "atencao",
+      "descricao": "Imagem histórica e oportunidade cadastral de alto impacto requerem validação antes de qualquer alteração.",
+      "campo_relacionado": "oportunidades"
+    },
+    {
+      "codigo": "ATIVIDADE_ECONOMICA_APARENTE",
+      "severidade": "info",
+      "descricao": "Sinais de atividade econômica na testada do imóvel-alvo.",
+      "campo_relacionado": "triagem.atividade_economica_aparente"
+    }
+  ],
+  "oportunidades": [
+    {
+      "codigo": "MULTIPLAS_UCS_MESMO_ENDERECO",
+      "classe": "cadastro",
+      "prioridade": "alta",
+      "confianca": 0.58,
+      "evidencia": "três medidores elétricos completos no mesmo endereço",
+      "acao_sugerida": "Cruzar as UCs com cadastro de água e unidades físicas do imóvel.",
+      "data_referencia": "2024-08",
+      "impacto_estimado": null,
+      "automatizavel": false,
+      "nivel_evidencia": "sinal_imagem",
+      "fontes_independentes": [
+        "imagem_fachada"
+      ]
+    },
+    {
+      "codigo": "DIVERGENCIA_UC_ECONOMIAS",
+      "classe": "receita",
+      "prioridade": "alta",
+      "confianca": 0.58,
+      "evidencia": "três UCs elétricas visíveis versus uma economia de água cadastrada",
+      "acao_sugerida": "Priorizar vistoria cadastral para confirmar individualização e economias de água.",
+      "data_referencia": "2024-08",
+      "impacto_estimado": null,
+      "automatizavel": false,
+      "nivel_evidencia": "achado_convergente",
+      "fontes_independentes": [
+        "imagem_fachada",
+        "cadastro_companhia"
+      ]
+    },
+    {
+      "codigo": "USO_MISTO_POTENCIAL",
+      "classe": "cadastro",
+      "prioridade": "alta",
+      "confianca": 0.4,
+      "evidencia": "auto center no térreo e acesso residencial independente no pavimento superior",
+      "acao_sugerida": "Verificar categoria tarifária e composição residencial/comercial na matrícula.",
+      "data_referencia": "2024-08",
+      "impacto_estimado": null,
+      "automatizavel": false,
+      "nivel_evidencia": "sinal_imagem",
+      "fontes_independentes": [
+        "imagem_fachada"
+      ]
+    }
+  ],
+  "lgpd": {
+    "pessoas_visiveis": false,
+    "placas_veiculo_visiveis": false,
+    "dado_pessoal_transcrito": false,
+    "acao": "nenhuma"
+  },
+  "auditoria": {
+    "passes_executados": 6,
+    "rodadas_verificacao": 1,
+    "confianca_media": 0.558,
+    "campos_preenchidos": 14,
+    "campos_nao_observaveis": 0
+  }
+}

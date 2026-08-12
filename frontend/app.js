@@ -571,6 +571,89 @@ function toggleMalha() {
 ──────────────────────────────────────────────────────────── */
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
+/* LEITURA DE FACHADA (avaliar_fachada.py + skill leitura-fachada-cadastral).
+   Mostra a evidência, não só a conclusão: quem vai decidir uma revisão tarifária
+   precisa ver de onde saiu o número e o quanto a fonte aguenta. */
+const OPORT_ROT = {
+  MULTIPLAS_UCS_MESMO_ENDERECO: "Vários medidores de energia",
+  DIVERGENCIA_UC_ECONOMIAS: "UCs elétricas × economias cadastradas",
+  MULTIPLAS_UNIDADES_FISICAS: "Várias unidades físicas",
+  ECONOMIAS_OCULTAS_POTENCIAL: "Economias ocultas",
+  USO_COMERCIAL_NAO_CADASTRADO: "Comércio não cadastrado",
+  USO_MISTO_POTENCIAL: "Uso misto",
+  ATIVIDADE_DOMICILIAR_POTENCIAL: "Atividade dentro de residência",
+  ESGOTO_SEM_COBRANCA_POTENCIAL: "Esgoto sem cobrança",
+  DIVERGENCIA_NUMERO_ENDERECO: "Número diverge do cadastro",
+  AREA_DIVERGENTE_POTENCIAL: "Área divergente",
+};
+const NIVEL_ROT = {
+  achado_convergente: ["Achado convergente", "ok", "duas fontes independentes"],
+  sinal_imagem: ["Sinal de imagem", "med", "uma fonte só — falta convergir"],
+  contradicao: ["Contradição", "baixo", "as fontes discordam"],
+};
+
+function blocoFachada(f) {
+  const st = {
+    aprovado: ["✅", "Leitura aprovada no gate da skill", "ok"],
+    reprovado: ["⚠️", "Leitura fora do gate — use com ressalva", "med"],
+    inapto: ["🚫", "Imagem não sustenta leitura", "baixo"],
+    fora_escopo: ["🚫", "A imagem não é de imóvel", "baixo"],
+  }[f.status] || ["•", f.status, ""];
+
+  let h = `<div class="m-sec-title">🏠 Leitura de fachada (cadastral)</div>`;
+  h += `<div class="fa-cab"><span class="tag ${st[2]}">${st[0]} ${esc(st[1])}</span>`
+     + `<small>${esc(f.modelo || "")}${f.data_imagem
+         ? " · imagem de " + esc(String(f.data_imagem).slice(0, 7)) : " · sem data do panorama"}</small></div>`;
+
+  if (f.status === "fora_escopo" || f.status === "inapto") {
+    h += `<div class="m-rows"><div class="m-row"><span class="ico">ℹ️</span><span>${
+      esc((f.alertas[0] || {}).descricao || "sem leitura aproveitável")}</span></div></div>`;
+    return h;
+  }
+
+  h += `<div class="m-rows">`;
+  const linha = (ico, rot, val) => val || val === 0
+    ? `<div class="m-row"><span class="ico">${ico}</span><span><b>${rot}:</b> ${esc(String(val))}</span></div>` : "";
+  h += linha("🏷️", "Uso observado", f.uso_observado);
+  h += linha("🏢", "Tipologia", (f.tipologia || "").replace(/_/g, " "));
+  if (f.estabelecimento || f.letreiro)
+    h += linha("📣", "No letreiro", [f.estabelecimento, f.letreiro].filter(Boolean).join(" — "));
+  h += linha("🧭", "O que funciona ali", f.descricao);
+  // as quatro medidas SEPARADAS: a skill proíbe fundi-las, e é a divergência
+  // entre elas que vira achado
+  const med = [
+    f.unidades_fisicas != null ? `${f.unidades_fisicas} unidade(s) física(s)` : null,
+    f.ucs_energia != null ? `${f.ucs_energia} medidor(es) de energia` : null,
+    f.hidrometros != null ? `${f.hidrometros} hidrômetro(s)` : null,
+    f.economias_base != null ? `${f.economias_base} economia(s) no cadastro` : null,
+  ].filter(Boolean);
+  if (med.length) h += linha("🔢", "Contagens", med.join(" · "));
+  if (f.numero_lido)
+    h += linha(f.numero_confere === false ? "❗" : "🔟",
+               "Número na fachada",
+               f.numero_lido + (f.numero_confere === false ? " (diverge do cadastro)"
+                              : f.numero_confere ? " (confere)" : ""));
+  if (f.atividade_no_alvo && f.atividade_no_alvo !== "no_imovel_alvo")
+    h += linha("↔️", "Atenção", `a atividade lida é ${f.atividade_no_alvo.replace(/_/g, " ")}`);
+  h += `</div>`;
+
+  const ops = f.oportunidades || [];
+  if (ops.length) {
+    h += `<div class="m-sec-title" style="margin-top:12px">Oportunidades cadastrais</div>`;
+    h += ops.map((o) => {
+      const n = NIVEL_ROT[o.nivel_evidencia] || ["", "", ""];
+      return `<div class="fa-op">
+        <div class="fa-op-cab"><b>${esc(OPORT_ROT[o.codigo] || o.codigo)}</b>
+          <span class="tag ${n[1]}" title="${esc(n[2])}">${esc(n[0])}</span></div>
+        <div class="fa-op-ev">${esc(o.evidencia || "")}</div>
+        <div class="fa-op-pe">confiança ${(o.confianca ?? 0).toFixed(2)} ·
+          ${esc(o.acao_sugerida || "")}</div>
+      </div>`;
+    }).join("");
+  }
+  return h;
+}
+
 function stars(v) {
   const n = Math.round(parseFloat(String(v).replace(",", ".")) || 0);
   return "★".repeat(Math.min(n, 5)) + "☆".repeat(Math.max(0, 5 - n));
@@ -693,6 +776,8 @@ async function abrirPoi(poiLeve) {
     }
     html += `</div>`;
   }
+
+  if (poi.fachada) html += blocoFachada(poi.fachada);
 
   if ((poi.horarios || []).length) {
     html += `<div class="m-sec-title">Horário de funcionamento</div><div class="m-horarios">` +
@@ -840,16 +925,61 @@ $("btn-limpar-fora").onclick = async () => {
 let modo = "planilha";
 let arquivoImportado = null;
 let jobRodando = false;
+let ultimoJob = null;   // alimenta o cartão "Agora" do menu
 
-document.querySelectorAll(".mode").forEach((b) => {
+/* MENU FLYOUT — abre por baixo do cabeçalho, largura inteira.
+   O botão mostra a etapa corrente; o painel mostra todas, agrupadas na ordem em
+   que o trabalho acontece. */
+const flyout = () => $("flyout");
+function abrirMenu(abrir) {
+  const b = $("menu-btn");
+  flyout().classList.toggle("hidden", !abrir);
+  $("flyout-fundo").classList.toggle("hidden", !abrir);
+  // A busca flutuante tem z-index 1310, acima do menu — ela atravessava o painel
+  // e ficava boiando no meio da coluna "Qualificação". Some enquanto o menu está
+  // aberto: é busca no MAPA, e o mapa está coberto de qualquer forma.
+  $("busca-wrap").classList.toggle("oculto-menu", abrir);
+  b.setAttribute("aria-expanded", abrir ? "true" : "false");
+  if (abrir) atualizarContextoMenu();
+}
+$("menu-btn").onclick = () => abrirMenu(flyout().classList.contains("hidden"));
+$("flyout-fundo").onclick = () => abrirMenu(false);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !flyout().classList.contains("hidden")) abrirMenu(false);
+});
+
+/* A coluna da direita responde "onde eu estou?" antes de o usuário escolher para
+   onde ir: qual área está em foco e o que o último processo fez. Sem isso o
+   menu é uma lista de destinos sem mapa. */
+function atualizarContextoMenu() {
+  const temArea = !!anelArea();
+  const cid = cidadeEmFoco();
+  $("fly-area-val").textContent = temArea
+    ? (cid ? `${cid} · área desenhada` : "área desenhada")
+    : (cid || "nenhuma definida");
+  $("fly-area-sub").textContent = temArea
+    ? `${poisBase().length.toLocaleString("pt-BR")} POIs no foco`
+    : "desenhe no mapa ou escolha o município";
+  const j = ultimoJob;
+  $("fly-job-val").textContent = j && j.modo
+    ? (MODO_LABEL[j.modo] || j.modo) : "nenhum nesta sessão";
+  $("fly-job-sub").textContent = j && j.status
+    ? `${j.status}${j.fim ? " às " + j.fim.slice(11, 16) : ""}` : "—";
+}
+
+document.querySelectorAll(".fly-item").forEach((b) => {
   b.onclick = () => {
-    document.querySelectorAll(".mode").forEach((x) => x.classList.remove("active"));
+    document.querySelectorAll(".fly-item").forEach((x) => x.classList.remove("active"));
     b.classList.add("active");
     modo = b.dataset.mode;
+    // o botão do cabeçalho passa a ser o rótulo da etapa corrente
+    $("menu-ico").textContent = b.querySelector(".fly-ico").textContent;
+    $("menu-rot").textContent = b.querySelector("b").textContent;
+    abrirMenu(false);
     $("sec-planilha").classList.toggle("hidden", modo !== "planilha");
     $("sec-mineracao").classList.toggle("hidden", modo !== "mineracao");
     $("sec-enriquecimento").classList.toggle("hidden", modo !== "enriquecimento");
-    $("sec-quadras").classList.toggle("hidden", modo !== "quadras");
+    $("sec-avaliar")?.classList.toggle("hidden", modo !== "avaliar");
     // O DASHBOARD NÃO É UM PASSO DO PROCESSO — é tela de leitura. Some com tudo
     // que serve para operar: área de trabalho, cards do processo atual, busca no
     // mapa, chips de filtro e log. Deixados no lugar, eles ficam por cima do
@@ -863,9 +993,13 @@ document.querySelectorAll(".mode").forEach((b) => {
                       "filtros", "log-panel"]) {
       $(id)?.classList.toggle("hidden", dash);
     }
-    if (modo === "quadras") carregarUltimaQuadra();
-    else { limparQuadras(); }
     if (dash) carregarDashboard();
+    // os cards da leitura substituem os do processo genérico só nesta aba
+    const av = modo === "avaliar";
+    $("stats-fachada")?.classList.toggle("hidden", !av);
+    $("stats-processo")?.classList.toggle("hidden", av && !jobRodando);
+    if (!av) fecharListaFachada();
+    if (av) { estimarAvaliacao(); carregarCardsFachada(); }
     atualizarBotoes();
   };
 });
@@ -916,7 +1050,8 @@ $("file-input").onchange = async () => {
    caro, de outra parte do sistema, sem ninguém ter pedido. Modo fora desta lista
    não inicia job nenhum e o botão nem aparece. */
 const MODOS_JOB = { planilha: "da planilha", mineracao: "de mineração",
-                    enriquecimento: "de enriquecimento", quadras: "de quadras" };
+                    enriquecimento: "de enriquecimento",
+                    avaliar: "de avaliação de fachada" };
 
 function atualizarBotoes() {
   const temArea = !!areaLayer;
@@ -931,6 +1066,213 @@ function atualizarBotoes() {
   else if (modo === "planilha" && !arquivoImportado && !jobRodando) $("job-status-txt").textContent = "Importe a planilha (passo 2).";
   else if (!jobRodando) $("job-status-txt").textContent = "Pronto para iniciar.";
 }
+
+/* A estimativa aparece ANTES de começar, e reage à troca de modelo: a diferença
+   entre gpt-4o-mini e gpt-4o é de uma ordem de grandeza sobre 16 mil fachadas, e
+   descobrir isso depois de mandar rodar é caro. */
+async function estimarAvaliacao() {
+  const el = $("av-estimativa");
+  if (!el) return;
+  el.textContent = "calculando o que há para avaliar…";
+  try {
+    // "false", não string vazia: o FastAPI recusa `refazer=` com erro de parse,
+    // e o catch abaixo transformava isso em "servidor fora?" — mensagem que
+    // manda procurar o problema no lugar errado.
+    const q = new URLSearchParams({ modelo: $("av-modelo").value,
+                                    refazer: $("av-refazer").checked ? "true" : "false" });
+    const e = await (await fetch("/api/avaliar/estimativa?" + q)).json();
+    if (!e.pois) {
+      el.innerHTML = e.ja_avaliados
+        ? `Tudo lido nesta área — <b>${e.ja_avaliados.toLocaleString("pt-BR")}</b> fachadas
+           já avaliadas (${e.ja_aprovados.toLocaleString("pt-BR")} aprovadas).
+           Marque <b>reavaliar</b> para passar de novo.`
+        : "Nenhum ponto da área tem fachada capturada. Rode a <b>Fase 4</b> do "
+          + "enriquecimento primeiro — a leitura precisa da imagem.";
+      return;
+    }
+    el.innerHTML =
+      `<b>${e.pois.toLocaleString("pt-BR")}</b> fachadas a ler`
+      + (e.cidade ? ` em ${esc(e.cidade)}` : "")
+      + (e.local
+         ? ` · <b>grátis</b> na GPU do i9 · ~<b>${e.horas} h</b> de processamento<br>`
+         : ` · custo estimado <b>US$ ${e.usd}</b> (US$ ${e.usd_por_poi}/ponto)<br>`)
+      + `<b>${e.com_vinculo.toLocaleString("pt-BR")}</b> têm imóvel casado no cadastro `
+      + `— só esses podem virar <b>achado convergente</b>; o resto para em sinal de imagem.`
+      + (e.ja_avaliados ? `<br><small>${e.ja_avaliados.toLocaleString("pt-BR")} já lidas
+          antes (${e.ja_aprovados.toLocaleString("pt-BR")} aprovadas).</small>` : "");
+  } catch {
+    el.textContent = "não consegui calcular a estimativa (servidor fora?).";
+  }
+}
+/* ────────────────────────────────────────────────────────────
+   CARDS DA LEITURA DE FACHADA + lista navegável sobre o mapa
+──────────────────────────────────────────────────────────── */
+const FA_ICO = {
+  aprovadas: "✅", oportunidade: "⚖️", convergente: "🎯", uso_diverge: "🏷️",
+  unidades: "🏢", coletiva: "🔗", medicao: "🔧", numero: "❗",
+  conservacao: "🧱", inapto: "🚫", fora_escopo: "🗺️",
+};
+const FA_COR = {
+  aprovadas: "c-green", convergente: "c-green", oportunidade: "c-purple",
+  uso_diverge: "c-orange", unidades: "c-orange", coletiva: "c-orange",
+  medicao: "c-blue", numero: "c-red", conservacao: "c-gray",
+  inapto: "c-gray", fora_escopo: "c-gray",
+};
+
+async function carregarCardsFachada() {
+  const alvo = $("fa-cards");
+  if (!alvo) return;
+  try {
+    const d = await (await fetch("/api/fachada/resumo")).json();
+    if (!d.total) {
+      alvo.innerHTML = `<div class="stat-nota">Nenhuma fachada lida nesta área
+        ainda. Configure ao lado e inicie o processo.</div>`;
+      return;
+    }
+    // card com zero não some: "0 medições com problema" é informação, e some-lo
+    // faria a lista mudar de tamanho a cada rodada
+    alvo.innerHTML = d.cards.map((c) => `
+      <button class="stat-card fa-card ${FA_COR[c.chave] || ""}" data-recorte="${c.chave}"
+              ${c.n ? "" : "disabled"}>
+        <div class="stat-ico">${FA_ICO[c.chave] || "•"}</div>
+        <div><div class="stat-val">${nfmt(c.n)}</div>
+          <div class="stat-label">${esc(c.rotulo)}</div></div>
+      </button>`).join("");
+    alvo.querySelectorAll(".fa-card").forEach((b) => {
+      b.onclick = () => abrirListaFachada(b.dataset.recorte);
+    });
+  } catch {
+    alvo.innerHTML = `<div class="stat-nota">não consegui ler o resumo.</div>`;
+  }
+}
+
+let faItens = [];
+async function abrirListaFachada(recorte) {
+  $("fa-lista").classList.remove("hidden");
+  document.body.classList.add("lista-aberta");
+  $("fa-lista-itens").innerHTML = `<div class="fa-vazio">carregando…</div>`;
+  const d = await (await fetch("/api/fachada/lista?recorte=" + encodeURIComponent(recorte))).json();
+  faItens = d.itens || [];
+  $("fa-lista-tit").textContent = d.rotulo || recorte;
+  $("fa-lista-sub").textContent = `${faItens.length} ponto(s) — clique para o mapa ir até lá`;
+  $("fa-lista-itens").innerHTML = faItens.length
+    ? faItens.map((p, i) => `
+      <button class="fa-item" data-i="${i}">
+        <div class="fa-item-nome">${esc(p.nome || "(sem nome)")}</div>
+        <div class="fa-item-sub">${esc((p.endereco || "").slice(0, 52))}</div>
+        <div class="fa-item-tags">
+          ${p.uso ? `<span class="tag">${esc(p.uso)}</span>` : ""}
+          ${p.n_oport ? `<span class="tag med">${p.n_oport} oport.</span>` : ""}
+          ${p.numero_confere === false ? `<span class="tag baixo">nº ${esc(p.numero_lido || "?")}</span>` : ""}
+        </div>
+      </button>`).join("")
+    : `<div class="fa-vazio">nada neste recorte.</div>`;
+  $("fa-lista-itens").querySelectorAll(".fa-item").forEach((b) => {
+    b.onclick = () => selecionarFachada(parseInt(b.dataset.i));
+  });
+  faAtual = -1;
+}
+
+/* Ao escolher um item: o mapa vai até o ponto e a FICHA abre quase em tela
+   cheia, com o mapa desfocado atrás. As imagens vêm do banco, coletadas no
+   enriquecimento — a fachada avaliada e as fotos do Maps —, e cada uma amplia
+   em tela cheia ao clique: conferir número de porta em miniatura não dá. */
+let faAtual = -1;
+
+async function selecionarFachada(i) {
+  const p = faItens[i];
+  if (!p) return;
+  faAtual = i;
+  document.querySelectorAll("#fa-lista-itens .fa-item").forEach((e, k) =>
+    e.classList.toggle("sel", k === i));
+  // O MOVIMENTO DO MAPA NÃO PODE DERRUBAR A FICHA. Um `flyTo` com coordenada
+  // inválida (ou com o mapa ainda sem tamanho, quando `getZoom()` volta NaN)
+  // lança, e a exceção abortava `selecionarFachada` inteira antes de abrir
+  // qualquer coisa — o clique no item simplesmente não fazia nada.
+  const la = Number(p.lat), lo = Number(p.lng);
+  if (Number.isFinite(la) && Number.isFinite(lo)) {
+    try {
+      const z = map.getZoom();
+      map.flyTo([la, lo], Number.isFinite(z) ? Math.max(z, 18) : 18, { duration: 0.7 });
+    } catch { /* mapa indisponível: a ficha vale por si */ }
+  }
+
+  $("fa-ficha").classList.remove("hidden");
+  document.body.classList.add("ficha-aberta");
+  $("fa-ficha-nome").textContent = p.nome || "(sem nome)";
+  $("fa-ficha-end").textContent = p.endereco || "";
+  $("fa-ficha-pos").textContent = `${i + 1} / ${faItens.length}`;
+  // o Street View do ponto exato, que é onde a leitura foi feita
+  $("fa-ficha-maps").href = (p.lat != null)
+    ? `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${p.lat},${p.lng}`
+    : `https://www.google.com/maps/search/${encodeURIComponent(p.nome || "")}`;
+  $("fa-ficha-imgs").innerHTML = `<div class="fa-vazio">carregando imagens…</div>`;
+  $("fa-ficha-dados").innerHTML = "";
+
+  const poi = await (await fetch("/api/pois/" + p.id)).json();
+  if (faAtual !== i) return;              // o usuário já mudou de item
+  const imgs = [{ src: `/api/sv/${p.id}/facade`, rot: "Fachada avaliada (Street View)" }]
+    .concat((poi.fotos || []).slice(0, 8).map((u, k) => ({ src: u, rot: `Foto do Maps ${k + 1}`, ext: true })));
+  $("fa-ficha-imgs").innerHTML = imgs.map((im, k) => `
+    <figure class="fa-img" data-k="${k}">
+      <img src="${esc(im.src)}" loading="lazy" ${im.ext ? 'referrerpolicy="no-referrer"' : ""}>
+      <figcaption>${esc(im.rot)}</figcaption>
+    </figure>`).join("");
+  $("fa-ficha-imgs").querySelectorAll(".fa-img").forEach((f) => {
+    f.onclick = () => ampliarImagem(imgs[parseInt(f.dataset.k)].src);
+  });
+  $("fa-ficha-dados").innerHTML =
+    (poi.fachada ? blocoFachada(poi.fachada)
+                 : `<div class="fa-vazio">sem leitura para este ponto.</div>`)
+    + `<div class="fa-ficha-rodape">
+         <button class="btn sm" id="fa-abrir-ficha">Ficha completa do POI</button>
+       </div>`;
+  const b = $("fa-abrir-ficha");
+  if (b) b.onclick = () => { fecharFicha(); abrirPoi(p); };
+}
+
+function fecharFicha() {
+  $("fa-ficha").classList.add("hidden");
+  document.body.classList.remove("ficha-aberta");
+}
+function ampliarImagem(src) {
+  $("fa-zoom-img").src = src;
+  $("fa-zoom").classList.remove("hidden");
+}
+$("fa-ficha-fechar").onclick = fecharFicha;
+$("fa-ficha-prev").onclick = () => selecionarFachada(Math.max(0, faAtual - 1));
+$("fa-ficha-next").onclick = () => selecionarFachada(Math.min(faItens.length - 1, faAtual + 1));
+$("fa-zoom").onclick = () => $("fa-zoom").classList.add("hidden");
+$("fa-ficha").onclick = (e) => { if (e.target.id === "fa-ficha") fecharFicha(); };
+
+/* Setas navegam a fila sem sair da ficha — é assim que se revisa cem pontos.
+   O Esc fecha a camada mais interna primeiro: zoom, depois ficha, depois lista. */
+document.addEventListener("keydown", (e) => {
+  const zoomAberto = !$("fa-zoom").classList.contains("hidden");
+  const fichaAberta = !$("fa-ficha").classList.contains("hidden");
+  if (e.key === "Escape") {
+    // fecha SÓ a camada mais interna, uma por vez: zoom → ficha → fila
+    if (zoomAberto) { $("fa-zoom").classList.add("hidden"); return; }
+    if (fichaAberta) { fecharFicha(); return; }
+    if (!$("fa-lista").classList.contains("hidden")) { fecharListaFachada(); return; }
+  }
+  if (!fichaAberta || zoomAberto) return;
+  if (e.key === "ArrowRight") selecionarFachada(Math.min(faItens.length - 1, faAtual + 1));
+  if (e.key === "ArrowLeft") selecionarFachada(Math.max(0, faAtual - 1));
+});
+function fecharListaFachada() {
+  $("fa-lista").classList.add("hidden");
+  document.body.classList.remove("lista-aberta");
+  fecharFicha();
+}
+$("fa-lista-fechar").onclick = fecharListaFachada;
+// O Esc da LISTA está no ouvinte único mais abaixo, junto com o da ficha e o do
+// zoom. Dois ouvintes separados fechavam tudo de uma vez: um Esc para sair da
+// imagem ampliada levava a ficha e a fila junto.
+
+$("btn-av-estimar").onclick = estimarAvaliacao;
+$("av-modelo").onchange = estimarAvaliacao;
+$("av-refazer").onchange = estimarAvaliacao;
 
 $("btn-iniciar").onclick = async () => {
   let modoJob = modo;
@@ -957,9 +1299,6 @@ $("btn-iniciar").onclick = async () => {
     } else {
       opcoes.zoom = parseInt($("op-zoom").value) || 19;
     }
-  } else if (modo === "quadras") {
-    opcoes = { com_maps: !!$("op-q-maps")?.checked,
-               sem_proxy: !$("op-q-proxy")?.checked };
   } else if (modo === "enriquecimento") {  // cascata única Maps→Web→StreetView
     modoJob = "enriquecer_tudo";
     opcoes = {
@@ -972,6 +1311,14 @@ $("btn-iniciar").onclick = async () => {
       sv_so_pobres: !!$("enr-sv-pobres")?.checked,
       visivel: !!$("enr-visivel")?.checked,
     };
+  } else if (modo === "avaliar") {
+    modoJob = "avaliar";
+    opcoes = {
+      modelo: $("av-modelo").value,
+      workers: parseInt($("av-workers").value) || 4,
+      teto_usd: parseFloat($("av-teto").value) || 0,
+      refazer: !!$("av-refazer").checked,
+    };
   }
   const body = { modo: modoJob, opcoes };
   if (arquivoImportado) body.arquivo = arquivoImportado;
@@ -983,7 +1330,6 @@ $("btn-iniciar").onclick = async () => {
   aplicarJob(r);
   $("log-panel").classList.remove("collapsed");
   toast(`Processo ${MODOS_JOB[modo]} iniciado ▶`, "ok");
-  if (modo === "quadras") acompanharQuadras();
 };
 
 $("btn-parar").onclick = () => confirmar(
@@ -996,9 +1342,11 @@ $("btn-parar").onclick = () => confirmar(
 
 const MODO_LABEL = { planilha: "planilha", mineracao: "mineração", minerar_web: "mineração web",
                      enriquecer_maps: "enriquecimento Maps", streetview: "Street View",
-                     enriquecer_tudo: "enriquecimento (cascata)", baixar_imagens: "download de imagens" };
+                     enriquecer_tudo: "enriquecimento (cascata)", baixar_imagens: "download de imagens",
+                     avaliar: "avaliação de fachada" };
 function aplicarJob(j) {
   jobRodando = j && j.status === "rodando";
+  if (j && j.status && j.status !== "ocioso") ultimoJob = j;
   if (jobRodando) agendarStats();   // job em curso mantém o painel do banco vivo
   const labels = { rodando: "⚙️ Rodando", finalizado: "✅ Finalizado", parado: "⏹ Parado", erro: "❌ Erro", ocioso: "" };
   if (j && j.status && j.status !== "ocioso") {
@@ -1418,12 +1766,6 @@ function fecharTooltips() {
   } catch { /* mapa ainda não montado */ }
 }
 
-function limparQuadras() {
-  fecharTooltips();
-  qCamadas.forEach((c) => { try { map.removeLayer(c); } catch { /* ok */ } });
-  qCamadas = [];
-  qLayers = {};
-}
 
 function classeDoPonto(p) {
   if (p.canonico === true) return p.resgate ? "resgatado" : "aprovado";
@@ -1454,287 +1796,6 @@ function escurecer(hex, fator = 0.55) {
   return `#${((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1)}`;
 }
 
-async function carregarQuadras(sid, silencioso = false) {
-  if (!sid) return;
-  const r = await fetch(`/api/quadras/${encodeURIComponent(sid)}`);
-  const gj = await r.json();
-  if (gj.erro) { toast(gj.erro, "erro"); return; }
-  qDados = gj;
-  qSessaoAtual = sid;
-  limparQuadras();
-  mapearCoresFaces(porCamadaQ("face"));
-
-  // a área desenhada
-  addCamada("area", L.geoJSON({ type: "FeatureCollection", features: porCamadaQ("area") }, {
-    pane: "paneQuadras", interactive: false,
-    style: { color: "#ffffff", weight: 1, opacity: 0.35, fill: false, dashArray: "8,8" },
-  }).addTo(map));
-
-  // vias do OSM, com o nome canônico lido no Maps
-  addCamada("vias", L.geoJSON({ type: "FeatureCollection", features: porCamadaQ("via") }, {
-    pane: "paneFaces",
-    style: { color: "#ffd400", weight: 2, opacity: 0.5 },
-    onEachFeature: (f, l) => {
-      const p = f.properties;
-      const dif = p.nome_canonico && p.nome_osm &&
-                  _normVia(p.nome_canonico) !== _normVia(p.nome_osm);
-      l.bindTooltip(
-        `🛣️ <b>${esc(p.nome_canonico || p.nome_osm || "sem nome")}</b>` +
-        (dif ? `<br><span style="color:#f0b429">OSM: ${esc(p.nome_osm)}</span>` : "") +
-        (!p.nome_canonico ? `<br><small style="color:#f0b429">canônico não lido</small>` : "") +
-        `<br><small>${esc(p.tipo || "")} · ${Math.round(p.comprimento_m || 0)} m</small>`,
-        { sticky: true });
-    },
-  }).addTo(map));
-
-  // quadra do OSM (eixo das vias) e a borda REAL
-  addCamada("quadraOsm", L.geoJSON({ type: "FeatureCollection", features: porCamadaQ("quadra_osm") }, {
-    pane: "paneQuadras", interactive: false,
-    style: { color: "#ffffff", weight: 1, opacity: 0.4, fill: false, dashArray: "2,6" },
-  }).addTo(map));
-  addCamada("quadraReal", L.geoJSON({ type: "FeatureCollection", features: porCamadaQ("quadra_real") }, {
-    pane: "paneQuadras",
-    // a quadra de rua aberta não é quarteirão: é o corredor de um lado da via.
-    // Desenhá-la igual a um quarteirão faria o mapa afirmar o que não existe.
-    style: (f) => (f.properties.via_aberta
-      ? { color: "#ffffff", weight: 1, opacity: 0.45, fill: false, dashArray: "4,5" }
-      : { color: "#ffffff", weight: 2, opacity: 0.9, fill: false }),
-    onEachFeature: (f, l) => l.bindTooltip(
-      (f.properties.via_aberta
-        ? `Rua aberta ${f.properties.id} — um lado da via`
-        : `Quadra ${f.properties.id}`) +
-      `<br>${Math.round(f.properties.area_m2 || 0)} m²` +
-      `<br><small>borda real · recuo ${f.properties.recuo_medio_m} m da meia-via</small>`,
-      { sticky: true }),
-  }).addTo(map));
-
-  // faces: cada uma com cor própria na sessão e deslocada para o lado da sua
-  // quadra — duas faces sobre a mesma rua aparecem lado a lado, não empilhadas
-  const centros = {};
-  porCamadaQ("quadra_osm").forEach((q) => {
-    const a = q.geometry.coordinates[0];
-    centros[q.properties.id] = [a.reduce((s, c) => s + c[0], 0) / a.length,
-                                a.reduce((s, c) => s + c[1], 0) / a.length];
-  });
-  const facesDesl = porCamadaQ("face").map((f) => ({
-    ...f,
-    geometry: { ...f.geometry,
-                coordinates: deslocarParaDentro(f.geometry.coordinates,
-                                                centros[f.properties.quadra_id]) },
-  }));
-  addCamada("faces", L.geoJSON({ type: "FeatureCollection", features: facesDesl }, {
-    pane: "paneFaces",
-    style: (f) => ({ color: corDaFace(f.properties.quadra_id, f.properties.face_idx),
-                     weight: 6, opacity: 0.9, lineCap: "round" }),
-    onEachFeature: (f, l) => {
-      const p = f.properties;
-      l.bindTooltip(
-        `<b>${p.via_aberta ? "rua aberta" : "quadra"} ${p.quadra_id} · face ` +
-        `${p.face_idx}</b> · ` +
-        `${Math.round(p.comprimento_m || 0)} m<br>` +
-        `${esc(p.nome_canonico || p.nome_osm || "via não identificada")}<br>` +
-        `numeração <b>${p.paridade || "indefinida"}</b>` +
-        (p.paridade_por ? `<br><small>${esc(p.paridade_por)}</small>` : "") +
-        `<br><small>recuo do eixo — par ${p.recuo_par_m ?? "—"} m · ` +
-        `ímpar ${p.recuo_impar_m ?? "—"} m</small>`, { sticky: true });
-      l.on("click", () => {
-        const k = `${p.quadra_id}:${p.face_idx}`;
-        qFaceFiltro = qFaceFiltro === k ? null : k;
-        aplicarFiltroFace();
-        montarLegendaQuadras();
-      });
-    },
-  }).addTo(map));
-
-  // TELHADOS do Overture (passo 7) — referência, não substituem o ponto.
-  // Quem tem ÂNCORA confirmada no Maps sai destacado: é o único par
-  // (número, posição) medido no chão que a face tem.
-  addCamada("telhados", L.geoJSON(
-    { type: "FeatureCollection", features: porCamadaQ("telhado") }, {
-      pane: "paneQuadras",
-      style: (f) => {
-        const p = f.properties;
-        const c = corDaFace(p.quadra_id, p.face_idx);
-        return p.ancora_numero
-          ? { color: "#ffffff", weight: 2.5, fillColor: c, fillOpacity: 0.55 }
-          : { color: c, weight: 1, opacity: 0.7, fillColor: c, fillOpacity: 0.18 };
-      },
-      onEachFeature: (f, l) => {
-        const p = f.properties;
-        l.bindTooltip(
-          `🏠 <b>${Math.round(p.area_m2 || 0)} m²</b>` +
-          (p.pavimentos ? ` · ${p.pavimentos} pav.` : "") +
-          (p.altura_m ? ` · ${p.altura_m} m` : "") +
-          `<br><small>quadra ${p.quadra_id} · face ${p.face_idx ?? "—"}` +
-          (p.dist_face_m != null ? ` · ${p.dist_face_m} m da face` : "") + `</small>` +
-          (p.ancora_via
-            ? `<br><small style="color:#22e07a">âncora Maps: ` +
-              `${p.ancora_numero ? "<b>nº " + p.ancora_numero + "</b> " : ""}` +
-              `${esc(p.ancora_via)}</small>`
-            : ""), { sticky: true });
-      },
-    }));
-
-  // a borda REAL de cada face — o trilho sobre o qual o passo 6 distribui
-  addCamada("faceReal", L.geoJSON({ type: "FeatureCollection", features: porCamadaQ("face_real") }, {
-    pane: "paneFaces", interactive: false,
-    style: (f) => ({ color: corDaFace(f.properties.quadra_id, f.properties.face_idx),
-                     weight: 2, opacity: 0.55, dashArray: "6,5" }),
-  }).addTo(map));
-
-  // PASSO 6 — a posição alinhada na borda real, ligada à original por tracejado.
-  // A original continua desenhada (mais apagada): a correção tem de ser sempre
-  // auditável contra o que o cadastro diz.
-  // um marcador por PORTA: mesmo logradouro e número já foram para o mesmo
-  // lugar, então desenhar um por endereço só empilharia círculos idênticos
-  const vistosGrupo = new Set();
-  const alinhados = porCamadaQ("ponto").filter((f) => {
-    const p = f.properties;
-    if (p.lat_alinhado == null) return false;
-    if (!p.grupo_id) return true;
-    if (vistosGrupo.has(p.grupo_id)) return false;
-    vistosGrupo.add(p.grupo_id);
-    return true;
-  });
-  if (alinhados.length) {
-    addCamada("ligacoes", L.geoJSON({
-      type: "FeatureCollection",
-      features: alinhados.map((f) => ({
-        type: "Feature", properties: f.properties,
-        geometry: { type: "LineString",
-                    coordinates: [f.geometry.coordinates,
-                                  [f.properties.lng_alinhado, f.properties.lat_alinhado]] },
-      })),
-    }, { pane: "paneFaces", interactive: false,
-         // A ligação até a coordenada original é a prova da correção. Quando o
-         // movimento é grande ela deixa de ser um fio cinza: um endereço andar
-         // 40 m é coisa para CONFERIR, não para passar batido no mapa.
-         style: (f) => {
-           const p = f.properties;
-           if (p.alinhado_modo === "realocado")
-             return { color: "#d97706", weight: 2.6, opacity: 0.95, dashArray: "7,4" };
-           if ((p.desloc_m || 0) >= DESLOC_DESTAQUE_M)
-             return { color: "#dc2626", weight: 2, opacity: 0.85, dashArray: "5,4" };
-           return { color: "#9aa4b0", weight: 1, opacity: 0.55, dashArray: "3,4" };
-         } })
-      .addTo(map));
-    addCamada("alinhados", L.geoJSON({
-      type: "FeatureCollection",
-      features: alinhados.map((f) => ({
-        type: "Feature", properties: f.properties,
-        geometry: { type: "Point",
-                    coordinates: [f.properties.lng_alinhado, f.properties.lat_alinhado] },
-      })),
-    }, {
-      pane: "paneMarcadores",
-      pointToLayer: (f, latlng) => {
-        const p = f.properties;
-        const c = p.resgate ? escurecer(corDaFace(p.quadra_id, p.face_idx))
-                            : corDaFace(p.quadra_id, p.face_idx);
-        // porta com vários endereços fica MAIOR — é uma só, mas pesa mais
-        const n = p.grupo_n || 1;
-        // perpendicular = só projetado na testada, sem entrar na régua da
-        // numeração: anel TRACEJADO, para não se confundir com o alinhado
-        const perp = p.alinhado_modo === "perpendicular";
-        const noTelhado = p.alinhado_modo === "telhado";
-        // preservado = via que não fecha quadra, com telhado perto: ficou na
-        // coordenada original de propósito. Anel claro, para não parecer que a
-        // régua o alcançou nem que ele foi projetado.
-        const preso = p.alinhado_modo === "preservado";
-        // anel âmbar: só aparece em sessão ANTERIOR à mudança que fez da via
-        // aberta uma face de verdade. Hoje esses pontos saem como 'regua' ou
-        // 'perpendicular', como os de qualquer face — o modo fica reconhecido
-        // para que a sessão antiga continue sendo desenhada pelo que ela é.
-        const rua = p.alinhado_modo === "via_aberta"
-                 || p.alinhado_modo === "via_aberta_perp";
-        const ruaPerp = p.alinhado_modo === "via_aberta_perp";
-        // realocado = o número não era da série daquela face e o endereço foi
-        // levado para o trecho da rua onde ele se encaixa. Anel âmbar GROSSO:
-        // é a maior intervenção que o processo faz num ponto.
-        const real = p.alinhado_modo === "realocado";
-        return L.circleMarker(latlng, {
-          pane: "paneMarcadores", radius: 5 + Math.min(6, Math.sqrt(n - 1) * 3),
-          weight: real ? 3.2 : (perp || preso || rua ? 2.4 : (n > 1 ? 2.2 : 1.6)),
-          dashArray: perp || ruaPerp ? "3,3" : null,
-          color: real ? "#d97706" : preso ? "#38bdf8" : rua ? "#f59e0b"
-               : perp ? "#111827" : (noTelhado ? "#ffffff" : "#0b0f14"),
-          fillColor: c, fillOpacity: perp ? 0.75 : 1, opacity: 1 });
-      },
-      onEachFeature: (f, l) => {
-        const p = f.properties;
-        const perp = p.alinhado_modo === "perpendicular";
-        l.bindTooltip(
-          `<b>${esc(p.logradouro || "—")}, ${p.numero}</b>` +
-          (p.grupo_n > 1 ? ` <b>· ${p.grupo_n} endereços nesta porta</b>` : "") +
-          `<br><small>${perp ? "⚠ posto só na perpendicular"
-              : p.alinhado_modo === "realocado" ? "⚠ REALOCADO para outro trecho da rua"
-              : p.alinhado_modo === "preservado" ? "📌 mantido onde estava"
-              : p.alinhado_modo === "telhado" ? "🏠 casado com um telhado"
-              : p.alinhado_modo === "interpolado" ? "interpolado entre telhados"
-              : "alinhado pela régua da numeração"} · ` +
-          `${p.desloc_m} m da coordenada original` +
-          `<br>${esc(p.alinhado_por || "")}</small>`, { sticky: true });
-      },
-    }).addTo(map));
-  }
-
-  // os pontos, na coordenada ORIGINAL do CNEFE
-  addCamada("origens", L.geoJSON({ type: "FeatureCollection", features: porCamadaQ("ponto") }, {
-    pane: "paneMarcadores",
-    pointToLayer: (f, latlng) => {
-      const p = f.properties;
-      // canonico: true = é desta face · false = destoa · null = não dá para julgar
-      const base = p.canonico === true ? corDaFace(p.quadra_id, p.face_idx)
-        : p.canonico === false ? COR_DESTOA : COR_INDEF;
-      // resgatado pela coordenada: mesma face, tom mais escuro
-      const cor = (p.canonico === true && p.resgate) ? escurecer(base) : base;
-      // quem já tem posição alinhada fica APAGADO aqui: a leitura principal
-      // passa a ser a da borda real, e esta vira só a origem, para conferência.
-      // O preservado NÃO saiu do lugar — apagá-lo diria o contrário.
-      const movido = p.lat_alinhado != null && p.alinhado_modo !== "preservado";
-      return L.circleMarker(latlng, {
-        pane: "paneMarcadores",
-        radius: movido ? 3 : (p.origem === "dentro_quadra" ? 5 : 4),
-        weight: movido ? 1 : (p.canonico === false ? 2 : 1),
-        color: movido ? "#9aa4b0" : "#0b0f14", fillColor: cor,
-        fillOpacity: movido ? 0.25 : (p.canonico === null ? 0.5 : 0.95),
-        opacity: movido ? 0.4 : 0.9,
-      });
-    },
-    onEachFeature: (f, l) => {
-      const p = f.properties;
-      l.bindTooltip(
-        `<b>${esc(p.logradouro || "—")}${p.numero ? ", " + p.numero : ""}</b>` +
-        (p.estabelecimento ? `<br>${esc(p.estabelecimento)}` : "") +
-        `<br><small>face ${p.face_idx ?? "—"} · ` +
-        (p.canonico === true
-          ? (p.resgate ? `<b>resgatado</b> — ${esc(p.motivo || "")}` : "condiz com a face")
-          : p.canonico === false ? `<span style="color:#ff9b9b">${esc(p.motivo || "destoa")}</span>`
-          : esc(p.motivo || "sem julgamento")) + `</small>` +
-        `<br><small>${p.origem === "dentro_quadra" ? "dentro da quadra"
-          : `a ${p.dist_via_m} m do eixo da via`}` +
-        (p.cep ? ` · CEP ${esc(p.cep)}` : "") +
-        (p.nv_geo ? ` · coord. nível ${esc(p.nv_geo)}` : "") + `</small>` +
-        (p.alinhado_modo === "perpendicular"
-          ? `<br><small style="color:#f0b429">⚠ ${esc(p.alinhado_por || "")}</small>`
-          : ""),
-        { sticky: true });
-    },
-  }).addTo(map));
-
-  aplicarVisualizacao();          // respeita o que o usuário escolheu ver
-  const s = gj.sessao || {};
-  $("q-estado").innerHTML =
-    `<b>${esc(sid)}</b> — passo ${s.passo}/8 · ${esc(s.municipio || "?")}/${esc(s.uf || "?")}` +
-    (s.erro ? `<br><span style="color:#ff9b9b">${esc(s.erro)}</span>` : "");
-  montarLegendaQuadras();
-  if (!silencioso) {
-    try { map.fitBounds(qCamadas[0].getBounds().pad(0.05)); } catch { /* ok */ }
-    const np = porCamadaQ("ponto").length;
-    toast(`${porCamadaQ("quadra_osm").length} quadras · ${porCamadaQ("via").length} vias · ` +
-          `${np} pontos`, "ok");
-  }
-}
 
 /* Clicar numa face isola os pontos dela — é assim que se confere, olhando um
    lado da rua de cada vez, se a paridade separou certo. */
@@ -2001,26 +2062,9 @@ $("btn-q-limpar") && ($("btn-q-limpar").onclick = () => {
    o botão azul roda o processo inteiro, como nos outros modos. Rodar passo a
    passo é coisa do terminal (`quadras.py vias|borda|pontos|faces --sessao S`),
    que é onde se conserta uma execução que quebrou no meio. */
-async function carregarUltimaQuadra(silencioso = false) {
-  try {
-    const ss = await (await fetch("/api/quadras/sessoes?limite=1")).json();
-    if (ss && ss[0]) await carregarQuadras(ss[0].id, silencioso);
-  } catch { /* ok */ }
-}
 
 /* Enquanto o job de quadras roda, o mapa vai preenchendo a cada passo. */
 let qTimer = null;
-function acompanharQuadras() {
-  if (qTimer) clearInterval(qTimer);
-  qTimer = setInterval(async () => {
-    if (!jobRodando) {
-      clearInterval(qTimer); qTimer = null;
-      await carregarUltimaQuadra(true);
-      return;
-    }
-    await carregarUltimaQuadra(true);
-  }, 6000);
-}
 
 /* ────────────────────────────────────────────────────────────
    Clique LONGO no mapa copia a coordenada
@@ -2272,6 +2316,125 @@ const brl = (v) => "R$ " + (v || 0).toLocaleString("pt-BR",
      mais caro — é o contrário: a mensalidade é a mesma, então quanto mais roda,
      menor o custo por POI.
    E o cenário Google, que é o custo NÃO pago — nunca somado ao resto. */
+/* CONVERGÊNCIA — a pergunta que o usuário fez: onde as duas bases se encontram,
+   onde cada uma viu o que a outra não viu, e o que cada lado acrescentou. O
+   total de cada base isolado não responde nada; a interseção responde tudo. */
+function cardConvergencia(v) {
+  if (!v || !v.cad_total) {
+    return `<div class="d-card g-laranja"><div class="d-tit">Meu mapeamento × cadastro</div>
+      <div class="d-nota">Nenhuma base de cadastro importada para esta cidade.</div></div>`;
+  }
+  const pct = (a, b) => b ? Math.round(100 * a / b) : 0;
+  const barra = (rot, n, tot, cls) => `<div class="d-lin ${cls}">
+      <span class="rot">${rot}</span>
+      <span class="barra"><i style="width:${pct(n, tot)}%"></i></span>
+      <span class="val">${nfmt(n)} <em>${pct(n, tot)}%</em></span></div>`;
+  return `<div class="d-card wide g-laranja">
+    <div class="d-tit">Meu mapeamento × cadastro do cliente</div>
+    <div class="conv-par">
+      <div class="conv-lado">
+        <div class="conv-rot">Meu mapeamento</div>
+        <div class="conv-n">${nfmt(v.poi_total)}</div>
+        <small>POIs na cidade</small>
+      </div>
+      <div class="conv-meio">
+        <div class="conv-n">${nfmt(v.poi_casado)}</div>
+        <small>casaram</small>
+      </div>
+      <div class="conv-lado">
+        <div class="conv-rot">Cadastro do cliente</div>
+        <div class="conv-n">${nfmt(v.cad_total)}</div>
+        <small>imóveis na base</small>
+      </div>
+    </div>
+
+    <div class="d-sub">Onde cada lado viu sozinho</div>
+    ${barra("só eu vi", v.poi_so_meu, v.poi_total, v.poi_so_meu > v.poi_casado ? "baixa" : "")}
+    ${barra("só o cadastro", v.cad_so_deles, v.cad_total, "baixa")}
+    <div class="d-nota">Os <b>${nfmt(v.poi_so_meu)}</b> que só eu vi são candidatos a
+      <b>acrescer</b> à base do cliente. Os <b>${nfmt(v.cad_so_deles)}</b> que só o
+      cadastro tem são imóveis onde o mapeamento não chegou — na maioria residências,
+      que não geram POI comercial.</div>
+
+    <div class="d-sub">O que eu acrescentei ao imóvel casado</div>
+    <table class="d-tab">
+      <tr><td>telefone que o cadastro não tinha</td><td>${nfmt(v.eu_dei_telefone)}</td></tr>
+      <tr><td>CNPJ</td><td>${nfmt(v.eu_dei_cnpj)}</td></tr>
+      <tr><td>foto de fachada</td><td>${nfmt(v.eu_dei_fachada)}</td></tr>
+    </table>
+
+    <div class="d-sub">O que o cadastro me deu de volta</div>
+    <table class="d-tab">
+      <tr><td>POIs com matrícula, economias e categoria tarifária</td>
+        <td>${nfmt(v.poi_casado)}</td></tr>
+      <tr><td>— desses, <b>comerciais</b> na base do cliente</td>
+        <td>${nfmt(v.cad_comercial_casado)}</td></tr>
+      <tr><td>— <b>não</b> comerciais na base, mas com POI: reclassificar</td>
+        <td>${nfmt(v.cad_nao_comercial_casado)}</td></tr>
+    </table>
+    <div class="d-nota">A última linha é a fila de maior retorno: o cliente cobra como
+      não-comercial e há um estabelecimento identificado ali.</div>
+  </div>`;
+}
+
+/* LEITURA DE FACHADA no agregado — o que a IA viu na cidade inteira. */
+function cardFachada(f) {
+  if (!f || !f.lidas) {
+    return `<div class="d-card g-azul"><div class="d-tit">Leitura de fachada</div>
+      <div class="d-nota">Nenhuma fachada lida nesta cidade. Rode a aba
+        <b>Avaliar candidatos</b>.</div></div>`;
+  }
+  const lista = (arr, vazio) => (arr || []).length
+    ? `<table class="d-tab">${arr.map((x) => `<tr><td>${esc(String(x.v).replace(/_/g, " "))}</td>
+        <td>${nfmt(x.n)}</td></tr>`).join("")}</table>`
+    : `<div class="d-nota">${vazio}</div>`;
+  return `<div class="d-card g-azul">
+    <div class="d-tit">Leitura de fachada</div>
+    <div class="d-num">${nfmt(f.lidas)}<small>fachadas lidas</small></div>
+    <table class="d-tab">
+      <tr><td>aprovadas no gate</td><td>${nfmt(f.aprovadas)}</td></tr>
+      <tr><td>imagem não é imóvel</td><td>${nfmt(f.fora_escopo)}</td></tr>
+      <tr><td>imagem inapta</td><td>${nfmt(f.inaptas)}</td></tr>
+    </table>
+    <div class="d-sub">Estado de conservação</div>
+    ${lista(f.conservacao, "nada lido ainda")}
+    <div class="d-sub">Tipo de edificação</div>
+    ${lista(f.tipos, "nada lido ainda")}
+    ${f.pavimentos_medio ? `<div class="d-nota">Média de <b>${f.pavimentos_medio}</b>
+      pavimentos por imóvel lido.</div>` : ""}
+  </div>`;
+}
+
+/* MEDIÇÃO — a tampa, a bateria e o acesso. É a parte que serve a QUALQUER
+   concessionária, e a que vira ordem de serviço em vez de fila de receita. */
+function cardMedicao(f) {
+  if (!f || !f.lidas) return "";
+  const alto = (n) => n > 0 ? "med" : "";
+  return `<div class="d-card">
+    <div class="d-tit">Medição e acesso</div>
+    <div class="d-num">${nfmt(f.medicao_coletiva)}<small>com bateria coletiva</small></div>
+    <div class="d-nota">Medição agrupada só existe onde há várias unidades — é o
+      sinal mais forte de economia oculta que a fachada dá.</div>
+    <div class="d-sub">Ocorrências de rota</div>
+    <table class="d-tab">
+      <tr><td><span class="tag ${alto(f.tampa_problema)}">tampa</span>
+        ausente, quebrada ou soterrada</td><td>${nfmt(f.tampa_problema)}</td></tr>
+      <tr><td><span class="tag ${alto(f.acesso_obstruido)}">acesso</span>
+        obstruído ou interno</td><td>${nfmt(f.acesso_obstruido)}</td></tr>
+    </table>
+    <div class="d-sub">Abrigo do medidor</div>
+    ${(f.abrigos || []).length
+      ? `<table class="d-tab">${f.abrigos.map((x) => `<tr>
+          <td>${esc(String(x.v).replace(/_/g, " "))}</td><td>${nfmt(x.n)}</td></tr>`).join("")}</table>`
+      : `<div class="d-nota">nada lido ainda</div>`}
+    <div class="d-sub">Divergências</div>
+    <table class="d-tab">
+      <tr><td>número da fachada diverge do cadastro</td><td>${nfmt(f.numero_diverge)}</td></tr>
+      <tr><td>unidades físicas acima das economias</td><td>${nfmt(f.unidades_acima)}</td></tr>
+    </table>
+  </div>`;
+}
+
 function cardCusto(c) {
   const ia = PARAM.ler("ia_usd", c.assinaturas.find((a) => a.editavel)?.usd || 0);
   const cambio = PARAM.ler("usd_brl", c.usd_brl);
@@ -2411,6 +2574,8 @@ function renderDashboard() {
   if (g === "tudo" || g === "cobertura") html += cardCobertura(c);
   if (g === "tudo" || g === "cnpj") html += cardCnpj(d.cnpj_confianca, c);
   if (g === "tudo" || g === "cadastro") html += cardCadastro(d.cadastro);
+  if (g === "tudo" || g === "cadastro") html += cardConvergencia(d.convergencia);
+  if (g === "tudo" || g === "fachada") html += cardFachada(d.fachada) + cardMedicao(d.fachada);
   if (g === "tudo" || g === "retorno") html += cardRetorno(d.faixas, d.custo);
   if (g === "tudo" || g === "custo" || g === "retorno") html += cardCusto(d.custo);
   if (g === "tudo") html += cardImagens(d.streetview, c) + cardOrigem(d.origem, d.status);

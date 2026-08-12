@@ -1,0 +1,191 @@
+{
+  "schema_versao": "1.4.0",
+  "imagem": {
+    "arquivo": "erro_achado_fonte_unica.jpg",
+    "fonte": "campo",
+    "data_captura": "2026-08-09",
+    "ano_captura": 2026,
+    "data_captura_origem": "exif",
+    "idade_meses": 0,
+    "enquadramento": "fachada_completa",
+    "qualidade": {
+      "nitidez": "boa",
+      "iluminacao": "boa",
+      "obstrucao": [
+        "nenhuma"
+      ]
+    },
+    "apta_para_leitura": true,
+    "motivo_inaptidao": null
+  },
+  "vinculo": {
+    "matricula": "MAT-125",
+    "logradouro_base": "RUA EXEMPLO",
+    "numero_base": "125",
+    "uso_base": "residencial",
+    "economias_agua_base": 1,
+    "metodo_vinculo": "gps_numero",
+    "confianca_vinculo": 0.96,
+    "numero_confere": true,
+    "logradouro_confere": true,
+    "ambiguidade": false
+  },
+  "triagem": {
+    "conteudo_imagem": "fachada_imovel",
+    "e_imovel": true,
+    "apto_para_cadastro": true,
+    "uso_parcial_permitido": null,
+    "motivo_descarte": null,
+    "atividade_economica_aparente": "nenhuma_aparente",
+    "sinais_atividade_economica": "nenhum",
+    "atividade_no_alvo": null,
+    "natureza_atividade": null,
+    "formalidade_aparente": null,
+    "confianca_triagem": 0.9,
+    "evidencia_triagem": "testada sem letreiro, toldo, vitrine ou mercadoria exposta"
+  },
+  "atributos": {
+    "enderecamento": {
+      "numero_fachada": {
+        "valor": "125",
+        "juizo": "observado",
+        "confianca": 0.97,
+        "evidencia": "número 125 fixado na fachada principal",
+        "regra": null,
+        "bbox": null,
+        "celula": "CC"
+      },
+      "numero_caixa_correio": {
+        "valor": "125-A;125-B;125-C",
+        "juizo": "observado",
+        "confianca": 0.94,
+        "evidencia": "três caixas de correio individualizadas rotuladas 125-A, 125-B e 125-C",
+        "regra": null,
+        "bbox": null,
+        "celula": "CE"
+      },
+      "numero_endereco_consolidado": {
+        "valor": "125",
+        "juizo": "inferido",
+        "confianca": 0.94,
+        "evidencia": "número principal 125 na fachada e complementos A/B/C nas caixas de correio",
+        "regra": "R-END-03",
+        "bbox": null,
+        "celula": "CC"
+      },
+      "origem_numero_consolidado": {
+        "valor": "fachada",
+        "juizo": "observado",
+        "confianca": 0.98,
+        "evidencia": "número principal lido diretamente na fachada",
+        "regra": null,
+        "bbox": null,
+        "celula": "CC"
+      },
+      "complementos_unidades_visiveis": {
+        "valor": "125-A;125-B;125-C",
+        "juizo": "observado",
+        "confianca": 0.94,
+        "evidencia": "complementos A, B e C impressos nas três caixas de correio",
+        "regra": null,
+        "bbox": null,
+        "celula": "CE"
+      }
+    },
+    "acessos": {
+      "portas_acesso_independentes": {
+        "valor": 3,
+        "juizo": "observado",
+        "confianca": 0.89,
+        "evidencia": "três portas independentes associadas à mesma testada",
+        "regra": null,
+        "bbox": null,
+        "celula": "CC"
+      },
+      "caixas_correio": {
+        "valor": 3,
+        "juizo": "observado",
+        "confianca": 0.91,
+        "evidencia": "três caixas de correio individualizadas",
+        "regra": null,
+        "bbox": null,
+        "celula": "CE"
+      },
+      "numeracoes_distintas": {
+        "valor": 3,
+        "juizo": "observado",
+        "confianca": 0.94,
+        "evidencia": "três identificadores complementares 125-A, 125-B e 125-C",
+        "regra": null,
+        "bbox": null,
+        "celula": "CE"
+      }
+    }
+  },
+  "economias": {
+    "estimativa": 3,
+    "faixa": null,
+    "metodo": "portas_independentes",
+    "evidencias_contadas": {
+      "portas_independentes": 3,
+      "caixas_correio": 3,
+      "numeracoes": 3
+    },
+    "confianca": 0.7,
+    "divergencia": false,
+    "justificativa": "Três portas, três caixas de correio e três complementos A/B/C convergem para três unidades físicas; a base possui uma economia e exige confirmação cadastral antes da alteração tarifária."
+  },
+  "alertas": [
+    {
+      "codigo": "COLETIVA_DETECTADA",
+      "severidade": "atencao",
+      "descricao": "Múltiplas unidades físicas aparentes na mesma matrícula; confirmar economias antes de alterar cadastro.",
+      "campo_relacionado": "economias"
+    }
+  ],
+  "oportunidades": [
+    {
+      "codigo": "MULTIPLAS_UNIDADES_FISICAS",
+      "classe": "cadastro",
+      "prioridade": "alta",
+      "confianca": 0.9,
+      "evidencia": "três portas independentes e três caixas de correio identificadas A/B/C",
+      "acao_sugerida": "Cruzar as unidades físicas com cadastro de economias, histórico de consumo e medição.",
+      "data_referencia": "2026-08-09",
+      "impacto_estimado": null,
+      "automatizavel": false,
+      "nivel_evidencia": "sinal_imagem",
+      "fontes_independentes": [
+        "imagem_fachada"
+      ]
+    },
+    {
+      "codigo": "ECONOMIAS_OCULTAS_POTENCIAL",
+      "classe": "receita",
+      "prioridade": "alta",
+      "confianca": 0.85,
+      "evidencia": "imagem indica três unidades físicas enquanto cadastro de água registra uma economia",
+      "acao_sugerida": "Priorizar confirmação cadastral das três unidades e composição de economias.",
+      "data_referencia": "2026-08-09",
+      "impacto_estimado": null,
+      "automatizavel": false,
+      "nivel_evidencia": "achado_convergente",
+      "fontes_independentes": [
+        "imagem_fachada"
+      ]
+    }
+  ],
+  "lgpd": {
+    "pessoas_visiveis": false,
+    "placas_veiculo_visiveis": false,
+    "dado_pessoal_transcrito": false,
+    "acao": "nenhuma"
+  },
+  "auditoria": {
+    "passes_executados": 6,
+    "rodadas_verificacao": 1,
+    "campos_preenchidos": 8,
+    "campos_nao_observaveis": 0,
+    "confianca_media": 0.939
+  }
+}

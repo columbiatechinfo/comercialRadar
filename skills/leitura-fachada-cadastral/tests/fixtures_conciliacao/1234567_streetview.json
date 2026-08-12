@@ -1,0 +1,162 @@
+{
+  "schema_versao": "1.4.0",
+  "imagem": {
+    "arquivo": "sv/1234567_2025.jpg",
+    "fonte": "streetview",
+    "data_captura": "2025-02",
+    "idade_meses": 18,
+    "coordenada": null,
+    "azimute_visada_graus": 95,
+    "enquadramento": "fachada_completa",
+    "qualidade": {
+      "nitidez": "boa",
+      "iluminacao": "boa",
+      "obstrucao": [
+        "nenhuma"
+      ],
+      "resolucao_px": "3024x4032"
+    },
+    "apta_para_leitura": true,
+    "motivo_inaptidao": null,
+    "ano_captura": 2025,
+    "data_captura_origem": "api_fonte"
+  },
+  "vinculo": {
+    "matricula": "1234567",
+    "imovel_id": null,
+    "logradouro_base": "RUA GENERAL LIMA E SILVA",
+    "numero_base": "0125",
+    "municipio_ibge": "4314902"
+  },
+  "triagem": {
+    "conteudo_imagem": "fachada_imovel",
+    "e_imovel": true,
+    "apto_para_cadastro": true,
+    "uso_parcial_permitido": null,
+    "motivo_descarte": null,
+    "atividade_economica_aparente": "sinal_forte",
+    "sinais_atividade_economica": "letreiro_fachada;porta_de_aco_comercial",
+    "atividade_no_alvo": "no_imovel_alvo",
+    "natureza_atividade": "comercio",
+    "formalidade_aparente": "estabelecimento_formal_aparente",
+    "confianca_triagem": 0.48,
+    "evidencia_triagem": "letreiro e vitrine ocupando a testada do imóvel-alvo"
+  },
+  "varredura": [
+    {
+      "celula": "CC",
+      "itens": [
+        "toldo com letreiro de lanchonete",
+        "porta de vidro"
+      ]
+    },
+    {
+      "celula": "CE",
+      "itens": [
+        "numeral 0125 no muro"
+      ]
+    },
+    {
+      "celula": "ID",
+      "itens": [
+        "asfalto"
+      ]
+    }
+  ],
+  "atributos": {
+    "enderecamento": {
+      "numero_fachada": {
+        "valor": "0125",
+        "juizo": "observado",
+        "confianca": 0.7,
+        "evidencia": "numeral no muro, legível no zoom da panorâmica",
+        "regra": null,
+        "bbox": null,
+        "celula": "CE"
+      }
+    },
+    "edificacao": {
+      "tipo_edificacao": {
+        "valor": "casa_terrea",
+        "juizo": "observado",
+        "confianca": 0.85,
+        "evidencia": "um pavimento com telhado aparente",
+        "regra": null,
+        "bbox": null,
+        "celula": "CC"
+      },
+      "pavimentos_visiveis": {
+        "valor": 1,
+        "juizo": "observado",
+        "confianca": 0.85,
+        "evidencia": "uma linha de esquadrias",
+        "regra": null,
+        "bbox": null,
+        "celula": "CC"
+      }
+    },
+    "uso": {
+      "uso_predominante": {
+        "valor": "comercial",
+        "juizo": "observado",
+        "confianca": 0.5,
+        "evidencia": "toldo e letreiro de lanchonete sobre a testada em 02/2025",
+        "regra": null,
+        "bbox": null,
+        "celula": "CC"
+      },
+      "atividade_letreiro": {
+        "valor": "LANCHES DA ESQUINA",
+        "juizo": "observado",
+        "confianca": 0.4,
+        "evidencia": "letreiro pintado sobre o toldo",
+        "regra": null,
+        "bbox": null,
+        "celula": "CC"
+      }
+    },
+    "entorno": {
+      "pavimentacao_via": {
+        "valor": "asfalto",
+        "juizo": "observado",
+        "confianca": 0.9,
+        "evidencia": "leito asfaltado",
+        "regra": null,
+        "bbox": null,
+        "celula": "ID"
+      }
+    }
+  },
+  "economias": {
+    "estimativa": 1,
+    "faixa": null,
+    "metodo": "unitario_default",
+    "evidencias_contadas": {},
+    "confianca": 0.5,
+    "divergencia": false,
+    "justificativa": "Sem evidência de subdivisão na panorâmica."
+  },
+  "alertas": [
+    {
+      "codigo": "ATIVIDADE_ECONOMICA_APARENTE",
+      "severidade": "info",
+      "descricao": "Sinais de atividade econômica na testada do imóvel-alvo.",
+      "campo_relacionado": "triagem.atividade_economica_aparente"
+    }
+  ],
+  "oportunidades": [],
+  "lgpd": {
+    "pessoas_visiveis": false,
+    "placas_veiculo_visiveis": false,
+    "dado_pessoal_transcrito": false,
+    "acao": "nenhuma"
+  },
+  "auditoria": {
+    "passes_executados": 6,
+    "rodadas_verificacao": 1,
+    "confianca_media": 0.7,
+    "teto_fonte_aplicado": true,
+    "anotador": "leitura-fachada-cadastral/1.3.0",
+    "timestamp": "2026-08-09T10:00:00-03:00"
+  }
+}

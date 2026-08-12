@@ -136,7 +136,8 @@ _JOB_LOCK = threading.Lock()
 
 
 def job_status() -> dict:
-    d = {k: v for k, v in JOB.items() if k not in ("proc", "cat", "feitos", "sv")}
+    d = {k: v for k, v in JOB.items()
+         if k not in ("proc", "cat", "feitos", "sv", "av")}
     # quem abre a página no meio do job recebe os rótulos da fase corrente —
     # senão os cartões só se acertariam no próximo tick do WebSocket
     d["rotulos"] = _ROTULOS_CARD.get(JOB.get("fase", ""), {})
@@ -193,7 +194,11 @@ _FASES_POI = {"busca", "enriquecimento", ""}
 _MODOS_COM_MATCH = {"planilha", "mineracao", "minerar_web", "enriquecer_maps"}
 _ROTULO_FASE = {"captura": "fotografando o mapa", "deteccao": "detectando ícones",
                 "ocr": "lendo os nomes", "busca": "buscando cada nome no Maps",
-                "streetview": "fotografando a fachada de cada ponto"}
+                "streetview": "fotografando a fachada de cada ponto",
+                "fachada": "lendo a fachada de cada ponto"}
+# "📸 POIs 12/500 | aptos 9 | inaptos 1 | fora de escopo 2 | oportunidades 14"
+_RE_AV = re.compile(r"aptos\s+(\d+)\s*\|\s*inaptos\s+(\d+)\s*\|\s*"
+                    r"fora de escopo\s+(\d+)\s*\|\s*oportunidades\s+(\d+)")
 # "📸 POIs 31/21701 | capturados 30 | sem pano 1 | Agelú Arte e Cia"
 _RE_SV = re.compile(r"capturados\s+(\d+)\s*\|\s*sem pano\s+(\d+)")
 # Na fase Street View os cartões medem outra coisa: não há "encontrado" nem
@@ -201,7 +206,12 @@ _RE_SV = re.compile(r"capturados\s+(\d+)\s*\|\s*sem pano\s+(\d+)")
 # painel mostraria o número certo embaixo da palavra errada.
 _ROTULOS_CARD = {"streetview": {"validos": "Fachadas capturadas",
                                 "semmatch": "Sem panorama",
-                                "ingeridos": "Gravadas no banco"}}
+                                "ingeridos": "Gravadas no banco"},
+                 "fachada": {"validos": "Leituras aptas",
+                             "recuperados": "Oportunidades",
+                             "descobertos": "Imagem inapta",
+                             "semmatch": "Não é imóvel",
+                             "ingeridos": "Gravadas no banco"}}
 
 
 def _emitir_progresso():
@@ -212,6 +222,20 @@ def _emitir_progresso():
     feitos = JOB.get("feitos", 0)
     total = JOB.get("total", 0)
     fase = JOB.get("fase", "")
+
+    if fase == "fachada":
+        # Também grava direto no banco (`fachada_anotacao`), sem passar pelo
+        # watcher — os números saem do log, como no Street View.
+        ap, ina, fora, oport = JOB.get("av", (0, 0, 0, 0))
+        cont = {"processados": min(feitos, total) if total else feitos,
+                "validos": ap, "recuperados": oport, "descobertos": ina,
+                "fora_area": 0, "sem_match": fora, "erros": 0, "ingeridos": ap}
+        JOB["contadores"] = cont
+        manager.broadcast({"tipo": "progresso", "dados": {
+            "contadores": cont, "total": total, "fase": fase,
+            "fase_rotulo": _ROTULO_FASE.get(fase, ""),
+            "rotulos": _ROTULOS_CARD.get(fase, {})}})
+        return
 
     if fase == "streetview":
         # A fase não escreve no JSON — grava a foto direto em `streetview_imgs`.
@@ -262,6 +286,7 @@ def _thread_logs(proc: subprocess.Popen):
             JOB["fase"] = mf.group(1)
             JOB["feitos"] = 0
             JOB["sv"] = (0, 0)
+            JOB["av"] = (0, 0, 0, 0)
             # zerar as CATEGORIAS também: elas vêm do JSON da fase anterior e,
             # como `processados = max(feitos, sucessos)`, o placar velho segurava
             # a barra da fase nova num número que não era dela
@@ -271,6 +296,9 @@ def _thread_logs(proc: subprocess.Popen):
         msv = _RE_SV.search(linha)
         if msv:
             JOB["sv"] = (int(msv.group(1)), int(msv.group(2)))
+        mav = _RE_AV.search(linha)
+        if mav:
+            JOB["av"] = tuple(int(mav.group(i)) for i in (1, 2, 3, 4))
         m = _RE_TOTAL_SHEET.search(linha) or _RE_TOTAL_MINA.search(linha)
         if m:
             JOB["total"] = int(m.group(1))
@@ -746,180 +774,13 @@ def malha(uf: str = "", lat: float | None = None, lng: float | None = None):
 # API — POIs / stats
 # ──────────────────────────────────────────────────────────────────────────
 # ──────────────────────────────────────────────────────────────────────────
-# API — quadras (área → vias → quadras → pontos → faces)
-#
-# Cinco passos, cada um disparável sozinho e retomável pela SESSÃO. O servidor
-# só orquestra: quem faz é `quadras_analise`, o mesmo módulo do terminal — para
-# que rodar pelo mapa e rodar pelo shell não possam divergir.
-# ──────────────────────────────────────────────────────────────────────────
-def _qa():
-    """Import tardio: puxa shapely e o DuckDB do OSM, que não precisam subir
-    junto com o servidor."""
-    import quadras_analise
-    return quadras_analise
 
 
-@app.get("/api/quadras/sessoes")
-def quadras_sessoes(limite: int = 50):
-    import quadras_db
-    try:
-        return quadras_db.sessoes(limite=limite)
-    except Exception as e:
-        return JSONResponse({"erro": str(e)[:200]}, status_code=500)
 
 
-@app.get("/api/quadras/lista")
-def quadras_lista(limite: int = 300, busca: str = ""):
-    """Quadras já tratadas — a lista do painel. Clicar numa leva o mapa até ela."""
-    import quadras_db
-    try:
-        return quadras_db.lista_quadras(limite=limite, busca=busca)
-    except Exception as e:
-        return JSONResponse({"erro": str(e)[:200]}, status_code=500)
 
 
-@app.post("/api/quadras/area")
-async def quadras_area(req: Request):
-    """Passo 1 — a área desenhada vira sessão."""
-    op = await req.json()
-    try:
-        return _qa().passo1_area(op["wkt"])
-    except Exception as e:
-        return JSONResponse({"erro": str(e)[:300]}, status_code=400)
 
-
-@app.post("/api/quadras/rodar")
-async def quadras_rodar(req: Request):
-    """Passos 2–5 da sessão, em segundo plano (a leitura do nome canônico no
-    Maps leva minutos). O progresso é lido por /api/quadras/{sid}."""
-    op = await req.json()
-    sid = op.get("sessao")
-    de = int(op.get("de") or 2)
-    ate = int(op.get("ate") or 5)
-    if not sid:
-        return JSONResponse({"erro": "informe a sessão"}, status_code=400)
-    kw = {"usar_proxy": not op.get("sem_proxy"),
-          "com_maps": bool(op.get("com_maps"))}
-    threading.Thread(target=_qa().rodar, args=(sid, de, ate), kwargs=kw,
-                     daemon=True).start()
-    return {"ok": True, "sessao": sid, "de": de, "ate": ate}
-
-
-@app.post("/api/quadras/retomar")
-async def quadras_retomar(req: Request):
-    """Continua do passo seguinte ao último concluído."""
-    import quadras_db
-    op = await req.json()
-    sid = op.get("sessao")
-    s = quadras_db.sessao(sid) if sid else None
-    if not s:
-        return JSONResponse({"erro": "sessão não encontrada"}, status_code=404)
-    de = min(int(s["passo"]) + 1, 5)
-    threading.Thread(target=_qa().rodar, args=(sid, de, 5),
-                     kwargs={"usar_proxy": not op.get("sem_proxy")},
-                     daemon=True).start()
-    return {"ok": True, "sessao": sid, "de": de}
-
-
-# nomes que são ROTAS, não sessões. Sem esta lista, uma instância antiga do
-# servidor (sem /api/quadras/lista) deixa o {sid} capturar a palavra "lista" e
-# responder "sessão não encontrada" — erro que não diz o que está errado.
-_QUADRAS_RESERVADOS = {"lista", "sessoes", "area", "rodar", "retomar"}
-
-
-@app.get("/api/quadras/{sid}")
-def quadras_geojson(sid: str):
-    """GeoJSON da sessão: vias, quadra (OSM e real), faces e pontos.
-
-    O ponto sai na coordenada ORIGINAL do CNEFE — este processo classifica, não
-    corrige a base."""
-    import quadras_db
-    if sid in _QUADRAS_RESERVADOS:
-        return JSONResponse({"erro": f"'{sid}' é uma rota, não uma sessão — "
-                                     f"este servidor está desatualizado, reinicie-o",
-                             "servidor_antigo": True}, status_code=409)
-    try:
-        s = quadras_db.sessao(sid)
-        if not s:
-            return JSONResponse({"erro": "sessão não encontrada"}, status_code=404)
-        con = realtime_ingest.conectar()
-    except Exception as e:
-        return JSONResponse({"erro": str(e)[:200]}, status_code=500)
-    try:
-        feats = []
-        feats.append({"type": "Feature", "properties": {"camada": "area"},
-                      "geometry": _wkt_geo(s["area_wkt"])})
-        for v in quadras_db.vias(sid, con):
-            feats.append({"type": "Feature",
-                          "geometry": _wkt_geo(v["geom_wkt"]),
-                          "properties": {"camada": "via", "id": v["id"],
-                                         "nome_osm": v["nome_osm"], "tipo": v["tipo"],
-                                         "nome_canonico": v["nome_canonico"],
-                                         "comprimento_m": v["comprimento_m"]}})
-        # a quadra de via aberta é degenerada (um corredor por lado da rua): o
-        # mapa precisa saber, senão ela é desenhada como se fosse quarteirão
-        aberta_q = set()
-        for q in quadras_db.quadras(sid, con):
-            ab = bool(q.get("via_aberta_id"))
-            if ab:
-                aberta_q.add(q["id"])
-            feats.append({"type": "Feature", "geometry": _wkt_geo(q["geom_osm"]),
-                          "properties": {"camada": "quadra_osm", "id": q["id"],
-                                         "area_m2": q["area_osm_m2"], "vias": q["vias"],
-                                         "via_aberta": ab, "lado": q.get("lado")}})
-            if q["geom_real"]:
-                feats.append({"type": "Feature", "geometry": _wkt_geo(q["geom_real"]),
-                              "properties": {"camada": "quadra_real", "id": q["id"],
-                                             "area_m2": q["area_real_m2"],
-                                             "via_aberta": ab,
-                                             "recuo_medio_m": q["recuo_medio_m"]}})
-        for f in quadras_db.faces(sid, con):
-            feats.append({"type": "Feature", "geometry": _wkt_geo(f["anel_wkt"]),
-                          "properties": {"camada": "face", **f, "anel_wkt": None,
-                                         "via_aberta": f["quadra_id"] in aberta_q,
-                                         "anel_real_wkt": None}})
-            # a borda REAL da face é o trilho do alinhamento (passo 6)
-            if f.get("anel_real_wkt"):
-                feats.append({"type": "Feature",
-                              "geometry": _wkt_geo(f["anel_real_wkt"]),
-                              "properties": {"camada": "face_real",
-                                             "quadra_id": f["quadra_id"],
-                                             "face_idx": f["face_idx"],
-                                             "via_aberta": f["quadra_id"] in aberta_q,
-                                             "nome_canonico": f["nome_canonico"]}})
-        try:
-            import quadras_telhados
-            for t in quadras_telhados.telhados(sid, con):
-                if not t.get("geom_wkt"):
-                    continue
-                feats.append({"type": "Feature",
-                              "geometry": _wkt_geo(t["geom_wkt"]),
-                              "properties": {"camada": "telhado", **t,
-                                             "geom_wkt": None}})
-        except Exception as e:
-            print(f"[quadras] telhados indisponíveis: {str(e)[:90]}", flush=True)
-        for p in quadras_db.pontos(sid, con):
-            feats.append({"type": "Feature",
-                          "geometry": {"type": "Point", "coordinates": [p["lng"], p["lat"]]},
-                          "properties": {"camada": "ponto", **p}})
-        return {"type": "FeatureCollection", "features": feats,
-                "sessao": {k: v for k, v in s.items()
-                           if k not in ("area_wkt",)} | {
-                    "criado_em": s["criado_em"].isoformat(timespec="seconds")
-                    if s["criado_em"] else None,
-                    "atualizado_em": s["atualizado_em"].isoformat(timespec="seconds")
-                    if s["atualizado_em"] else None}}
-    except Exception as e:
-        return JSONResponse({"erro": str(e)[:300]}, status_code=500)
-    finally:
-        try: con.close()
-        except Exception: pass
-
-
-def _wkt_geo(w: str) -> dict:
-    from shapely import wkt as _w
-    from shapely.geometry import mapping
-    return mapping(_w.loads(w))
 
 @app.get("/api/pois")
 def listar_pois():
@@ -1008,6 +869,34 @@ def detalhe_poi(poi_id: int):
                                WHERE poi_id=%s AND angulo IS NOT NULL ORDER BY id""", (poi_id,))
                 ia["angulos_sv"] = [r[0] for r in cur.fetchall()]
                 poi["ia"] = ia
+
+            # Leitura de fachada cadastral (avaliar_fachada.py). É OUTRA coisa que
+            # a análise visual acima: aquela julga se o POI serve para visita,
+            # esta lê o imóvel para o cadastro de saneamento. Convivem no modal.
+            cur.execute("""SELECT status, e_imovel, apta, uso_observado, tipologia,
+                                  unidades_fisicas, ucs_energia, hidrometros,
+                                  economias_base, numero_lido, numero_confere,
+                                  atividade_no_alvo, confianca, oportunidades,
+                                  anotacao, modelo, criado_em
+                             FROM fachada_anotacao WHERE poi_id=%s""", (poi_id,))
+            f = cur.fetchone()
+            if f:
+                fc = ["status", "e_imovel", "apta", "uso_observado", "tipologia",
+                      "unidades_fisicas", "ucs_energia", "hidrometros",
+                      "economias_base", "numero_lido", "numero_confere",
+                      "atividade_no_alvo", "confianca", "oportunidades",
+                      "anotacao", "modelo", "criado_em"]
+                fa = dict(zip(fc, f))
+                anot = fa.pop("anotacao") or {}
+                atr = (anot.get("atributos") or {})
+                uso = atr.get("uso") or {}
+                fa["letreiro"] = (uso.get("atividade_letreiro") or {}).get("valor")
+                fa["estabelecimento"] = (uso.get("nome_estabelecimento_visivel") or {}).get("valor")
+                fa["descricao"] = (uso.get("descricao_atividade_funcional") or {}).get("valor")
+                fa["situacao"] = (uso.get("situacao_estabelecimento_na_data_imagem") or {}).get("valor")
+                fa["data_imagem"] = (anot.get("imagem") or {}).get("data_captura")
+                fa["alertas"] = anot.get("alertas") or []
+                poi["fachada"] = fa
             return poi
     finally:
         conn.close()
@@ -1303,6 +1192,82 @@ def dashboard(cidade: str = ""):
                     import cadastro_cliente as CC
                     cadastro = {"flags": flags, "descricoes": CC.FLAGS,
                                 "total": sum(f["n"] for f in flags)}
+            # ── CONVERGÊNCIA: meu mapeamento × cadastro do cliente ──
+            # As duas bases medem o mesmo território por caminhos diferentes, e o
+            # que interessa não é o total de cada uma: é onde elas se encontram,
+            # onde uma viu o que a outra não viu, e o que cada lado acrescentou.
+            cur.execute(f"""
+                SELECT count(*) FILTER (WHERE c.poi_id IS NOT NULL),
+                       count(*) FILTER (WHERE c.poi_id IS NULL),
+                       count(*) FILTER (WHERE c.poi_id IS NOT NULL AND c.e_comercial),
+                       count(*) FILTER (WHERE c.poi_id IS NOT NULL AND NOT c.e_comercial)
+                  FROM cadastro_cliente c
+                 WHERE {'lower(c.cidade) = lower(%s)' if cidade else 'TRUE'}""", pc)
+            cad_casado, cad_so, cad_com, cad_nao_com = cur.fetchone()
+
+            cur.execute(f"""
+                SELECT count(*),
+                       count(*) FILTER (WHERE EXISTS (SELECT 1 FROM cadastro_cliente c
+                                                       WHERE c.poi_id = p.id)),
+                       count(*) FILTER (WHERE p.place_id LIKE 'planilha:%%'),
+                       count(*) FILTER (WHERE p.cnpj <> '')
+                  FROM pois p WHERE {w}""", pc)
+            poi_tot, poi_casado, poi_import, poi_cnpj = cur.fetchone()
+
+            # o que cada lado ACRESCENTOU ao outro
+            cur.execute(f"""
+                SELECT count(*) FILTER (WHERE p.telefone <> ''),
+                       count(*) FILTER (WHERE p.cnpj <> ''),
+                       count(*) FILTER (WHERE p.streetview_path NOT IN ('', 'NA'))
+                  FROM pois p JOIN cadastro_cliente c ON c.poi_id = p.id
+                 WHERE {w}""", pc)
+            deu_tel, deu_cnpj, deu_sv = cur.fetchone()
+
+            convergencia = {
+                "poi_total": poi_tot, "poi_casado": poi_casado,
+                "poi_so_meu": poi_tot - poi_casado, "poi_importado": poi_import,
+                "cad_total": cad_casado + cad_so, "cad_casado": cad_casado,
+                "cad_so_deles": cad_so, "cad_comercial_casado": cad_com,
+                "cad_nao_comercial_casado": cad_nao_com,
+                "eu_dei_telefone": deu_tel, "eu_dei_cnpj": deu_cnpj,
+                "eu_dei_fachada": deu_sv,
+            }
+
+            # ── leitura de fachada: atributos novos ──
+            cur.execute(f"""
+                SELECT count(*),
+                       count(*) FILTER (WHERE f.status = 'aprovado'),
+                       count(*) FILTER (WHERE f.status = 'fora_escopo'),
+                       count(*) FILTER (WHERE f.status = 'inapto'),
+                       count(*) FILTER (WHERE f.medicao_coletiva),
+                       count(*) FILTER (WHERE f.medicao_estado IN
+                            ('tampa_ausente','tampa_quebrada','obstruido','soterrado')),
+                       count(*) FILTER (WHERE f.medicao_acesso IN
+                            ('inacessivel','obstruido_vegetacao','obstruido_veiculo',
+                             'interno_requer_morador')),
+                       count(*) FILTER (WHERE f.numero_confere IS FALSE),
+                       count(*) FILTER (WHERE f.unidades_fisicas > f.economias_base)
+                  FROM fachada_anotacao f JOIN pois p ON p.id = f.poi_id
+                 WHERE {w}""", pc)
+            r = cur.fetchone()
+            fach = dict(zip(("lidas", "aprovadas", "fora_escopo", "inaptas",
+                             "medicao_coletiva", "tampa_problema", "acesso_obstruido",
+                             "numero_diverge", "unidades_acima"), r))
+            for col, chave in (("estado_conservacao", "conservacao"),
+                               ("tipo_edificacao", "tipos"),
+                               ("uso_observado", "usos"),
+                               ("medicao_abrigo", "abrigos")):
+                cur.execute(f"""SELECT f.{col}, count(*) FROM fachada_anotacao f
+                                  JOIN pois p ON p.id = f.poi_id
+                                 WHERE {w} AND f.{col} IS NOT NULL
+                                 GROUP BY 1 ORDER BY 2 DESC LIMIT 8""", pc)
+                fach[chave] = [{"v": a, "n": b} for a, b in cur.fetchall()]
+            cur.execute(f"""SELECT coalesce(sum(f.pavimentos),0), count(f.pavimentos)
+                              FROM fachada_anotacao f JOIN pois p ON p.id = f.poi_id
+                             WHERE {w}""", pc)
+            sp, np_ = cur.fetchone()
+            fach["pavimentos_medio"] = round(sp / np_, 1) if np_ else None
+
         # ── custo ──
         # Só a fase Web tem preço por POI: ela abre navegador com proxy e chama
         # o LLM. `recuperado_web` é a marca de quem passou por ela.
@@ -1348,7 +1313,7 @@ def dashboard(cidade: str = ""):
         custo["variavel_usd"] = round(custo["llm_usd"] + custo["places_usd"], 2)
         return {"cidade": cidade, "cidades": cidades, "cobertura": cob,
                 "cnpj_confianca": conf, "faixas": faixas, "origem": origem,
-                "status": status,
+                "status": status, "convergencia": convergencia, "fachada": fach,
                 "streetview": {"imagens": sv_n, "bytes": int(sv_bytes or 0)},
                 "cadastro": cadastro, "custo": custo}
     finally:
@@ -1477,6 +1442,114 @@ async def upload(file: UploadFile = File(...)):
 # ──────────────────────────────────────────────────────────────────────────
 # API — jobs
 # ──────────────────────────────────────────────────────────────────────────
+# Cada card da aba é um RECORTE da leitura, e o mesmo recorte serve para contar e
+# para listar — assim o número do card e a lista que ele abre nunca divergem.
+_RECORTES_FACHADA = {
+    "aprovadas":   ("Leituras aptas", "f.status = 'aprovado'"),
+    "oportunidade": ("Com oportunidade", "jsonb_array_length(f.oportunidades) > 0"),
+    "convergente": ("Achado convergente",
+                    "f.oportunidades @> '[{\"nivel_evidencia\":\"achado_convergente\"}]'"),
+    "uso_diverge": ("Uso divergente",
+                    "f.uso_observado IN ('comercial','servicos','industrial','misto_res_com')"),
+    "unidades":    ("Unidades acima das economias",
+                    "f.unidades_fisicas > f.economias_base"),
+    "coletiva":    ("Medição coletiva", "f.medicao_coletiva"),
+    "medicao":     ("Medição com problema",
+                    "f.medicao_estado IN ('tampa_ausente','tampa_quebrada','obstruido','soterrado')"
+                    " OR f.medicao_acesso IN ('inacessivel','obstruido_vegetacao',"
+                    "'obstruido_veiculo','interno_requer_morador')"),
+    "numero":      ("Número diverge", "f.numero_confere IS FALSE"),
+    "conservacao": ("Conservação ruim",
+                    "f.estado_conservacao IN ('ruim','em_ruina')"),
+    "inapto":      ("Imagem inapta", "f.status = 'inapto'"),
+    "fora_escopo": ("Não é imóvel", "f.status = 'fora_escopo'"),
+}
+
+
+@app.get("/api/fachada/resumo")
+def fachada_resumo():
+    """Contagem de cada recorte, na área de trabalho em foco."""
+    poligono = area_utils.carregar_area()
+    cidade = area_utils.municipio_da_area(poligono)[0]
+    w = "lower(p.cidade) = lower(%s)" if cidade else "TRUE"
+    pc = [cidade] if cidade else []
+    conn = realtime_ingest.conectar()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT to_regclass('fachada_anotacao')")
+            if not cur.fetchone()[0]:
+                return {"cards": [], "total": 0}
+            sel = ", ".join(f"count(*) FILTER (WHERE {c})"
+                            for _r, c in _RECORTES_FACHADA.values())
+            cur.execute(f"""SELECT count(*), {sel} FROM fachada_anotacao f
+                              JOIN pois p ON p.id = f.poi_id WHERE {w}""", pc)
+            r = cur.fetchone()
+        cards = [{"chave": k, "rotulo": v[0], "n": n}
+                 for (k, v), n in zip(_RECORTES_FACHADA.items(), r[1:])]
+        return {"total": r[0], "cards": cards, "cidade": cidade}
+    finally:
+        conn.close()
+
+
+@app.get("/api/fachada/lista")
+def fachada_lista(recorte: str = "aprovadas", limite: int = 400):
+    """POIs de um recorte, com o mínimo para a lista do modal — o resto vem do
+    detalhe quando o usuário clicar, para a lista abrir rápido com 400 itens."""
+    if recorte not in _RECORTES_FACHADA:
+        return JSONResponse({"erro": "recorte desconhecido"}, status_code=400)
+    poligono = area_utils.carregar_area()
+    cidade = area_utils.municipio_da_area(poligono)[0]
+    w = "lower(p.cidade) = lower(%s)" if cidade else "TRUE"
+    pc = ([cidade] if cidade else []) + [limite]
+    cond = _RECORTES_FACHADA[recorte][1]
+    conn = realtime_ingest.conectar()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"""
+                SELECT p.id, p.nome, p.endereco,
+                       COALESCE(p.maps_lat, p.lat_origem), COALESCE(p.maps_lng, p.lng_origem),
+                       f.status, f.uso_observado, f.tipologia, f.confianca,
+                       jsonb_array_length(f.oportunidades),
+                       f.numero_lido, f.numero_confere, f.estado_conservacao
+                  FROM fachada_anotacao f JOIN pois p ON p.id = f.poi_id
+                 WHERE {w} AND ({cond})
+                 ORDER BY jsonb_array_length(f.oportunidades) DESC, f.confianca DESC
+                 LIMIT %s""", pc)
+            cols = ["id", "nome", "endereco", "lat", "lng", "status", "uso",
+                    "tipologia", "confianca", "n_oport", "numero_lido",
+                    "numero_confere", "conservacao"]
+            itens = [dict(zip(cols, r)) for r in cur.fetchall()]
+        return {"recorte": recorte, "rotulo": _RECORTES_FACHADA[recorte][0],
+                "itens": itens}
+    finally:
+        conn.close()
+
+
+@app.get("/api/avaliar/estimativa")
+def avaliar_estimativa(modelo: str = "gpt-4o-mini", refazer: bool = False):
+    """Quanto há para ler e quanto custa — ANTES de gastar.
+
+    A conta só faz sentido com o recorte na frente: são 16 mil fachadas na área
+    de Canoas, e a diferença entre os dois modelos é de uma ordem de grandeza."""
+    import avaliar_fachada as AF
+    poligono = area_utils.carregar_area()
+    con = realtime_ingest.conectar()
+    try:
+        AF.esquema(con)
+        alvos = AF.carregar_alvos(poligono, 0, refazer, con)
+        com_vinculo = sum(1 for a in alvos if a["vinculo"])
+        with con.cursor() as cur:
+            cur.execute("""SELECT count(*), count(*) FILTER (WHERE status='aprovado')
+                             FROM fachada_anotacao""")
+            feitos, aprovados = cur.fetchone()
+    finally:
+        con.close()
+    est = AF.estimar(len(alvos), modelo)
+    return {**est, "com_vinculo": com_vinculo, "ja_avaliados": feitos,
+            "ja_aprovados": aprovados,
+            "cidade": area_utils.municipio_da_area(poligono)[0]}
+
+
 @app.post("/api/jobs")
 def iniciar_job(body: dict):
     with _JOB_LOCK:
@@ -1548,6 +1621,19 @@ def iniciar_job(body: dict):
                 if op.get("no_proxy"):
                     cmd.append("--no-proxy")
                 _novo_job("mineracao", out_json, {"sessao": sessao, "motor": "captura"})
+
+        elif modo == "avaliar":
+            # A leitura de fachada grava DIRETO em `fachada_anotacao` — não passa
+            # registro para o watcher. O JSON aqui é só um destino inerte para o
+            # watcher não ficar procurando arquivo que ninguém escreve.
+            out_json = MINERACAO / "_avaliar_noop.json"
+            cmd = [PYTHON, "avaliar_fachada.py", "--area", area_utils.AREA_PADRAO,
+                   "--modelo", str(op.get("modelo") or "gpt-4o-mini"),
+                   "--workers", str(int(op.get("workers", 4))),
+                   "--teto-usd", str(float(op.get("teto_usd") or 0))]
+            if op.get("refazer"):
+                cmd.append("--refazer")
+            _novo_job("avaliar", out_json, {})
 
         elif modo == "enriquecer_tudo":
             # CASCATA: cada POI pobre passa por Maps → Web → Street View até completar.
@@ -1628,17 +1714,6 @@ def iniciar_job(body: dict):
                 cmd.append("--pular-streetview")
             _novo_job("baixar_imagens", out_json, {})
 
-        elif modo == "quadras":
-            # Os 5 passos na área desenhada. Roda o MESMO CLI do terminal, como
-            # os demais processos: o log do subprocess é o progresso na tela.
-            # Não toca em POI nenhum — grava só nas tabelas de quadras.
-            out_json = MINERACAO / "_quadras_noop.json"   # watcher fica ocioso
-            cmd = [PYTHON, "quadras.py", "tudo", "--area", area_utils.AREA_PADRAO]
-            if op.get("com_maps"):
-                cmd.append("--com-maps")
-            if op.get("sem_proxy"):
-                cmd.append("--sem-proxy")
-            _novo_job("quadras", out_json, {})
 
         else:
             return JSONResponse({"erro": f"Modo inválido: {modo}"}, status_code=400)
