@@ -1,0 +1,45 @@
+{
+  "_artifact_sha256": "d222a04183214a7002f7749b3559e2cdd1acba861fac71a5eca261968b5bd64f",
+  "_pipeline_version": "4.11.0",
+  "_run_fingerprint": "c08c208c03ac72b6ebdb1875d20e56ae0a0731cc32e7b072cbd1463e1bb8e0cc",
+  "colunas": 104,
+  "com_atividade": 66228,
+  "destino_campo": {
+    "AMOSTRAR": 10046,
+    "ENVIAR": 791968,
+    "RETER": 10413
+  },
+  "elegibilidade": {
+    "ELEGIVEL": 785463,
+    "ELEGIVEL_COM_OBSERVACAO": 3711,
+    "RETIDO_CONFIANCA": 25,
+    "RETIDO_SEM_NUMERO": 23228
+  },
+  "enderecos_distintos": 279462,
+  "equivalencias_marcadas": 2279,
+  "grupos_coletivos": 84522,
+  "inferidas": 50188,
+  "linhas": 812427,
+  "observadas": 762239,
+  "polo_classe": {
+    "FORA_DE_POLO": 756286,
+    "POLO_LOCAL": 13703,
+    "POLO_REGIONAL": 15049,
+    "ZONA_CENTRAL": 27389
+  },
+  "por_classe": {
+    "A_INTERIOR_FAIXA": 2225,
+    "A_INTERIOR_SEQUENCIA": 26855,
+    "B_ANDAR_AUSENTE": 107,
+    "C_EXTRAPOLADA": 12136,
+    "D_POSICIONAL_SATURADO": 542,
+    "E_POSICIONAL_ENUMERADO": 1764,
+    "F_POSICIONAL_IMPLICITO": 6559
+  },
+  "por_grau": {
+    "ESPECULATIVA": 10413,
+    "PLAUSIVEL": 10046,
+    "SUSTENTADA": 29729
+  },
+  "unidades_em_coletiva": 587158
+}

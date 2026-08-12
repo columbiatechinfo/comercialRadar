@@ -1,0 +1,17 @@
+# Radar Coletivo v4.11.0 — LOCK COMPLETO do ambiente de validacao
+# Carimbado nesta versao: as versoes abaixo nao mudaram desde a v4.5.2, mas o
+# cabecalho ficou parado enquanto a skill andou 6 versoes — e lock cuja
+# procedencia nao acompanha o codigo nao serve de prova de ambiente.
+# python 3.11.15 (ver .python-version). Inclui diretas E
+# transitivas relevantes. Instalar deste arquivo em producao; regenerar
+# (pip freeze) somente apos revalidar tests/ + fixtures no ambiente novo.
+et_xmlfile==2.0.0
+joblib==1.5.3
+numpy==2.4.4
+openpyxl==3.1.5
+pandas==3.0.2
+python-dateutil==2.9.0.post0
+scikit-learn==1.8.0
+scipy==1.17.1
+six==1.17.0
+threadpoolctl==3.6.0
