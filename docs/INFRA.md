@@ -70,12 +70,38 @@ como as regras que já existiam ali: quem precisa alcançar a pilha está no
 tailnet. A porta externa **5442** existe porque a 5432 do Windows já é do
 PostgreSQL 14 nativo.
 
-> **Fragilidade conhecida:** `netsh portproxy` aponta para o IP da distro
-> (`192.168.226.17`), que **muda quando o WSL reinicia**. As regras antigas do i9
-> têm o mesmo problema. O sintoma é "a pilha sumiu da rede" sem nada nos logs.
-> Solução definitiva: `networkingMode=mirrored` no `.wslconfig` — exige
-> `wsl --shutdown`, o que derruba Ollama, OSRM e Nominatim junto, então é
-> mudança para uma janela combinada.
+### O IP da distro muda, e a regra guarda o antigo
+
+`netsh portproxy` aponta para o IP da distro WSL, que **muda a cada reinício**.
+O sintoma é cruel: os serviços sobem normalmente, os logs ficam limpos, e nada
+responde de fora.
+
+Resolvido por uma **tarefa agendada na inicialização** do Windows do i9 —
+`WSL portproxy - comercialRadar`, rodando `wsl-portproxy.ps1` como SYSTEM. Ela
+espera a distro responder, descobre o IP atual e reconstrói as doze regras,
+registrando em `wsl-portproxy.log`. Conserta também as regras antigas do i9,
+que tinham a mesma fragilidade e não eram cobertas por nada.
+
+Para rodar à mão, se algo sumir da rede:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File $env:USERPROFILE\wsl-portproxy.ps1
+```
+
+> **`networkingMode=mirrored` foi tentado em 12/08/2026 e revertido.** Dispensaria
+> o portproxy inteiro, e a máquina atende os requisitos — Windows 11 build 26200,
+> WSL 2.2.4. Mas em modo espelhado o tráfego de entrada passa pelo **firewall do
+> Hyper-V**, que é outra camada de regras: das dez portas testadas do notebook,
+> só Ollama e Nominatim responderam, e as outras oito — que funcionavam —
+> pararam. Revertido em seguida, com o `.wslconfig` restaurado do backup e as
+> regras reconstruídas com o IP corrente. Voltou 11/11.
+>
+> Registrado para não ser tentado de novo sem antes resolver o firewall do
+> Hyper-V (`Get-NetFirewallHyperVRule`), que é o trabalho real por trás disso.
+
+> **O script é ASCII de propósito.** Acento e travessão viram lixo quando o
+> PowerShell lê o arquivo como ANSI, e o erro aparece como "cadeia sem
+> terminador" numa linha que parece perfeita.
 
 ---
 
