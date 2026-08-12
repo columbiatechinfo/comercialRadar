@@ -4,21 +4,25 @@
   "perfil": "saas-multi-cliente",
   "versao": "0.1.0",
   "ambiente": "wsl-dev",
-  "atualizado_em": "2026-08-12T15:30:00-03:00",
+  "atualizado_em": "2026-08-12T17:00:00-03:00",
   "atualizado_por": "/segredos",
-  "commit": "7b771b0",
+  "commit": "54c0530",
   "seguranca": {
     "nota": null,
     "corte": 70,
     "historico": [],
     "categorias": [],
-    "criticos": [
+    "criticos": [],
+    "recomendados": [
       {
-        "item": "Chave do Google Maps exposta no commit 1c7f081 desde 27/04/2026",
-        "acao": "revogar no console do Google Cloud e gerar tres chaves novas com restricao (IP, referrer)"
+        "item": "Reconferir a restricao de referrer das duas chaves de navegador",
+        "acao": "servir uma pagina de teste num host fora da lista; se o mapa desenhar, a restricao nao esta ativa"
+      },
+      {
+        "item": "Chaves de navegador tambem tem a Street View Static API liberada",
+        "acao": "ela e cobrada; deixar so a Maps JavaScript API nas chaves de navegador reduz o estrago de um vazamento"
       }
-    ],
-    "recomendados": []
+    ]
   },
   "requisitos": [
     {
@@ -54,8 +58,8 @@
     {
       "id": "segredos",
       "nome": "Segredos",
-      "status": "parcial",
-      "detalhe": "gitleaks 8.30.1 no pre-commit (core.hooksPath=.githooks, testado: bloqueia) e no CI sobre o historico; .env.example conferido contra o codigo; chaves do Supabase geradas fora do repo. FALTA: revogar a chave Google do commit 1c7f081 no console (unico item aberto)."
+      "status": "ok",
+      "detalhe": "chave exposta REVOGADA e confirmada morta (REQUEST_DENIED/expired); tres chaves novas separadas por funcao; gitleaks no pre-commit (testado) e no CI; .env.example conferido contra o codigo. Pendencia menor: reconferir se a restricao de referrer esta sendo aplicada — em 12/08 o controle ainda passava de endereco fora da lista."
     },
     {
       "id": "modulos",
@@ -103,9 +107,9 @@
     },
     {
       "nome": "segredos",
-      "resultado": "parcial",
+      "resultado": "ok",
       "data": "2026-08-12",
-      "detalhe": "1 vazamento real em 7 achados; portao instalado; rotacao pendente com o usuario"
+      "detalhe": "1 vazamento real rotacionado e verificado; portao instalado; 3 chaves separadas por funcao"
     }
   ],
   "operacional": {
@@ -189,6 +193,13 @@
       "nivel": "ok",
       "evento": "Portao de segredo instalado e testado; chaves do Supabase geradas",
       "detalhe": "Hook em .githooks/ e nao em .git/hooks, porque .git nao e versionado: hook la protege so a maquina de quem o criou. Testado com uma chave falsa: bloqueou. ANON_KEY e SERVICE_ROLE_KEY sao JWT assinados com o JWT_SECRET novo e gravados fora do repositorio — os valores do compose oficial do Supabase sao publicos e varridos por scanner."
+    },
+    {
+      "data": "2026-08-12",
+      "skill": "segredos",
+      "nivel": "ok",
+      "evento": "Chave exposta rotacionada e confirmada morta",
+      "detalhe": "A chave do commit 1c7f081 ficou exposta 3 meses e meio. Revogada no console e conferida no endpoint: REQUEST_DENIED, 'The provided API key is expired'. No lugar entraram TRES chaves separadas por funcao — duas de navegador (uma por painel) e uma de servidor. A separacao resolve o que causou o trabalho dobrado desta rotacao: uma chave so servia comercialRadar e radarTelhados, entao o vazamento de uma contaminou os dois. Ficou registrado que a restricao de referrer ainda nao pode ser comprovada: o controle negativo passou de um host fora da lista, o que indica cache de autorizacao do Google e pede reconferencia."
     }
   ]
 }

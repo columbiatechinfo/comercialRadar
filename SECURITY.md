@@ -35,11 +35,26 @@ Quem for avaliar precisa saber o que está em jogo:
 
 | Segredo | Exposto em | Desde | Situação |
 |---|---|---|---|
-| Chave do Google Maps Platform `AIzaSyA0BL…oSmY` | commit `1c7f081`, em `recover_pois.py` e `src/capture.ts` | 27/04/2026 | **aguardando revogação no console do Google** |
+| Chave do Google Maps Platform `AIzaSyA0BL…oSmY` | commit `1c7f081`, em `recover_pois.py` e `src/capture.ts` | 27/04/2026 | **revogada em 12/08/2026** — confirmado: o endpoint responde `REQUEST_DENIED — The provided API key is expired` |
 
-A chave saiu do código, mas continua no histórico do git e em todo clone
-existente. Reescrever o histórico não corrige — quem clonou já tem. A única
-correção é revogar no provedor.
+Ficou exposta por **3 meses e meio**. Continua no histórico do git e em todo
+clone existente, e continuará: reescrever o histórico não corrige, porque quem
+clonou já tem. O que a neutraliza é a revogação, e ela foi feita.
+
+No lugar dela entraram **três chaves separadas por função** — compartilhar uma
+chave entre dois projetos foi o que obrigou esta rotação a mexer no
+comercialRadar e no radarTelhados ao mesmo tempo:
+
+| Chave | Uso | Restrição |
+|---|---|---|
+| `comercialradarweb` | painel :8765 | referrer HTTP |
+| `radartelhadosweb` | painel :8770 | referrer HTTP |
+| `comercialradar_server` | chamadas do Python ao Street View | endereços IP |
+
+> **Pendência de verificação:** em 12/08/2026 as restrições de referrer ainda não
+> estavam sendo aplicadas — a página carregou o mapa de `192.168.3.6:8793`, que
+> não está em nenhuma lista. Não é falha de configuração comprovada; é cache de
+> autorização do Google. **Reconferir**, e só então considerar a restrição ativa.
 
 Varredura completa em 12/08/2026 (gitleaks 8.30.1, 51 commits, 50,8 MB): 7
 achados brutos, **1 vazamento real**. Os demais são o token de compartilhamento
