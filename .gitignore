@@ -89,3 +89,8 @@ coletivas/
 
 # Cache de malhas/CNEFE do IBGE (135 MB, reconstruivel sob demanda)
 cache_ibge/
+
+# Saidas de trabalho da migracao para o i9 (log e dump temporario)
+migracao.log
+migracao_saida.log
+t.dump
