@@ -4,9 +4,9 @@
   "perfil": "saas-multi-cliente",
   "versao": "0.1.0",
   "ambiente": "wsl-dev",
-  "atualizado_em": "2026-08-12T17:00:00-03:00",
-  "atualizado_por": "/segredos",
-  "commit": "54c0530",
+  "atualizado_em": "2026-08-12T19:00:00-03:00",
+  "atualizado_por": "/infra",
+  "commit": "116ffbb",
   "seguranca": {
     "nota": null,
     "corte": 70,
@@ -21,6 +21,14 @@
       {
         "item": "Chaves de navegador tambem tem a Street View Static API liberada",
         "acao": "ela e cobrada; deixar so a Maps JavaScript API nas chaves de navegador reduz o estrago de um vazamento"
+      },
+      {
+        "item": "portproxy do i9 aponta para o IP da distro WSL, que muda ao reiniciar",
+        "acao": "networkingMode=mirrored no .wslconfig, em janela combinada (derruba Ollama/OSRM/Nominatim junto)"
+      },
+      {
+        "item": "66 GB de dado real sem rotina de backup",
+        "acao": "pgBackRest com full semanal + WAL continuo, e restauracao testada em maquina limpa"
       }
     ]
   },
@@ -110,6 +118,12 @@
       "resultado": "ok",
       "data": "2026-08-12",
       "detalhe": "1 vazamento real rotacionado e verificado; portao instalado; 3 chaves separadas por funcao"
+    },
+    {
+      "nome": "infra",
+      "resultado": "parcial",
+      "data": "2026-08-12",
+      "detalhe": "pilha Supabase de pe no i9 (11 servicos healthy) e alcancavel pelo tailnet; migracao do banco e backup pendentes"
     }
   ],
   "operacional": {
@@ -139,6 +153,27 @@
   "dados_por_cliente": [],
   "servicos_externos": [
     {
+      "nome": "Supabase — gateway",
+      "endpoint": "http://100.115.117.49:8000",
+      "status": "ok",
+      "versao": "GoTrue v2.189.0",
+      "dado_em": "2026-08-12"
+    },
+    {
+      "nome": "Supabase — Postgres",
+      "endpoint": "100.115.117.49:5442 (supavisor)",
+      "status": "ok",
+      "versao": "PostgreSQL 17.6 / PostGIS 3.3.7",
+      "dado_em": "2026-08-12"
+    },
+    {
+      "nome": "Postgres de origem (notebook)",
+      "endpoint": "localhost:5432",
+      "status": "ok",
+      "versao": "PostgreSQL 16.11 / PostGIS 3.6.1",
+      "dado_em": "2026-08-12"
+    },
+    {
       "nome": "Ollama (i9)",
       "endpoint": "http://100.115.117.49:11434",
       "status": "ok",
@@ -147,8 +182,14 @@
     },
     {
       "nome": "SearXNG (i9)",
-      "endpoint": "i9",
-      "status": "desconhecido",
+      "endpoint": "http://100.115.117.49:8888",
+      "status": "ok",
+      "dado_em": "2026-08-12"
+    },
+    {
+      "nome": "Nominatim / OSRM / Photon / OpenTopoData (i9)",
+      "endpoint": "8080 · 5000-5003 · 2322",
+      "status": "ok",
       "dado_em": "2026-08-12"
     },
     {
@@ -156,12 +197,6 @@
       "endpoint": "api.openai.com",
       "status": "ok",
       "versao": "gpt-4o",
-      "dado_em": "2026-08-12"
-    },
-    {
-      "nome": "PostgreSQL + PostGIS",
-      "endpoint": "localhost:5432/comercialradar",
-      "status": "ok",
       "dado_em": "2026-08-12"
     }
   ],
@@ -200,6 +235,27 @@
       "nivel": "ok",
       "evento": "Chave exposta rotacionada e confirmada morta",
       "detalhe": "A chave do commit 1c7f081 ficou exposta 3 meses e meio. Revogada no console e conferida no endpoint: REQUEST_DENIED, 'The provided API key is expired'. No lugar entraram TRES chaves separadas por funcao — duas de navegador (uma por painel) e uma de servidor. A separacao resolve o que causou o trabalho dobrado desta rotacao: uma chave so servia comercialRadar e radarTelhados, entao o vazamento de uma contaminou os dois. Ficou registrado que a restricao de referrer ainda nao pode ser comprovada: o controle negativo passou de um host fora da lista, o que indica cache de autorizacao do Google e pede reconferencia."
+    },
+    {
+      "data": "2026-08-12",
+      "skill": "infra",
+      "nivel": "ok",
+      "evento": "Pilha Supabase no i9, 11 servicos healthy, alcancavel pelo tailnet",
+      "detalhe": "Subiu no i9 e nao no notebook porque o notebook tem UM disco com 66 GB livres e o banco tem 66 GB — dump mais restauracao pediriam ~132 GB. O i9 tem 781 GB livres. Portas escolhidas contra a pilha geo que ja rodava la (OSRM, Nominatim, Photon, Ollama, SearXNG) e contra um PostgreSQL 14 nativo do Windows que ja ocupava a 5432 — por isso a porta externa do banco e a 5442. O encaminhamento escuta so na interface do Tailscale, e nao em 0.0.0.0 como as regras que ja existiam ali."
+    },
+    {
+      "data": "2026-08-12",
+      "skill": "infra",
+      "nivel": "aviso",
+      "evento": "PostGIS da pilha e 3.3.7 e a origem e 3.6.1 — restauracao para versao anterior nao e suportada",
+      "detalhe": "A imagem do Supabase so oferece 3.3.7. Postgres 16->17 funciona, PostGIS 3.6->3.3 nao. As tabelas mais afetadas sao ibge_cnefe e osm_via, que sao justamente as de referencia publica. Isso, somado a regra da casa de nao rodar analitico no banco que atende usuario, gerou o ADR 0003: banco do produto na instancia Supabase, bases de referencia num container com PostGIS igual ou mais novo. Decisao aguarda o dono antes da migracao."
+    },
+    {
+      "data": "2026-08-12",
+      "skill": "infra",
+      "nivel": "aviso",
+      "evento": "setup.sh imprimiu os segredos na saida; todos os sete foram regerados",
+      "detalhe": "O script do proprio Supabase ecoa JWT_SECRET, SERVICE_ROLE_KEY, POSTGRES_PASSWORD e outros. Foram parar na transcricao da sessao. Como nenhum servico tinha nascido ainda, regerar custou zero — depois de a pilha subir, custaria recriar o volume."
     }
   ]
 }
