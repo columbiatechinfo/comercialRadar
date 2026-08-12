@@ -4,9 +4,9 @@
   "perfil": "saas-multi-cliente",
   "versao": "0.1.0",
   "ambiente": "wsl-dev",
-  "atualizado_em": "2026-08-12T16:05:00-03:00",
+  "atualizado_em": "2026-08-12T19:25:00-03:00",
   "atualizado_por": "/infra",
-  "commit": "9a85c12",
+  "commit": "89a765b",
   "seguranca": {
     "nota": null,
     "corte": 70,
@@ -94,8 +94,8 @@
     {
       "id": "backup",
       "nome": "Backup",
-      "status": "pendente",
-      "detalhe": "banco de 60 GB sem rotina verificada de backup/restauracao"
+      "status": "ok",
+      "detalhe": "dump diario do banco do produto (31 MB comprimidos) + espelho do Storage com link-dest, 14 dias de retencao, no cron das 03:10. Restauracao VALIDADA em 12/08/2026: 9 tabelas conferem e o schema auth volta junto. Verificacao semanal agendada. O banco de referencia fica fora de proposito — e base publica, rebaixa da fonte."
     },
     {
       "id": "borda",
@@ -134,8 +134,8 @@
     "cobertura_testes": 0,
     "tabelas_sem_rls": 0,
     "indice_tenant": false,
-    "ultimo_backup": null,
-    "restauracao_validada": false
+    "ultimo_backup": "2026-08-12",
+    "restauracao_validada": "2026-08-12"
   },
   "custo": {
     "mensal_estimado": null,
@@ -281,6 +281,13 @@
       "nivel": "ok",
       "evento": "Banco reorganizado em schema por ferramenta; cadastro publico fechado",
       "detalhe": "As 9 tabelas sairam do public para o schema `comercialradar`, e os papeis cr_* viraram comercialradar_app/migrator/readonly, cada um com USAGE so no proprio schema. Isolamento PROVADO, nao afirmado: o papel recebeu 'permission denied for schema radartelhados' ao tentar atravessar. DISABLE_SIGNUP=true testado com tentativa real (HTTP 422 signup_disabled). Convencao documentada no SKILLS.md da raiz para os proximos sistemas nascerem sabendo."
+    },
+    {
+      "data": "2026-08-12",
+      "skill": "infra",
+      "nivel": "ok",
+      "evento": "Migracao completa: banco, imagens e backup com restauracao validada",
+      "detalhe": "As imagens sairam do banco: 71.965 objetos e 6,3 GB foram para o Storage, com 11 conferidos byte a byte. Os leitores passaram a busca-los la, com queda para a coluna `dados` enquanto ela existir — e isso que permitiu migrar 3 leitores um a um sem quebrar nenhum. A leitura de fachada rodou ponta a ponta com imagem do Storage e foi APROVADA pelo validador da skill em 2 POIs, zero erro. Backup diario instalado e, mais importante, RESTAURADO num banco descartavel com conferencia linha a linha: e a diferenca entre backup e pasta com arquivos. Uma falha no envio, unica: 1 GIF em 39.737 fotos, barrado por eu ter restringido os tipos do bucket a JPEG/PNG/WebP sem antes olhar o que a base tinha."
     }
   ]
 }

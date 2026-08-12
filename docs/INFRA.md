@@ -162,12 +162,54 @@ restauração e replicação carregam esses bytes junto em toda operação.
 
 ---
 
-## Backup — pendente, e é o item mais caro de adiar
+## Backup — feito, e restaurado
 
-Em `wsl-dev` a skill não obriga. **Não confundir com não precisar**: são 66 GB de
-dado real, sendo ~340 MB insubstituíveis (POIs, cadastro do cliente, anotações de
-fachada) que não se rebaixa de fonte pública nenhuma.
+Diário às 03:10 pelo cron do i9, com verificação de restauração aos domingos.
 
-O que falta: `pgBackRest` com full semanal, incremental diário e WAL contínuo; e
-**restauração testada em máquina limpa, com conferência de contagem de linhas**.
-Backup nunca restaurado é hipótese, não backup.
+| O que | Tamanho | Entra? | Por quê |
+|---|---|---|---|
+| Banco do produto | 220 MB (31 MB comprimido) | **sim** | POIs, cadastro, anotações e os usuários do Auth. Nada disso se refaz |
+| Storage | 6,7 GB | **sim** | cada fachada custou chamada de API e captura |
+| Banco de referência | 60 GB | não | base pública do IBGE e da Receita: rebaixa da fonte |
+
+O Storage vai por `rsync --link-dest`: cada dia fica navegável como cópia
+inteira, mas custa em disco só o que mudou. Tar diário de 6,7 GB encheria o disco
+para guardar quatorze vezes o mesmo arquivo.
+
+```bash
+bash ~/comercialradar-infra/backup/backup.sh              # rodar à mão
+bash ~/comercialradar-infra/backup/testar_restauracao.sh  # provar que restaura
+```
+
+> **A restauração é testada, não presumida.** O script restaura o dump mais
+> recente num banco descartável e confere as nove tabelas linha a linha, mais a
+> existência do schema `auth` — banco com dado e sem quem possa lê-lo não é
+> restauração. Validado em 12/08/2026. Backup nunca restaurado é hipótese: ele é
+> gerado, ocupa disco, parece certo, e só no dia do desastre se descobre que
+> faltava um schema.
+
+---
+
+## Imagens — fora do banco
+
+Os 6,3 GB de `bytea` viraram 71.965 objetos no bucket `comercialradar`. O banco
+guarda o caminho; os bytes vêm por HTTP.
+
+```
+fachada/<id % 100>/<id>.jpg    32.380 objetos
+foto/<id % 100>/<id>.jpg       39.585 objetos
+```
+
+O prefixo de dois dígitos existe para não deixar dezenas de milhares de objetos
+num diretório só — listar vira operação cara e algumas ferramentas engasgam.
+
+`imagens.py` é o único ponto que sabe disso. Ele busca no Storage e **cai para a
+coluna `dados`** quando a linha não tem caminho — foi essa queda que permitiu
+migrar os três leitores (a IA, o painel e o descritor) um a um, sem que nenhum
+quebrasse enquanto o outro não tinha migrado.
+
+> Uma falha em 71.965 envios: **um GIF**. O bucket tinha sido criado aceitando só
+> JPEG, PNG e WebP, e a base tinha exatamente um GIF entre 39.737 fotos.
+> Restringir tipo protege contra upload indevido, mas a lista tem de refletir o
+> que EXISTE — senão o portão barra dado legítimo e a falha só aparece no meio de
+> uma carga de 40 mil.
