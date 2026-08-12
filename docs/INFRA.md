@@ -62,8 +62,21 @@ ocupadas antes:  5000-5003 OSRM/OpenTopoData · 5433 e 8080 Nominatim
 | Do tailnet | → WSL | O quê |
 |---|---|---|
 | `100.115.117.49:8000` | `:8000` | gateway — REST, Auth, Storage, Studio |
-| `100.115.117.49:5442` | `:5432` | Postgres pelo Supavisor |
+| `100.115.117.49:5442` | `:5442` | Postgres pelo Supavisor |
 | `100.115.117.49:6543` | `:6543` | pooler em modo transação |
+| `100.115.117.49:5443` | `:5443` | banco de **referência** (CNEFE, Receita, OSM) |
+| `100.115.117.49:5444` | `:5444` | Postgres **direto**, para o worker do pipeline |
+
+**A 5444 não passa pelo pooler, de propósito.** Pooler existe para quem abre
+conexão por requisição — o PostgREST. O pipeline faz o oposto: poucas conexões
+com trabalho longo, `COPY` e `execute_values`, e o modo transação do Supavisor
+perde tabela temporária, *prepared statement* e lock de sessão.
+
+> O Postgres da pilha escuta na **5442 dentro do container**, não na 5432:
+> `POSTGRES_PORT` define a porta interna também. Publicar `5444:5432` apontava
+> para porta vazia — o `docker-proxy` aceitava e fechava, produzindo
+> *"server closed the connection unexpectedly"*, erro com cara de banco e causa
+> de mapeamento.
 
 O encaminhamento escuta **só na interface do Tailscale**, e não em `0.0.0.0`
 como as regras que já existiam ali: quem precisa alcançar a pilha está no
@@ -113,11 +126,25 @@ decoração — e a `/seguranca` audita isso como crítico.
 
 | Papel | Para | `superuser` | `bypassrls` |
 |---|---|---|---|
-| `cr_migrator` | migrations e CI | não | não |
-| `cr_app` | runtime da aplicação | não | não |
-| `cr_readonly` | relatório e BI | não | não |
+| `comercialradar_migrator` | migrations e CI | não | não |
+| `comercialradar_app` | a API, sujeita a RLS | não | não |
+| `comercialradar_readonly` | relatório e BI | não | não |
+| `comercialradar_worker` | **o pipeline Python** | não | **sim** |
+
+O nome leva a ferramenta porque o banco é compartilhado: `app` genérico esconde
+de quem é o papel quando houver três sistemas ali.
+
+**O `worker` tem `BYPASSRLS`, e é consciente.** Ele roda no servidor, sem usuário
+logado, e nunca é alcançável pelo navegador — é o "worker de confiança" que a
+regra da casa prevê. Sem isso, com RLS ligada e sem policy, o pipeline leria zero
+linha das próprias tabelas. Ele é **separado do `app`** justamente para que o
+`app` continue sujeito à RLS: dar `BYPASSRLS` ao papel da API transformaria toda
+policy futura em decoração.
 
 Senhas no `.env` da pilha, com permissão `600`.
+
+> Isolamento **provado**, não afirmado: `comercialradar_app` recebe
+> `permission denied for schema radartelhados` ao tentar atravessar sem grant.
 
 ---
 
@@ -134,17 +161,25 @@ e varridos por scanner — subir com eles é deixar a porta aberta.
 
 ---
 
-## PostGIS — a diferença que decide a migração
+## PostGIS — como ficou
 
 ```
-origem (notebook)   PostgreSQL 16.11 · PostGIS 3.6.1
-destino (pilha)     PostgreSQL 17.6  · PostGIS 3.3.7  (única na imagem)
+origem (notebook)     PostgreSQL 16.11 · PostGIS 3.6.1
+produto (pilha)       PostgreSQL 17.6  · PostGIS 3.3.7   única na imagem Supabase
+referência (próprio)  PostgreSQL 17.5  · PostGIS 3.5.2   imagem postgis/postgis
 ```
 
-Postgres 16 → 17 é o sentido que funciona. **PostGIS 3.6 → 3.3 é o contrário**, e
-restauração para versão anterior do PostGIS não é caminho suportado. As tabelas
-com geometria pesada — `ibge_cnefe`, `osm_via` — são justamente as que mais
-sofrem com isso.
+Postgres 16 → 17 é o sentido que funciona; PostGIS para trás não é caminho
+suportado. Por isso as tabelas de referência foram para um container com PostGIS
+mais novo, e não para a pilha.
+
+> **Correção do que eu havia escrito antes:** a `ibge_cnefe` **não tem coluna de
+> geometria nenhuma** — os 23 GB dela são texto e número. Ao medir, o banco
+> inteiro tem 5 colunas de geometria, todas `GEOMETRY` 2D em SRID 4326, sem
+> coluna gerada e sem constraint usando `ST_`. O argumento do PostGIS para
+> separar os bancos era **bem mais fraco** do que pintei. O que sustenta a
+> separação é o outro motivo: analítico pesado não divide instância com quem
+> atende usuário.
 
 Ver [ADR 0003](adr/0003-onde-mora-cada-banco.md).
 
@@ -152,13 +187,11 @@ Ver [ADR 0003](adr/0003-onde-mora-cada-banco.md).
 
 ## Storage
 
-`STORAGE_BACKEND` em arquivo local, dentro do volume da pilha. Em `wsl-dev` isso
-basta. Em produção vai para o **R2** — egress zero, e o disco fica só para o
-Postgres, porque disco cheio derruba o banco junto e imagem acumula rápido.
+`STORAGE_BACKEND` em arquivo local, dentro do volume da pilha, hoje com **6,7 GB**.
+Em `wsl-dev` isso basta. Em produção vai para o **R2** — egress zero, e o disco
+fica só para o Postgres, porque disco cheio derruba o banco junto.
 
-Hoje há **6,3 GB de imagem em `bytea` dentro do banco** (`streetview_imgs` e
-`images_urls`). Esse é o candidato natural a sair para o Storage: backup,
-restauração e replicação carregam esses bytes junto em toda operação.
+Os bytes de imagem **já saíram do banco** — ver a seção "Imagens" adiante.
 
 ---
 
