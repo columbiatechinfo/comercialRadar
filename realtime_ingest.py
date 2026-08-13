@@ -202,25 +202,50 @@ def ingerir_registro(r: dict, poligono=None, conn=None) -> tuple:
                     hs = cur.fetchall()
                     if hs:
                         r["horarios"] = [{"dia": d, "horario": h} for d, h in hs]
-                cur.execute("DELETE FROM images_urls WHERE poi_id = ANY(%s)", (ids,))
-                cur.execute("DELETE FROM comentarios WHERE poi_id = ANY(%s)", (ids,))
-                cur.execute("DELETE FROM horario_funcionamento WHERE poi_id = ANY(%s)", (ids,))
-                cur.execute("DELETE FROM pois WHERE id = ANY(%s)", (ids,))
+                # DUPLICATAS: quando o mesmo place_id aparece em mais de uma
+                # linha, uma delas fica e as outras vão embora — mas os filhos
+                # CAROS mudam de dono antes, senão a cascata os leva junto.
+                extras = ids[1:]
+                if extras:
+                    for tabela in ("streetview_imgs", "fachada_anotacao"):
+                        try:
+                            cur.execute(
+                                f"""UPDATE {tabela} SET poi_id = %s
+                                     WHERE poi_id = ANY(%s)
+                                       AND NOT EXISTS (SELECT 1 FROM {tabela} z
+                                                        WHERE z.poi_id = %s)""",
+                                (keep, extras, keep))
+                        except Exception:
+                            pass          # tabela pode não existir ainda
+                    cur.execute("DELETE FROM pois WHERE id = ANY(%s)", (extras,))
 
-            cur.execute(
-                """INSERT INTO pois (fonte, sessao, nome, categoria, endereco, telefone, website,
-                       avaliacao, total_avaliacoes, plus_code, status_horario,
-                       lat_origem, lng_origem, maps_lat, maps_lng, maps_url, place_id,
-                       status, distancia_m, similaridade, match_valido, ocr_texto,
-                       nome_original, endereco_original, preco_medio, fonte_dado, ia_resposta,
-                       cnpj, razao_social, nome_fantasia, natureza_juridica, cnae,
-                       situacao_cadastral, socios, instagram, email, resumo_avaliacoes,
-                       streetview_path, fontes_web, endereco_fonte, cidade, uf,
-                       cnpj_conf, facebook)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                           %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                   RETURNING id""",
-                (
+                # Filhos REFEITOS pela própria busca: apagados e reinseridos
+                # logo abaixo. Fachada e anotação NÃO estão aqui de propósito.
+                cur.execute("DELETE FROM images_urls WHERE poi_id = %s", (keep,))
+                cur.execute("DELETE FROM comentarios WHERE poi_id = %s", (keep,))
+                cur.execute("DELETE FROM horario_funcionamento WHERE poi_id = %s", (keep,))
+
+            # ── A linha do POI: ATUALIZADA quando já existe, nunca recriada ──
+            #
+            # Até 12/08/2026 este caminho fazia `DELETE FROM pois` + `INSERT`. Com
+            # `fachada_anotacao` e `streetview_imgs` em `ON DELETE CASCADE`, isso
+            # significava que **reimportar uma planilha destruía leitura de fachada
+            # já paga** — US$ 0,017 por POI, mais a captura, mais a passagem pelo
+            # validador. Medido no dia: 19.838 POIs com dado insubstituível eram
+            # alcançáveis por uma reimportação.
+            #
+            # O `id` preservado é o que mantém os filhos ligados. É por isso que
+            # aqui é UPDATE, e não um DELETE mais esperto.
+            _COLS = ("fonte", "sessao", "nome", "categoria", "endereco", "telefone", "website",
+                     "avaliacao", "total_avaliacoes", "plus_code", "status_horario",
+                     "lat_origem", "lng_origem", "maps_lat", "maps_lng", "maps_url", "place_id",
+                     "status", "distancia_m", "similaridade", "match_valido", "ocr_texto",
+                     "nome_original", "endereco_original", "preco_medio", "fonte_dado", "ia_resposta",
+                     "cnpj", "razao_social", "nome_fantasia", "natureza_juridica", "cnae",
+                     "situacao_cadastral", "socios", "instagram", "email", "resumo_avaliacoes",
+                     "streetview_path", "fontes_web", "endereco_fonte", "cidade", "uf",
+                     "cnpj_conf", "facebook")
+            _VALORES = (
                     r.get("fonte") or "desconhecido", _s(r.get("sessao")), str(r["nome"]),
                     _s(r.get("categoria")), _s(r.get("endereco")), _s(r.get("telefone")),
                     _s(r.get("website")), _s(r.get("avaliacao")), _i(r.get("total_avaliacoes")),
@@ -242,8 +267,17 @@ def ingerir_registro(r: dict, poligono=None, conn=None) -> tuple:
                     _s(r.get("cidade")) or _cidade_uf(r.get("endereco"), r.get("endereco_planilha"))[0],
                     _s(r.get("uf")) or _cidade_uf(r.get("endereco"), r.get("endereco_planilha"))[1],
                     _s(r.get("cnpj_conf")), _s(r.get("facebook")),
-                ),
             )
+
+            if ids:
+                sets = ", ".join(f"{c} = %s" for c in _COLS)
+                cur.execute(f"UPDATE pois SET {sets} WHERE id = %s RETURNING id",
+                            (*_VALORES, keep))
+            else:
+                cur.execute(
+                    f"INSERT INTO pois ({', '.join(_COLS)}) "
+                    f"VALUES ({', '.join(['%s'] * len(_COLS))}) RETURNING id",
+                    _VALORES)
             poi_id = cur.fetchone()[0]
 
             fotos = [(poi_id, str(u), k) for k, u in enumerate(r.get("fotos") or []) if u]
