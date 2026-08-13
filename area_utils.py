@@ -144,9 +144,14 @@ def municipio_da_area(poligono=None, ref=AREA_PADRAO) -> tuple:
     # cidade e UF são a fonte única de toda a ferramenta. A tabela `ibge_malha`
     # fica nas duas — são 8,6 MB de divisa oficial, e duplicar dado de
     # referência público é mais barato que acoplar duas ferramentas.
+    # A `ibge_malha` é base pública e mora no banco de REFERÊNCIA desde
+    # 12/08/2026. Consultá-la pela conexão do produto devolvia ("", "") em
+    # silêncio — e cidade vazia não estoura erro: ela envenena a busca web e faz
+    # a conferência de CNPJ recusar tudo, que foi exatamente o bug do "Parnaíba"
+    # fixo descrito acima. Falha silenciosa em fonte única é a pior de todas.
     try:
         import base_comum as bc
-        con = bc.conectar()
+        con = bc.conectar_referencia()
         try:
             with con.cursor() as cur:
                 cur.execute("""SELECT nome, uf FROM ibge_malha

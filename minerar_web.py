@@ -83,7 +83,9 @@ def _receita_local(d: str) -> dict | None:
     o número achado na página não é um estabelecimento de verdade."""
     try:
         import base_comum as _bc
-        con = _bc.conectar()
+        # Receita Federal mora no banco de REFERENCIA (ADR 0003). Pela conexao
+        # do produto isto daria "relation does not exist" no meio da rodada.
+        con = _bc.conectar_referencia()
     except Exception:
         return None
     try:

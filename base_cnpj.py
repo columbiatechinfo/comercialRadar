@@ -120,14 +120,15 @@ def tabela_de(nome_zip: str):
 
 
 def _cols(tab):
-    with bc.conectar() as c, c.cursor() as cur:
+    with bc.conectar_referencia() as c, c.cursor() as cur:
         cur.execute("SELECT column_name FROM information_schema.columns "
                     "WHERE table_name=%s ORDER BY ordinal_position", (tab,))
         return [r[0] for r in cur.fetchall()]
 
 
 def run(mes, recriar, so, indices):
-    conn = bc.conectar()
+    # Base publica da Receita: banco de REFERENCIA.
+    conn = bc.conectar_referencia()
     bc.garantir_controle(conn)
     with conn, conn.cursor() as cur:
         cur.execute(DDL)

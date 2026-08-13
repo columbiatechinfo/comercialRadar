@@ -65,7 +65,8 @@ def garantir_tabela(conn, cols):
 
 
 def run(ufs, recriar, indices):
-    conn = bc.conectar()
+    # Carrega base publica: escreve no banco de REFERENCIA, nunca no do produto.
+    conn = bc.conectar_referencia()
     bc.garantir_controle(conn)
     disponiveis = listar_ufs()
     if ufs:

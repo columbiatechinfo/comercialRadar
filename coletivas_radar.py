@@ -169,7 +169,8 @@ def main():
             f"  .venv-coletivo\\Scripts\\python -m pip install -r "
             f"skills/radar-coletivo/scripts/requirements.lock.txt")
 
-    con = bc.conectar()
+    # Le `ibge_cnefe` e `ibge_malha`: banco de REFERENCIA.
+    con = bc.conectar_referencia()
     try:
         print(f"🏢 Radar Coletivo — município {a.municipio}", flush=True)
         csv_mun = exportar(a.municipio, con)

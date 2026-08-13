@@ -46,6 +46,7 @@ from fastapi.staticfiles import StaticFiles
 import config  # .env + UTF-8
 import area_utils
 import realtime_ingest
+import base_comum
 
 BASE = Path(__file__).resolve().parent
 FRONT = BASE / "frontend"
@@ -646,7 +647,8 @@ def mapa_config():
 @app.get("/api/ufs")
 def ufs_carregadas():
     """UFs que já têm malha municipal no banco, com a contagem."""
-    conn = realtime_ingest.conectar()
+    # `ibge_malha` e base publica: banco de REFERENCIA (ADR 0003).
+    conn = base_comum.conectar_referencia()
     try:
         with conn.cursor() as cur:
             cur.execute("""SELECT uf, count(*) FROM ibge_malha
@@ -660,7 +662,8 @@ def ufs_carregadas():
 @app.get("/api/municipios")
 def municipios_da_uf(uf: str):
     """Municípios de uma UF, para o seletor — sem geometria, que é pesada."""
-    conn = realtime_ingest.conectar()
+    # `ibge_malha` e base publica: banco de REFERENCIA (ADR 0003).
+    conn = base_comum.conectar_referencia()
     try:
         with conn.cursor() as cur:
             cur.execute("""SELECT cod_municipio, nome FROM ibge_malha
@@ -682,7 +685,8 @@ def area_do_municipio(cod: str):
 
     O anel externo basta: a área de trabalho é um filtro de contenção, e ilha ou
     buraco na divisa não muda quem está dentro para efeito de varredura."""
-    conn = realtime_ingest.conectar()
+    # `ibge_malha` e base publica: banco de REFERENCIA (ADR 0003).
+    conn = base_comum.conectar_referencia()
     try:
         with conn.cursor() as cur:
             cur.execute("""SELECT nome, uf, ST_AsGeoJSON(ST_Envelope(geom)),
@@ -724,7 +728,8 @@ def malha(uf: str = "", lat: float | None = None, lng: float | None = None):
         uf = _uf_majoritaria()
 
     def _do_banco():
-        conn = realtime_ingest.conectar()
+        # `ibge_malha` e base publica: banco de REFERENCIA (ADR 0003).
+        conn = base_comum.conectar_referencia()
         try:
             with conn.cursor() as cur:
                 cur.execute("""SELECT cod_municipio, nome, ST_AsGeoJSON(geom)
@@ -746,7 +751,8 @@ def malha(uf: str = "", lat: float | None = None, lng: float | None = None):
             url_nomes = (f"https://servicodados.ibge.gov.br/api/v1/localidades/"
                          f"estados/{uf}/municipios")
             nomes = {str(m["id"]): m["nome"] for m in _http_json(url_nomes, timeout=60)}
-            conn = realtime_ingest.conectar()
+            # `ibge_malha` e base publica: banco de REFERENCIA (ADR 0003).
+            conn = base_comum.conectar_referencia()
             try:
                 with conn.cursor() as cur:
                     for f in gj.get("features", []):
