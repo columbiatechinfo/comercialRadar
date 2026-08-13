@@ -83,18 +83,13 @@ def _gravar_path(poi_id: int, path: str, conn):
 def _gravar_imagem(poi_id: int, dados: bytes, lat, lng):
     """A fachada vai para `streetview_imgs`, não para um .jpg na pasta.
 
+    Os BYTES vão para o Storage desde 12/08/2026; a tabela guarda o caminho.
     Substitui a linha 'facade' anterior deste POI: recapturar é justamente para
-    trocar a foto, e acumular versões só incharia a tabela."""
-    import psycopg2
+    trocar a foto, e acumular versões só incharia a tabela e o bucket."""
+    import imagens
     conn = realtime_ingest.conectar()
     try:
-        with conn, conn.cursor() as cur:
-            cur.execute("DELETE FROM streetview_imgs WHERE poi_id=%s AND angulo='facade'",
-                        (poi_id,))
-            cur.execute("""INSERT INTO streetview_imgs
-                             (poi_id, dados, bytes_tam, lat, lng, angulo)
-                           VALUES (%s,%s,%s,%s,%s,'facade')""",
-                        (poi_id, psycopg2.Binary(dados), len(dados), lat, lng))
+        return imagens.gravar_streetview(poi_id, dados, lat, lng, conn)
     finally:
         conn.close()
 

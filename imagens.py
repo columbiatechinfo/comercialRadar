@@ -84,6 +84,71 @@ def _buscar(con, tabela: str, onde: str, args: tuple, limite: int | None = None)
     return out
 
 
+def enviar(caminho: str, dados: bytes, tipo: str = "image/jpeg") -> bool:
+    """Sobe um objeto para o Storage. `x-upsert` para reenvio não duplicar."""
+    chave = _chave()
+    if not chave or not dados:
+        return False
+    req = urllib.request.Request(
+        f"{_gateway()}/storage/v1/object/{BUCKET}/{caminho}", data=dados, method="POST",
+        headers={"apikey": chave, "Authorization": f"Bearer {chave}",
+                 "Content-Type": tipo or "image/jpeg", "x-upsert": "true"})
+    try:
+        with urllib.request.urlopen(req, timeout=180) as r:
+            return r.status in (200, 201)
+    except urllib.error.HTTPError as e:
+        return e.code == 409          # já existe = o byte está lá
+    except Exception:
+        return False
+
+
+def gravar_streetview(poi_id: int, dados: bytes, lat, lng, con,
+                      angulo: str = "facade", **extra) -> int | None:
+    """Grava uma fachada: bytes no Storage, caminho no banco.
+
+    Escrita e leitura precisam mudar JUNTAS. Na migração de 12/08/2026 eu movi
+    só os leitores e deixei os escritores gravando na coluna `dados`, que já não
+    existia — e o sintoma foi silencioso: `Capturados 0/4` num resumo sem uma
+    linha de erro, porque a falha acontecia dentro do worker e virava "não
+    capturou". Só apareceu quando a rodada ponta a ponta tentou capturar.
+
+    Substitui a linha anterior do mesmo ângulo: recapturar existe para TROCAR a
+    foto, e acumular versões só incharia a tabela e o bucket."""
+    with con.cursor() as cur:
+        cur.execute("DELETE FROM streetview_imgs WHERE poi_id=%s AND angulo=%s",
+                    (poi_id, angulo))
+        cur.execute("""INSERT INTO streetview_imgs (poi_id, bytes_tam, lat, lng, angulo,
+                                                    data_captura, pano_id)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
+                    (poi_id, len(dados), lat, lng, angulo,
+                     extra.get("data_captura"), extra.get("pano_id")))
+        sv_id = cur.fetchone()[0]
+        caminho = f"fachada/{sv_id % 100:02d}/{sv_id}.jpg"
+        if not enviar(caminho, dados):
+            # Sem o byte no Storage a linha seria uma promessa vazia: melhor
+            # desfazer do que registrar imagem que não existe.
+            cur.execute("DELETE FROM streetview_imgs WHERE id=%s", (sv_id,))
+            return None
+        cur.execute("UPDATE streetview_imgs SET storage_path=%s WHERE id=%s", (caminho, sv_id))
+    con.commit()
+    return sv_id
+
+
+def gravar_foto(img_id: int, dados: bytes, con, tipo: str = "image/jpeg", **extra) -> bool:
+    """Grava os bytes de uma foto já cadastrada em `images_urls`."""
+    caminho = f"foto/{img_id % 100:02d}/{img_id}.jpg"
+    if not enviar(caminho, dados, tipo):
+        return False
+    with con.cursor() as cur:
+        cur.execute("""UPDATE images_urls
+                          SET storage_path=%s, bytes_tam=%s, content_type=%s,
+                              data_imagem=COALESCE(%s, data_imagem)
+                        WHERE id=%s""",
+                    (caminho, len(dados), tipo, extra.get("data_imagem"), img_id))
+    con.commit()
+    return True
+
+
 def streetview_por_id(sv_id: int, con) -> bytes | None:
     r = _buscar(con, "streetview_imgs", "id = %s", (sv_id,))
     return r[0] if r else None

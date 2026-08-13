@@ -477,14 +477,10 @@ def _arquivar_shot(conn, poi_id: int, raw: bytes, angulo: str, lat=None, lng=Non
     g270/p1/p2) e espelha em disco. Idempotente: refazer substitui o mesmo ângulo."""
     EXTRAS_DIR.mkdir(parents=True, exist_ok=True)
     (EXTRAS_DIR / f"{poi_id}_{angulo}.jpg").write_bytes(raw)
-    import psycopg2
-    with conn, conn.cursor() as cur:
-        cur.execute("DELETE FROM streetview_imgs WHERE poi_id=%s AND angulo=%s",
-                    (poi_id, angulo))
-        cur.execute("""INSERT INTO streetview_imgs (poi_id, dados, bytes_tam, lat, lng,
-                                                    angulo, data_captura)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s)""",
-                    (poi_id, psycopg2.Binary(raw), len(raw), lat, lng, angulo, data_captura))
+    # Bytes no Storage, caminho no banco (12/08/2026).
+    import imagens
+    imagens.gravar_streetview(poi_id, raw, lat, lng, conn,
+                              angulo=angulo, data_captura=data_captura)
 
 
 def _recomendar_visita(conn, poi_id: int, aprovado: bool) -> tuple:

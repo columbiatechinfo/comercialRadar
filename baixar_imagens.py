@@ -81,7 +81,7 @@ def _baixar_foto(url: str):
 def fase_fotos(workers: int, limit: int):
     conn = realtime_ingest.conectar()
     with conn.cursor() as cur:
-        cur.execute("SELECT id, url FROM images_urls WHERE dados IS NULL AND url LIKE 'http%'")
+        cur.execute("SELECT id, url FROM images_urls WHERE storage_path IS NULL AND url LIKE 'http%'")
         alvos = cur.fetchall()
     conn.close()
     if limit:
@@ -105,11 +105,15 @@ def fase_fotos(workers: int, limit: int):
         try:
             raw, ct = _baixar_foto(url)
             data = _data_exif(raw)
+            # Bytes no Storage, caminho no banco (12/08/2026). A coluna
+            # `dados` deixou de existir no banco novo.
+            import imagens
             c = _conn()
-            with c, c.cursor() as cur:
-                cur.execute("UPDATE images_urls SET dados=%s, data_imagem=%s, bytes_tam=%s, content_type=%s WHERE id=%s",
-                            (psycopg2.Binary(raw) if True else raw,
-                             data, len(raw), ct[:40], img_id))
+            try:
+                imagens.gravar_foto(img_id, raw, c, tipo=(ct or "image/jpeg")[:40],
+                                    data_imagem=data)
+            finally:
+                c.close()
             with lock:
                 cont["ok"] += 1
                 cont["bytes"] += len(raw)
@@ -186,13 +190,13 @@ def fase_streetview(workers: int, limit: int):
                 return
             raw = fp.read_bytes()
             data, pano = _sv_metadata(lat, lng) if lat is not None else (None, None)
+            import imagens
             c = _conn()
-            with c, c.cursor() as cur:
-                cur.execute("""INSERT INTO streetview_imgs (poi_id, dados, data_captura, pano_id, bytes_tam, lat, lng, angulo)
-                               VALUES (%s,%s,%s,%s,%s,%s,%s,'facade')""",
-                            (poi_id,
-                             psycopg2.Binary(raw) if (raw and True) else raw,
-                             data, pano, len(raw) if raw else None, lat, lng))
+            try:
+                imagens.gravar_streetview(poi_id, raw, lat, lng, c,
+                                          data_captura=data, pano_id=pano)
+            finally:
+                c.close()
             with lock:
                 cont["ok"] += 1
                 if data:
@@ -225,7 +229,7 @@ def main():
 
     conn = realtime_ingest.conectar()
     with conn.cursor() as cur:
-        cur.execute("SELECT COUNT(*), COUNT(dados), COUNT(data_imagem) FROM images_urls")
+        cur.execute("SELECT COUNT(*), COUNT(storage_path), COUNT(data_imagem) FROM images_urls")
         nf, nfb, nfd = cur.fetchone()
         cur.execute("SELECT COUNT(*), COUNT(data_captura) FROM streetview_imgs")
         nsv, nsvd = cur.fetchone()
