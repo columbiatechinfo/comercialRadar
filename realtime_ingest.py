@@ -163,6 +163,26 @@ def ingerir_registro(r: dict, poligono=None, conn=None) -> tuple:
                        AND fonte = %s AND sessao IS NOT DISTINCT FROM %s AND nome_original = %s""",
                     (r.get("fonte") or "desconhecido", _s(r.get("sessao")), str(r["nome_planilha"])))
                 ids = [row[0] for row in cur.fetchall()]
+            elif la is not None and lo is not None:
+                # ÚLTIMO RECURSO: nome + coordenada.
+                #
+                # POI vindo da captura+OCR não tem `place_id` nem `nome_planilha`
+                # — as duas chaves acima. Sem uma terceira, TODA reingestão dele
+                # inseria de novo: medido em 12/08/2026, o banco tinha 45 grupos
+                # de duplicatas assim, alguns com 6 cópias do mesmo ponto, e uma
+                # única passada de enriquecimento criou mais 4.
+                #
+                # 5 casas decimais ≈ 1 m. É apertado de propósito: dois negócios
+                # diferentes na mesma porta têm nomes diferentes, então o par
+                # nome+posição só colide quando é de fato o mesmo POI.
+                cur.execute(
+                    """SELECT id FROM pois
+                        WHERE place_id IS NULL AND nome = %s
+                          AND abs(COALESCE(maps_lat, lat_origem) - %s) < 0.00001
+                          AND abs(COALESCE(maps_lng, lng_origem) - %s) < 0.00001
+                        ORDER BY id""",
+                    (str(r["nome"]), la, lo))
+                ids = [row[0] for row in cur.fetchall()]
             if ids:
                 # MERGE não-destrutivo: um dado NOVO vazio nunca apaga um dado BOM
                 # já salvo. Vale p/ enriquecimento (CNPJ/streetview/web) E p/ os campos
