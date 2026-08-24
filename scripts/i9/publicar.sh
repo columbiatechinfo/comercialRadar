@@ -47,7 +47,11 @@ done
 # `wsl -d Ubuntu` e não `bash` direto: o SSH do i9 cai em PowerShell (é Windows),
 # e o Linux de lá é a distro do WSL. Foi o que fez a primeira tentativa de
 # `reamarrar-wsl.ps1` pendurar.
-remoto() { ssh -o BatchMode=yes -o ConnectTimeout=20 "$I9" "wsl -d Ubuntu -- bash -lc '$1'"; }
+# `-n` NÃO É DETALHE: sem ele o ssh lê o stdin do script, e o primeiro comando
+# remoto engole a resposta do `read` de confirmação do .env logo abaixo. O
+# sintoma é o pior tipo — a pergunta aparece, ninguém responde nada, o script
+# segue como se tivesse sido negado e o arquivo simplesmente não chega.
+remoto() { ssh -n -o BatchMode=yes -o ConnectTimeout=20 "$I9" "wsl -d Ubuntu -- bash -lc '$1'"; }
 
 echo "▶ 1/4 conferindo o i9"
 remoto "mkdir -p $DESTINO && echo ok" >/dev/null
@@ -64,7 +68,14 @@ echo "  OK  $(git -C "$RAIZ" rev-parse --short HEAD) publicado"
 if [ "$MANDAR_ENV" = 1 ]; then
   echo "▶ 2b/4 enviando o .env"
   echo "  ⚠️  Isto copia SEGREDOS para o i9. Ctrl+C para desistir."
-  read -r -p "  Confirma? [s/N] " ok
+  if [ -t 0 ]; then
+    read -r -p "  Confirma? [s/N] " ok
+  else
+    # Sem terminal (chamado por outro script/CI), a confirmação vem por
+    # variável — nunca por silêncio. Segredo não viaja por omissão.
+    ok="${CONFIRMA_ENV:-n}"
+    echo "  (sem terminal) CONFIRMA_ENV=$ok"
+  fi
   if [ "$ok" = "s" ] || [ "$ok" = "S" ]; then
     # `chmod 600` no mesmo comando: um .env que existe por um instante com
     # permissão de leitura para todos é um .env vazado, e o WSL é multiusuário.
@@ -99,10 +110,38 @@ remoto "cd $DESTINO && \
   echo pip-ok"
 
 echo "▶ 4/4 Chromium do Playwright"
-# `--with-deps` puxa as bibliotecas de sistema (libnss3, libatk…). Sem elas o
-# Chromium instala, existe, e falha ao abrir com erro de símbolo ausente — que
-# não se parece nem um pouco com "falta pacote do sistema".
-remoto "cd $DESTINO && ./.venv/bin/python -m playwright install --with-deps chromium 2>&1 | tail -3"
+# DUAS COISAS, e elas foram SEPARADAS de propósito (24/08/2026):
+#
+#   install chromium        baixa o navegador. NÃO precisa de root.
+#   install-deps chromium   instala ~35 pacotes do sistema (libnss3, libatk,
+#                           libgbm…). PRECISA de root, e o sudo do i9 pede senha.
+#
+# `--with-deps` faz as duas numa chamada só — e foi isso que quebrou aqui: ele
+# tenta o apt PRIMEIRO, esbarra na senha e ABORTA, deixando o navegador sem
+# baixar. O sintoma é `~/.cache/ms-playwright` vazio depois de uma publicação
+# que pareceu correr bem.
+#
+# Então o download roda sempre, sozinho, e a falta das bibliotecas vira AVISO
+# com o comando exato — em vez de derrubar a publicação inteira por causa de um
+# passo que só o dono da máquina pode dar.
+remoto "cd $DESTINO && ./.venv/bin/python -m playwright install chromium 2>&1 | tail -3"
+
+echo "▶ conferindo se o Chromium ABRE (bibliotecas do sistema)"
+if remoto "cd $DESTINO && ./.venv/bin/python -c \"
+from playwright.sync_api import sync_playwright
+with sync_playwright() as p:
+    b = p.chromium.launch(headless=True); b.close()
+print('abre')\" 2>/dev/null | grep -q abre"; then
+  echo "  OK  o Chromium abre"
+else
+  echo "  ⚠️  O Chromium NÃO abre — faltam as bibliotecas de sistema."
+  echo "      Um comando, uma vez, com a senha do sudo NO PRÓPRIO i9:"
+  echo
+  echo "        sudo $DESTINO/.venv/bin/python -m playwright install-deps chromium"
+  echo
+  echo "      Sem isso a captura falha com erro de símbolo ausente, que não se"
+  echo "      parece nem um pouco com 'falta pacote do sistema'."
+fi
 
 echo
 echo "✅ Publicado. Conferir:"

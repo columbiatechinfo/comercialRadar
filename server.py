@@ -3453,6 +3453,20 @@ app.mount("/static", _FrontSemCache(directory=str(FRONT)), name="static")
 
 if __name__ == "__main__":
     import uvicorn
-    print("\n  ✅ ComercialRadar no ar  →  http://127.0.0.1:8765")
+    # `127.0.0.1` continua sendo o PADRÃO, e isso é escolha e não descuido: o
+    # painel não tem TLS próprio, então escutar em qualquer interface por
+    # omissão seria servir login e dado de cliente em claro para a rede.
+    #
+    # No i9 o endereço segue 127.0.0.1 — quem escuta na rede é o Caddy, com o
+    # certificado da Tailscale, repassando para cá pelo loopback. As variáveis
+    # existem para o dia em que outro arranjo for necessário, e para o
+    # `scripts/i9/painel.sh` declarar o que está fazendo em vez de depender do
+    # que estiver escrito aqui.
+    host = os.environ.get("CR_HOST", "127.0.0.1").strip() or "127.0.0.1"
+    porta = int(os.environ.get("CR_PORTA", "8765"))
+    if host not in ("127.0.0.1", "localhost"):
+        print(f"\n  ⚠️  Escutando em {host} — SEM TLS. Só faz sentido atrás de um")
+        print("     proxy que termine HTTPS; direto na rede, expõe a sessão.\n")
+    print(f"\n  ✅ ComercialRadar no ar  →  http://{host}:{porta}")
     print("     deixe esta janela aberta · Ctrl+C para parar\n", flush=True)
-    uvicorn.run(app, host="127.0.0.1", port=8765, log_level="info")
+    uvicorn.run(app, host=host, port=porta, log_level="info")
