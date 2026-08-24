@@ -2817,3 +2817,116 @@ ponto que a **captura + OCR** traz de graça.
   Places: o job rodaria, o resultado seria outro, e nada diria por quê.
 - `minerar_area.py` continua no repositório como histórico. O painel não o
   alcança mais.
+
+---
+
+## 35. O painel inteiro mudou de máquina (24/08/2026)
+
+`scripts/i9/publicar.sh` · `scripts/i9/painel.sh` · `.gitattributes` ·
+`server.py` (bloco `__main__`).
+
+**Endereço novo:** `https://desktop-s8l7nat.tail7e301b.ts.net:8443`
+
+### A decisão, e por que ela é MENOR que a alternativa
+
+O pedido era "os jobs rodam no i9". O caminho óbvio era extrair o catálogo de
+jobs de dentro do `server.py`, escrever um serviço no i9 que recebe
+`modo` + `opções`, e resolver como o painel acompanha um arquivo que passou a
+morar noutra máquina. Três peças novas, uma delas com superfície de execução
+remota, e a definição de cada job existindo em **dois lugares que podem
+divergir**.
+
+Antes de escrever qualquer uma delas, uma medição: **`server.py` importa limpo
+no i9**, sem nenhuma dependência faltando. Se o painel roda lá, todo job já é
+subprocesso local — na máquina certa. As três peças deixam de existir.
+
+### O ganho é medido
+
+`verificar_servicos.py` rodado dos dois lados, no mesmo minuto:
+
+| | notebook | i9 |
+|---|---:|---:|
+| banco do produto | 1,5 s | **0,2 s** |
+| photon | 0,09 s | 0,03 s |
+| osrm | 0,04 s | 0,00 s |
+
+O banco ficou **7,5× mais rápido** só por deixar de atravessar a rede — é o
+mesmo argumento que o `worker_rede.py` já tinha escrito para as ferramentas do
+chat. E o notebook deixa de ser dono da rodada: fechar a tampa não mata mais uma
+captura de 80 minutos.
+
+Capacidade, remedida: **16 CPUs, 94 GB de RAM, 682 GB livres** (a doc anterior
+dizia 51 GB — errado por mais de 10×). O notebook impunha teto de quatro
+Chromiums.
+
+### O desenho, em duas peças
+
+```
+server.py   127.0.0.1:8765, DENTRO do WSL. Não alcançável de fora.
+caddy       :8443 com o certificado da Tailscale → repassa pelo LOOPBACK.
+```
+
+O padrão do bind continua `127.0.0.1`, e isso **é escolha**: o painel não tem
+TLS próprio, então escutar em qualquer interface por omissão seria servir login
+e dado de cliente em claro. `CR_HOST`/`CR_PORTA` existem e **avisam alto** quando
+o endereço não é loopback.
+
+Separar as duas é o que faz o tráfego em claro nunca tocar uma interface de rede.
+
+**O certificado é Let's Encrypt de verdade**, não interno: `tailscale cert` emite
+para o nome MagicDNS, e o `curl` devolve `ssl_verify_result=0` — nenhum navegador
+reclama. A Tailscale roda no **Windows** do i9, então os arquivos entram no WSL
+por `/mnt/c/ferramentas`.
+
+### O alcance, e a lição de 24/08 aplicada
+
+A regra `netsh portproxy` da 8443 entrou **também** no `reamarrar-wsl.ps1`. Sem
+isso o painel responderia dentro do WSL e ninguém o alcançaria depois do próximo
+boot — exatamente o modo de falha da seção 30, com os containers todos `healthy`.
+
+Ela escuta em `100.115.117.49`, **não** em `0.0.0.0`: só o tailnet, nunca a LAN.
+
+### Publicar
+
+```bash
+scripts/i9/publicar.sh              # código + ambiente
+scripts/i9/publicar.sh --env        # também o .env (confirma antes, chmod 600)
+scripts/i9/publicar.sh --so-codigo  # só os .py mudaram
+```
+
+O código sai do **índice do git**, não do working tree — publicar working tree é
+como se descobre, em produção, que a correção que faltava era um arquivo nunca
+commitado. E não é `git clone`: o repositório é privado e o i9 **não ganha
+credencial de GitHub** só para isso.
+
+### Quatro pedras do caminho, todas silenciosas
+
+1. **`/usr/bin/env: 'bash\r'`** — o CRLF do Windows viajando dentro do shebang.
+   A mensagem culpa o `bash`, que não tem nada com o assunto, e o `\r` é
+   invisível em editor e em `cat`. Resolvido com `.gitattributes` (`eol=lf` para
+   tudo que um Linux executa).
+2. **O `ssh` engole o stdin de quem o chama.** A confirmação do `.env` era lida
+   por `read`, e o primeiro `ssh` do script comia a resposta: a pergunta
+   aparecia, ninguém respondia, o script seguia como se tivesse sido negado e o
+   arquivo não chegava. `ssh -n` em tudo que não recebe dados.
+3. **`--with-deps` do Playwright aborta antes de baixar.** Ele tenta o `apt`
+   primeiro, esbarra na senha do sudo e desiste — deixando
+   `~/.cache/ms-playwright` **vazio** depois de uma publicação que pareceu
+   correr bem. As duas coisas foram separadas: o download roda sempre; a falta
+   das bibliotecas vira aviso com o comando exato.
+4. **`instalar_bancada.py` apontava para um caminho que não existia mais.** O
+   zip do modelo tinha ido de `assets/modelo_frontend/` para
+   `assets/skills_locais/`. No notebook nada acusou, porque o `bancada.html` já
+   existia de antes — **arquivo movido não quebra quem tem o resultado; quebra
+   quem for gerar de novo, meses depois.**
+
+### Operar
+
+```bash
+ssh orbisgrid@100.115.117.49 "wsl -d Ubuntu -- bash -lc \
+  '/home/orbisgrid/comercialradar/scripts/i9/painel.sh subir|parar|estado|log'"
+```
+
+> ⚠️ **Não rode dois painéis contra o mesmo banco.** O do notebook e o do i9
+> escrevem nas mesmas tabelas e cada um tem o seu trava-job de um por vez — os
+> dois juntos disparam dois jobs simultâneos sem que nenhum saiba do outro.

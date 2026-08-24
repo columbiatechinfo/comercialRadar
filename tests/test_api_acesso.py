@@ -21,7 +21,11 @@ RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, RAIZ)
 import config  # noqa: F401,E402
 
-API = "http://127.0.0.1:8765"
+# O painel mudou de máquina em 24/08/2026: ele roda no i9, atrás do Caddy.
+# O padrão continua o local para quem depura aqui; `CR_API_URL` aponta para
+# onde ele de fato está — sem isso a suíte testaria um servidor que não é o
+# que serve o usuário, e passaria dizendo nada.
+API = os.environ.get("CR_API_URL", "http://127.0.0.1:8765").rstrip("/")
 GW = f"http://{os.environ.get('I9_POSTGRES_HOST', '100.115.117.49')}:8000"
 CHAVE = (os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or "").strip()
 CSV = os.path.join(RAIZ, "USUARIOS-INICIAIS.csv")
