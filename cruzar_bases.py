@@ -184,6 +184,18 @@ _TIPOS = {"rua", "avenida", "travessa", "alameda", "praca", "rodovia",
           "estrada", "largo", "beco", "linha", "servidao", "acesso", "viela"}
 
 
+# Palavra que INICIA complemento. Tudo dela em diante deixa de ser logradouro.
+# A lista e curta de proposito: palavra ambigua aqui corta endereco legitimo —
+# "Rua Casa Forte" perderia o nome se "CASA" fosse cortada em qualquer posicao,
+# e por isso o corte so vale DEPOIS do numero da porta ter sido visto.
+_COMPLEMENTO = {
+    "LOJA", "LOJAS", "SALA", "SALAS", "CASA", "APTO", "APARTAMENTO", "AP",
+    "BLOCO", "BL", "ANDAR", "CONJ", "CONJUNTO", "TERREO", "SOBRELOJA",
+    "FUNDOS", "GALPAO", "QUADRA", "LOTE", "BOX", "KM", "PAVIMENTO", "PAV",
+    "EDIFICIO", "ED", "CONDOMINIO", "TORRE", "ANEXO", "SUBSOLO",
+}
+
+
 def partes_cadastur(texto: str | None, cidade: str | None = None) -> tuple:
     """Quebra o endereço do Cadastur em (logradouro, número, bairro).
 
@@ -225,6 +237,17 @@ def partes_cadastur(texto: str | None, cidade: str | None = None) -> tuple:
 
     esquerda = palavras[:corte[0]]
     bairro = " ".join(palavras[corte[1]:]).strip() or None
+
+    # O COMPLEMENTO SAI PRIMEIRO. Sem isto, "General Flores da Cunha 2586 LOJA 3
+    # SOBRE LOJA SALA 1" devolvia numero=1 — o da sala — e o logradouro virava
+    # "General Flores da Cunha 2586 LOJA 3 SOBRE LOJA SALA", que nao casa com
+    # nada. Medido em Cachoeirinha: 2 dos 6 enderecos que falharam eram isto.
+    # `.upper()` porque `sem_acento` devolve MINÚSCULA — a primeira versão
+    # comparava contra uma lista em maiúscula e nunca casava nada, em silêncio.
+    for i, w in enumerate(esquerda):
+        if sem_acento(w).upper() in _COMPLEMENTO:
+            esquerda = esquerda[:i]
+            break
 
     # O número é o último grupo de dígitos ANTES do município. "Getúlio Vargas
     # 4861" → 4861. Quando não há, o endereço veio sem número — acontece em 26%

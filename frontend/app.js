@@ -1029,6 +1029,7 @@ document.querySelectorAll(".fly-item").forEach((b) => {
     $("sec-mineracao").classList.toggle("hidden", modo !== "mineracao");
     $("sec-enriquecimento").classList.toggle("hidden", modo !== "enriquecimento");
     $("sec-cadastur")?.classList.toggle("hidden", modo !== "cadastur");
+    if (modo === "cadastur") carregarResumoCadastur();
     // A base pública vem por MUNICÍPIO. A área desenhada não participa, e
     // deixar o painel dela visível sugeriria que participa — o operador
     // desenharia um polígono e esperaria que o recorte o respeitasse.
@@ -1138,11 +1139,97 @@ function aplicarNivel() {
 }
 document.addEventListener("cr:sessao", aplicarNivel);
 
+/* O RESUMO do que a fonte já trouxe. É a primeira pergunta de quem abre esta
+   tela: "o que eu já tenho daqui?" — e não "quais são os parâmetros?".
+
+   Ele mostra também o que NÃO virou ponto, com o motivo. Sem isso, "28
+   carregados, 17 pontos" parece perda; com isso, é decisão: aqueles 11 não
+   têm coordenada em nenhuma das trêsancoras, e pô-los no mapa significaria
+   inventar posição. */
+async function carregarResumoCadastur() {
+  const caixa = $("cad-resumo");
+  if (!caixa) return;
+  const municipio = ($("cad-municipio")?.value || "").trim();
+  const uf = ($("cad-uf")?.value || "").trim();
+  if (!municipio && !uf) { caixa.classList.add("hidden"); return; }
+  try {
+    const r = await fetch("/api/cadastur/resumo?municipio="
+                          + encodeURIComponent(municipio)
+                          + "&uf=" + encodeURIComponent(uf));
+    if (!r.ok) { caixa.classList.add("hidden"); return; }
+    const d = await r.json();
+    if (!d.total) {
+      /* NADA CARREGADO não é erro — é o estado normal antes da primeira
+         atualização. Esconder o card diria menos que dizer isto. */
+      caixa.innerHTML = '<div class="hint">Nada do Cadastur neste município '
+        + 'ainda. A primeira atualização baixa o snapshot do MTur.</div>';
+      caixa.classList.remove("hidden");
+      return;
+    }
+    const n = (v) => (v || 0).toLocaleString("pt-BR");
+    let h = '<div class="cad-numeros">'
+      + `<div class="cad-num"><b>${n(d.total)}</b><span>prestadores</span></div>`
+      + `<div class="cad-num"><b>${n(d.com_poi)}</b><span>viraram ponto</span></div>`;
+    if (d.sem_poi) {
+      h += `<div class="cad-num"><b>${n(d.sem_poi)}</b><span>sem coordenada</span></div>`;
+    }
+    /* LEITOS ganha destaque porque é o número que nenhuma outra fonte dá — e
+       leito é consumo de água por pessoa/dia. */
+    if (d.leitos) {
+      h += `<div class="cad-num destaque"><b>${n(d.leitos)}</b><span>leitos declarados</span></div>`;
+    }
+    if (d.uh) {
+      h += `<div class="cad-num"><b>${n(d.uh)}</b><span>unidades habitacionais</span></div>`;
+    }
+    h += "</div>";
+
+    if ((d.atividades || []).length) {
+      h += '<div class="cad-linha-chips">'
+        + d.atividades.map((a) => `<span class="cad-chip">${esc(a.nome)} <b>${n(a.n)}</b></span>`).join("")
+        + "</div>";
+    }
+    if (d.sairam) {
+      h += `<div class="cr-alerta cr-alerta--atencao"><span><b>${n(d.sairam)} saíram do Cadastur</b>`
+        + "Deixaram de aparecer no snapshot — perderam regularidade. Não foram "
+        + "apagados: pode ser fechamento, troca de dono ou renovação atrasada, e "
+        + "os três casos valem uma olhada.</span></div>";
+    }
+
+    /* O CARD DE PESSOA FÍSICA é um TOTALIZADOR, e assume isso: sem lista, sem
+       link, sem "ver detalhes". O detalhe não existe no banco de propósito —
+       guia de turismo tem CPF e data de nascimento, e contar não identifica
+       ninguém, mas guardar identificaria. */
+    const pf = (d.pessoa_fisica || []).reduce((a, x) => a + (x.n || 0), 0);
+    if (pf) {
+      h += `<div class="cad-pf"><b>${n(pf)}</b> prestadores pessoa física `
+        + "(guia de turismo) registrados aqui."
+        + "<small>Descartados como ponto e como linha: não são economia que "
+        + "consome água, e o cadastro deles traz CPF e data de nascimento. "
+        + "Guardamos apenas este total.</small></div>";
+    }
+    if (d.periodo) {
+      h += `<div class="hint">Snapshot de referência: <b>${esc(d.periodo)}</b> `
+        + "(fim do trimestre publicado pelo MTur).</div>";
+    }
+    caixa.innerHTML = h;
+    caixa.classList.remove("hidden");
+  } catch { caixa.classList.add("hidden"); }
+}
+
 /* Os campos da base pública reavaliam o botão A CADA TECLA. Sem isto ele só
    acenderia na próxima troca de etapa: a pessoa digitaria o município inteiro
    olhando um botão apagado e concluiria que a tela travou. */
+let _cadResumoTimer = null;
 for (const id of ["cad-municipio", "cad-uf"]) {
-  document.getElementById(id)?.addEventListener("input", atualizarBotoes);
+  document.getElementById(id)?.addEventListener("input", () => {
+    atualizarBotoes();
+    /* Espera a digitação parar. Sem isto, "Cachoeirinha" dispara doze
+       consultas — uma por letra — e as respostas chegam fora de ordem: a de
+       "Cach" pode chegar depois da de "Cachoeirinha" e sobrescrever o card
+       certo com o de um município que não existe. */
+    clearTimeout(_cadResumoTimer);
+    _cadResumoTimer = setTimeout(carregarResumoCadastur, 400);
+  });
 }
 
 /* Dispara o job e MOSTRA a falha. O `.json()` direto sobre a resposta engolia
@@ -1181,6 +1268,12 @@ function atualizarBotoes() {
   const pronto = usaJob && (temArea || !precisaArea) && !jobRodando && executa &&
                  !!temMunicipio &&
                  (modo !== "planilha" || !!arquivoImportado);
+  /* O RÓTULO diz o que o botão faz NESTE passo. "Iniciar processo" está certo
+     para minerar uma área; numa base pública o que se faz é ATUALIZAR a fonte,
+     e chamar isso de "iniciar" esconde que a segunda vez custa quase nada — a
+     skill revalida por SHA-256 e só rebaixa o trimestre que mudou. */
+  $("btn-iniciar").textContent = modo === "cadastur"
+    ? "\u21bb Atualizar fonte" : "\u25b6 Iniciar processo";
   $("btn-iniciar").disabled = !pronto;
   $("btn-iniciar").classList.toggle("hidden", jobRodando || !usaJob);
   $("btn-parar").classList.toggle("hidden", !jobRodando || !executa);
@@ -1470,6 +1563,9 @@ $("btn-iniciar").onclick = async () => {
     if (uf.length !== 2) return toast("Informe a UF com duas letras.", "err");
     opcoes = { municipio, uf,
                gerar: $("cad-gerar")?.checked !== false,
+               encadear: $("cad-encadear")?.checked !== false,
+               pular_streetview: !!$("cad-pular-sv")?.checked,
+               sem_pessoa_fisica: !!$("cad-sem-pf")?.checked,
                so_carregar: !!$("cad-so-carregar")?.checked };
   } else if (modo === "mineracao") {
     const motor = $("op-motor")?.value || "captura";

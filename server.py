@@ -2094,6 +2094,15 @@ def iniciar_job(body: dict):
                 cmd.append("--so-carregar")
             if op.get("gerar", True):
                 cmd.append("--gerar")
+            if op.get("encadear"):
+                # Cruza de novo (agora com os POIs novos no banco) e enriquece
+                # SÓ eles — Maps, web, CNPJ e Street View. É a esteira dos
+                # demais; nada é pulado por o ponto ter vindo de base pública.
+                cmd.append("--encadear")
+            if op.get("pular_streetview"):
+                cmd.append("--pular-streetview")
+            if op.get("sem_pessoa_fisica"):
+                cmd.append("--sem-pessoa-fisica")
             _novo_job("cadastur", out_json,
                       {"municipio": municipio, "uf": uf})
 
@@ -3304,6 +3313,74 @@ def bancada_dataset(limite: int = 40, poi: int | None = None,
                          base=f"fila de {u.nome or u.nivel}")
     finally:
         con.close()
+
+
+@app.get("/api/cadastur/resumo")
+def cadastur_resumo(municipio: str = "", uf: str = ""):
+    """O que o Cadastur trouxe para este município.
+
+    Alimenta o card do painel. Devolve TRÊS coisas que respondem perguntas
+    diferentes:
+
+      · o que virou ponto no mapa, e de onde saiu a coordenada de cada um;
+      · o que NÃO virou, com o motivo — sem isso, "28 carregados, 16 pontos"
+        parece perda, e é decisão;
+      · quantos prestadores PESSOA FÍSICA existem ali. Este é um NÚMERO e só:
+        guia de turismo não vira POI e não tem linha guardada, mas saber que a
+        cidade tem 10 deles é informação de mercado legítima.
+    """
+    con = realtime_ingest.conectar()
+    try:
+        with con.cursor() as cur:
+            filtro = ("where (%(m)s = '' or lower(municipio) = lower(%(m)s)) "
+                      "and (%(u)s = '' or upper(uf) = upper(%(u)s))")
+            par = {"m": municipio or "", "u": uf or ""}
+
+            cur.execute(f"""select count(*),
+                                   count(*) filter (where poi_id is not null),
+                                   count(*) filter (where sem_poi_motivo is not null
+                                                      and poi_id is null),
+                                   count(*) filter (where saiu_em is not null),
+                                   sum(leitos), sum(uh),
+                                   max(ref_periodo)
+                              from comercialradar.cadastur_prestador {filtro}""",
+                        par)
+            (total, com_poi, sem_poi, sairam, leitos, uh, periodo) = cur.fetchone()
+
+            cur.execute(f"""select sem_poi_motivo, count(*)
+                              from comercialradar.cadastur_prestador {filtro}
+                             and sem_poi_motivo is not null and poi_id is null
+                             group by 1 order by 2 desc""", par)
+            motivos = {m: n for m, n in cur.fetchall()}
+
+            cur.execute(f"""select atividade_turistica, count(*)
+                              from comercialradar.cadastur_prestador {filtro}
+                             and atividade_turistica is not null
+                             group by 1 order by 2 desc limit 12""", par)
+            atividades = [{"nome": a, "n": n} for a, n in cur.fetchall()]
+
+            cur.execute(f"""select atividade, uf, municipio, ref_periodo,
+                                   quantidade
+                              from comercialradar.cadastur_total_pf {filtro}
+                             order by ref_periodo desc, quantidade desc""", par)
+            pf = [{"atividade": a, "uf": u, "municipio": m,
+                   "periodo": (per.isoformat() if per else None), "n": q}
+                  for a, u, m, per, q in cur.fetchall()]
+    finally:
+        con.close()
+
+    return {
+        "total": total or 0,
+        "com_poi": com_poi or 0,
+        "sem_poi": sem_poi or 0,
+        "sairam": sairam or 0,
+        "leitos": int(leitos) if leitos else 0,
+        "uh": int(uh) if uh else 0,
+        "periodo": periodo.isoformat() if periodo else None,
+        "motivos": motivos,
+        "atividades": atividades,
+        "pessoa_fisica": pf,
+    }
 
 
 @app.get("/bancada")

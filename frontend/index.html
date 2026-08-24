@@ -302,17 +302,23 @@
           <input id="cad-uf" maxlength="2" placeholder="RS" autocomplete="off"></label>
       </div>
 
+      <!-- O RESUMO do que a fonte já trouxe para este município. Aparece antes
+           das opções porque a primeira pergunta de quem abre esta tela é "o que
+           eu já tenho daqui?", e não "quais são os parâmetros?". -->
+      <div id="cad-resumo" class="cad-resumo hidden"></div>
+
       <details class="opts">
         <summary>Opções</summary>
         <label class="opt"><input type="checkbox" id="cad-gerar" checked> Gerar POIs do que não cruzou
-          <small>(exige o cruzamento rodado — o próprio passo recusa se não estiver)</small></label>
+          <small>(o que já existe é enriquecido; o que não existe vira ponto novo)</small></label>
+        <label class="opt"><input type="checkbox" id="cad-encadear" checked> Encadear a esteira completa
+          <small>(cruza de novo com os pontos novos, depois Maps → web → CNPJ → Street View, só neles)</small></label>
+        <label class="opt sub"><input type="checkbox" id="cad-pular-sv">
+          ↳ sem Street View <small>(mais rápido; a fachada fica para depois)</small></label>
         <label class="opt"><input type="checkbox" id="cad-so-carregar"> Só carregar
           <small>(não baixa de novo; usa o snapshot já em disco)</small></label>
-        <div class="hint" style="margin-top:8px">
-          Guia de turismo <b>não entra</b>: é cadastro de pessoa física, com CPF e
-          data de nascimento. Não é economia que consome água, e o sistema não
-          tem onde guardar dado pessoal sem finalidade.
-        </div>
+        <label class="opt"><input type="checkbox" id="cad-sem-pf"> Não contar pessoa física
+          <small>(guia de turismo — só o total entra, nunca a linha)</small></label>
       </details>
     </div>
   </section>

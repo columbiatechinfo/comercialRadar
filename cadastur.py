@@ -38,18 +38,33 @@ por quê em `sem_poi_motivo`. Não vira POI sem posição, e não ganha posiçã
 inventada — um ponto no centroide do município mandaria alguém a campo no
 lugar errado, o que custa mais que não ter o ponto.
 
-O QUE NÃO ENTRA
+PESSOA FÍSICA: CONTADA, NÃO GUARDADA
 
 O Cadastur tem 15 atividades; uma delas — guia de turismo — é PESSOA FÍSICA,
-com CPF, data de nascimento, nome social e até tipo sanguíneo. Não entra: não é
-economia que consome água, e guardar dado pessoal sem finalidade é o que a LGPD
-chama de tratamento sem base legal. A tabela nem tem coluna para receber.
+com CPF, data de nascimento, nome social e até tipo sanguíneo.
+
+Nenhuma linha dela entra em `cadastur_prestador` — a tabela não tem coluna para
+receber. O que entra é o NÚMERO, em `cadastur_total_pf`: quantos guias há
+naquele município, naquele trimestre. Contar não identifica ninguém; guardar
+identificaria, e não há finalidade num produto que procura economia que consome
+água.
+
+Ignorar o conjunto inteiro — o que a primeira versão fazia — jogava fora uma
+informação legítima de mercado junto com o dado pessoal.
+
+ATUALIZAÇÃO
+
+A skill já traz a metodologia: cache por `recurso_id` revalidado por SHA-256, e
+`eventos_entidade.csv.gz` classificando cada entidade em ENTROU / ALTEROU /
+PERMANECEU / SAIU. Aqui isso vira carga incremental — `PERMANECEU` não é
+regravado — e quem SAIU ganha `saiu_em` sem ser apagado: sumir do arquivo
+significa ter perdido regularidade, e isso é motivo para olhar de novo.
 
 USO
 
     python cadastur.py --listar
-    python cadastur.py --uf RS --municipio Canoas
-    python cadastur.py --uf RS --municipio Canoas --gerar
+    python cadastur.py --uf RS --municipio Canoas --gerar --encadear
+    python cadastur.py --uf RS --municipio Canoas --so-carregar --gerar
     python cadastur.py --uf RS --municipio Canoas --simular
 """
 from __future__ import annotations
@@ -95,6 +110,18 @@ DATASETS_PJ = [
     "prestador-especializado-em-segmentos-turisticos",
     "transportadora-turistica",
 ]
+
+# PESSOA FÍSICA. Guia de turismo é a única, hoje.
+#
+# Ela É baixada — mas nenhuma linha dela entra em `cadastur_prestador`. Vira um
+# NÚMERO em `cadastur_total_pf`: quantos guias há naquele município, naquele
+# trimestre. Contar não identifica ninguém; guardar CPF, data de nascimento e
+# tipo sanguíneo identifica, e não tem finalidade num produto que procura
+# economia que consome água.
+#
+# Ignorar o conjunto inteiro — o que a versão anterior fazia — jogava fora uma
+# informação legítima de mercado junto com o dado pessoal.
+DATASETS_PF = ["prestadores-de-servicos-turisticos-guia-turismo_2"]
 
 # Coluna do Parquet → coluna nossa. O que não está aqui vai para `extras`
 # (R0 da skill: zero perda). Os aliases existem porque as três gerações de
@@ -313,7 +340,8 @@ def baixar(datasets: list, desde: int | None, refresh: bool = False) -> Path:
 
 # ── 2. Carregar ──────────────────────────────────────────────────────────────
 
-def _linhas_do_parquet(pasta: Path, uf: str | None, municipio: str | None):
+def _linhas_do_parquet(pasta: Path, uf: str | None, municipio: str | None,
+                       datasets: list | None = None):
     """Lê o bronze e devolve só o recorte pedido, do trimestre mais recente.
 
     O TRIMESTRE MAIS RECENTE, e não todos: o Cadastur é uma SÉRIE, e carregar
@@ -324,6 +352,12 @@ def _linhas_do_parquet(pasta: Path, uf: str | None, municipio: str | None):
     import pandas as pd
 
     arquivos = sorted((pasta / "bronze_parquet").rglob("*.parquet"))
+    if datasets:
+        # O bronze fica em `bronze_parquet/<dataset>/<dataset>_<ano>.parquet`,
+        # então o nome da PASTA é o conjunto. Filtrar por aqui evita abrir 14
+        # arquivos para depois descartar 13.
+        alvo = set(datasets)
+        arquivos = [a for a in arquivos if a.parent.name in alvo]
     if not arquivos:
         raise SystemExit(f"nenhum parquet em {pasta / 'bronze_parquet'} — "
                          "rode sem --so-carregar para baixar primeiro")
@@ -407,6 +441,140 @@ def carregar(con, linhas: list, simular: bool = False) -> dict:
             execute_values(k, GRAVAR, prontas, page_size=1000)
         con.commit()
     return conta
+
+
+# ── 2b. Pessoa física: só o total ────────────────────────────────────────────
+
+TOTAL_PF = """
+insert into comercialradar.cadastur_total_pf
+       (dataset, atividade, uf, municipio, ref_periodo, quantidade)
+values %s
+on conflict (tenant_id, dataset, uf, municipio, ref_periodo) do update set
+  quantidade    = excluded.quantidade,
+  atividade     = coalesce(excluded.atividade, cadastur_total_pf.atividade),
+  atualizado_em = now()
+"""
+
+
+def contar_pf(con, linhas: list, simular: bool = False) -> dict:
+    """Conta prestadores pessoa física por município e trimestre.
+
+    O laço NUNCA guarda a linha: lê município, UF, período e atividade, soma, e
+    descarta. O CPF passa pela memória do processo e não chega ao banco — que é
+    a diferença entre ler um dado público e tratá-lo.
+    """
+    contagem: dict = {}
+    for r in linhas:
+        municipio = _s(r.get("municipio"))
+        uf_r = _s(r.get("uf"))
+        periodo, _ = _data(r.get("_ref_periodo"))
+        dataset = _s(r.get("_dataset"))
+        if not (municipio and uf_r and periodo and dataset):
+            continue
+        chave = (dataset, _s(r.get("_atividade")), uf_r, municipio, periodo)
+        contagem[chave] = contagem.get(chave, 0) + 1
+
+    if contagem and not simular:
+        with con.cursor() as k:
+            execute_values(k, TOTAL_PF,
+                           [(d, a, u, m, p, n)
+                            for (d, a, u, m, p), n in contagem.items()])
+        con.commit()
+    return {f"{m}/{u}": n for (_, _, u, m, _), n in contagem.items()}
+
+
+# ── Atualização incremental ──────────────────────────────────────────────────
+#
+# A SKILL JÁ RESOLVE A METADE DIFÍCIL, e é importante não reimplementá-la:
+#
+#   · cache por `recurso_id`, revalidado por SHA-256 — trimestre que não mudou
+#     não é baixado de novo;
+#   · `eventos_entidade.csv.gz`, comparando o snapshot novo com o anterior e
+#     classificando cada entidade em ENTROU / ALTEROU / PERMANECEU / SAIU;
+#   · `historico/<run_id>/` guardando cada execução.
+#
+# O que faltava era do NOSSO lado: a carga regravava as 388 mil linhas a cada
+# execução, incluindo as que não mudaram uma vírgula.
+#
+# A chave da skill é `CNPJ:<14 dígitos>` por conjunto — casa direto com o nosso
+# par (dataset, cnpj).
+#
+# SAIU NÃO APAGA. O arquivo do MTur só traz quem está regular, então sumir
+# significa ter perdido regularidade: pode ter fechado, mudado de dono ou só
+# atrasado a renovação. Nos três casos vale olhar de novo, e apagar destruiria
+# justamente o sinal. A linha fica, com `saiu_em` preenchido.
+
+def ler_eventos(pasta: Path) -> dict:
+    """(dataset, cnpj) → evento. Vazio quando é a primeira execução."""
+    arq = pasta / "eventos_entidade.csv.gz"
+    if not arq.exists():
+        return {}
+    import csv
+    import gzip
+    saida = {}
+    with gzip.open(arq, "rt", encoding="utf-8", newline="") as f:
+        for linha in csv.DictReader(f, delimiter=";"):
+            chave = (linha.get("chave_entidade") or "")
+            if not chave.startswith("CNPJ:"):
+                # CERT:, CPF: e ROW: existem — a primeira é de quem não tem
+                # CNPJ, a segunda é pessoa física, a terceira é linha sem
+                # identidade nenhuma. Nenhuma casa com a nossa tabela, que é
+                # ancorada em CNPJ.
+                continue
+            saida[(linha.get("_dataset"), chave[5:])] = linha.get("evento")
+    return saida
+
+
+def marcar_saidas(con, eventos: dict, simular: bool = False) -> int:
+    """Carimba `saiu_em` em quem deixou de aparecer, e limpa quem voltou."""
+    saiu = [(d, c) for (d, c), e in eventos.items() if e == "SAIU"]
+    voltou = [(d, c) for (d, c), e in eventos.items()
+              if e in ("ENTROU", "ALTEROU", "PERMANECEU")]
+    if simular:
+        return len(saiu)
+    with con.cursor() as k:
+        if saiu:
+            execute_values(
+                k, """update comercialradar.cadastur_prestador c
+                         set saiu_em = coalesce(c.saiu_em, current_date)
+                        from (values %s) as v(dataset, cnpj)
+                       where c.dataset = v.dataset
+                         and regexp_replace(coalesce(c.cnpj,''), '[^0-9]', '', 'g')
+                             = v.cnpj""", saiu)
+        if voltou:
+            # Renovação atrasada é comum: quem volta a aparecer deixa de estar
+            # ausente, e manter a data antiga faria o painel acusar uma baixa
+            # que já foi desfeita.
+            execute_values(
+                k, """update comercialradar.cadastur_prestador c
+                         set saiu_em = null
+                        from (values %s) as v(dataset, cnpj)
+                       where c.saiu_em is not null
+                         and c.dataset = v.dataset
+                         and regexp_replace(coalesce(c.cnpj,''), '[^0-9]', '', 'g')
+                             = v.cnpj""", voltou)
+    con.commit()
+    return len(saiu)
+
+
+def filtrar_por_evento(linhas: list, eventos: dict) -> tuple:
+    """Devolve (linhas a gravar, quantas ficaram de fora).
+
+    Sem eventos — primeira execução — grava tudo. Com eventos, só ENTROU e
+    ALTEROU: PERMANECEU é, por definição, idêntico ao que já está no banco, e
+    regravá-lo é trabalho e I/O para chegar ao mesmo lugar.
+    """
+    if not eventos:
+        return linhas, 0
+    manter, pulou = [], 0
+    for r in linhas:
+        doc = "".join(c for c in str(r.get("cnpj") or "") if c.isdigit())
+        ev = eventos.get((r.get("_dataset"), doc))
+        if ev == "PERMANECEU":
+            pulou += 1
+            continue
+        manter.append(r)
+    return manter, pulou
 
 
 # ── 3+4. Gerar POIs a partir do que não cruzou ───────────────────────────────
@@ -531,8 +699,235 @@ def _poi_por_cnpj(con, cnpjs: list) -> dict:
         return dict(k.fetchall())
 
 
+# ── A TERCEIRA ÂNCORA: o CNEFE, por endereço ─────────────────────────────────
+#
+# As duas primeiras dependem de o CNPJ estar na `cnpj_tratado` (âncora 1) ou de
+# o endereço bater com um imóvel do cliente (âncora 2). As duas falham fora de
+# município já trabalhado — e é justamente lá que o Cadastur mais serve, porque
+# lá não há POI nenhum.
+#
+# O CNEFE tem 111 milhões de endereços do Censo 2022 com coordenada, e o
+# Cadastur nos dá logradouro e número em 81% das linhas. É casamento por texto,
+# não por documento — e por isso a PRECISÃO É DECLARADA, nunca embutida:
+#
+#     porta        número idêntico, coordenada colhida no próprio endereço
+#     porta_face   número idêntico, coordenada anotada na mesma face
+#     nao_casou    o resto — e o resto NÃO vira POI
+#
+# `nv_geo_coord` diz de onde o IBGE tirou a coordenada:
+#     1  colhida no endereço                     → aceita
+#     2  endereço modificado (apto no mesmo nº)   → aceita, é verticalização
+#     3  estimada na localidade                   → recusada
+#     4+ centróide de setor, erro de quilômetros  → recusada
+#
+# O piso é 2 e não 3 porque aqui a coordenada VIRA PONTO NO MAPA para alguém
+# visitar. A skill `tratamento-cnpj` usa 3 porque lá ela alimenta um score, e
+# score tolera ruído que uma visita a campo não tolera.
+NV_ACEITO = ("1", "2")
+
+# Cache do código IBGE por UF. A lista de municípios de um estado tem ~4 KB e
+# não muda; buscá-la a cada execução seria uma ida à rede para responder o que
+# já se sabe.
+CACHE_IBGE = RAIZ / "cache_ibge"
+
+
+def _codigo_ibge(uf: str, municipio: str) -> str | None:
+    """Código IBGE do município, que é a chave do CNEFE.
+
+    O Cadastur dá NOME e UF; o CNEFE indexa por código. A tradução é obrigatória
+    e tem de ser por (nome, UF) juntos: "Cachoeirinha" existe no RS e em PE, e
+    pegar o primeiro código que aparece traz o município errado sem erro nenhum
+    — foi exatamente assim que o `tratamento_cnpj` errou uma vez.
+    """
+    import json
+    import urllib.request
+
+    uf = (uf or "").strip().upper()
+    if len(uf) != 2 or not municipio:
+        return None
+    CACHE_IBGE.mkdir(parents=True, exist_ok=True)
+    arq = CACHE_IBGE / f"municipios_{uf}.json"
+    if arq.exists():
+        lista = json.loads(arq.read_text(encoding="utf-8"))
+    else:
+        url = ("https://servicodados.ibge.gov.br/api/v1/localidades/"
+               f"estados/{uf}/municipios")
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "ComercialRadar", "Accept-Encoding": "identity"})
+        with urllib.request.urlopen(req, timeout=60) as r:
+            bruto = r.read()
+        # O IBGE responde GZIP mesmo pedindo `identity`, e o `urllib` não
+        # descomprime sozinho. O sintoma engana: `json.loads` acusa
+        # "invalid start byte 0x8b" e parece problema de acentuação — 0x8b é o
+        # segundo byte do número mágico do gzip.
+        #
+        # A decisão vem dos BYTES, e não do cabeçalho `Content-Encoding`, pela
+        # mesma razão que a skill do Cadastur decide formato por magic bytes: o
+        # cabeçalho é o que o servidor DIZ, e este já disse errado uma vez.
+        if bruto[:2] == b"\x1f\x8b":
+            import gzip
+            bruto = gzip.decompress(bruto)
+        lista = json.loads(bruto.decode("utf-8"))
+        arq.write_text(json.dumps(lista, ensure_ascii=False), encoding="utf-8")
+    alvo = _norm(municipio)
+    for m in lista:
+        if _norm(m.get("nome", "")) == alvo:
+            return str(m.get("id"))
+    return None
+
+
+# Título de logradouro. O CNEFE guarda em COLUNA PRÓPRIA (`nom_titulo_seglogr`)
+# o que o Cadastur escreve junto do nome: "General Flores da Cunha" está lá como
+# titulo=GENERAL, seglogr=FLORES DA CUNHA. Sem tratar isso, NENHUMA via com
+# título casava — são 12 títulos cobrindo 7.800 endereços só em Cachoeirinha.
+_TITULOS = {
+    "GENERAL", "DOUTOR", "DR", "SAO", "SANTO", "SANTA", "PAPA", "DONA",
+    "MARECHAL", "CAPITAO", "DEPUTADO", "CORONEL", "MAJOR", "PROFESSOR",
+    "PROFESSORA", "PADRE", "PRESIDENTE", "SENADOR", "VEREADOR", "ENGENHEIRO",
+    "DESEMBARGADOR", "GOVERNADOR", "PREFEITO", "TENENTE", "SARGENTO",
+    "ALMIRANTE", "BRIGADEIRO", "COMENDADOR", "VISCONDE", "BARAO", "IRMA",
+    "FREI", "MONSENHOR", "CONEGO", "DOM",
+}
+# Conectivo que aparece num lado e não no outro: o CNEFE tem "DO CARVALHO"
+# onde o Cadastur escreve "Avenida Carvalho".
+_CONECTIVOS = {"DO", "DA", "DE", "DOS", "DAS", "E"}
+
+
+def _variantes_via(rua: str | None) -> set:
+    """Os nomes pelos quais uma via pode ser procurada.
+
+    NÃO é similaridade: cada variante é uma string exata, e o casamento continua
+    sendo igualdade. É a única forma honesta de reconciliar duas bases que
+    escrevem o mesmo logradouro de jeitos diferentes sem inventar um score de
+    0,87 que ninguém sabe interpretar.
+    """
+    import cruzar_bases as cb
+    if not rua:
+        return set()
+    partes = cb.via_norm(rua).split()
+    if partes and partes[0] in cb._TIPOS:
+        partes = partes[1:]
+    saida = set()
+    # Vai tirando palavra da frente enquanto ela for título ou conectivo.
+    while partes:
+        saida.add(" ".join(partes))
+        if partes[0].upper() in _TITULOS or partes[0].upper() in _CONECTIVOS:
+            partes = partes[1:]
+        else:
+            break
+    return {v for v in saida if v}
+
+
+def _chave_via(rua: str | None, numero: str | None) -> str | None:
+    """`logradouro|numero` na forma canônica — a primeira variante.
+
+    Continua existindo porque os testes e a leitura humana precisam de UMA
+    chave por endereço; a busca no CNEFE usa o conjunto de variantes.
+    """
+    variantes = _variantes_via(rua)
+    digitos = "".join(c for c in str(numero or "") if c.isdigit())
+    if not variantes or not digitos:
+        return None
+    return f"{sorted(variantes, key=len, reverse=True)[0]}|{digitos}"
+
+
+def _coordenada_por_cnefe(pendentes: list, uf: str | None) -> dict:
+    """id do prestador → (lat, lng, precisão).
+
+    Um SELECT por MUNICÍPIO, e não por endereço. O CNEFE tem 111 milhões de
+    linhas; consultá-lo por linha do Cadastur seria uma ida ao banco por
+    prestador, e o índice do município já reduz o universo a dezenas de
+    milhares — Cachoeirinha tem 69.715. O casamento acontece em memória.
+
+    O banco de REFERÊNCIA é outra instância (ADR 0003): não existe JOIN entre
+    ele e o banco do produto. Por isso o recorte vem para o Python.
+
+    AMBIGUIDADE NÃO É RESOLVIDA, É RECUSADA. Em Cachoeirinha existem uma
+    AVENIDA e uma RUA "Flores da Cunha" — logradouros diferentes, mesmo nome.
+    Quando uma variante aponta para mais de uma via, o prestador fica sem esta
+    âncora. Escolher a primeira produziria base limpa e ponto errado, e é a
+    mesma regra do `cruzar_bases`: ambíguo se registra, não se resolve.
+    """
+    import cruzar_bases as cb
+
+    # Agrupa o que perguntar, por município: prestadores do mesmo lugar
+    # compartilham a mesma leitura do CNEFE.
+    por_municipio: dict = {}
+    for linha in pendentes:
+        cid, endereco, municipio, uf_linha = (linha[0], linha[6],
+                                              linha[7], linha[8])
+        rua, numero, _ = cb.partes_cadastur(endereco, municipio)
+        digitos = "".join(c for c in str(numero or "") if c.isdigit())
+        variantes = _variantes_via(rua)
+        if not digitos or not variantes:
+            continue
+        por_municipio.setdefault((uf_linha or uf, municipio), []).append(
+            (cid, {f"{v}|{digitos}" for v in variantes}))
+    if not por_municipio:
+        return {}
+
+    achados: dict = {}
+    ref = bc.conectar_referencia()
+    try:
+        for (uf_m, municipio), alvos in por_municipio.items():
+            cod = _codigo_ibge(uf_m, municipio)
+            if not cod:
+                print(f"  ⚠ sem código IBGE para {municipio}/{uf_m} — "
+                      f"{len(alvos)} prestadores ficam sem esta âncora",
+                      flush=True)
+                continue
+            with ref.cursor() as k:
+                # `nom_titulo_seglogr` entra na consulta porque o CNEFE guarda
+                # nele o que o Cadastur escreve junto do nome: "General Flores
+                # da Cunha" está lá como titulo=GENERAL, seglogr=FLORES DA
+                # CUNHA. Sem esta coluna, nenhuma via com título casava.
+                k.execute("""select nom_tipo_seglogr, nom_titulo_seglogr,
+                                    nom_seglogr, num_endereco,
+                                    latitude, longitude, nv_geo_coord
+                               from ibge_cnefe
+                              where cod_municipio = %s
+                                and nv_geo_coord = any(%s)
+                                and latitude is not null""",
+                          (cod, list(NV_ACEITO)))
+                # chave → { identidade da via : (lat, lng, nv) }. O dicionário
+                # aninhado é o que permite ver a ambiguidade: duas identidades
+                # sob a mesma chave são duas ruas diferentes com o mesmo nome.
+                indice: dict = {}
+                for tipo, titulo, seglogr, num, la, lo, nv in k:
+                    digitos = "".join(c for c in str(num or "") if c.isdigit())
+                    if not digitos:
+                        continue
+                    nome = " ".join(x for x in (titulo, seglogr) if x)
+                    identidade = (tipo or "", titulo or "", seglogr or "")
+                    for v in _variantes_via(nome):
+                        alvo = indice.setdefault(f"{v}|{digitos}", {})
+                        atual = alvo.get(identidade)
+                        # Nível 1 (colhido no endereço) vence o 2 (apartamento
+                        # no mesmo número): um prédio tem dezenas de linhas
+                        # apontando para a mesma porta.
+                        if atual is None or (nv == "1" and atual[2] != "1"):
+                            alvo[identidade] = (la, lo, nv)
+
+            for cid, chaves in alvos:
+                identidades: dict = {}
+                for ch in chaves:
+                    identidades.update(indice.get(ch, {}))
+                if len(identidades) != 1:
+                    continue          # ausente, ou ambíguo — nos dois casos, fora
+                la, lo, nv = next(iter(identidades.values()))
+                try:
+                    achados[cid] = (float(la), float(lo),
+                                    "cnefe:porta" if nv == "1"
+                                    else "cnefe:porta_face")
+                except (TypeError, ValueError):
+                    continue
+    finally:
+        ref.close()
+    return achados
+
+
 def gerar(con, uf: str | None, municipio: str | None,
-          simular: bool = False) -> dict:
+          simular: bool = False, usar_cnefe: bool = True) -> dict:
     """Transforma em POI o que não cruzou com nada. Devolve o placar.
 
     EXIGE o cruzamento rodado. Sem ele, tudo pareceria inédito e o banco
@@ -570,10 +965,15 @@ def gerar(con, uf: str | None, municipio: str | None,
                    if len(d) == 14})
     geo = _coordenada_por_cnpj(con, docs)
     geo_cruz = _coordenada_por_cruzamento(con)
+    geo_cnefe = _coordenada_por_cnefe(pendentes, uf) if usar_cnefe else {}
     ja = _poi_por_cnpj(con, docs)
 
     placar = {"pendentes": len(pendentes), "gerados": 0,
-              "sem_cnpj": 0, "sem_coordenada": 0, "ja_existe": 0}
+              "sem_cnpj": 0, "sem_coordenada": 0, "ja_existe": 0,
+              # De onde saiu a coordenada de cada POI gerado. Sem isto, o
+              # operador vê "17 gerados" sem saber que 9 deles têm precisão de
+              # porta e 8 de face — e são coisas diferentes na hora da visita.
+              "por_ancora": {}}
     # TRÊS listas, e não uma com nulos dentro. Um `VALUES` cuja coluna é nula em
     # todas as linhas não tem tipo inferível — o Postgres responde "could not
     # determine data type" e a carga inteira cai. Separar por destino evita o
@@ -600,6 +1000,11 @@ def gerar(con, uf: str | None, municipio: str | None,
             origem_geo = "cnpj_tratado"
         elif cid in geo_cruz:
             la, lo, origem_geo = geo_cruz[cid]
+        elif cid in geo_cnefe:
+            # Terceira e última: endereço contra o CNEFE. Vem por último porque
+            # é a única que casa por TEXTO — as duas anteriores casam por
+            # documento ou por um cruzamento já auditado.
+            la, lo, origem_geo = geo_cnefe[cid]
         else:
             # Sem CNPJ E sem cruzamento é caso diferente de sem coordenada com
             # CNPJ: o primeiro nunca vai se resolver, o segundo se resolve
@@ -666,6 +1071,8 @@ def gerar(con, uf: str | None, municipio: str | None,
 
         if poi_id:
             placar["gerados"] += 1
+            placar["por_ancora"][origem_geo] = \
+                placar["por_ancora"].get(origem_geo, 0) + 1
             gerados.append((poi_id, cid))
         else:
             # O ingestor recusou. Ele tem motivo próprio — coordenada fora do
@@ -689,6 +1096,7 @@ def gerar(con, uf: str | None, municipio: str | None,
                                  cruzado_em = now()
                             from (values %s) as v(poi, id)
                            where c.id = v.id""", ligados)
+            placar["novos_ids"] = [poi for poi, _ in gerados]
             if gerados:
                 # `sem_poi_motivo` fica NULO: virou POI, então não há motivo
                 # para não ter virado. O literal na consulta, e não um nulo na
@@ -701,6 +1109,56 @@ def gerar(con, uf: str | None, municipio: str | None,
                            where c.id = v.id""", gerados)
         con.commit()
     return placar
+
+
+# ── Encadeamento ─────────────────────────────────────────────────────────────
+#
+# A sequência completa, na ordem em que uma coisa depende da outra:
+#
+#   1. cruzar   — o Cadastur contra POIs, cadastro do cliente, Receita e iFood
+#   2. gerar    — o que não cruzou com POI nenhum vira POI
+#   3. cruzar   — DE NOVO, porque agora existem POIs que não existiam no passo 1.
+#                 Sem esta segunda passada, o ponto recém-nascido não cruza com
+#                 o cadastro de imóveis do cliente, e é justamente esse
+#                 cruzamento que diz se ele já é cobrado como comercial.
+#   4. enriquecer — Maps, web, CNPJ na Receita e Street View, SÓ nos que
+#                 nasceram agora. A esteira é a mesma dos demais: nada é pulado
+#                 por o POI ter vindo de base pública.
+#
+# Cada etapa é o processo QUE JÁ EXISTE, invocado como subprocesso. Reimplementar
+# qualquer uma aqui criaria uma segunda versão que envelheceria em silêncio.
+
+
+def _rodar(cmd: list, titulo: str) -> int:
+    print(f"\n⟦fase⟧ {titulo}", flush=True)
+    print("  $ " + " ".join(cmd[1:]), flush=True)
+    return subprocess.run(cmd, cwd=str(RAIZ)).returncode
+
+
+def encadear(con, uf: str | None, municipio: str | None, novos: list,
+             workers: int = 4, pular_streetview: bool = False) -> None:
+    """Cruza de novo e enriquece os POIs recém-nascidos."""
+    if not novos:
+        print("\n  nenhum POI novo — nada a encadear", flush=True)
+        return
+
+    cmd = [sys.executable, "cruzar_bases.py"]
+    if municipio:
+        cmd += ["--cidade", municipio]
+    _rodar(cmd, "cruzando de novo, agora com os POIs novos no banco")
+
+    cmd = [sys.executable, "enriquecer_tudo.py",
+           "--poi-ids", ",".join(str(i) for i in novos),
+           "--workers", str(workers),
+           "--out", str(RAIZ / "mineracao" / "cadastur_enriquecimento_db.json")]
+    if pular_streetview:
+        cmd.append("--pular-streetview")
+    _rodar(cmd, f"enriquecendo os {len(novos)} POIs novos "
+                "(Maps → web → CNPJ → Street View)")
+
+    print("\n  Os POIs novos já estão visíveis no mapa e na bancada, e podem "
+          "ser distribuídos a supervisor como qualquer outro — nem o mapa nem "
+          "a fila filtram por fonte.", flush=True)
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
@@ -739,6 +1197,21 @@ def main() -> int:
     p.add_argument("--gerar", action="store_true",
                    help="gera POIs do que não cruzou (exige cruzar_bases.py antes)")
     p.add_argument("--simular", action="store_true", help="não grava nada")
+    p.add_argument("--encadear", action="store_true",
+                   help="depois de gerar: cruza de novo (agora com os POIs "
+                        "novos) e enriquece SÓ eles, na esteira completa")
+    p.add_argument("--workers", type=int, default=4,
+                   help="workers do enriquecimento encadeado")
+    p.add_argument("--pular-streetview", action="store_true",
+                   help="no encadeamento, não captura fachada")
+    p.add_argument("--sem-pessoa-fisica", action="store_true",
+                   help="não baixa nem CONTA o conjunto de guia de turismo. "
+                        "A contagem não guarda dado pessoal — só o total por "
+                        "município — mas o download é um arquivo a mais")
+    p.add_argument("--sem-cnefe", action="store_true",
+                   help="não usa a âncora por endereço no CNEFE (a mais "
+                        "lenta: lê o município inteiro do banco de "
+                        "referência)")
     p.add_argument("--listar", action="store_true", help="mostra o catálogo e sai")
     args = p.parse_args()
 
@@ -757,35 +1230,89 @@ def main() -> int:
             "social — e não vai ter. Guia de turismo é pessoa que presta "
             "serviço, não economia que consome água.")
 
+    # O conjunto de PESSOA FÍSICA é baixado junto, mas só para ser CONTADO.
+    baixar_pf = not args.sem_pessoa_fisica
     if not args.so_carregar:
-        baixar(datasets, args.desde, args.refresh)
+        baixar(datasets + (DATASETS_PF if baixar_pf else []),
+               args.desde, args.refresh)
 
     print("⟦fase⟧ carregando o recorte", flush=True)
-    linhas = _linhas_do_parquet(SAIDA, args.uf, args.municipio)
+    linhas = _linhas_do_parquet(SAIDA, args.uf, args.municipio, datasets)
     print(f"  {len(linhas)} linhas no recorte"
           + (f" · {args.municipio}/{args.uf}" if args.municipio else
              (f" · {args.uf}" if args.uf else " · Brasil inteiro")), flush=True)
 
     con = bc.conectar()
     try:
+        # ── O QUE MUDOU, e só isso ──────────────────────────────────────
+        eventos = ler_eventos(SAIDA)
+        if eventos:
+            linhas, pulou = filtrar_por_evento(linhas, eventos)
+            if pulou:
+                print(f"  {pulou} inalteradas desde o snapshot anterior — "
+                      "não regravadas", flush=True)
+            saiu = marcar_saidas(con, eventos, args.simular)
+            if saiu:
+                print(f"  ⚠ {saiu} deixaram de aparecer no Cadastur. NÃO foram "
+                      "apagadas: sumir do arquivo significa ter perdido "
+                      "regularidade, e isso é motivo para olhar de novo.",
+                      flush=True)
+
         conta = carregar(con, linhas, args.simular)
         for d in sorted(conta):
             print(f"    {d:<62}{conta[d]:>7}", flush=True)
         print(f"  {sum(conta.values())} gravadas"
               + (" (simulação)" if args.simular else ""), flush=True)
 
+        # ── Pessoa física: o total, nunca a linha ────────────────────────
+        if baixar_pf:
+            try:
+                pf = _linhas_do_parquet(SAIDA, args.uf, args.municipio,
+                                        DATASETS_PF)
+            except SystemExit:
+                pf = []          # o conjunto pode não ter sido baixado ainda
+            if pf:
+                totais = contar_pf(con, pf, args.simular)
+                for lugar, n in sorted(totais.items()):
+                    print(f"  {n} prestadores pessoa física em {lugar} — "
+                          "contados, não guardados (sem CPF, sem nome, sem "
+                          "endereço)", flush=True)
+
         if args.gerar:
             print("\n⟦fase⟧ gerando POIs", flush=True)
-            placar = gerar(con, args.uf, args.municipio, args.simular)
+            placar = gerar(con, args.uf, args.municipio, args.simular,
+                           usar_cnefe=not args.sem_cnefe)
             for chave in ("pendentes", "gerados", "ja_existe",
                           "sem_cnpj", "sem_coordenada"):
                 if chave in placar:
                     print(f"  {chave:<18}{placar[chave]:>7}", flush=True)
+            if args.encadear and not args.simular:
+                encadear(con, args.uf, args.municipio,
+                         placar.get("novos_ids") or [],
+                         workers=args.workers,
+                         pular_streetview=args.pular_streetview)
+            if placar.get("por_ancora"):
+                print("  de onde veio a coordenada:", flush=True)
+                for a, n in sorted(placar["por_ancora"].items(),
+                                   key=lambda x: -x[1]):
+                    print(f"    {a:<20}{n:>5}", flush=True)
             if placar.get("sem_coordenada"):
-                print("\n  Os sem coordenada NÃO viraram POI e não vão virar "
-                      "sozinhos: falta o CNPJ deles na `cnpj_tratado`.\n"
-                      "  Rode `tratamento_cnpj.py --municipio <IBGE>` para "
-                      "esse município e passe aqui de novo.", flush=True)
+                # A mensagem antiga culpava só o CNPJ. Com TRÊS âncoras, ficar
+                # sem coordenada tem três causas possíveis — apontar a errada
+                # manda o operador rodar o processo que não resolve nada.
+                print(f"\n  {placar['sem_coordenada']} sem coordenada — não "
+                      "viraram POI. Nenhuma das três âncoras os alcançou:\n"
+                      "    · o CNPJ não está na `cnpj_tratado`;\n"
+                      "    · o endereço não casou com imóvel do cliente;\n"
+                      "    · o endereço não casou com o CNEFE — ou casou com "
+                      "duas ruas de mesmo nome, e aí a recusa é proposital.\n"
+                      "  O que costuma render: `tratamento_cnpj.py "
+                      "--municipio <IBGE>` neste município, e passar aqui de "
+                      "novo.\n"
+                      "  Motivo linha a linha:  select nome_fantasia, "
+                      "sem_poi_motivo, endereco_comercial from "
+                      "comercialradar.cadastur_prestador where "
+                      "sem_poi_motivo is not null;", flush=True)
     finally:
         con.close()
     return 0

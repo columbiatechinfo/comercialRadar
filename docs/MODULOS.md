@@ -74,12 +74,12 @@ que existe, a do imóvel que ela fatura. Quem não tem nenhuma das duas **não v
 POI** e registra o porquê em `sem_poi_motivo`. Ponto no centroide do município
 mandaria alguém a campo no lugar errado.
 
-**Guia de turismo não entra.** É cadastro de pessoa física, com CPF, data de
-nascimento, nome social e tipo sanguíneo. Não é economia que consome água, e
-guardar dado pessoal sem finalidade é tratamento sem base legal. A lista de
-conjuntos é **positiva** — as 14 de pessoa jurídica, nomeadas — porque o portal
-já criou conjunto novo duas vezes: com lista negativa, um cadastro de pessoa
-física que nascesse amanhã entraria sozinho.
+**Guia de turismo não vira linha** — só total. É cadastro de pessoa física, com
+CPF, data de nascimento, nome social e tipo sanguíneo. Nada disso entra; a
+contagem entra (ver abaixo). A lista de conjuntos é **positiva** — as 14 de
+pessoa jurídica, nomeadas — porque o portal já criou conjunto novo duas vezes:
+com lista negativa, um cadastro de pessoa física que nascesse amanhã entraria
+como linha sem ninguém ver.
 
 **Nem todo conjunto é atualizado.** Em 24/08/2026, doze estavam em 2026T2 e dois
 — `parque-tematico` e `empreendimento-de-entretenimento-e-lazer-e-parques-aquaticos`
@@ -87,10 +87,74 @@ física que nascesse amanhã entraria sozinho.
 fixo: parque aquático é o maior consumidor de água da lista, e um `--desde 2026`
 o deixaria de fora sem uma linha de aviso.
 
+### Atualizar a fonte
+
+A skill **já traz a metodologia** — cache por `recurso_id` revalidado por
+SHA-256, e `eventos_entidade.csv.gz` classificando cada entidade em
+`ENTROU` / `ALTEROU` / `PERMANECEU` / `SAIU`. O que faltava era o nosso lado
+usar: a carga regravava as 388 mil linhas a cada execução.
+
+Agora, uma ação faz tudo — pelo botão **↻ Atualizar fonte** no passo Bases
+públicas, ou:
+
 ```bash
-python cadastur.py --uf RS --municipio Canoas
-python cruzar_bases.py --cidade canoas
-python cadastur.py --uf RS --municipio Canoas --so-carregar --gerar
+python cadastur.py --uf RS --municipio Canoas --gerar --encadear
+```
+
+1. baixa só o trimestre que mudou;
+2. grava só `ENTROU` e `ALTEROU`; `PERMANECEU` é pulado;
+3. quem **saiu** do snapshot ganha `saiu_em` — e **não é apagado**: sumir do
+   arquivo significa ter perdido regularidade, e pode ser fechamento, troca de
+   dono ou renovação atrasada;
+4. cruza, gera POI do que sobrou, **cruza de novo** (agora com os pontos novos)
+   e enriquece só eles — Maps → web → CNPJ → Street View.
+
+### As três âncoras de coordenada
+
+Em ordem de qualidade da chave, e a origem fica gravada em `fonte_dado`:
+
+| # | Âncora | Chave | Precisão |
+|---|---|---|---|
+| 1 | `cnpj_tratado` | CNPJ | do CNEFE, via Receita |
+| 2 | cruzamento com `cadastro_cliente` | endereço | do imóvel que o cliente fatura |
+| 3 | `ibge_cnefe` | endereço | `porta` (nv 1) ou `porta_face` (nv 2) |
+
+A terceira é a que destrava o caso geral: em Esteio — município sem nenhuma
+cobertura de `cnpj_tratado` — ela sozinha gerou 16 dos 17 pontos.
+
+`nv_geo_coord` 3 (estimada na localidade) e 4+ (centróide de setor, erro de km)
+são **recusados**. A skill `tratamento-cnpj` aceita até 3 porque lá o número
+alimenta um score; aqui ele vira ponto para alguém visitar, e visita não tolera
+o ruído que um score tolera.
+
+Via **ambígua é recusada, não resolvida**: em Cachoeirinha existem uma AVENIDA e
+uma RUA "Flores da Cunha". Escolher a primeira produziria base limpa e ponto
+errado.
+
+### Pessoa física: contada, não guardada
+
+Guia de turismo é cadastro de pessoa física — CPF, data de nascimento, nome
+social, tipo sanguíneo. A linha **não entra**; o total entra, em
+`cadastur_total_pf`, e vira um card informativo no painel. Contar não identifica
+ninguém; guardar identificaria, e não há finalidade num produto que procura
+economia que consome água. A tabela de totais não tem coluna que possa receber
+identificação — é a linha de defesa que sobrevive a qualquer refatoração.
+
+### O chat também fecha o ciclo
+
+`guardar_ponto` é o degrau que faltava: todas as outras ferramentas do chat
+leem, e o que o agente descobria morria na conversa. Agora ele grava pelo mesmo
+escritor único de POI, captura a fachada e cruza com a base.
+
+Ele **exige** lat/lng e recusa sem — e é uma ferramenta explícita, não um efeito
+de toda consulta: o chat também serve para explorar, e consulta que vira
+cadastro enche a base de tentativa e a fila de aprovação de trabalho que ninguém
+pediu.
+
+```bash
+python cadastur.py --listar
+python cadastur.py --uf RS --municipio Canoas --gerar --encadear
+python cadastur.py --uf RS --municipio Canoas --so-carregar --gerar   # sem rebaixar
 ```
 
 ---

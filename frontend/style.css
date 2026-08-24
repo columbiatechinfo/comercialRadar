@@ -1254,6 +1254,42 @@ body.lista-aberta #painel { display: none; }
   border-radius: var(--r-caixa); background: var(--branco); }
 
 
+
+/* ── Resumo da base pública ───────────────────────────────────────
+   Números grandes em MONO e alinhados: e´ assim que 1.730 leitos e 45 pontos se
+   comparam de relance. Em fonte proporcional as casas não batem. */
+.cad-resumo { margin: var(--e4) 0; display: flex; flex-direction: column;
+  gap: var(--e3); }
+.cad-numeros { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: var(--e2); }
+.cad-num { background: var(--claro); border-radius: var(--r-controle);
+  padding: 10px 12px; }
+.cad-num b { display: block; font-family: var(--f-m);
+  font-variant-numeric: tabular-nums; font-size: var(--fs-xl);
+  font-weight: 700; color: var(--navy); line-height: 1.1; }
+.cad-num span { display: block; font-size: var(--fs-2xs); font-weight: 700;
+  text-transform: uppercase; letter-spacing: var(--tk-olho);
+  color: var(--texto-fraco); margin-top: 3px; }
+/* Leitos ganha o acento: é o número que nenhuma outra fonte dá. */
+.cad-num.destaque { background: var(--tinta-info); }
+.cad-num.destaque b { color: var(--azul-texto); }
+
+.cad-linha-chips { display: flex; flex-wrap: wrap; gap: var(--e1); }
+.cad-chip { display: inline-flex; align-items: center; gap: 5px;
+  background: var(--branco); border: 1px solid var(--linha);
+  border-radius: var(--r-pilula); padding: 3px 10px; font-size: var(--fs-xs);
+  color: var(--texto-fraco); }
+.cad-chip b { color: var(--texto); font-family: var(--f-m); }
+
+/* O card de PESSOA FÍSICA é informativo e ASSUME isso: sem lista, sem link,
+   sem "ver detalhes". O detalhe não existe no banco de propósito. */
+.cad-pf { background: var(--tinta-roxo); border-radius: var(--r-controle);
+  padding: 11px 13px; font-size: var(--fs-sm); color: var(--texto); }
+.cad-pf b { font-family: var(--f-m); font-size: var(--fs-lg);
+  color: var(--roxo); }
+.cad-pf small { display: block; color: var(--texto-fraco);
+  font-size: var(--fs-xs); line-height: 1.45; margin-top: 4px; }
+
 /* ── Campos em linha ─────────────────────────────────────────────
    Município e UF andam juntos e têm larguras muito diferentes — a UF tem duas
    letras. Em colunas iguais, o campo da UF ficaria com espaço para um parágrafo

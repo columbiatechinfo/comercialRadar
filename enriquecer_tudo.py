@@ -103,7 +103,7 @@ def _ingerir(reg: dict, poligono):
         print(f"  ⚠️ ingest: {str(e)[:90]}", flush=True)
 
 
-def carregar_carentes(poligono, limit: int) -> list:
+def carregar_carentes(poligono, limit: int, alvo: list | None = None) -> list:
     conn = realtime_ingest.conectar()
     try:
         with conn.cursor() as cur:
@@ -126,10 +126,16 @@ def carregar_carentes(poligono, limit: int) -> list:
                   -- ou imagem. O `status IN (...)` de antes limitava a busca de
                   -- fotos aos POIs "rasos", e deixava de fora justamente os que
                   -- a captura traz como `ok` — 2.738 sem foto em Canoas.
-                  AND (p.telefone IS NULL OR p.endereco IS NULL
+                  AND (%(alvo)s::bigint[] IS NOT NULL
+                       -- Sem alvo, a pergunta continua sendo "quem está pobre".
+                       OR p.telefone IS NULL OR p.endereco IS NULL
                        OR p.categoria IS NULL OR p.cnpj IS NULL
                        OR NOT EXISTS (SELECT 1 FROM images_urls i WHERE i.poi_id = p.id))
-                ORDER BY p.id""")
+                  -- COM alvo, são exatamente estes — e nenhum outro. Encadear
+                  -- depois de gerar 22 POIs não pode significar varrer os 27
+                  -- mil do banco para alcançar aqueles 22.
+                  AND (%(alvo)s::bigint[] IS NULL OR p.id = ANY(%(alvo)s::bigint[]))
+                ORDER BY p.id""", {"alvo": (alvo or None)})
             cols = ["db_id", "place_id", "maps_url", "fonte", "sessao", "status",
                     "nome", "categoria", "endereco", "telefone", "website",
                     "avaliacao", "total_avaliacoes", "status_horario",
@@ -389,8 +395,18 @@ _SQL_POBRE = """(NOT EXISTS (SELECT 1 FROM images_urls i WHERE i.poi_id = p.id)
                  OR p.telefone IS NULL OR p.telefone = ''
                  OR p.total_avaliacoes IS NULL OR p.total_avaliacoes = 0)"""
 
+# JÁ COMERCIAL NO CADASTRO NÃO PRECISA DE FACHADA — regra do usuário,
+# 14/08/2026. O cliente já cobra esse imóvel como comercial: não há
+# reclassificação a propor, e capturar para confirmar o que a base já afirma
+# gasta hora de captura que a área precisa em outro lugar. Continua sendo
+# OPÇÃO, para quem quiser o dossiê da carteira inteira.
+_SQL_JA_COMERCIAL = """EXISTS (SELECT 1 FROM cadastro_cliente c
+                                WHERE c.poi_id = p.id AND c.e_comercial)"""
 
-def _sem_streetview_na_area(poligono, so_pobres: bool = False) -> list:
+
+def _sem_streetview_na_area(poligono, so_pobres: bool = False,
+                            incluir_ja_comerciais: bool = False,
+                            alvo: list | None = None) -> list:
     """IDs dos POIs DA ÁREA que ainda não têm foto de fachada.
 
     Por padrão pega TODO POI da área: a fachada falta a POI completo também. Dos
@@ -404,6 +420,10 @@ def _sem_streetview_na_area(poligono, so_pobres: bool = False) -> list:
     nota."""
     conn = realtime_ingest.conectar()
     try:
+        # Quem tem `streetview_path` gravado mas nenhuma imagem em
+        # `streetview_imgs` volta para a fila aqui — senão o filtro logo abaixo
+        # o pula para sempre, e ele também nunca chega à avaliação por IA.
+        SV.soltar_presos(conn)
         with conn.cursor() as cur:
             cur.execute(f"""
                 SELECT p.id, COALESCE(p.maps_lat, p.lat_origem),
@@ -411,8 +431,19 @@ def _sem_streetview_na_area(poligono, so_pobres: bool = False) -> list:
                   FROM pois p
                  WHERE p.match_valido IS NOT FALSE
                    AND COALESCE(p.maps_lat, p.lat_origem) IS NOT NULL
-                   AND (p.streetview_path IS NULL OR p.streetview_path = '')
-                   {f'AND {_SQL_POBRE}' if so_pobres else ''}""")
+                   -- 'NA' volta à fila a cada rodada da ÁREA: cobertura nova
+                   -- aparece, e a marca já se provou falha demais para ser
+                   -- definitiva. Quem não tem panorama mesmo custa uma consulta
+                   -- de metadados, que é grátis.
+                   AND (p.streetview_path IS NULL OR p.streetview_path IN ('', 'NA'))
+                   {"AND p.id = ANY(%(alvo)s::bigint[])" if alvo else ""}
+                   {f'AND {_SQL_POBRE}' if so_pobres else ''}
+                   {'' if incluir_ja_comerciais else f'AND NOT {_SQL_JA_COMERCIAL}'}""",
+                        # O dicionário vai SEMPRE, e não só quando há alvo: sem
+                        # ele o psycopg2 não interpola, e o `%(alvo)s` chegaria
+                        # cru ao Postgres. Passar sempre também protege
+                        # qualquer `%` que apareça no SQL montado acima.
+                        {"alvo": (alvo or None)})
             linhas = cur.fetchall()
     finally:
         conn.close()
@@ -422,16 +453,20 @@ def _sem_streetview_na_area(poligono, so_pobres: bool = False) -> list:
             if area_utils.ponto_no_poligono(la, lo, poligono)]
 
 
-async def fase_streetview(workers, prog, poligono, so_pobres: bool = False):
+async def fase_streetview(workers, prog, poligono, so_pobres: bool = False,
+                          incluir_ja_comerciais: bool = False, alvo: list | None = None):
     prog["fase"] = "Street View"
-    ids = _sem_streetview_na_area(poligono, so_pobres)
+    ids = _sem_streetview_na_area(poligono, so_pobres, incluir_ja_comerciais, alvo)
     # MARCADOR DE FASE: sem ele o painel continuava somando a fase Web. A barra
     # anunciava "2.229 de 21.701" — 2.229 era o que a Web tinha gravado, 21.701
     # é o total de fachadas: dois números de fases diferentes na mesma frase, e
     # nenhum deles o andamento do Street View, que naquele instante era 31.
     print("⟦fase⟧ streetview", flush=True)
     alvo = "pobres (sem foto/telefone/avaliação)" if so_pobres else "da área"
-    print(f"📸 FASE 3/3 — Street View: {len(ids)} POIs {alvo} sem fachada", flush=True)
+    corte = ("" if incluir_ja_comerciais
+             else " · fora os que já são comerciais no cadastro")
+    print(f"📸 FASE 3/3 — Street View: {len(ids)} POIs {alvo} sem fachada{corte}",
+          flush=True)
     if not ids:
         return
     # grava streetview_path direto no banco
@@ -447,10 +482,11 @@ _PW = None
 async def run(out_json: Path, workers: int, usar_proxy: bool, limit: int, area_path: str,
               pular_maps: bool, pular_web: bool, pular_sv: bool,
               pular_cnpj_local: bool = False, visivel: bool = False,
-              sv_so_pobres: bool = False):
+              sv_so_pobres: bool = False, incluir_ja_comerciais: bool = False,
+              alvo: list | None = None):
     global _PW
     poligono = area_utils.carregar_area(area_path) if area_path else None
-    regs = carregar_carentes(poligono, limit)
+    regs = carregar_carentes(poligono, limit, alvo)
     total = len(regs)
     # CIDADE E UF VÊM DA ÁREA DE TRABALHO — a mesma que o usuário definiu no
     # painel (select de UF+município, clique no mapa ou polígono desenhado).
@@ -472,7 +508,8 @@ async def run(out_json: Path, workers: int, usar_proxy: bool, limit: int, area_p
         # é a única coisa que resta a fazer.
         print("✅ Nenhum POI pobre para Maps/Web.", flush=True)
         if not pular_sv:
-            await fase_streetview(min(workers, 4), prog, poligono, sv_so_pobres)
+            await fase_streetview(min(workers, 4), prog, poligono, sv_so_pobres,
+                                  incluir_ja_comerciais, alvo)
         return
 
     lock_io = asyncio.Lock()
@@ -501,7 +538,8 @@ async def run(out_json: Path, workers: int, usar_proxy: bool, limit: int, area_p
     shutil.rmtree(config.BROWSER_PROFILES_DIR, ignore_errors=True)
 
     if not pular_sv:
-        await fase_streetview(min(workers, 4), prog, poligono, sv_so_pobres)
+        await fase_streetview(min(workers, 4), prog, poligono, sv_so_pobres,
+                              incluir_ja_comerciais, alvo)
 
     # O RESUMO SÓ FALA DAS FASES QUE RODARAM. "Completos/incompletos" mede o
     # carente de Maps/Web; numa rodada só de Street View esses campos não podiam
@@ -542,19 +580,33 @@ def main():
                    help="abre os navegadores na TELA (1 por worker)")
     p.add_argument("--pular-web", action="store_true")
     p.add_argument("--pular-streetview", action="store_true")
+    p.add_argument("--incluir-ja-comerciais", action="store_true",
+                   help="tambem captura fachada de quem ja e comercial no cadastro")
     p.add_argument("--sv-so-pobres", action="store_true",
                    help="Street View só em POI mal documentado (sem foto, sem "
                         "telefone ou sem avaliação).")
     p.add_argument("--sem-ingest", action="store_true",
                    help="Não ingere direto (rodando sob o server web, o watcher grava).")
+    p.add_argument("--poi-ids", default="",
+                   help="ids separados por vírgula. Enriquece EXATAMENTE estes, "
+                        "na mesma ordem de fases — é o que permite encadear "
+                        "depois de gerar POI de uma base pública, sem varrer o "
+                        "banco inteiro para alcançar os poucos que nasceram.")
     a = p.parse_args()
     global _SEM_INGEST
     _SEM_INGEST = a.sem_ingest
     out = Path(a.out)
     out.parent.mkdir(parents=True, exist_ok=True)
+    alvo = [int(x) for x in a.poi_ids.split(",") if x.strip().isdigit()] or None
+    if a.poi_ids and not alvo:
+        # Pedir alvo e receber lista vazia NÃO pode virar "enriquece tudo":
+        # seria a diferença entre 22 POIs e 27 mil, decidida por um erro de
+        # digitação.
+        raise SystemExit(f"--poi-ids={a.poi_ids!r} não tem nenhum id válido")
     asyncio.run(run(out, a.workers, not a.no_proxy, a.limit, a.area,
                     a.pular_maps, a.pular_web, a.pular_streetview,
-                    a.pular_cnpj_local, a.visivel, a.sv_so_pobres))
+                    a.pular_cnpj_local, a.visivel, a.sv_so_pobres,
+                    a.incluir_ja_comerciais, alvo))
 
 
 if __name__ == "__main__":
