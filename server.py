@@ -2453,7 +2453,12 @@ def fila_candidatos(u: _auth.Usuario = Depends(_auth.exige("admin"))):
                         and p.streetview_path not in ('', 'NA')),
                        f.tipo_edificacao, f.estado_conservacao, f.uso_observado,
                        c.cruz_flag, c.e_comercial, c.num_ligacao,
-                       exists (select 1 from atribuicao a where a.poi_id = p.id)
+                       exists (select 1 from atribuicao a where a.poi_id = p.id),
+                       -- A PRECISAO vai junto de cada ponto. Ela decide a cor
+                       -- do marcador e alimenta o filtro; buscar depois, ponto
+                       -- a ponto, seria uma consulta por marcador na tela.
+                       coalesce(p.coord_precisao, 'desconhecida'),
+                       p.coord_fonte, p.coord_incerteza_m
                   from pois p
                   left join fachada_anotacao f on f.poi_id = p.id
                   left join cadastro_cliente c on c.poi_id = p.id
@@ -2467,7 +2472,7 @@ def fila_candidatos(u: _auth.Usuario = Depends(_auth.exige("admin"))):
 
     cols = ("id nome categoria endereco cidade lat lng tem_cnpj cnpj_conf tem_foto "
             "tem_sv edificacao conservacao uso_fachada cruz_flag e_comercial "
-            "num_ligacao na_fila").split()
+            "num_ligacao na_fila coord_precisao coord_fonte coord_incerteza_m").split()
     itens = []
     for r in linhas:
         d = dict(zip(cols, r))

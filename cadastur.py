@@ -81,6 +81,7 @@ from psycopg2.extras import execute_values
 
 import config  # noqa: F401  (carrega o .env)
 import base_comum as bc
+import geocodificar
 import realtime_ingest
 
 RAIZ = Path(__file__).resolve().parent
@@ -737,6 +738,18 @@ def _poi_por_cnpj(con, cnpjs: list) -> dict:
 # porque lá o número alimenta um score; aqui ele manda alguém a um endereço.
 NV_ACEITO = ("1", "2")
 
+# O PIOR PONTO QUE AINDA VIRA POI.
+#
+# `via` são 150 m: o ponto cai na rua certa, e quem vai a campo acha o negócio
+# pelo nome naquela quadra. `bairro` são 800 m e `municipio` são 5 km — o
+# segundo é literalmente o centróide da cidade, onde vários estabelecimentos
+# empilham na mesma coordenada e ninguém acha nada.
+#
+# Quem fica abaixo do piso não é descartado: fica na tabela com o motivo, e
+# volta para a fila quando ganhar CNPJ na `cnpj_tratado` ou quando alguém rodar
+# a busca pelo painel do Maps, que dá precisão de porta.
+PISO_PARA_POI = ("porta", "porta_aprox", "via")
+
 # Cache do código IBGE por UF. A lista de municípios de um estado tem ~4 KB e
 # não muda; buscá-la a cada execução seria uma ida à rede para responder o que
 # já se sabe.
@@ -938,8 +951,60 @@ def _coordenada_por_cnefe(pendentes: list, uf: str | None) -> dict:
     return achados
 
 
+def _descarregar(con, marcas: list, ligados: list, gerados: list,
+                 simular: bool = False) -> None:
+    """Grava os vínculos e esvazia as listas.
+
+    CHAMADA EM LOTE, e não só no fim. A primeira versão acumulava tudo e
+    gravava depois do último prestador — e quando a execução do RS inteiro foi
+    interrompida no meio, 4.442 POIs já existiam no banco sem que nenhum
+    prestador apontasse para eles. Os pontos estavam certos; o rastro de quem
+    os gerou, perdido.
+
+    Reconciliar aquilo deu para fazer pelo CNPJ, mas só porque CNPJ é chave
+    exata. Um processo longo não pode depender de terminar para deixar o banco
+    coerente.
+    """
+    if simular:
+        marcas.clear(); ligados.clear(); gerados.clear()
+        return
+    with con.cursor() as k:
+        if marcas:
+            execute_values(
+                k, """update comercialradar.cadastur_prestador c
+                         set sem_poi_motivo = v.motivo, cruzado_em = now()
+                        from (values %s) as v(motivo, id)
+                       where c.id = v.id""", marcas)
+        if ligados:
+            execute_values(
+                k, """update comercialradar.cadastur_prestador c
+                         set poi_id = v.poi, sem_poi_motivo = 'ja_existe',
+                             cruzado_em = now()
+                        from (values %s) as v(poi, id)
+                       where c.id = v.id""", ligados)
+        if gerados:
+            # `sem_poi_motivo` fica NULO: virou POI, então não há motivo para
+            # não ter virado. O literal na consulta, e não um nulo na lista, é
+            # o que mantém o VALUES com tipo.
+            execute_values(
+                k, """update comercialradar.cadastur_prestador c
+                         set poi_id = v.poi, sem_poi_motivo = null,
+                             cruzado_em = now()
+                        from (values %s) as v(poi, id)
+                       where c.id = v.id""", gerados)
+    con.commit()
+    marcas.clear(); ligados.clear(); gerados.clear()
+
+
+# A cada quantos prestadores o vínculo é gravado. Pequeno o bastante para uma
+# interrupção custar pouco, grande o bastante para não fazer um commit por
+# linha — que numa execução estadual seriam 5.443 idas ao banco.
+LOTE_VINCULO = 100
+
+
 def gerar(con, uf: str | None, municipio: str | None,
-          simular: bool = False, usar_cnefe: bool = True) -> dict:
+          simular: bool = False, usar_cnefe: bool = True,
+          buscar_endereco: bool = True, usar_maps: bool = False) -> dict:
     """Transforma em POI o que não cruzou com nada. Devolve o placar.
 
     EXIGE o cruzamento rodado. Sem ele, tudo pareceria inédito e o banco
@@ -1007,16 +1072,63 @@ def gerar(con, uf: str | None, municipio: str | None,
         # A coordenada vem do CNPJ quando há, e do cruzamento quando não há.
         # A ordem importa: documento igual é a chave mais forte que existe.
         origem_geo = None
+        # A precisão sai da âncora que resolveu, e não de um padrão: é ela que
+        # sabe se o ponto é a porta, o prédio ou a rua.
+        precisao, incerteza = "porta", 15
         if len(doc) == 14 and doc in geo:
             la, lo = geo[doc]
             origem_geo = "cnpj_tratado"
         elif cid in geo_cruz:
             la, lo, origem_geo = geo_cruz[cid]
+            # O cruzamento com `cadastro_cliente` casa por ENDEREÇO: é o imóvel
+            # certo, não necessariamente a porta da loja dentro dele.
+            if origem_geo == "cadastro_cliente":
+                precisao, incerteza = "porta_aprox", 40
         elif cid in geo_cnefe:
-            # Terceira e última: endereço contra o CNEFE. Vem por último porque
-            # é a única que casa por TEXTO — as duas anteriores casam por
-            # documento ou por um cruzamento já auditado.
+            # Terceira: endereço contra o CNEFE, por chave exata.
             la, lo, origem_geo = geo_cnefe[cid]
+            if origem_geo.endswith("porta_face"):
+                precisao, incerteza = "porta_aprox", 40
+        elif buscar_endereco and endereco:
+            # QUARTA, e a que o usuário pediu: SE TEM ENDEREÇO, PROCURA.
+            #
+            # As três anteriores casam por igualdade — CNPJ ou chave de
+            # endereço. Quando nenhuma casa, sobra o texto como está, e é isso
+            # que vai para o geocodificador. Descartar o ponto por causa de uma
+            # vírgula seria perder o estabelecimento inteiro.
+            #
+            # A precisão vem DECLARADA pelo geocodificador e costuma ser `via`
+            # (150 m), não `porta`. É menos, e é honesto: quem abrir o ponto vê
+            # que a coordenada é da rua, não da porta.
+            achado = geocodificar.buscar(endereco, mun, uf_r, nome=fantasia or razao,
+                                         usar_maps=usar_maps)
+            # PISO: `via` (150 m) é o pior ponto que ainda leva alguém ao lugar
+            # — ele cai na rua certa, e quem chega lá acha o negócio pelo nome.
+            #
+            # `bairro` (800 m) e `municipio` (5 km) NÃO viram POI. A primeira
+            # versão aceitava o que o geocodificador devolvesse, e o resultado
+            # foi o que eu tinha dito que nunca faríamos: 117 pontos no
+            # centróide da cidade, empilhados — em Encantado, quatro
+            # estabelecimentos na mesma coordenada.
+            #
+            # O prestador NÃO é descartado: fica na tabela com o motivo, e a
+            # coordenada grosseira não é gravada em lugar nenhum. Quando ele
+            # ganhar um CNPJ na `cnpj_tratado`, ou quando alguém rodar a busca
+            # pelo painel do Maps, ele volta para a fila sozinho.
+            if achado and achado["precisao"] in PISO_PARA_POI:
+                la, lo = achado["lat"], achado["lng"]
+                origem_geo = f"{achado['fonte']}:{achado['precisao']}"
+                precisao = achado["precisao"]
+                incerteza = achado["incerteza_m"]
+            elif achado:
+                placar["sem_coordenada"] += 1
+                placar["grosseira"] = placar.get("grosseira", 0) + 1
+                marcas.append((f"coordenada_grosseira:{achado['precisao']}", cid))
+                continue
+            else:
+                placar["sem_coordenada"] += 1
+                marcas.append(("endereco_nao_encontrado", cid))
+                continue
         else:
             # Sem CNPJ E sem cruzamento é caso diferente de sem coordenada com
             # CNPJ: o primeiro nunca vai se resolver, o segundo se resolve
@@ -1071,6 +1183,9 @@ def gerar(con, uf: str | None, municipio: str | None,
             # mentiria quando ela viesse do cadastro do cliente, e a precisão
             # das duas é diferente — quem olha o ponto precisa saber qual é.
             "fonte_dado": f"cadastur+{origem_geo}",
+            "coord_precisao": precisao,
+            "coord_fonte": origem_geo,
+            "coord_incerteza_m": incerteza,
             "endereco_fonte": "cadastur",
             # O ingestor pula quem não tem `match_valido`. Aqui ele é True
             # porque o casamento é por CNPJ — documento igual, sem gradação.
@@ -1086,6 +1201,7 @@ def gerar(con, uf: str | None, municipio: str | None,
             placar["por_ancora"][origem_geo] = \
                 placar["por_ancora"].get(origem_geo, 0) + 1
             gerados.append((poi_id, cid))
+            placar.setdefault("novos_ids", []).append(poi_id)
         else:
             # O ingestor recusou. Ele tem motivo próprio — coordenada fora do
             # Brasil, por exemplo — e guardá-lo textual é o que permite saber
@@ -1093,33 +1209,10 @@ def gerar(con, uf: str | None, municipio: str | None,
             placar["sem_coordenada"] += 1
             marcas.append((f"ingestor:{resultado}", cid))
 
-    if not simular:
-        with con.cursor() as k:
-            if marcas:
-                execute_values(
-                    k, """update comercialradar.cadastur_prestador c
-                             set sem_poi_motivo = v.motivo, cruzado_em = now()
-                            from (values %s) as v(motivo, id)
-                           where c.id = v.id""", marcas)
-            if ligados:
-                execute_values(
-                    k, """update comercialradar.cadastur_prestador c
-                             set poi_id = v.poi, sem_poi_motivo = 'ja_existe',
-                                 cruzado_em = now()
-                            from (values %s) as v(poi, id)
-                           where c.id = v.id""", ligados)
-            placar["novos_ids"] = [poi for poi, _ in gerados]
-            if gerados:
-                # `sem_poi_motivo` fica NULO: virou POI, então não há motivo
-                # para não ter virado. O literal na consulta, e não um nulo na
-                # lista, é o que mantém o VALUES com tipo.
-                execute_values(
-                    k, """update comercialradar.cadastur_prestador c
-                             set poi_id = v.poi, sem_poi_motivo = null,
-                                 cruzado_em = now()
-                            from (values %s) as v(poi, id)
-                           where c.id = v.id""", gerados)
-        con.commit()
+        if len(marcas) + len(ligados) + len(gerados) >= LOTE_VINCULO:
+            _descarregar(con, marcas, ligados, gerados, simular)
+
+    _descarregar(con, marcas, ligados, gerados, simular)
     return placar
 
 
@@ -1220,6 +1313,14 @@ def main() -> int:
                    help="não baixa nem CONTA o conjunto de guia de turismo. "
                         "A contagem não guarda dado pessoal — só o total por "
                         "município — mas o download é um arquivo a mais")
+    p.add_argument("--sem-buscar-endereco", action="store_true",
+                   help="não procura o endereço no geocodificador quando as "
+                        "chaves exatas falham. O ponto fica sem coordenada e "
+                        "não vira POI")
+    p.add_argument("--coordenada-pelo-maps", action="store_true",
+                   help="antes do OSM, procura o ESTABELECIMENTO no painel do "
+                        "Google Maps. É a única fonte que dá precisão de PORTA "
+                        "— e a mais cara: abre navegador com proxy por ponto")
     p.add_argument("--sem-cnefe", action="store_true",
                    help="não usa a âncora por endereço no CNEFE (a mais "
                         "lenta: lê o município inteiro do banco de "
@@ -1293,7 +1394,9 @@ def main() -> int:
         if args.gerar:
             print("\n⟦fase⟧ gerando POIs", flush=True)
             placar = gerar(con, args.uf, args.municipio, args.simular,
-                           usar_cnefe=not args.sem_cnefe)
+                           usar_cnefe=not args.sem_cnefe,
+                           buscar_endereco=not args.sem_buscar_endereco,
+                           usar_maps=args.coordenada_pelo_maps)
             for chave in ("pendentes", "gerados", "ja_existe",
                           "sem_cnpj", "sem_coordenada"):
                 if chave in placar:

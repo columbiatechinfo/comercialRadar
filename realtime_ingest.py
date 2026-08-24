@@ -25,19 +25,60 @@ import area_utils
 _LOCK = threading.Lock()
 
 
+def _opcoes() -> str:
+    """Opções da conexão: `search_path` e a empresa dona do que este processo grava.
+
+    `app.tenant_id` é a MESMA variável que as policies de RLS leem. Declarar aqui
+    faz a trigger `preencher_tenant` carimbar cada INSERT com a empresa certa, e
+    faz gravar e enxergar concordarem por construção — não por alguém lembrar de
+    passar `tenant_id` em todo INSERT espalhado pelo código.
+
+    Sem `CR_TENANT_ID` a variável não é declarada, a trigger deixa `tenant_id`
+    nulo e o `NOT NULL` recusa a linha. É de propósito: linha sem dono não some,
+    ela nasce invisível para todo mundo depois que a RLS liga — e ninguém procura
+    o que não sabe que perdeu.
+
+    O pipeline tem UMA empresa por processo, então a variável pode viver na
+    conexão. A API é o oposto: lá o tenant vem do token e muda a cada requisição,
+    então lá é `SET LOCAL`, dentro da transação, e nunca isto aqui.
+    """
+    opts = "-c search_path=comercialradar,public"
+    tid = (os.environ.get("CR_TENANT_ID") or "").strip()
+    if tid:
+        opts += f" -c app.tenant_id={tid}"
+    return opts
+
+
 def conectar():
     """Conexão com o banco do PRODUTO.
 
-    A partir de 12/08/2026 o banco mora no i9, dentro da pilha Supabase, no
-    schema `comercialradar`. As variáveis `I9_*` mandam quando existem; sem elas,
-    cai no Postgres local de antes. É isso que permite voltar atrás mudando uma
-    linha do `.env`, sem tocar em código — e o banco antigo continua intacto no
-    notebook até o pipeline se provar contra o i9.
+    O banco mora no i9, dentro da pilha Supabase, no schema `comercialradar`.
+
+    Entre 12 e 13/08/2026 houve uma queda para o Postgres do notebook: as `I9_*`
+    mandavam quando existiam, e sem elas o pipeline voltava ao banco antigo. Essa
+    rede existia para permitir voltar atrás mudando uma linha do `.env` enquanto
+    o i9 não estivesse provado. O i9 se provou e o banco do notebook foi
+    aposentado — a queda virou armadilha e por isso agora é erro explícito.
 
     O `search_path` já vem do papel (`alter role ... set search_path`), então o
     código segue escrevendo `pois` sem qualificar o schema. Definir aqui também
     protege quem conectar com outro papel.
     """
+    # DENTRO de uma requisição autenticada, a conexão é a do USUÁRIO: papel sem
+    # BYPASSRLS e `app.tenant_id` declarado, então a RLS filtra. Fora dela —
+    # pipeline, scripts, jobs — segue sendo o worker, como sempre foi.
+    #
+    # A checagem mora aqui, e não em cada rota, porque era assim que o buraco
+    # nascia: 29 rotas chamando este mesmo `conectar()` e recebendo um papel que
+    # ignora toda policy. Corrigir rota a rota deixaria a próxima de fora.
+    try:
+        import auth
+        u = auth.USUARIO_DA_REQUISICAO.get()
+        if u is not None:
+            return auth.conectar_como(u)
+    except ImportError:
+        pass          # ambiente sem FastAPI (pipeline puro): segue no worker
+
     host = (os.environ.get("I9_POSTGRES_HOST") or "").strip()
     if host:
         cfg = dict(
@@ -51,16 +92,14 @@ def conectar():
             user=os.environ.get("I9_POSTGRES_USER", "comercialradar_worker"),
             password=os.environ.get("I9_POSTGRES_PASSWORD", ""),
             dbname=os.environ.get("I9_POSTGRES_DB", "postgres"),
-            options="-c search_path=comercialradar,public",
+            options=_opcoes(),
         )
     else:
-        cfg = dict(
-            host=os.environ.get("POSTGRES_HOST", "localhost"),
-            port=os.environ.get("POSTGRES_PORT", "5432"),
-            user=os.environ.get("POSTGRES_USER", "postgres"),
-            password=os.environ.get("POSTGRES_PASSWORD", ""),
-            dbname=os.environ.get("POSTGRES_DB", "comercialradar"),
-        )
+        raise RuntimeError(
+            "I9_POSTGRES_HOST não está no .env. Até 13/08/2026 a falta dessa "
+            "variável caía no Postgres do notebook; esse banco foi aposentado e "
+            "não existe mais. Cair em 'localhost' agora só produziria um erro de "
+            "conexão longe da causa — a causa é o .env.")
     cfg["connect_timeout"] = int(os.environ.get("PG_CONNECT_TIMEOUT", "20"))
     return psycopg2.connect(**cfg)
 
@@ -195,23 +234,24 @@ def ingerir_registro(r: dict, poligono=None, conn=None) -> tuple:
                           "resumo_avaliacoes", "streetview_path", "fontes_web",
                           "telefone", "website", "categoria", "status_horario",
                           "avaliacao", "total_avaliacoes", "preco_medio", "plus_code",
-                          "endereco", "endereco_fonte", "cidade", "uf")
+                          "endereco", "endereco_fonte", "cidade", "uf",
+                          # Precisao entra no merge pelo mesmo motivo dos
+                          # demais: uma etapa que nao sabe de onde veio a
+                          # coordenada nao pode apagar a declaracao de quem
+                          # sabia. Enriquecer telefone nao rebaixa o ponto.
+                          "coord_precisao", "coord_fonte", "coord_incerteza_m")
                 cur.execute(f"SELECT {', '.join(_MERGE)} FROM pois WHERE id = %s", (ids[0],))
                 antigo = cur.fetchone()
                 if antigo:
                     for campo, valor in zip(_MERGE, antigo):
                         if valor not in (None, "", 0) and r.get(campo) in (None, "", 0):
                             r[campo] = valor
-                # PRESERVA fotos/comentários/horários já coletados se o registro novo
+                # PRESERVA comentários/horários já coletados se o registro novo
                 # não os traz (uma etapa de enriquecimento que só melhora texto NÃO pode
-                # apagar as fotos que o Maps já tinha capturado).
+                # apagar o que o Maps já tinha capturado).
+                #
+                # Foto não precisa mais deste resgate: ela deixou de ser apagada.
                 keep = ids[0]
-                if not (r.get("fotos") or []):
-                    cur.execute("SELECT url, ordem FROM images_urls WHERE poi_id = %s ORDER BY ordem NULLS LAST, id", (keep,))
-                    fs = cur.fetchall()
-                    if fs:
-                        r["fotos"] = [u for u, _ in fs]
-                        r["_preserva_fotos"] = True
                 if not (r.get("comentarios") or []):
                     cur.execute("SELECT autor, nota, texto, data FROM comentarios WHERE poi_id = %s ORDER BY id", (keep,))
                     cs = cur.fetchall()
@@ -237,11 +277,25 @@ def ingerir_registro(r: dict, poligono=None, conn=None) -> tuple:
                                 (keep, extras, keep))
                         except Exception:
                             pass          # tabela pode não existir ainda
+                    # A FOTO DA CÓPIA também muda de dono. Entrou aqui em
+                    # 13/08/2026: até então só fachada e anotação eram resgatadas,
+                    # e a foto BAIXADA da duplicata ia na cascata. Custou 11 fotos,
+                    # descobertas ao conferir o notebook contra o i9 antes de
+                    # aposentá-lo — o byte seguia no Storage, inalcançável, porque
+                    # a linha que sabia o caminho tinha sumido.
+                    cur.execute("""UPDATE images_urls i SET poi_id = %s
+                                    WHERE i.poi_id = ANY(%s)
+                                      AND NOT EXISTS (SELECT 1 FROM images_urls z
+                                                       WHERE z.poi_id = %s AND z.url = i.url)""",
+                                (keep, extras, keep))
                     cur.execute("DELETE FROM pois WHERE id = ANY(%s)", (extras,))
 
-                # Filhos REFEITOS pela própria busca: apagados e reinseridos
-                # logo abaixo. Fachada e anotação NÃO estão aqui de propósito.
-                cur.execute("DELETE FROM images_urls WHERE poi_id = %s", (keep,))
+                # Filhos REFEITOS pela própria busca: apagados e reinseridos logo
+                # abaixo. `images_urls` NÃO está mais aqui, pelo mesmo motivo de
+                # fachada e anotação: a linha da foto guarda o `storage_path`, e
+                # apagá-la para reinserir a partir da url descartaria o byte já
+                # baixado e deixaria o objeto órfão no Storage. Foto passou a
+                # ACUMULAR — url nova entra, url já conhecida fica como está.
                 cur.execute("DELETE FROM comentarios WHERE poi_id = %s", (keep,))
                 cur.execute("DELETE FROM horario_funcionamento WHERE poi_id = %s", (keep,))
 
@@ -264,7 +318,12 @@ def ingerir_registro(r: dict, poligono=None, conn=None) -> tuple:
                      "cnpj", "razao_social", "nome_fantasia", "natureza_juridica", "cnae",
                      "situacao_cadastral", "socios", "instagram", "email", "resumo_avaliacoes",
                      "streetview_path", "fontes_web", "endereco_fonte", "cidade", "uf",
-                     "cnpj_conf", "facebook")
+                     "cnpj_conf", "facebook",
+                     # A PRECISAO DA COORDENADA, declarada por quem a produziu.
+                     # Sem isto o mapa mostra um centroide de quadra e um pin de
+                     # porta como pontos iguais, e quem vai a campo trata os dois
+                     # com a mesma confianca. Ver a migracao 0028.
+                     "coord_precisao", "coord_fonte", "coord_incerteza_m")
             _VALORES = (
                     r.get("fonte") or "desconhecido", _s(r.get("sessao")), str(r["nome"]),
                     _s(r.get("categoria")), _s(r.get("endereco")), _s(r.get("telefone")),
@@ -287,6 +346,8 @@ def ingerir_registro(r: dict, poligono=None, conn=None) -> tuple:
                     _s(r.get("cidade")) or _cidade_uf(r.get("endereco"), r.get("endereco_planilha"))[0],
                     _s(r.get("uf")) or _cidade_uf(r.get("endereco"), r.get("endereco_planilha"))[1],
                     _s(r.get("cnpj_conf")), _s(r.get("facebook")),
+                    _s(r.get("coord_precisao")), _s(r.get("coord_fonte")),
+                    _i(r.get("coord_incerteza_m")),
             )
 
             if ids:
@@ -302,8 +363,18 @@ def ingerir_registro(r: dict, poligono=None, conn=None) -> tuple:
 
             fotos = [(poi_id, str(u), k) for k, u in enumerate(r.get("fotos") or []) if u]
             if fotos:
+                # Só a url que ainda NÃO está lá. A linha existente carrega
+                # `storage_path`, `bytes_tam` e `content_type`: reinseri-la pela
+                # url perderia o byte já baixado e mandaria a próxima etapa
+                # baixar de novo o que já estava pago.
                 psycopg2.extras.execute_values(
-                    cur, "INSERT INTO images_urls (poi_id, url, ordem) VALUES %s", fotos)
+                    cur,
+                    """INSERT INTO images_urls (poi_id, url, ordem)
+                       SELECT v.poi_id, v.url, v.ordem
+                         FROM (VALUES %s) AS v(poi_id, url, ordem)
+                        WHERE NOT EXISTS (SELECT 1 FROM images_urls z
+                                           WHERE z.poi_id = v.poi_id AND z.url = v.url)""",
+                    fotos)
 
             coments = [(poi_id, _s(c.get("autor")), _f(c.get("nota")), _s(c.get("texto")), _s(c.get("data")))
                        for c in (r.get("comentarios") or []) if isinstance(c, dict)]

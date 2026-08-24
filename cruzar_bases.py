@@ -184,12 +184,38 @@ _TIPOS = {"rua", "avenida", "travessa", "alameda", "praca", "rodovia",
           "estrada", "largo", "beco", "linha", "servidao", "acesso", "viela"}
 
 
+# A NOTACAO DE FAIXA da Receita/Correios. Nao e endereco, e a descricao do
+# trecho da via a que aquele CEP pertence:
+#
+#     "Frederico Augusto Ritter - de 3501 a 5101 - lado impar"
+#                                 └──── faixa de CEP ─────┘
+#
+# O "3501" nao e o numero da porta, e lido como se fosse manda o ponto para o
+# lugar errado. A barra ("2561 / APT 202") separa complemento pelo mesmo motivo
+# que LOJA e SALA separam.
+_FAIXA = re.compile(
+    r"\s*-?\s*\bde\s+\d+\s+a\s+\d+\b"      # "de 3501 a 5101"
+    r"|\s*-?\s*\bat[eé]\s+\d+\b"              # "ate 5101"
+    r"|\s*-?\s*\blado\s+[ií]mpar\b"
+    r"|\s*-?\s*\blado\s+par\b",
+    re.I)
+
+
+def _sem_faixa_de_cep(texto: str) -> str:
+    """Tira a notacao de faixa e normaliza os separadores soltos."""
+    t = _FAIXA.sub(" ", texto or "")
+    t = t.replace("/", " ")                 # "2561 / APT 202" → complemento
+    t = re.sub(r"\s*-\s*", " ", t)          # hifen solto nao separa nada aqui
+    return re.sub(r"\s{2,}", " ", t).strip()
+
+
 # Palavra que INICIA complemento. Tudo dela em diante deixa de ser logradouro.
 # A lista e curta de proposito: palavra ambigua aqui corta endereco legitimo —
 # "Rua Casa Forte" perderia o nome se "CASA" fosse cortada em qualquer posicao,
 # e por isso o corte so vale DEPOIS do numero da porta ter sido visto.
 _COMPLEMENTO = {
-    "LOJA", "LOJAS", "SALA", "SALAS", "CASA", "APTO", "APARTAMENTO", "AP",
+    "LOJA", "LOJAS", "SALA", "SALAS", "CASA", "APTO", "APT", "APARTAMENTO",
+    "AP", "APTOS", "SL", "LJ", "CJ",
     "BLOCO", "BL", "ANDAR", "CONJ", "CONJUNTO", "TERREO", "SOBRELOJA",
     "FUNDOS", "GALPAO", "QUADRA", "LOTE", "BOX", "KM", "PAVIMENTO", "PAV",
     "EDIFICIO", "ED", "CONDOMINIO", "TORRE", "ANEXO", "SUBSOLO",
@@ -219,7 +245,8 @@ def partes_cadastur(texto: str | None, cidade: str | None = None) -> tuple:
     """
     if not texto or not cidade:
         return (None, None, None)
-    t = re.sub(r"\bcep\b\s*:?\s*\d*", " ", texto, flags=re.I)
+    t = _sem_faixa_de_cep(texto)
+    t = re.sub(r"\bcep\b\s*:?\s*\d*", " ", t, flags=re.I)
     t = re.sub(r"\s+\b[A-Z]{2}\b\s*$", " ", t)          # UF no fim
     t = re.sub(r"\s{2,}", " ", t).strip()
 

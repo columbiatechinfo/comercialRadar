@@ -70,14 +70,62 @@ def test_nenhum_poi_valido_longe_da_cidade_que_declara():
         linhas = cur.fetchall()
     con.close()
 
-    ref = bc.conectar_referencia()
+    # O POLIGONO, e nao a distancia do centroide.
+    #
+    # A regra antiga — "a mais de 50 km do centroide" — reprovava ponto
+    # LEGITIMO em municipio grande: Santa Vitoria do Palmar tem 5.244 km2, e a
+    # cidade fica a mais de 50 km do centro geometrico do municipio. Quatro
+    # pontos corretos apareciam como erro.
+    #
+    # E deixava passar o inverso: um ponto a 40 km, dentro de outro municipio,
+    # nao era acusado. Contencao no poligono nao tem nenhum dos dois problemas.
+    #
+    # UMA CONSULTA, e nao uma por POI. A primeira versao consultava o PostGIS
+    # ponto a ponto: 31 mil idas ao banco, nove minutos, e a conexao caiu antes
+    # de terminar. O `unnest` manda tudo de uma vez e o banco resolve o
+    # conjunto — que e o que ele faz bem.
+    # BANCO DE REFERENCIA FORA DO AR PULA, e nao reprova.
+    #
+    # A malha do IBGE mora noutra instancia (ADR 0003), no i9. Quando aquela
+    # maquina cai — aconteceu em 24/08/2026 —, este teste acusava um defeito de
+    # dado que nao existe. Teste que reprova por indisponibilidade da fonte
+    # ensina a ignorar teste vermelho, que e o pior que pode acontecer com uma
+    # suite.
+    try:
+        ref = bc.conectar_referencia()
+    except Exception as e:
+        pytest.skip(f"banco de referencia (malha do IBGE) inacessivel: "
+                    f"{type(e).__name__}")
     with ref.cursor() as rc:
-        rc.execute("""select upper(nome), uf, ST_Y(ST_Centroid(geom)),
-                             ST_X(ST_Centroid(geom)) from ibge_malha""")
-        cent = {(norm(n), u): (la, lo) for n, u, la, lo in rc.fetchall()}
+        rc.execute("select cod_municipio, upper(nome), uf from ibge_malha")
+        cod_de = {}
+        for cod, nome_m, u in rc.fetchall():
+            cod_de.setdefault((norm(nome_m), u), cod)
+
+        ids, cods, las, los = [], [], [], []
+        for i, ci, uf, la, lo in linhas:
+            cod = cod_de.get((norm(ci), uf))
+            if not cod:
+                continue          # sem malha daquele municipio: nao da para julgar
+            ids.append(i); cods.append(cod); las.append(float(la)); los.append(float(lo))
+
+        fora = []
+        if ids:
+            rc.execute("""
+                select v.id
+                  from unnest(%s::bigint[], %s::text[], %s::float8[], %s::float8[])
+                       as v(id, cod, la, lo)
+                  join ibge_malha m on m.cod_municipio = v.cod
+                 where not ST_DWithin(
+                         m.geom::geography,
+                         ST_SetSRID(ST_MakePoint(v.lo, v.la), 4326)::geography,
+                         -- 2 km de folga: a malha e simplificada e um endereco
+                         -- na divisa cai fora por dezenas de metros. E a mesma
+                         -- tolerancia do `geocodificar.dentro_do_municipio`.
+                         2000)""", (ids, cods, las, los))
+            fora = [r[0] for r in rc.fetchall()]
     ref.close()
 
-    fora = [i for i, ci, uf, la, lo in linhas
-            if cent.get((norm(ci), uf)) and hav(la, lo, *cent[(norm(ci), uf)]) > 50]
     assert not fora, (
-        f"{len(fora)} POIs validos a mais de 50 km da cidade que declaram: {fora[:10]}")
+        f"{len(fora)} POIs validos FORA do poligono do municipio que declaram: "
+        f"{fora[:10]}")

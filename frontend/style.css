@@ -1255,6 +1255,18 @@ body.lista-aberta #painel { display: none; }
 
 
 
+
+/* ── Precisão da coordenada ─────────────────────────────────────────────────
+   Fileira própria de filtro. Ela responde outra pergunta que os demais chips:
+   não é "o que se sabe do negócio", é "o quanto se pode confiar no lugar" — e
+   é essa a pergunta de quem monta uma rota de campo. */
+.frow-prec { border-top: 1px dashed var(--linha); padding-top: 7px;
+  margin-top: 2px; }
+.fchip.prec { background: var(--branco); padding: 6px 12px;
+  font-size: var(--fs-sm); }
+.fchip.prec.on { background: var(--c); border-color: var(--c); color: #fff; }
+.fchip.prec.on .n { background: rgba(0, 0, 0, .26); color: #fff; }
+
 /* ── Resumo da base pública ───────────────────────────────────────
    Números grandes em MONO e alinhados: e´ assim que 1.730 leitos e 45 pontos se
    comparam de relance. Em fonte proporcional as casas não batem. */

@@ -243,6 +243,25 @@ const ATRIBUTOS = [
 ];
 const atributosAtivos = new Set(); // vazio = não filtra por atributo
 
+/* PRECISÃO DA COORDENADA — o quão perto da porta o ponto está.
+ *
+ * Vive numa fileira PRÓPRIA, e não entre os atributos, porque responde outra
+ * pergunta. "Com CNPJ" diz o que se sabe do negócio; isto diz o quanto se pode
+ * confiar no lugar — e é essa a pergunta de quem monta uma rota de campo.
+ *
+ * `desconhecida` NÃO é vermelho, de propósito: ela não significa ruim,
+ * significa não conferido. Pintar de vermelho faria descartar 13 mil pontos
+ * que podem ser ótimos. */
+const PRECISOES = [
+  { key: "porta",        label: "🎯 Porta",         cor: "#1c853a", raio: "~15 m" },
+  { key: "porta_aprox",  label: "🏢 Prédio",        cor: "#1f7a4d", raio: "~40 m" },
+  { key: "via",          label: "🛣️ Rua",           cor: "#976e09", raio: "~150 m" },
+  { key: "bairro",       label: "🗺️ Bairro",        cor: "#ba5a08", raio: "~800 m" },
+  { key: "municipio",    label: "🏙️ Município",     cor: "#c0392b", raio: "~5 km" },
+  { key: "desconhecida", label: "❓ Não declarada", cor: "#6f767f", raio: "—" },
+];
+const precisaoFiltro = new Set();   // vazio = não filtra por precisão
+
 /* Filtros por ANÁLISE DA IA (descrever_imagens): veredito é seleção única
    (aprovado XOR reprovado, ou todos); recomendar/revisar narram em AND. */
 let vereditoFiltro = null;         // null | 'aprovado' | 'reprovado'
@@ -312,6 +331,10 @@ function visivel(p) {
   // mesma regra do poisBase: município escolhido manda; sem ele, a área desenhada
   if (municipioSel ? _normCidade(p.cidade) !== municipioSel : !dentroDaArea(p)) return false;
   if (!filtrosAtivos.has(origemDe(p)) || !passaAtributos(p)) return false;
+  // Vazio = não filtra. Com classes marcadas, só elas aparecem — é assim que
+  // se monta uma rota de campo só com pontos em que se pode confiar.
+  if (precisaoFiltro.size
+      && !precisaoFiltro.has(p.coord_precisao || "desconhecida")) return false;
   if (vereditoFiltro && p.veredito !== vereditoFiltro) return false;
   if (flagsIA.has("recomendar") && !p.recomendar_visita) return false;
   if (flagsIA.has("revisar") && !p.revisar_manual) return false;
@@ -412,8 +435,40 @@ function renderChips() {
     html += `<button class="fchip attr ${on ? "on" : ""}" data-a="${a.key}" style="--c:#1f7a4d">
                ${a.label} <span class="n">${(attrCounts[a.key] || 0).toLocaleString("pt-BR")}</span></button>`;
   }
+  /* A fileira da PRECISÃO só aparece quando há mais de uma classe na tela.
+     Numa base inteira de precisão `porta`, um filtro com uma opção só é ruído
+     ocupando a mesma altura de um filtro útil. */
+  const contaPrec = {};
+  for (const p of base) {
+    const k = p.coord_precisao || "desconhecida";
+    contaPrec[k] = (contaPrec[k] || 0) + 1;
+  }
+  const classesPrec = PRECISOES.filter((c) => contaPrec[c.key]);
+  if (classesPrec.length > 1) {
+    html += '</div><div class="frow frow-prec">';
+    html += '<span class="ia-tag" title="Quão perto da porta o ponto está">📍 Precisão</span>';
+    for (const c of classesPrec) {
+      const on = precisaoFiltro.has(c.key);
+      html += `<button class="fchip prec ${on ? "on" : ""}" data-p="${c.key}"
+                 style="--c:${c.cor}" title="${c.raio}">
+                 ${c.label} <span class="n">${contaPrec[c.key].toLocaleString("pt-BR")}</span>
+               </button>`;
+    }
+  }
+
   html += "</div>";
   box.innerHTML = html;
+  box.querySelectorAll(".fchip[data-p]").forEach((b) => {
+    b.onclick = () => {
+      const k = b.dataset.p;
+      if (precisaoFiltro.has(k)) precisaoFiltro.delete(k);
+      else precisaoFiltro.add(k);
+      // `aplicarFiltro` redesenha o cluster e ja chama `renderChips` no fim —
+      // era `desenhar()` + `montarFiltros()`, dois nomes que nao existem neste
+      // arquivo. O clique estourava no console e o filtro nunca valia.
+      aplicarFiltro();
+    };
+  });
   box.querySelectorAll(".fchip[data-k]").forEach((b) => {
     b.onclick = () => {
       const k = b.dataset.k;
