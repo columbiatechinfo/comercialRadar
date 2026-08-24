@@ -12,7 +12,7 @@
 | 3 | **Repo + docs padrão** | 🟡 parcial | Repositório e docs existem; falta proteger a `master` (PR obrigatório, CI verde) |
 | 4 | **Matriz RBAC** | ✅ ok | Existe login, papel e usuário: 48 usuários em 4 níveis, 42 empresas, `auth.py` resolve o tenant da requisição, 45 rotas autenticadas e nenhuma sem auth |
 | 5 | **`tenant_id` + RLS** | ✅ ok | 28 tabelas com `tenant_id`, **todas** com RLS, policy e gatilho (migração 0029). 54 índices com `tenant_id` na primeira coluna. `test_isolamento_tenant.py` cobra a **regra**, não a lista |
-| 6 | **Segredos** | ✅ ok | Chave exposta **revogada e confirmada morta**; três chaves novas separadas por função; gitleaks no pre-commit e no CI; `.env.example` conferido contra o código |
+| 6 | **Segredos** | 🟡 parcial | Chave do Google **revogada e confirmada morta**; três chaves novas separadas por função; gitleaks no pre-commit e no CI. **Aberto em 24/08:** 100 credenciais de proxy Webshare no histórico desde o commit inicial — desrastreadas hoje, rotação pendente |
 | 7 | **Módulos + flags** | ❌ pendente | [MODULOS.md](MODULOS.md) cataloga 12 módulos; `tenant_features` não existe e tudo está sempre ligado |
 | 8 | **Botão de erro** | ❌ pendente | Não há captura de erro do usuário nem log correlacionado por requisição |
 | 9 | **Testes** | ✅ ok | 266 coletados, **231 passando e 35 pulados** (medido em 24/08). Mais `prova_ponta_a_ponta.py` (**49/49**) e `prova_carga_chat.py` |
@@ -38,7 +38,13 @@ rastro que o explicaria.
 evitado o estado em que este repositório passou o mês: trabalho real num branch,
 `master` um mês atrás, e 19 commits sem enviar.
 
-**4 · Avaliação formal de LGPD (req. 12).** O sistema guarda sócios de CNPJ e
+**4 · Rotação dos proxies Webshare (req. 6).** 100 credenciais
+`ip:porta:usuario:senha` estão no histórico do git desde o commit inicial. O
+arquivo saiu do rastreamento em 24/08, mas o histórico já foi enviado —
+reescrever commit não apaga credencial exposta. Rotacionar no painel da Webshare
+é a única correção real.
+
+**5 · Avaliação formal de LGPD (req. 12).** O sistema guarda sócios de CNPJ e
 imagens de fachada com pessoas. As decisões pontuais já foram bem tomadas —
 guia de turismo é contado e não guardado, a skill proíbe transcrever nome de
 morador —, mas nunca houve o inventário completo.

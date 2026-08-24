@@ -4,7 +4,7 @@
   "perfil": "saas-multi-cliente",
   "versao": "0.1.0",
   "ambiente": "wsl-dev",
-  "atualizado_em": "2026-08-24T15:40:00-03:00",
+  "atualizado_em": "2026-08-24T15:55:00-03:00",
   "atualizado_por": "(analise de estado)",
   "commit": "daeba39",
   "seguranca": {
@@ -14,6 +14,10 @@
     "categorias": [],
     "criticos": [],
     "recomendados": [
+      {
+        "item": "100 credenciais de proxy Webshare no historico do git (commit 1c7f081)",
+        "acao": "o arquivo saiu do rastreamento hoje, mas o historico ja foi enviado e reescrever commit nao apaga credencial exposta — foi a licao da MAPS_JS_KEY. ROTACIONAR no painel da Webshare e a unica correcao real. O gitleaks nao pega o formato ip:porta:usuario:senha: sem prefixo, sem entropia alta, sem palavra-chave"
+      },
       {
         "item": "66 registros de auditoria com tenant_id nulo",
         "acao": "sao anteriores ao ajuste e nenhum papel os enxerga. NAO retro-atribuir: trilha de auditoria editada depois do fato vale menos que trilha incompleta. Decidir se ficam como estao ou saem"
@@ -68,8 +72,8 @@
     {
       "id": "segredos",
       "nome": "Segredos",
-      "status": "ok",
-      "detalhe": "chave exposta REVOGADA e confirmada morta (REQUEST_DENIED/expired); tres chaves novas separadas por funcao; gitleaks no pre-commit (testado) e no CI; .env.example conferido contra o codigo. Pendencia menor: reconferir se a restricao de referrer esta sendo aplicada — em 12/08 o controle ainda passava de endereco fora da lista."
+      "status": "parcial",
+      "detalhe": "chave do Google REVOGADA e confirmada morta; tres chaves novas separadas por funcao; gitleaks no pre-commit e no CI; .env.example conferido contra o codigo. PENDENCIA ABERTA EM 24/08: 100 credenciais de proxy Webshare no historico desde o commit inicial — o arquivo estava no .gitignore E rastreado ao mesmo tempo. Desrastreado hoje; a rotacao segue pendente. Pendencia menor: reconferir a restricao de referrer das chaves de navegador"
     },
     {
       "id": "modulos",
@@ -505,6 +509,13 @@
       "nivel": "ok",
       "evento": "As quatro tabelas sem politica de isolamento, e a regra que impede a quinta",
       "detalhe": "atribuicao_divergente, fachada_triagem, foto_maps_triagem e ifood_merchant estavam sem RLS — e o estado.json afirmava tabelas_sem_rls: []. Sao as MESMAS quatro que a migration 0024 ja tinha pego por outro motivo (escreviam e nao liam): tabela nova nao herda a politica. Como worker e root tem BYPASSRLS, o pipeline nunca sentiu; quem era submetido e o comercialradar_app, o papel do servidor web — ou seja, era por ali que o painel de uma empresa alcancava linha de outra. O ifood_merchant tinha 1.598 linhas com tenant_id NULO: ligar a RLS naquele estado as tornaria invisiveis, que e pior que o problema. Atribuidas por municipio, a criterio do dono do produto — 1.002 Aegea, 596 Columbia — e a coluna virou not null. Uma linha tinha a cidade grafada 'porto-alergre' e teria ficado orfa; a migration corrige antes de cruzar e ABORTA se sobrar alguma. O teste novo pergunta pela REGRA e nao pela lista: tabela com tenant_id sem RLS, sem policy ou sem gatilho reprova a suite. Foi ele que achou duas excecoes legitimas (auditoria e usuarios) e, de quebra, 66 registros de auditoria com tenant_id nulo que ninguem enxerga. 231 testes, 49/49 na prova de ponta."
+    },
+    {
+      "data": "2026-08-24",
+      "skill": "(segredos)",
+      "nivel": "atencao",
+      "evento": "O arquivo estava no .gitignore E rastreado ao mesmo tempo",
+      "detalhe": "Webshare_100_proxies.txt aparecia nas duas listas: no .gitignore com o comentario 'contem credenciais', e em `git ls-files`. Nao e contradicao do git — o .gitignore nao desrastreia o que ja entrou. Ele foi commitado no 1c7f081 (versao inicial), a regra veio depois, e desde entao seguia sendo versionado, com a regra dando a impressao contraria a quem lesse o arquivo. Sao 100 linhas ip:porta:usuario:senha, com 100 usuarios distintos. O gitleaks nao pega o formato: sem prefixo, sem entropia alta, sem palavra-chave. A versao em disco estava MODIFICADA, com senhas novas — commita-la publicaria 100 credenciais que ainda nao estavam no historico. Desrastreado com git rm --cached: o arquivo fica em disco e a regra do ignore finalmente vale. O que isso NAO resolve: as credenciais do 1c7f081 seguem no historico ja enviado, e reescrever commit nao apaga credencial exposta. Rotacionar no painel da Webshare e a unica correcao real."
     }
   ],
   "caminho_dados": "psycopg",
