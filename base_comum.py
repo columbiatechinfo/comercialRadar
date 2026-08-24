@@ -90,9 +90,13 @@ def ja_carregado(conn, fonte: str, referencia: str) -> bool:
 
 def marcar(conn, fonte, referencia, tabela, linhas, bytes_):
     with conn, conn.cursor() as cur:
+        # ON CONSTRAINT, e não a lista de colunas: esta função grava no banco do
+        # produto, cuja chave é (tenant_id, fonte, referencia) desde a 0010, e no
+        # de referência, que não tem empresa e mantém (fonte, referencia). O nome
+        # da constraint é o mesmo nos dois, a lista de colunas não.
         cur.execute("""INSERT INTO fonte_arquivos (fonte, referencia, tabela, linhas, bytes)
                        VALUES (%s,%s,%s,%s,%s)
-                       ON CONFLICT (fonte, referencia) DO UPDATE
+                       ON CONFLICT ON CONSTRAINT fonte_arquivos_pkey DO UPDATE
                          SET tabela=EXCLUDED.tabela, linhas=EXCLUDED.linhas,
                              bytes=EXCLUDED.bytes, status='ok', carregado_em=now()""",
                     (fonte, referencia, tabela, linhas, bytes_))

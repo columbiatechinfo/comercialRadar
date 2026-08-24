@@ -39,6 +39,7 @@ import base64
 import asyncio
 import argparse
 import tempfile
+import unicodedata
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -67,13 +68,70 @@ MODELO_PADRAO = "gpt-4o-mini"
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://100.115.117.49:11434").rstrip("/")
 MODELOS_LOCAIS = ("qwen2.5vl:7b", "qwen2.5vl:3b")
 
+# JANELA DE CONTEXTO do modelo local — e por que ela é variável.
+#
+# 8.192 era o teto do que cabia no i9: com 8 GB de VRAM, o `qwen2.5vl:7b` já
+# ocupava quase tudo e a janela tinha de ser apertada. No Spark, com 121 GB
+# unificados, isso deixou de ser restrição — e a janela pequena passou a ser a
+# própria limitação: com ela não cabem a fachada, as fotos do Maps e os 19
+# exemplos de medidor na mesma chamada, que é exatamente o que se quer comparar
+# contra o gpt-4o-mini.
+NUM_CTX = int(os.environ.get("OLLAMA_NUM_CTX", "8192"))
+
+# TETO DE SAÍDA — o freio que faltava.
+#
+# Sem `num_predict` o modelo pode entrar em laço e escrever até o contexto
+# acabar. Medido em 16/08/2026 no `qwen3.5:122b`: um POI devolveu 101.622
+# caracteres e foi cortado no meio de uma string, gerando JSON inválido —
+# `JSONDecodeError` que parece defeito de parse e é fuga do gerador. Num lote de
+# 16 mil, cada fuga dessas custa minutos de GPU para produzir lixo.
+#
+# 3.000 é folgado: a anotação completa fica em ~1.200 tokens. Quem passar disso
+# não está respondendo, está repetindo.
+NUM_PREDICT = int(os.environ.get("OLLAMA_NUM_PREDICT", "3000"))
+
+
+def _conteudo(d: dict) -> str:
+    """A resposta do Ollama, venha ela em `content` ou em `thinking`.
+
+    Modelo da linha "thinking" — e o `qwen3-vl:32b` é um — devolve o JSON no
+    campo `thinking` e deixa `content` VAZIO, mesmo com `think: false`. O
+    resultado é um `JSONDecodeError` na coluna 1, que manda procurar defeito no
+    parse quando a resposta chegou inteira e válida, só que noutro campo.
+    """
+    m = d.get("message") or {}
+    return (m.get("content") or "").strip() or (m.get("thinking") or "").strip()
+
+# Exemplos de medidor no modelo LOCAL. Ficavam de fora porque no i9 não cabiam —
+# imagem a mais devolvia 400 em silêncio. Com janela grande passa a ser escolha,
+# não limitação, e a comparação entre modelos só é honesta se os dois receberem
+# o mesmo material.
+EXEMPLOS_NO_LOCAL = os.environ.get("OLLAMA_EXEMPLOS", "0") == "1"
+
 
 def _e_local(modelo: str) -> bool:
-    return modelo in MODELOS_LOCAIS or modelo.startswith("qwen")
+    """Local é tudo que NÃO está na tabela de preços da OpenAI.
+
+    Era `startswith("qwen")`, o que funcionava enquanto o único modelo local era
+    da família Qwen. `mistral-medium-3.5:128b` — 80 GB rodando no Spark — cairia
+    no caminho da OpenAI e voltaria erro de modelo inexistente, apontando para o
+    lugar errado. A regra certa é a inversa: quem tem preço vai para a API paga;
+    o resto é servido pelo Ollama.
+    """
+    return modelo not in PRECOS
 # Street View sem data declarada: a skill manda assumir 36 meses e DECLARAR a
 # suposição. `data_captura_origem = "assumida"` é essa declaração.
 IDADE_ASSUMIDA_MESES = 36
-TIMEOUT_S = 90.0
+# DOIS TIMEOUTS, e não um, porque as duas pontas falham de jeitos diferentes.
+#
+# Na OpenAI, 90 s já é generoso: passou disso, a chamada está pendurada e
+# esperar mais só atrasa o lote. No modelo local a primeira chamada precisa
+# CARREGAR o modelo — 28 GB do `qwen3-vl:32b`, 81 GB do `qwen3.5:122b` — e isso
+# leva minutos lendo do NVMe. Foi o que derrubou o primeiro teste no Spark: o
+# modelo subiu certo, 100% em GPU, e o cliente desistiu antes com "timed out",
+# erro que aponta para rede quando o problema era paciência.
+TIMEOUT_S = float(os.environ.get("LLM_TIMEOUT_S", "90"))
+TIMEOUT_LOCAL_S = float(os.environ.get("OLLAMA_TIMEOUT_S", "900"))
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -109,6 +167,86 @@ def ENUM_SCHEMA(*caminho) -> list:
         d = d[c] if c in d else d["properties"][c]
     return [x for x in d.get("enum", []) if x is not None]
 
+# ── Classificação pedida pelo usuário em 14/08/2026 ────────────────────────
+#
+# Vocabulário PRÓPRIO deste sistema, e não da skill de fachada: a skill descreve
+# o imóvel para cadastro de saneamento; estas listas respondem à pergunta
+# comercial do produto. Ficam aqui, em constante, porque o mesmo texto precisa
+# aparecer em três lugares — no schema, no prompt e na coluna do banco — e três
+# cópias divergem no primeiro ajuste.
+TIPOS_CLIENTE = [
+    "comercial_empresarial_industrial",
+    "publico_governamental_religioso",
+    "moradia_simples_habitada",
+    "moradia_simples_abandonada",
+    "moradia_luxo_habitada",
+    "moradia_luxo_abandonada",
+    "terreno_vazio",
+    "construcao_em_curso",
+    "predio_multiandar_habitado",
+    "predio_multiandar_abandonado",
+]
+
+# O usuário pediu "avenida bem pavimentada, rua bem pavimentada, rua rural, etc
+# (crie mais categorias)". As que faltavam e mudam decisão de campo: o
+# paralelepípedo e o chão de terra separam bairro consolidado de loteamento
+# novo; viela e calçadão dizem que o carro não chega; e a via interna de
+# condomínio explica por que a fachada não tem número na rua.
+TIPOS_VIA = [
+    "avenida_pavimentada",
+    "rua_pavimentada",
+    "rua_paralelepipedo",
+    "rua_terra_sem_pavimento",
+    "rua_rural",
+    "estrada_ou_rodovia",
+    "viela_ou_beco",
+    "calcadao_pedestres",
+    "via_interna_condominio",
+    "nao_identificavel",
+]
+
+# COMO a contagem de habitações foi feita. Sem isto o número é palpite sem
+# lastro: "8 habitações" contadas por janela e por medidor são afirmações de
+# força diferente, e quem revisa precisa saber qual delas está lendo.
+METODOS_HABITACAO = [
+    "portas_independentes_para_a_rua",
+    "colunas_de_janelas_x_pavimentos",
+    "pavimentos_visiveis",
+    "medidores_de_energia",
+    "hidrometros",
+    "caixas_de_correio",
+    "interfones",
+    "unidades_geminadas_visiveis",
+    "unidade_unica_aparente",
+    "nao_estimavel",
+]
+
+# ONDE O ALVO ESTÁ EM RELAÇÃO AO QUE A FOTO MOSTRA.
+#
+# Nasceu de um caso real, 14/08/2026: "Açougue Carne Fresca" fica DENTRO do Fort
+# Atacadista, e a foto possível é a do atacadista inteiro, tirada da avenida a
+# 125 m. Sem este campo o modelo tinha duas saídas, ambas erradas — dizer que
+# não há comércio ali (há, e é grande), ou atribuir ao açougue o letreiro do
+# atacadista. Nomear a relação resolve as duas: o supervisor lê "está dentro
+# deste estabelecimento maior" e sabe exatamente o que foi visto.
+ENQUADRAMENTOS = [
+    "fachada_propria",                  # a loja dá para a rua e é ela na foto
+    "unidade_dentro_de_loja_maior",     # açougue/padaria/farmácia dentro de mercado
+    "unidade_em_predio_ou_galeria",     # sala, andar, box de galeria ou shopping
+    "unidade_em_condominio",            # dentro de condomínio residencial ou misto
+    "predio_visto_de_longe",            # é o prédio certo, mas distante demais
+    "alvo_nao_identificavel",           # a foto não permite dizer
+]
+
+PESSOAS_NA_IMAGEM = [
+    "nenhuma",
+    "pessoas_passando",
+    "pessoas_paradas_na_frente",
+    "grupo_ou_aglomeracao",
+    "fila_de_clientes",
+    "movimento_interno_visivel",
+]
+
 # O schema que vai para o `response_format` da OpenAI. Pequeno de proposito: o
 # schema completo da skill tem 16 blocos e 51 KB, e mandar isso a cada imagem
 # custa mais em token de contrato do que a propria leitura. O que falta e
@@ -117,7 +255,8 @@ def ENUM_SCHEMA(*caminho) -> list:
 SCHEMA_IA = {
     "type": "object", "additionalProperties": False,
     "required": ["triagem", "imagem", "enderecamento", "uso", "estrutura",
-                 "contagens", "medicao", "edificacao", "agua_esgoto", "observacoes"],
+                 "contagens", "medicao", "edificacao", "agua_esgoto",
+                 "classificacao", "observacoes"],
     "properties": {
         "triagem": {
             "type": "object", "additionalProperties": False,
@@ -289,7 +428,59 @@ SCHEMA_IA = {
                     "enum": LISTA("esgoto.lancamento_sarjeta_aparente") + [None]},
             },
         },
+        # ── CLASSIFICAÇÃO — o bloco pedido pelo usuário em 14/08/2026 ──────
+        # Continua sendo OBSERVAÇÃO: o que se vê, não o que se conclui. O juízo
+        # comercial (aprovar/reprovar/visitar e a nota) sai numa SEGUNDA
+        # chamada, `_julgar`, que não vê imagem nenhuma — é a separação que
+        # tornou o veredito confiável neste projeto, e misturá-la aqui faria o
+        # modelo classificar o imóvel já puxando para a resposta que ele quer
+        # dar no fim.
+        "classificacao": {
+            "type": "object", "additionalProperties": False,
+            "required": ["tipo_cliente", "habitacoes_distintas", "metodo_habitacoes",
+                         "tipo_via", "pessoas_na_imagem", "numero_na_parede",
+                         "enquadramento_alvo", "estabelecimento_maior",
+                         "evidencia_classificacao"],
+            "properties": {
+                "tipo_cliente": {"type": "string", "enum": TIPOS_CLIENTE},
+                "enquadramento_alvo": {"type": "string", "enum": ENQUADRAMENTOS},
+                # Quando o alvo está dentro de outro, QUAL é o de fora. É o dado
+                # que o supervisor precisa para saber o que ele vai encontrar
+                # quando chegar no endereço.
+                "estabelecimento_maior": {"type": ["string", "null"]},
+                "habitacoes_distintas": {"type": ["integer", "null"]},
+                "metodo_habitacoes": {"type": "array", "items": {
+                    "type": "string", "enum": METODOS_HABITACAO}},
+                "tipo_via": {"type": "string", "enum": TIPOS_VIA},
+                "pessoas_na_imagem": {"type": "string", "enum": PESSOAS_NA_IMAGEM},
+                # O número que estiver em QUALQUER parede visível. A comparação
+                # com o cadastro NÃO é feita aqui: o número cadastrado não entra
+                # no prompt, porque quando entrava o modelo devolvia ele de
+                # volta. Quem compara é `_numero_confere`, em código.
+                "numero_na_parede": {"type": ["string", "null"]},
+                "evidencia_classificacao": {"type": "string"},
+            },
+        },
         "observacoes": {"type": "string"},
+    },
+}
+
+
+# ── O juízo, em chamada separada ──────────────────────────────────────────
+# Recebe TEXTO: a leitura que a percepção produziu mais o que o cadastro e a
+# Receita dizem. Sem imagem, de propósito — quem olha a foto está ocupado
+# descrevendo, e quem julga precisa pesar descrição contra cadastro. Uma
+# chamada só faria as duas mal.
+_SCHEMA_VEREDITO = {
+    "type": "object", "additionalProperties": False,
+    "required": ["veredito", "nota_comercial", "justificativa", "fatores"],
+    "properties": {
+        "veredito": {"type": "string",
+                     "enum": ["aprova_comercial", "reprova", "recomenda_visita"]},
+        # 0 = com certeza NÃO é comercial · 10 = com certeza É
+        "nota_comercial": {"type": "integer"},
+        "justificativa": {"type": "string"},
+        "fatores": {"type": "array", "items": {"type": "string"}},
     },
 }
 
@@ -362,16 +553,162 @@ def _prompt_sistema() -> str:
         "dizer de que tamanho não reconstrói estrutura nenhuma. Se não consegue "
         "contar, use uma tipologia não vertical.\n\n"
         "A confiança é sua certeza de LEITURA, de 0 a 1. Seja severo: 0,9 é para o que "
-        "está nítido e inequívoco no pixel."
+        "está nítido e inequívoco no pixel.\n\n"
+        + _bloco_classificacao()
+    )
+
+
+def _bloco_classificacao() -> str:
+    """As sete perguntas de classificação, com a REGRA DE CONTAGEM escrita.
+
+    "Quantas habitações?" sem dizer como contar devolve número inventado — o
+    modelo escolhe um critério diferente a cada foto e ninguém consegue somar os
+    resultados depois. Aqui o critério é fixo e, mais importante, ele tem de
+    dizer qual usou em `metodo_habitacoes`.
+    """
+    return (
+        "CLASSIFICAÇÃO — responda também este bloco.\n\n"
+        f"tipo_cliente, um destes: {', '.join(TIPOS_CLIENTE)}.\n"
+        "  · ISTO É SOBRE A EDIFICAÇÃO NA FOTO, não sobre o que você imagina que "
+        "funcione ali. Casa térrea com cerca, jardim e nenhum letreiro é "
+        "moradia, ainda que alguém trabalhe dentro dela. Só é "
+        "`comercial_empresarial_industrial` se a construção for de comércio ou "
+        "indústria — vitrine, porta de aço, galpão, letreiro, balcão de "
+        "atendimento — ou se houver sinal comercial visível na fachada.\n"
+        "  · 'abandonada' exige sinal visível de abandono: mato alto na entrada, "
+        "vidro quebrado, tapume, porta lacrada, pichação sobre a entrada, telhado "
+        "caído. Casa fechada, cortina fechada ou sem carro NÃO é abandono.\n"
+        "  · 'luxo' exige dois ou mais: muro alto com acabamento, portão automático "
+        "de alumínio ou madeira nobre, guarita, jardim tratado, revestimento em "
+        "pedra ou porcelanato, esquadria ampla de vidro.\n"
+        "  · 'terreno_vazio' é lote sem edificação, mesmo com muro ou cerca.\n"
+        "  · 'construcao_em_curso' é obra: andaime, tapume de obra, alvenaria sem "
+        "reboco, laje exposta, entulho.\n"
+        "  · 'predio_multiandar' a partir de 3 pavimentos.\n\n"
+        "habitacoes_distintas — quantas moradias ou unidades independentes o imóvel "
+        "tem. REGRA DE CONTAGEM, na ordem; use a primeira que a foto permitir e "
+        "declare qual usou em metodo_habitacoes:\n"
+        "  1. Prédio: colunas verticais de janelas × pavimentos. Duas colunas num "
+        "prédio de 4 andares = 8 unidades. Ignore a janela da escada (a que sobe "
+        "escalonada, meia altura entre andares).\n"
+        "  2. Casas geminadas ou vila: conte PORTAS INDEPENDENTES que dão para a "
+        "rua. Duas portas lado a lado com números diferentes = 2 habitações. "
+        "Portão de garagem não conta como porta.\n"
+        "  3. Sem os dois: use medidores de energia, hidrômetros, caixas de "
+        "correio ou interfones — o MAIOR entre eles, nunca a soma.\n"
+        "  4. Casa térrea com uma porta social = 1.\n"
+        "  Se nada disso é visível, devolva null e 'nao_estimavel'.\n\n"
+        f"tipo_via, um destes: {', '.join(TIPOS_VIA)}. Olhe o piso da via: asfalto "
+        "contínuo, paralelepípedo (pedras justapostas), chão de terra ou cascalho. "
+        "Avenida tem duas pistas, canteiro central ou três ou mais faixas.\n\n"
+        "pessoas_na_imagem — há gente na foto? "
+        f"Um destes: {', '.join(PESSOAS_NA_IMAGEM)}. Fila ou grupo parado na frente "
+        "de um estabelecimento é sinal de atendimento ao público. NUNCA descreva "
+        "a pessoa, não diga sexo, idade, cor, roupa nem nada que identifique "
+        "alguém — só quantas e se estão paradas ali.\n\n"
+        "numero_na_parede — o número do imóvel que você consegue ler em QUALQUER "
+        "parede, muro ou portão visível na foto, transcrito literal. Se houver "
+        "mais de um, o que estiver na entrada principal. Se não houver, null.\n\n"
+        + _bloco_enquadramento() + "\n\n"
+        + _bloco_medidores()
+    )
+
+
+def _bloco_enquadramento() -> str:
+    """A foto nem sempre é da porta do alvo — e o modelo precisa poder dizer isso.
+
+    A captura vai até a via mais próxima e mira o ponto. Quando o ponto está
+    dentro de uma loja grande, de uma galeria ou de um condomínio, o que aparece
+    é o CONTINENTE, não o alvo. Sem um campo para nomear isso, o modelo era
+    empurrado para dois erros: negar o comércio que existe, ou colar no alvo o
+    letreiro do vizinho.
+    """
+    return (
+        "ONDE ESTÁ O ALVO NA FOTO — enquadramento_alvo, um destes:\n"
+        "  · fachada_propria — a loja dá para a rua e é ela que está na foto.\n"
+        "  · unidade_dentro_de_loja_maior — o alvo é um setor ou balcão DENTRO de "
+        "um estabelecimento maior: açougue, padaria, farmácia ou lotérica dentro "
+        "de supermercado ou atacadista, quiosque dentro de loja.\n"
+        "  · unidade_em_predio_ou_galeria — sala, andar, box ou loja de galeria, "
+        "centro comercial ou shopping. A foto mostra o prédio, não a porta do alvo.\n"
+        "  · unidade_em_condominio — dentro de condomínio residencial ou misto.\n"
+        "  · predio_visto_de_longe — é a edificação certa, mas distante demais "
+        "para distinguir a unidade.\n"
+        "  · alvo_nao_identificavel — a foto não permite dizer.\n\n"
+        "estabelecimento_maior — quando o alvo está DENTRO de outro, escreva o "
+        "nome do de fora, lido no letreiro (\"Fort Atacadista\", \"Galeria "
+        "Central\", \"Shopping Canoas\"). Se o alvo tem fachada própria, null.\n\n"
+        "REGRA QUE VALE MAIS QUE AS OUTRAS AQUI: quando o enquadramento não é "
+        "`fachada_propria`, DESCREVA O QUE ESTÁ NA FOTO — o prédio, o "
+        "atacadista, a galeria — e NÃO atribua ao alvo o letreiro, a atividade "
+        "ou o número do estabelecimento maior. Em `atividade_no_alvo` isso é "
+        "`em_vizinho` ou `indefinido`, nunca `no_alvo`. Um açougue dentro de um "
+        "atacadista não faz o atacadista virar açougue, e o contrário também "
+        "não: a placa do atacadista não é a placa do açougue.\n\n"
+        "E o inverso é igualmente errado: prédio comercial grande, atacadista ou "
+        "galeria NÃO é ausência de comércio. É comércio, e dos grandes — só que "
+        "a unidade específica não aparece. Marque `atividade_economica_aparente` "
+        "pelo que a foto mostra e deixe o enquadramento explicar o resto."
+    )
+
+
+def _bloco_medidores() -> str:
+    """O que é caixa de medidor — descrito, porque 'hidrômetro' não basta.
+
+    O modelo confunde as três coisas o tempo todo: chama de hidrômetro a caixa
+    de energia, e de padrão de energia o abrigo de gás. As três aparecem na
+    mesma fachada, a poucos palmos uma da outra, e a contagem de cada uma
+    responde a uma pergunta diferente do cadastro.
+    """
+    return (
+        "O QUE PROCURAR NA FACHADA — as três medições, que são coisas diferentes:\n\n"
+        "1. CAIXA DE MEDIÇÃO DE ÁGUA (hidrômetro / cavalete). Caixa BAIXA, quase "
+        "sempre no nível do chão ou até a altura do joelho, embutida no muro ou na "
+        "calçada. Tampa de plástico azul ou preta, ou tampa de concreto redonda, ou "
+        "nicho quadrado no muro com portinhola. Dentro há um relógio pequeno com "
+        "visor de números e um cano curvo (o cavalete). Em prédio e vila aparece "
+        "uma BATERIA: vários relógios lado a lado num mesmo abrigo — e isso é sinal "
+        "forte de várias unidades. Conte quantos relógios você vê.\n\n"
+        "2. CAIXA DE MEDIÇÃO DE ENERGIA (padrão de entrada). Caixa ALTA, na altura "
+        "do peito ou acima, cinza, branca ou metálica, presa ao muro ou a um poste "
+        "próprio, com um visor de vidro ou policarbonato onde se vê o medidor. Tem "
+        "um cabo aéreo ou um eletroduto rígido descendo até ela. Em prédio também "
+        "vira bateria — várias caixas juntas ou um quadro coletivo. Não confunda "
+        "com caixa de telefonia ou de internet, que é menor, sem visor e sem cabo "
+        "aéreo grosso.\n\n"
+        "3. ESGOTO. Não tem medidor. O que aparece é a CAIXA DE INSPEÇÃO: tampa "
+        "quadrada ou redonda de concreto no piso da calçada ou do recuo, rente ao "
+        "chão, sem relógio nenhum dentro. Sinal de FOSSA é tampa de concreto no "
+        "terreno, longe da rua, muitas vezes com respiro. Lançamento na sarjeta é "
+        "cano saindo do muro e despejando na calçada ou na guia.\n\n"
+        "Se você não distingue qual das três está vendo, diga 'nao_observavel' em "
+        "vez de escolher uma. Chutar entre água e energia estraga as duas contagens."
     )
 
 
 def _prompt_usuario(poi: dict, vinc: dict | None) -> str:
-    """O contexto do caso. O cadastro entra como REFERÊNCIA A CONFERIR, nunca como
-    resposta — dizer ao modelo que ali há 1 economia é convidá-lo a enxergar 1."""
-    p = [f"POI: {poi.get('nome') or '(sem nome)'}"]
-    if poi.get("categoria"):
-        p.append(f"Categoria no Maps: {poi['categoria']}")
+    """O que a leitura recebe — e é MUITO pouco de propósito.
+
+    NEM O NOME NEM A CATEGORIA DO POI ENTRAM AQUI.
+
+    Medido em 14/08/2026, nas 6 primeiras leituras com o bloco de classificação:
+    `tipo_cliente` voltou `comercial_empresarial_industrial` em **6 de 6**.
+    Duas delas — "Godoy Cuias / Atacadista" e "Estofaria Ester / Estofamento
+    automotivo" — são, na foto, casa simples com cerca de madeira e um terreno
+    com entulho. O modelo não classificou a imagem: classificou o nome que eu
+    dei. É o mesmo defeito já medido com o endereço, quando ele devolvia o
+    número que eu tinha escrito no prompt.
+
+    O que substitui o nome é ancoragem VERDADEIRA: a câmera foi apontada para o
+    ponto, então o alvo está no centro do quadro. Isso o modelo pode verificar
+    olhando; um nome, não.
+
+    O nome e a categoria continuam existindo — vão para o JUÍZO, em
+    `_resumo_para_juizo`, que é texto e onde pesar cadastro contra imagem é
+    exatamente o trabalho.
+    """
+    p = ["A câmera foi apontada para o ponto avaliado: ele está no CENTRO da "
+         "imagem. O que estiver nas bordas é vizinho."]
     # NEM o endereço do POI NEM o número do imóvel vinculado entram aqui, mesmo
     # com a ressalva de "confira se bate". Medido nas mesmas 5 fotos, tirando o
     # endereço do prompt o gpt-4o mudou 3 dos 5 números: 175 virou nenhum, 317
@@ -381,6 +718,22 @@ def _prompt_usuario(poi: dict, vinc: dict | None) -> str:
     # o modelo repetia, e o código declarava que batia — inflando a confiança do
     # achado com a minha própria informação. A comparação é feita em código, que
     # é onde ela sempre esteve; o modelo só precisa ler.
+    # DE QUE DISTÂNCIA A FOTO FOI TIRADA — e o que isso obriga.
+    #
+    # A captura vai até a via mais próxima e mira o ponto; quando o alvo está no
+    # meio da quadra ou dentro de uma loja grande, a câmera fica a 60, 100, 125
+    # metros. Sem esse número o modelo julga uma foto de 125 m com a régua de
+    # uma de 10 m: cobra placa que não se lê a essa distância, e conclui
+    # "nenhum sinal de comércio" quando o que houve foi falta de resolução.
+    d = poi.get("dist_camera_m")
+    if d is not None:
+        p.append(f"\nA foto foi tirada da via, a cerca de {d} m do ponto.")
+        if d > 40:
+            p.append(
+                "A essa distância NÃO SE COBRA leitura de número, de letreiro "
+                "pequeno nem de vitrine: o que não dá para ler vai como null com "
+                "motivo, e ausência de placa legível NÃO é ausência de comércio. "
+                "Descreva a edificação e o conjunto, que é o que a foto sustenta.")
     p.append("\nLeia a(s) imagem(ns) e devolva a observação no formato pedido.")
     return "\n".join(p)
 
@@ -388,7 +741,41 @@ def _prompt_usuario(poi: dict, vinc: dict | None) -> str:
 # ──────────────────────────────────────────────────────────────────────────
 # Banco
 # ──────────────────────────────────────────────────────────────────────────
+# Colunas que a versão atual exige. Serve de gabarito: se todas já existem, não
+# há DDL a fazer e a função sai antes de tentar.
+_COLS_ESPERADAS = frozenset((
+    "id", "poi_id", "modelo", "schema_versao", "status", "apta", "e_imovel",
+    "uso_observado", "tipologia", "unidades_fisicas", "ucs_energia", "hidrometros",
+    "economias_base", "gap_uc_economias", "numero_lido", "numero_confere",
+    "atividade_no_alvo", "confianca", "oportunidades", "anotacao", "validacao",
+    "tokens_in", "tokens_out", "custo_usd", "criado_em",
+    "estado_conservacao", "padrao_construtivo", "tipo_edificacao", "pavimentos",
+    "medicao_abrigo", "medicao_estado", "medicao_acesso", "medicao_posicao",
+    "medicao_coletiva", "medicao_desc", "energia_entrada",
+    "tipo_cliente", "habitacoes_distintas", "metodo_habitacoes", "tipo_via",
+    "pessoas_na_imagem", "numero_na_parede", "veredito_comercial",
+    "nota_comercial", "veredito_justificativa", "veredito_fatores"))
+
+
 def esquema(con):
+    """Cria a tabela na primeira vez; nas demais, não toca no banco.
+
+    DDL aqui é trabalho de quem é dono do schema — o worker. A API conecta como
+    `comercialradar_app`, que não tem CREATE, e chamava esta função também na
+    rota de *leitura* `/api/avaliar/estimativa`: o resultado era um 500 com
+    "permission denied for schema comercialradar" sobre uma tabela que já
+    existia, íntegra, com todas as colunas. Sair cedo quando não há nada a
+    migrar corrige o 500 sem afrouxar permissão nenhuma.
+    """
+    with con.cursor() as cur:
+        # `pg_attribute` pelo oid, e não `information_schema.columns` por nome:
+        # o nome casaria com uma tabela homônima de outro schema e a checagem
+        # aprovaria a tabela errada.
+        cur.execute("""SELECT a.attname FROM pg_attribute a
+                        WHERE a.attrelid = to_regclass('fachada_anotacao')
+                          AND a.attnum > 0 AND NOT a.attisdropped""")
+        if _COLS_ESPERADAS <= {c for (c,) in cur.fetchall()}:
+            return
     with con.cursor() as cur:
         cur.execute("""
             CREATE TABLE IF NOT EXISTS fachada_anotacao (
@@ -423,7 +810,14 @@ def esquema(con):
                           ("medicao_abrigo", "text"), ("medicao_estado", "text"),
                           ("medicao_acesso", "text"), ("medicao_posicao", "text"),
                           ("medicao_coletiva", "boolean"), ("medicao_desc", "text"),
-                          ("energia_entrada", "text")):
+                          ("energia_entrada", "text"),
+                          # classificação e veredito comercial (0011)
+                          ("tipo_cliente", "text"), ("habitacoes_distintas", "integer"),
+                          ("metodo_habitacoes", "text"), ("tipo_via", "text"),
+                          ("pessoas_na_imagem", "text"), ("numero_na_parede", "text"),
+                          ("veredito_comercial", "text"), ("nota_comercial", "smallint"),
+                          ("veredito_justificativa", "text"),
+                          ("veredito_fatores", "jsonb")):
             cur.execute(f"ALTER TABLE fachada_anotacao "
                         f"ADD COLUMN IF NOT EXISTS {col} {tipo}")
         cur.execute("""CREATE UNIQUE INDEX IF NOT EXISTS ix_fachada_poi
@@ -433,11 +827,92 @@ def esquema(con):
     con.commit()
 
 
-def carregar_alvos(poligono, limit: int, refazer: bool, con) -> list:
-    """POIs da área que têm fachada, com o vínculo do cadastro quando existir."""
+# QUEM JÁ É COMERCIAL NO CADASTRO NÃO PRECISA DE FOTO NEM DE IA.
+#
+# Regra do usuário, 14/08/2026: o cliente já cobra esse imóvel como comercial,
+# então não há reclassificação a propor — e capturar fachada e ler com IA custa
+# tempo e dinheiro para confirmar o que a base já diz. Fica como OPÇÃO porque
+# há quem queira o dossiê completo da carteira, inclusive do que já é comercial.
+SQL_JA_COMERCIAL = """EXISTS (SELECT 1 FROM cadastro_cliente c
+                               WHERE c.poi_id = p.id AND c.e_comercial)"""
+
+
+def panorama_da_area(poligono, con) -> dict:
+    """QUANTOS FICAM DE FORA, E POR QUÊ.
+
+    A avaliação só alcança POI que tem fachada capturada — é `JOIN
+    streetview_imgs` em `carregar_alvos`, e não uma escolha desta função. O
+    problema nunca foi o recorte: era ele ser INVISÍVEL. O processo anunciava
+    "POIs: 40 | Pendentes: 40" numa área de 254 e nada dizia que 200 sequer
+    tinham foto para ler. Quem olhava concluía, com razão, que a IA estava
+    pulando ponto.
+
+    Os quatro números abaixo fecham com o total: avaliáveis + sem panorama +
+    nunca capturados + já avaliados = POIs válidos da área.
+    """
     with con.cursor() as cur:
         cur.execute(f"""
-            SELECT p.id, p.nome, p.endereco, p.categoria,
+            SELECT COALESCE(p.maps_lat, p.lat_origem), COALESCE(p.maps_lng, p.lng_origem),
+                   EXISTS (SELECT 1 FROM streetview_imgs s
+                            WHERE s.poi_id = p.id AND s.angulo = 'facade'),
+                   COALESCE(p.streetview_path, '') = 'NA',
+                   EXISTS (SELECT 1 FROM fachada_anotacao a WHERE a.poi_id = p.id),
+                   {SQL_JA_COMERCIAL}
+              FROM pois p
+             WHERE p.match_valido IS NOT FALSE
+               AND COALESCE(p.maps_lat, p.lat_origem) IS NOT NULL""")
+        linhas = cur.fetchall()
+
+    d = {"validos": 0, "com_fachada": 0, "sem_panorama": 0,
+         "nunca_capturados": 0, "ja_avaliados": 0, "a_avaliar": 0,
+         "ja_comerciais": 0}
+    for la, lo, tem_fachada, sem_pano, avaliado, ja_com in linhas:
+        if poligono and not area_utils.ponto_no_poligono(la, lo, poligono):
+            continue
+        d["validos"] += 1
+        if avaliado:
+            d["ja_avaliados"] += 1
+        if ja_com:
+            # Fora da conta de trabalho por padrão — não some em `a_avaliar`.
+            d["ja_comerciais"] += 1
+        if tem_fachada:
+            d["com_fachada"] += 1
+            if not avaliado and not ja_com:
+                d["a_avaliar"] += 1
+        elif sem_pano:
+            d["sem_panorama"] += 1
+        else:
+            d["nunca_capturados"] += 1
+    return d
+
+
+def carregar_alvos(poligono, limit: int, refazer: bool, con,
+                   incluir_ja_comerciais: bool = False, ids: list | None = None) -> list:
+    """POIs da área que têm fachada, com o vínculo do cadastro quando existir.
+
+    Quem já é comercial no cadastro fica de fora por padrão — ver
+    `SQL_JA_COMERCIAL`. `incluir_ja_comerciais=True` traz a carteira inteira.
+
+    `ids` recorta POIs específicos e IGNORA os demais filtros de elegibilidade
+    (área, já-avaliado, já-comercial): quem pede um id já sabe qual quer. Serve
+    para reprocessar um ponto e para medir prompt sobre a mesma amostra — sem
+    isso, carregar 15 POIs custava varrer os 16 mil da área.
+    """
+    with con.cursor() as cur:
+        # DISTINCT ON (p.id) — UMA LINHA POR POI.
+        #
+        # Os três LEFT JOIN abaixo multiplicam: um POI com duas linhas em
+        # `cadastro_cliente` ou em `cnefe_coletiva` volta duas vezes, e a
+        # avaliação paga duas leituras da mesma fachada. Medido em 14/08/2026 na
+        # área de Canoas: 18.492 linhas para 12.819 POIs distintos — 5.673
+        # leituras repetidas, 44% de gasto que não descobria nada.
+        #
+        # `s.id DESC` no ORDER BY faz a escolha ser a fachada MAIS RECENTE
+        # quando há mais de uma; sem isso a captura nova seria ignorada em favor
+        # da antiga.
+        cur.execute(f"""
+            SELECT DISTINCT ON (p.id)
+                   p.id, p.nome, p.endereco, p.categoria,
                    COALESCE(p.maps_lat, p.lat_origem), COALESCE(p.maps_lng, p.lng_origem),
                    s.id, s.data_captura,
                    c.num_ligacao, c.numero, c.categoria, c.classe_esgoto,
@@ -445,7 +920,17 @@ def carregar_alvos(poligono, limit: int, refazer: bool, con) -> list:
                      + COALESCE(c.economias_ind,0) + COALESCE(c.economias_pub,0)
                      + COALESCE(c.economias_out,0),
                    k.coletiva_id, k.forma, k.veredito, k.qtd_observada,
-                   k.qtd_inferida, k.economias_cnefe, k.com_atividade, k.atividades
+                   k.qtd_inferida, k.economias_cnefe, k.com_atividade, k.atividades,
+                   -- DE QUE DISTÂNCIA A FOTO FOI TIRADA. `streetview_imgs.lat/lng`
+                   -- é a posição da CÂMERA; a do POI vem de `pois`. A conta é
+                   -- aproximada de propósito — grau para metro com o cosseno da
+                   -- latitude basta para dizer "10 m" ou "125 m", que é a única
+                   -- precisão que muda a leitura.
+                   CASE WHEN s.lat IS NULL THEN NULL ELSE round(sqrt(
+                     power((s.lat - COALESCE(p.maps_lat, p.lat_origem)) * 111320, 2) +
+                     power((s.lng - COALESCE(p.maps_lng, p.lng_origem)) * 111320 *
+                           cos(radians(COALESCE(p.maps_lat, p.lat_origem))), 2))::numeric,
+                     0) END
               FROM pois p
               JOIN streetview_imgs s ON s.poi_id = p.id AND s.angulo = 'facade'
               LEFT JOIN cadastro_cliente c ON c.poi_id = p.id
@@ -453,15 +938,18 @@ def carregar_alvos(poligono, limit: int, refazer: bool, con) -> list:
               LEFT JOIN cnefe_coletiva k ON k.poi_id = p.id
              WHERE p.match_valido IS NOT FALSE
                AND COALESCE(p.maps_lat, p.lat_origem) IS NOT NULL
-               {"" if refazer else
+               {"AND p.id = ANY(%s)" if ids else ""}
+               {"" if (ids or incluir_ja_comerciais) else f"AND NOT {SQL_JA_COMERCIAL}"}
+               {"" if (ids or refazer) else
                 "AND NOT EXISTS (SELECT 1 FROM fachada_anotacao a WHERE a.poi_id = p.id)"}
-             ORDER BY p.id""")
+             ORDER BY p.id, s.id DESC""", ([list(ids)] if ids else None))
         linhas = cur.fetchall()
 
     alvos = []
     for r in linhas:
         la, lo = r[4], r[5]
-        if poligono and not area_utils.ponto_no_poligono(la, lo, poligono):
+        # com `ids`, a área não filtra: o chamador nomeou o ponto que quer
+        if poligono and not ids and not area_utils.ponto_no_poligono(la, lo, poligono):
             continue
         vinc = None
         if r[8] or r[9]:
@@ -476,7 +964,8 @@ def carregar_alvos(poligono, limit: int, refazer: bool, con) -> list:
         alvos.append({"poi_id": r[0], "nome": r[1], "endereco": r[2],
                       "categoria": r[3], "lat": la, "lng": lo,
                       "sv_id": r[6], "sv_data": r[7], "vinculo": vinc,
-                      "coletiva": col})
+                      "coletiva": col,
+                      "dist_camera_m": int(r[21]) if r[21] is not None else None})
         if limit and len(alvos) >= limit:
             break
     return alvos
@@ -597,17 +1086,127 @@ def limpar_interface(dados: bytes) -> bytes:
     return saida.getvalue()
 
 
-def _imagens(poi_id: int, sv_id: int, con) -> list:
-    """Bytes da fachada. Uma imagem por chamada é o padrão: duas fotos de fachada
-    continuam sendo UMA fonte independente, então a segunda encarece sem mudar o
-    teto de confiança de nada.
+# Quantas FOTOS DO MAPS acompanham a fachada. O usuário pediu, em 14/08/2026,
+# que a leitura responda se "alguma das imagens, seja do googlemaps ou
+# streetview, mostra clientela ou pessoas agrupadas" — e movimento de cliente
+# aparece na foto do estabelecimento, não na fachada vazia da rua.
+#
+# O teto é diferente por modelo porque o limite é de contexto, não de gosto: com
+# o qwen2.5vl no i9, passar de duas imagens devolvia 400 em silêncio e o POI
+# sumia da conta. Na OpenAI o limite é o custo, e cada foto extra é ~1 k tokens.
+FOTOS_MAPS_LOCAL = 1
+FOTOS_MAPS_REMOTO = 2
+
+
+def _imagens(poi_id: int, sv_id: int, con, modelo: str = "") -> list:
+    """Bytes para a leitura: a fachada primeiro, depois fotos do Maps.
+
+    A fachada continua sendo a fonte principal e vem sempre em primeiro lugar —
+    é dela que saem número, medição e tipologia. As fotos do Maps entram para
+    responder o que a fachada não mostra: gente na porta, vitrine por dentro,
+    letreiro que o Street View pegou de lado.
 
     Os bytes vêm do Storage desde 12/08/2026; `imagens.py` cai para a coluna
     `dados` enquanto ela existir, o que mantém esta função funcionando nos dois
     mundos durante a troca."""
     import imagens
     b = imagens.streetview_por_id(sv_id, con)
-    return [limpar_interface(b)] if b else []
+    if not b:
+        return []
+    teto = FOTOS_MAPS_LOCAL if _e_local(modelo) else FOTOS_MAPS_REMOTO
+    fotos = imagens.fotos_do_poi(poi_id, con, limite=teto) or []
+    return [limpar_interface(b)] + [f for f in fotos if f][:teto]
+
+
+_EXEMPLOS_DIR = Path(__file__).parent / "exemplos_medidores"
+_EXEMPLOS_CACHE = None
+# Teto de exemplos por chamada. Está em 24 para caber o acervo inteiro que o
+# usuário montou: 19 recortes, 9 de água, 6 de energia e 4 de esgoto.
+#
+# A conta, medida e não estimada: em `detail: low` a OpenAI cobra ~85 tokens por
+# imagem, então 19 exemplos são ~1.600 tokens de referência por POI. Sobre os
+# 22,5 mil POIs de Canoas, no gpt-4o-mini, a diferença entre 6 e 19 exemplos é
+# de cerca de US$ 3,70 na cidade inteira — barato o bastante para não valer
+# escolher por nós quais variantes o modelo vê.
+#
+# O que ainda pesa e não é dinheiro: muita referência antes do alvo dilui a
+# atenção do modelo. Se as leituras começarem a hesitar ou a citar o exemplo em
+# vez da fachada, tirar arquivos da pasta é o primeiro ajuste.
+TETO_EXEMPLOS = 24
+
+
+def exemplos_medidores() -> list:
+    """Fotos de referência de caixa de água, de energia e de esgoto.
+
+    O usuário pediu que a IA receba EXEMPLOS, não só a descrição. Elas saem de
+    `exemplos_medidores/`, e o nome do arquivo é a legenda: `agua_*.jpg`,
+    `energia_*.jpg`, `esgoto_*.jpg`. Pasta vazia significa só a descrição —
+    nunca um exemplo inventado, que é o pior resultado possível aqui: o modelo
+    aprenderia a reconhecer a coisa errada e passaria a errar com confiança.
+
+    Só vai para modelo remoto. No qwen2.5vl do i9 o contexto já está no limite
+    com fachada + foto do Maps, e imagem a mais ali devolve 400 em silêncio.
+    """
+    global _EXEMPLOS_CACHE
+    if _EXEMPLOS_CACHE is not None:
+        return _EXEMPLOS_CACHE
+    _EXEMPLOS_CACHE = []
+    if not _EXEMPLOS_DIR.is_dir():
+        return _EXEMPLOS_CACHE
+    # Extensão livre: quem tira o print salva em .png, .jpeg ou .webp conforme o
+    # aparelho, e exigir .jpg faria a pasta parecer vazia sem dizer por quê.
+    arqs = sorted(a for a in _EXEMPLOS_DIR.iterdir()
+                  if a.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp"))
+    if len(arqs) > TETO_EXEMPLOS:
+        # Corte anunciado. Silencioso, ele daria a impressão de que os 12
+        # exemplos da pasta estão no prompt quando só 6 estão — e o efeito de um
+        # exemplo é justamente o que se está tentando medir.
+        print(f"   ⚠️ {len(arqs)} exemplos na pasta; só os {TETO_EXEMPLOS} primeiros "
+              f"em ordem alfabética vão no prompt. Os demais ficam de fora: "
+              f"{', '.join(a.name for a in arqs[TETO_EXEMPLOS:])}", flush=True)
+    for arq in arqs[:TETO_EXEMPLOS]:
+        partes = arq.stem.split("_")
+        rot = {"agua": "caixa de medição de ÁGUA (hidrômetro)",
+               "energia": "caixa de medição de ENERGIA (padrão de entrada)",
+               "esgoto": "caixa de inspeção de ESGOTO"}.get(partes[0].lower())
+        # O RESTO DO NOME VIRA LEGENDA. Com um acervo de variantes, dizer só
+        # "caixa de água" nove vezes desperdiça as nove: o que ensina é a
+        # diferença entre elas — cavalete, caixa embutida, caixa com telhado.
+        detalhe = " ".join(partes[1:]).strip()
+        if rot and detalhe:
+            rot = f"{rot} — {detalhe}"
+        if not rot:
+            print(f"   ⚠️ exemplo ignorado: {arq.name} — o nome precisa começar "
+                  f"com agua_, energia_ ou esgoto_", flush=True)
+            continue
+        try:
+            _EXEMPLOS_CACHE.append((rot, _normalizar_exemplo(arq.read_bytes())))
+        except OSError as e:
+            print(f"   ⚠️ não consegui ler {arq.name}: {e}", flush=True)
+    if _EXEMPLOS_CACHE:
+        print(f"   🧩 {len(_EXEMPLOS_CACHE)} exemplos de medidor vão junto do prompt",
+              flush=True)
+    return _EXEMPLOS_CACHE
+
+
+def _normalizar_exemplo(dados: bytes) -> bytes:
+    """JPEG de no máximo 768 px no maior lado.
+
+    Foto de celular tem 4 MB e 4000 px. Como o exemplo vai em TODA chamada, o
+    tamanho dele multiplica por dezenas de milhares de imagens — e a referência
+    não precisa de resolução: ela só mostra o formato da caixa. Também converte
+    PNG e WebP, que nem toda API aceita do mesmo jeito."""
+    try:
+        import io as _io
+        from PIL import Image
+        im = Image.open(_io.BytesIO(dados))
+        im = im.convert("RGB")
+        im.thumbnail((768, 768))
+        buf = _io.BytesIO()
+        im.save(buf, format="JPEG", quality=80)
+        return buf.getvalue()
+    except Exception:
+        return dados          # sem Pillow, vai como veio — melhor que não ir
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -1603,18 +2202,19 @@ async def _triagem_nitidez(imgs: list, modelo: str) -> tuple[bool, str]:
             "messages": [{"role": "user", "content": _PROMPT_NITIDEZ,
                           "images": [base64.b64encode(imgs[0]).decode()]}],
             "format": _SCHEMA_NITIDEZ,
-            "options": {"temperature": 0, "num_ctx": 4096},
+            "options": {"temperature": 0, "num_ctx": min(NUM_CTX, 8192),
+                        "num_predict": NUM_PREDICT},
         }).encode()
         req = urllib.request.Request(f"{OLLAMA_URL}/api/chat", data=corpo,
                                      headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=TIMEOUT_S) as r:
+        with urllib.request.urlopen(req, timeout=TIMEOUT_LOCAL_S) as r:
             return json.load(r)
 
     try:
         d = await asyncio.to_thread(_chamar)
         _USO["in"] += d.get("prompt_eval_count", 0)
         _USO["out"] += d.get("eval_count", 0)
-        n = json.loads(d["message"]["content"])
+        n = json.loads(_conteudo(d))
     except Exception:
         return True, ""            # triagem que falha não reprova a foto
     sim = sum(bool(n.get(k)) for k in ("ve_parede", "ve_abertura", "ve_limite_rua"))
@@ -1640,20 +2240,36 @@ async def _ler_ollama(alvo: dict, imgs: list, modelo: str) -> dict:
     import urllib.request
 
     def _chamar():
+        # Os exemplos vão numa mensagem PRÓPRIA, antes da do alvo. No caminho da
+        # OpenAI eles são separados por blocos de texto rotulados; aqui a
+        # separação é por mensagem, que é o equivalente do protocolo do Ollama —
+        # e serve ao mesmo fim: exemplo misturado às fotos do alvo é lido como
+        # se fosse do alvo, e o modelo conta o hidrômetro do exemplo na fachada
+        # do cliente.
+        msgs = [{"role": "system", "content": _prompt_sistema()}]
+        exemplos = exemplos_medidores() if EXEMPLOS_NO_LOCAL else []
+        for rot, dados in exemplos:
+            msgs.append({"role": "user",
+                         "content": f"EXEMPLO DE REFERÊNCIA — {rot}. "
+                                    f"Não é o imóvel avaliado.",
+                         "images": [base64.b64encode(dados).decode()]})
+        msgs.append({
+            "role": "user",
+            "content": (("AGORA O IMÓVEL AVALIADO.\n" if exemplos else "")
+                        + _prompt_usuario(alvo, alvo.get("vinculo"))
+                        + ("\n(A 1ª imagem é a fachada no Street View; a 2ª, se houver, "
+                           "é foto do estabelecimento no Google Maps.)" if len(imgs) > 1 else "")),
+            "images": [base64.b64encode(b).decode() for b in imgs]})
         corpo = json.dumps({
             "model": modelo, "stream": False, "think": False,
-            "messages": [
-                {"role": "system", "content": _prompt_sistema()},
-                {"role": "user",
-                 "content": _prompt_usuario(alvo, alvo.get("vinculo")),
-                 "images": [base64.b64encode(imgs[0]).decode()]},
-            ],
+            "messages": msgs,
             "format": SCHEMA_IA,
-            "options": {"temperature": 0, "num_ctx": 8192},
+            "options": {"temperature": 0, "num_ctx": NUM_CTX,
+                        "num_predict": NUM_PREDICT},
         }).encode()
         req = urllib.request.Request(f"{OLLAMA_URL}/api/chat", data=corpo,
                                      headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=TIMEOUT_S) as r:
+        with urllib.request.urlopen(req, timeout=TIMEOUT_LOCAL_S) as r:
             return json.load(r)
 
     apta, motivo = await _triagem_nitidez(imgs, modelo)
@@ -1661,7 +2277,7 @@ async def _ler_ollama(alvo: dict, imgs: list, modelo: str) -> dict:
     # tokens contam para o placar, mas não para o bolso: o preço local é 0
     _USO["in"] += d.get("prompt_eval_count", 0)
     _USO["out"] += d.get("eval_count", 0)
-    out = json.loads(d["message"]["content"])
+    out = json.loads(_conteudo(d))
     # a aptidão vem da triagem, não desta resposta: aqui o modelo tem 11 regras
     # na frente e reprova a foto citando a que mandava não reprovar
     out.setdefault("imagem", {})
@@ -1726,18 +2342,19 @@ async def _reler_numero(dados: bytes, modelo: str) -> list:
                                   "images": [base64.b64encode(x).decode()
                                              for x in recortes]}],
                     "format": _ESQ_NUMERO,
-                    "options": {"temperature": 0, "num_ctx": 8192},
+                    "options": {"temperature": 0, "num_ctx": NUM_CTX,
+                        "num_predict": NUM_PREDICT},
                 }).encode()
                 req = urllib.request.Request(
                     f"{OLLAMA_URL}/api/chat", data=corpo,
                     headers={"Content-Type": "application/json"})
-                with urllib.request.urlopen(req, timeout=TIMEOUT_S) as r:
+                with urllib.request.urlopen(req, timeout=TIMEOUT_LOCAL_S) as r:
                     return json.load(r)
 
             d = await asyncio.to_thread(_chamar)
             _USO["in"] += d.get("prompt_eval_count", 0)
             _USO["out"] += d.get("eval_count", 0)
-            saida = json.loads(d["message"]["content"])
+            saida = json.loads(_conteudo(d))
         else:
             conteudo = [{"type": "text", "text": _PROMPT_NUMERO}] + [
                 {"type": "image_url", "image_url": {
@@ -1798,13 +2415,27 @@ async def _ler_imagem(alvo: dict, imgs: list, modelo: str) -> dict | None:
     return None
 
 
+def _img_openai(dados: bytes, detalhe: str = "high") -> dict:
+    return {"type": "image_url",
+            "image_url": {"url": "data:image/jpeg;base64,"
+                                 + base64.b64encode(dados).decode(),
+                          "detail": detalhe}}
+
+
 async def _chamar_openai(alvo: dict, imgs: list, modelo: str) -> dict:
-    b64 = base64.b64encode(imgs[0]).decode()
-    conteudo = [
-        {"type": "text", "text": _prompt_usuario(alvo, alvo.get("vinculo"))},
-        {"type": "image_url",
-         "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "high"}},
-    ]
+    conteudo = [{"type": "text", "text": _prompt_usuario(alvo, alvo.get("vinculo"))}]
+    # REFERÊNCIA ANTES DO CASO, e rotulada. Exemplo solto no meio das fotos do
+    # alvo é lido como se fosse do alvo — o modelo passaria a contar o
+    # hidrômetro do exemplo na fachada do cliente.
+    for rot, dados in exemplos_medidores():
+        conteudo.append({"type": "text", "text": f"EXEMPLO DE REFERÊNCIA — {rot}. "
+                                                 f"Não é o imóvel avaliado."})
+        conteudo.append(_img_openai(dados, "low"))
+    conteudo.append({"type": "text", "text":
+                     "AGORA O IMÓVEL AVALIADO. A primeira imagem é a fachada "
+                     "(Street View); as seguintes, se houver, são fotos do "
+                     "estabelecimento no Google Maps."})
+    conteudo += [_img_openai(b) for b in imgs]
     resp = await _openai().chat.completions.create(
         model=modelo, temperature=0,
         messages=[{"role": "system", "content": _prompt_sistema()},
@@ -1818,6 +2449,212 @@ async def _chamar_openai(alvo: dict, imgs: list, modelo: str) -> dict:
     return json.loads(resp.choices[0].message.content)
 
 
+_PROMPT_JUIZO = (
+    "Você decide se um imóvel deve ser CADASTRADO COMO COMERCIAL numa "
+    "concessionária de saneamento. Você NÃO vê a foto: recebe a leitura que "
+    "outro avaliador fez dela, mais o que o cadastro e a Receita Federal dizem. "
+    "Pese as três fontes.\n\n"
+    "O QUE PESA MAIS — a hierarquia da evidência, nesta ordem:\n\n"
+    "1. A FACHADA, quando ela é forte E casa com o nome do POI. Letreiro com o "
+    "nome do estabelecimento, vitrine, porta de aço com identificação, "
+    "mercadoria exposta — e a linha 'o letreiro CASA com o nome do POI' dizendo "
+    "SIM. Isto é ver o comércio funcionando no endereço, e vale MAIS que "
+    "cadastro e que Receita: cadastro é o que o cliente registrou um dia, "
+    "Receita é onde a empresa se declarou, e os dois envelhecem. A foto é o "
+    "local. Com isso, `aprova_comercial` mesmo que o cadastro diga residencial "
+    "e mesmo que não haja CNPJ casado — a divergência do cadastro é justamente "
+    "o que se quer achar.\n"
+    "2. A fachada forte SEM casar com o nome — há comércio ali, mas talvez "
+    "outro. Sozinha, isso é `recomenda_visita`; com CNPJ ativo no endereço, "
+    "sustenta aprovação.\n"
+    "3. CNPJ ativo na Receita no endereço, sem sinal na fachada. Empresa aberta "
+    "não prova porta aberta: `recomenda_visita`.\n"
+    "4. O cadastro do cliente é REFERÊNCIA, nunca prova de ausência. 'Está como "
+    "residencial' é o ponto de partida do trabalho, não argumento contra.\n\n"
+    "veredito:\n"
+    "  · aprova_comercial — a evidência sustenta a mudança sozinha. O caminho "
+    "mais curto é o item 1 acima. Sem ele, exige sinal de atividade NO PRÓPRIO "
+    "IMÓVEL (não no vizinho) somado a uma confirmação independente: CNPJ ativo "
+    "no endereço, ou vitrine/mercadoria exposta.\n"
+    "  · recomenda_visita — há indício, mas ele não fecha: foto antiga, "
+    "atividade só no vizinho, CNPJ sem confirmação de endereço, porta de aço "
+    "baixada sem letreiro, imagem inapta.\n"
+    "  · reprova — o conjunto indica que ali NÃO há comércio: fachada "
+    "residencial sem qualquer sinal, terreno vazio, obra, imóvel abandonado.\n\n"
+    "nota_comercial, de 0 a 10: 0 é ter certeza de que NÃO é comercial, 10 é ter "
+    "certeza de que É. Use a faixa inteira; 5 é dúvida honesta. A nota tem de "
+    "ser coerente com o veredito — reprova não recebe 8, aprova não recebe 3.\n\n"
+    "fatores: liste em poucas palavras o que pesou, um item por evidência, "
+    "dizendo de onde veio (imagem, cadastro, Receita).\n"
+    "justificativa: uma frase. Não repita a lista.\n\n"
+    "Se o imóvel JÁ é comercial no cadastro, isto não é ganho — diga na "
+    "justificativa que a mudança não se aplica e dê a nota pelo que se observa.\n\n"
+    "A FOTO NEM SEMPRE É DA PORTA DO ALVO. Ela é tirada da via mais próxima, e "
+    "quando o ponto está dentro de uma loja grande, galeria ou condomínio, o que "
+    "aparece é o prédio de fora. Leia `onde o alvo está na foto` e a `distância "
+    "da câmera` antes de pesar a evidência visual:\n"
+    "  · `unidade_dentro_de_loja_maior` — o alvo é setor de um estabelecimento "
+    "maior. Aqui a atividade comercial do LOCAL está provada pela própria "
+    "existência da loja; o que a foto não diz é se o setor específico opera. "
+    "Não reprove por 'não vi letreiro do alvo'.\n"
+    "  · `unidade_em_predio_ou_galeria` / `unidade_em_condominio` — o prédio "
+    "aparece, a unidade não. Sem outra fonte que confirme a operação (CNPJ ativo "
+    "no endereço, letreiro do próprio alvo, telefone atendendo), isto é "
+    "`recomenda_visita`, não reprovação.\n"
+    "  · distância acima de 40 m — ausência de placa legível é limite da foto, "
+    "não prova de que não há comércio. Não use isso como fator contra."
+)
+
+
+_PALAVRAS_VAZIAS = frozenset(
+    "de da do das dos e o a os as em no na para com ltda me epp eirelli eireli "
+    "sa s/a cia com comercio comercial servicos servico industria industrial "
+    "loja lojas casa centro".split())
+
+
+def _tokens_nome(s: str) -> set:
+    """Palavras que IDENTIFICAM um nome, sem as que qualquer negócio tem.
+
+    "M. Keller Comércio e Serviços" e "Keller" têm de casar; "Comércio Silva" e
+    "Comércio Souza" não podem casar por causa de "comércio".
+    """
+    s = unicodedata.normalize("NFD", (s or "").lower())
+    s = "".join(c for c in s if unicodedata.category(c) != "Mn")
+    palavras = re.findall(r"[a-z0-9]+", s)
+    return {p for p in palavras if len(p) >= 3 and p not in _PALAVRAS_VAZIAS}
+
+
+def letreiro_casa(nome_poi: str, letreiro: str) -> bool | None:
+    """O letreiro lido na fachada é o do POI?
+
+    Comparação em CÓDIGO, não no modelo — mesma razão do número do imóvel: se a
+    pergunta "bate com o nome?" for feita ao modelo junto com o nome, ele
+    responde que sim. Aqui o modelo só transcreve o que leu na placa; quem
+    compara é esta função, que não tem como se convencer.
+
+    `None` quando não houve letreiro legível: ausência de placa não é
+    divergência, é falta de informação.
+    """
+    a, b = _tokens_nome(nome_poi), _tokens_nome(letreiro)
+    if not a or not b:
+        return None
+    return bool(a & b)
+
+
+def _resumo_para_juizo(alvo: dict, obs: dict) -> str:
+    """O que o juiz recebe. Texto, e só o que muda a decisão."""
+    c = obs.get("classificacao") or {}
+    t = obs.get("triagem") or {}
+    u = obs.get("uso") or {}
+    v = alvo.get("vinculo") or {}
+    linhas = [
+        f"POI: {alvo.get('nome') or '(sem nome)'}",
+        f"Categoria no Maps: {alvo.get('categoria') or '—'}",
+        "",
+        "LEITURA DA IMAGEM:",
+        f"  tipo de cliente: {c.get('tipo_cliente')}",
+        f"  habitações distintas: {c.get('habitacoes_distintas')} "
+        f"({', '.join(c.get('metodo_habitacoes') or []) or 'sem método'})",
+        f"  via: {c.get('tipo_via')}",
+        f"  pessoas na imagem: {c.get('pessoas_na_imagem')}",
+        f"  número lido na parede: {c.get('numero_na_parede') or 'nenhum'}",
+        f"  onde o alvo está na foto: {c.get('enquadramento_alvo')}"
+        + (f" — dentro de {c['estabelecimento_maior']}"
+           if c.get("estabelecimento_maior") else ""),
+        f"  distância da câmera ao ponto: "
+        + (f"{alvo['dist_camera_m']} m" if alvo.get("dist_camera_m") is not None
+           else "não registrada"),
+        f"  atividade econômica aparente: {t.get('atividade_economica_aparente')}",
+        f"  de quem é a atividade: {t.get('atividade_no_alvo')}",
+        f"  sinais: {', '.join(t.get('sinais_atividade_economica') or []) or 'nenhum'}",
+        f"  uso predominante: {u.get('uso_predominante')}",
+        f"  letreiro: {u.get('nome_estabelecimento_visivel') or 'nenhum'}"
+        f" · {u.get('atividade_letreiro') or ''}",
+        # A CONFERÊNCIA É FEITA EM CÓDIGO, e chega pronta. Perguntar ao modelo
+        # "o letreiro bate com o nome?" logo depois de lhe dar o nome é o mesmo
+        # erro do número do imóvel: ele responde que sim.
+        "  o letreiro CASA com o nome do POI: " + {
+            True: "SIM — é a prova mais forte que existe aqui",
+            False: "não — a placa é de outro estabelecimento",
+            None: "não houve letreiro legível",
+        }[letreiro_casa(alvo.get("nome"), u.get("nome_estabelecimento_visivel"))],
+        f"  situação na data: {u.get('situacao_na_data')}",
+        f"  imagem apta: {(obs.get('imagem') or {}).get('apta_para_leitura')}",
+    ]
+    if v:
+        linhas += ["", "CADASTRO DO CLIENTE:",
+                   f"  matrícula: {v.get('matricula')}",
+                   f"  categoria cadastrada: {v.get('categoria')}",
+                   f"  economias: {v.get('economias')}"]
+    else:
+        linhas += ["", "CADASTRO DO CLIENTE: sem imóvel casado (achado novo)."]
+    if alvo.get("cnpj"):
+        linhas += ["", "RECEITA FEDERAL:",
+                   f"  CNPJ no endereço: {alvo.get('cnpj')}",
+                   f"  CNAE: {alvo.get('cnae') or '—'}",
+                   f"  situação: {alvo.get('situacao_cadastral') or '—'}"]
+    else:
+        linhas += ["", "RECEITA FEDERAL: nenhum CNPJ casado com este endereço."]
+    return "\n".join(linhas)
+
+
+async def _julgar(alvo: dict, obs: dict, modelo: str) -> dict | None:
+    """Veredito comercial e nota de 0 a 10 — chamada própria, sem imagem.
+
+    Separada da leitura porque foi assim que o veredito virou confiável neste
+    projeto: quem descreve não decide, quem decide não olha o pixel. Junto, o
+    modelo escolhe o veredito primeiro e depois descreve a foto de um jeito que
+    o sustente.
+
+    Falha aqui NÃO derruba a anotação: a leitura já vale por si, e o supervisor
+    decide sem a nota se for preciso."""
+    texto = _resumo_para_juizo(alvo, obs)
+    try:
+        if _e_local(modelo):
+            import urllib.request
+
+            def _chamar():
+                corpo = json.dumps({
+                    "model": modelo, "stream": False, "think": False,
+                    "messages": [{"role": "system", "content": _PROMPT_JUIZO},
+                                 {"role": "user", "content": texto}],
+                    "format": _SCHEMA_VEREDITO,
+                    "options": {"temperature": 0, "num_ctx": min(NUM_CTX, 8192),
+                        "num_predict": NUM_PREDICT},
+                }).encode()
+                req = urllib.request.Request(f"{OLLAMA_URL}/api/chat", data=corpo,
+                                             headers={"Content-Type": "application/json"})
+                with urllib.request.urlopen(req, timeout=TIMEOUT_LOCAL_S) as r:
+                    return json.load(r)
+
+            d = await asyncio.to_thread(_chamar)
+            _USO["in"] += d.get("prompt_eval_count", 0)
+            _USO["out"] += d.get("eval_count", 0)
+            j = json.loads(_conteudo(d))
+        else:
+            resp = await _openai().chat.completions.create(
+                model=modelo, temperature=0,
+                messages=[{"role": "system", "content": _PROMPT_JUIZO},
+                          {"role": "user", "content": texto}],
+                response_format={"type": "json_schema", "json_schema": {
+                    "name": "veredito_comercial", "strict": True,
+                    "schema": _SCHEMA_VEREDITO}})
+            _USO["in"] += resp.usage.prompt_tokens
+            _USO["out"] += resp.usage.completion_tokens
+            j = json.loads(resp.choices[0].message.content)
+    except Exception as e:
+        print(f"   ⚠️ POI {alvo['poi_id']}: juízo comercial falhou "
+              f"({type(e).__name__}) — a leitura foi gravada sem nota", flush=True)
+        return None
+    # A nota vem do modelo e é o que ele mais erra de formato; prender aqui
+    # evita nota 87 no dossiê do cliente.
+    try:
+        j["nota_comercial"] = max(0, min(10, int(j.get("nota_comercial", 0))))
+    except (TypeError, ValueError):
+        j["nota_comercial"] = None
+    return j
+
+
 def gravar(alvo: dict, anot: dict, val: dict, modelo: str, con):
     tri = anot["triagem"]
     est = anot["estrutura_imovel"]
@@ -1827,6 +2664,9 @@ def gravar(alvo: dict, anot: dict, val: dict, modelo: str, con):
     atr = anot.get("atributos") or {}
     ed, agua, ene = (atr.get("edificacao") or {}, atr.get("agua") or {},
                      atr.get("energia") or {})
+
+    cls = anot.get("classificacao") or {}
+    jui = anot.get("veredito_comercial") or {}
 
     def _v(bloco, campo_):
         return (bloco.get(campo_) or {}).get("valor")
@@ -1845,9 +2685,13 @@ def gravar(alvo: dict, anot: dict, val: dict, modelo: str, con):
                 validacao, tokens_in, tokens_out, custo_usd,
                 estado_conservacao, padrao_construtivo, tipo_edificacao, pavimentos,
                 medicao_abrigo, medicao_estado, medicao_acesso, medicao_posicao,
-                medicao_coletiva, medicao_desc, energia_entrada)
+                medicao_coletiva, medicao_desc, energia_entrada,
+                tipo_cliente, habitacoes_distintas, metodo_habitacoes, tipo_via,
+                pessoas_na_imagem, numero_na_parede, veredito_comercial,
+                nota_comercial, veredito_justificativa, veredito_fatores)
             VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                    %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                    %s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             ON CONFLICT (poi_id) DO UPDATE SET
                 modelo=EXCLUDED.modelo, schema_versao=EXCLUDED.schema_versao,
                 status=EXCLUDED.status, apta=EXCLUDED.apta, e_imovel=EXCLUDED.e_imovel,
@@ -1868,7 +2712,17 @@ def gravar(alvo: dict, anot: dict, val: dict, modelo: str, con):
                 medicao_posicao=EXCLUDED.medicao_posicao,
                 medicao_coletiva=EXCLUDED.medicao_coletiva,
                 medicao_desc=EXCLUDED.medicao_desc,
-                energia_entrada=EXCLUDED.energia_entrada""",
+                energia_entrada=EXCLUDED.energia_entrada,
+                tipo_cliente=EXCLUDED.tipo_cliente,
+                habitacoes_distintas=EXCLUDED.habitacoes_distintas,
+                metodo_habitacoes=EXCLUDED.metodo_habitacoes,
+                tipo_via=EXCLUDED.tipo_via,
+                pessoas_na_imagem=EXCLUDED.pessoas_na_imagem,
+                numero_na_parede=EXCLUDED.numero_na_parede,
+                veredito_comercial=EXCLUDED.veredito_comercial,
+                nota_comercial=EXCLUDED.nota_comercial,
+                veredito_justificativa=EXCLUDED.veredito_justificativa,
+                veredito_fatores=EXCLUDED.veredito_fatores""",
             (alvo["poi_id"], modelo, SCHEMA_VERSAO, status,
              anot["imagem"]["apta_para_leitura"], tri["e_imovel"],
              ((anot["atributos"].get("uso") or {}).get("uso_predominante")
@@ -1892,7 +2746,17 @@ def gravar(alvo: dict, anot: dict, val: dict, modelo: str, con):
              _v(agua, "acessibilidade_medicao"), _v(agua, "posicao_medicao"),
              _v(agua, "hidrometro_presente") == "bateria_coletiva",
              (agua.get("hidrometro_presente") or {}).get("evidencia"),
-             _v(ene, "tipo_padrao_entrada")))
+             _v(ene, "tipo_padrao_entrada"),
+             # classificação e veredito: vêm crus da leitura e do juízo, sem
+             # passar pela máquina de `campo()` — são observação direta e
+             # decisão, não atributo derivado com evidência e regra.
+             cls.get("tipo_cliente"), cls.get("habitacoes_distintas"),
+             ", ".join(cls.get("metodo_habitacoes") or []) or None,
+             cls.get("tipo_via"), cls.get("pessoas_na_imagem"),
+             cls.get("numero_na_parede"),
+             jui.get("veredito"), jui.get("nota_comercial"),
+             jui.get("justificativa"),
+             json.dumps(jui.get("fatores") or [], ensure_ascii=False)))
     con.commit()
     return status
 
@@ -1920,13 +2784,15 @@ def estimar(n: int, modelo: str) -> dict:
             "horas": round(n / por_min / 60, 1)}
 
 
-async def run(area_path, limit, modelo, workers, refazer, teto_usd, so_estimar):
+async def run(area_path, limit, modelo, workers, refazer, teto_usd, so_estimar,
+              incluir_ja_comerciais=False):
     poligono = area_utils.carregar_area(area_path) if area_path else None
     cidade, uf = area_utils.municipio_da_area(poligono)
     con = bc.conectar()
     try:
         esquema(con)
-        alvos = carregar_alvos(poligono, limit, refazer, con)
+        pano = panorama_da_area(poligono, con)
+        alvos = carregar_alvos(poligono, limit, refazer, con, incluir_ja_comerciais)
     finally:
         con.close()
 
@@ -1934,6 +2800,19 @@ async def run(area_path, limit, modelo, workers, refazer, teto_usd, so_estimar):
     print(f"🔍 Avaliação de fachada | Área: {cidade or '?'}/{uf or '?'} | "
           f"modelo {modelo}", flush=True)
     print(f"POIs : {len(alvos)} | Pendentes: {len(alvos)}", flush=True)
+    # A CONTA QUE FECHA. Sem estas quatro linhas, "POIs: 40" numa área de 254
+    # parece a IA pulando ponto — quando 200 nunca tiveram fachada capturada.
+    print(f"   Universo da área     : {pano['validos']} POIs válidos", flush=True)
+    print(f"   ├─ com fachada       : {pano['com_fachada']}"
+          f" (destes, {pano['ja_avaliados']} já avaliados)", flush=True)
+    print(f"   ├─ sem panorama      : {pano['sem_panorama']}"
+          f" — o Street View não cobre a coordenada", flush=True)
+    print(f"   └─ nunca capturados  : {pano['nunca_capturados']}"
+          f" — rode o Street View neles antes", flush=True)
+    if pano["nunca_capturados"]:
+        print(f"   ⚠️ {pano['nunca_capturados']} POIs ficam de fora por falta de "
+              f"fachada. Se a Fase 4 rodou com 'só nos pobres' marcado, ela "
+              f"capturou apenas quem não tinha foto/telefone/avaliação.", flush=True)
     if est.get("local"):
         print(f"   LLM local no i9 ({OLLAMA_URL}) — custo US$ 0; "
               f"~{est['horas']} h de GPU", flush=True)
@@ -1952,7 +2831,8 @@ async def run(area_path, limit, modelo, workers, refazer, teto_usd, so_estimar):
 
     print("⟦fase⟧ fachada", flush=True)
     sem = asyncio.Semaphore(workers)
-    cont = {"n": 0, "ok": 0, "inapto": 0, "fora": 0, "reprov": 0, "erro": 0, "oport": 0}
+    cont = {"n": 0, "ok": 0, "inapto": 0, "fora": 0, "reprov": 0, "erro": 0,
+            "oport": 0, "sem_bytes": 0, "nao_tentados": 0}
     ini = time.time()
     lock = asyncio.Lock()
     parar = {"teto": False}
@@ -1961,15 +2841,33 @@ async def run(area_path, limit, modelo, workers, refazer, teto_usd, so_estimar):
     async def _um(alvo):
         async with sem:
             if parar["teto"]:
+                async with lock:
+                    cont["nao_tentados"] += 1
                 return
             con = bc.conectar()
             try:
-                imgs = _imagens(alvo["poi_id"], alvo["sv_id"], con)
+                imgs = _imagens(alvo["poi_id"], alvo["sv_id"], con, modelo)
                 if not imgs:
+                    # O `return` mudo daqui era o buraco mais difícil de ver: a
+                    # linha existe em `streetview_imgs`, mas os BYTES não vieram
+                    # — objeto ausente no Storage, ou a rede caiu, e
+                    # `imagens.baixar()` devolve None em silêncio para os dois.
+                    # O POI sumia da conta sem contador, sem log e sem anotação;
+                    # o resumo dizia "avaliados 40 de 92" e os 52 não tinham
+                    # explicação em lugar nenhum.
+                    async with lock:
+                        cont["sem_bytes"] += 1
+                    print(f"   ⚠️ POI {alvo['poi_id']}: fachada registrada mas sem "
+                          f"bytes (sv_id={alvo['sv_id']}) — Storage fora do ar ou "
+                          f"objeto ausente", flush=True)
                     return
                 try:
-                    obs = await asyncio.wait_for(_ler_imagem(alvo, imgs, modelo),
-                                                 timeout=TIMEOUT_S)
+                    # o teto de fora tem de acompanhar o de dentro: com modelo
+                    # local, 90 s aqui cancelaria a chamada que o Ollama ainda
+                    # está atendendo, e o POI voltaria à fila sem motivo
+                    obs = await asyncio.wait_for(
+                        _ler_imagem(alvo, imgs, modelo),
+                        timeout=TIMEOUT_LOCAL_S if _e_local(modelo) else TIMEOUT_S)
                 except Exception as e:
                     async with lock:
                         cont["erro"] += 1
@@ -1981,13 +2879,19 @@ async def run(area_path, limit, modelo, workers, refazer, teto_usd, so_estimar):
                 try:
                     await asyncio.wait_for(
                         _confirmar_divergencia(alvo, obs, imgs, modelo),
-                        timeout=TIMEOUT_S)
+                        timeout=TIMEOUT_LOCAL_S if _e_local(modelo) else TIMEOUT_S)
                 except Exception:
                     pass          # sem confirmação, a divergência não abre fila
                 data = _data_iso(alvo["sv_data"] or buscar_data_pano(
                     alvo["lat"], alvo["lng"], alvo["sv_id"], con))
                 anot = _expandir(obs, alvo, data, modelo)
                 val = validar(anot)
+                # DEPOIS de validar, nunca antes: o validador é o da skill de
+                # fachada e cobra o contrato dela. Classificação e veredito são
+                # deste sistema, e entrar no documento antes da validação faria
+                # a skill reprovar campo que ela não conhece.
+                anot["classificacao"] = obs.get("classificacao") or {}
+                anot["veredito_comercial"] = await _julgar(alvo, obs, modelo) or {}
                 status = gravar(alvo, anot, val, modelo, con)
             finally:
                 con.close()
@@ -2030,6 +2934,17 @@ async def run(area_path, limit, modelo, workers, refazer, teto_usd, so_estimar):
     print(f"   Fora de escopo       : {cont['fora']}")
     print(f"   Reprovados no gate   : {cont['reprov']}")
     print(f"   Erros de chamada     : {cont['erro']}")
+    # A diferença entre alvos e avaliados tem de ter nome. Sem estas duas
+    # linhas, o resumo fecha errado e ninguém sabe qual delas cobrar.
+    if cont["sem_bytes"]:
+        print(f"   Sem bytes no Storage : {cont['sem_bytes']} — nada foi lido "
+              f"nestes; rode de novo quando o Storage voltar")
+    if cont["nao_tentados"]:
+        print(f"   Não tentados (teto)  : {cont['nao_tentados']}")
+    falta = len(alvos) - cont["n"] - cont["sem_bytes"] - cont["nao_tentados"] - cont["erro"]
+    if falta:
+        print(f"   ⚠️ {falta} alvos sem desfecho registrado — isto é defeito, não "
+              f"resultado; me diga que eu investigo")
     print(f"   Oportunidades geradas: {cont['oport']}")
     print(f"   Custo                : US$ {custo_usd(modelo):.4f}")
     print(f"   Tempo                : {(time.time()-ini)/60:.1f} min")
@@ -2047,9 +2962,12 @@ def main():
     p.add_argument("--teto-usd", type=float, default=0.0,
                    help="para quando o gasto chegar aqui (0 = sem teto)")
     p.add_argument("--so-estimar", action="store_true")
+    p.add_argument("--incluir-ja-comerciais", action="store_true",
+                   help="tambem avalia quem ja e comercial no cadastro do cliente "
+                        "(por padrao esses ficam de fora: nao ha reclassificacao a propor)")
     a = p.parse_args()
     asyncio.run(run(a.area, a.limit, a.modelo, a.workers, a.refazer,
-                    a.teto_usd, a.so_estimar))
+                    a.teto_usd, a.so_estimar, a.incluir_ja_comerciais))
 
 
 if __name__ == "__main__":

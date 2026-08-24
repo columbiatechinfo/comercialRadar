@@ -21,18 +21,17 @@ import config
 
 
 def _conn():
-    import psycopg2
-    env = {}
-    for ln in (config.BASE_DIR / ".env").read_text(encoding="utf-8").splitlines():
-        ln = ln.strip()
-        if ln and not ln.startswith("#") and "=" in ln:
-            k, v = ln.split("=", 1)
-            env[k] = v.strip().strip('"')
-    return psycopg2.connect(
-        host=env.get("POSTGRES_HOST", "localhost"), port=env.get("POSTGRES_PORT", "5432"),
-        user=env["POSTGRES_USER"], password=env["POSTGRES_PASSWORD"],
-        dbname=env.get("POSTGRES_DB", "comercialradar"),
-    )
+    """A MESMA conexão do resto do sistema.
+
+    Este arquivo lia o `.env` por conta própria e montava a conexão com as
+    variáveis `POSTGRES_*`, que apontavam para o Postgres do notebook. Quando o
+    banco local foi aposentado (13/08/2026) ele passou a apontar para um banco
+    que não existe mais — e o sintoma seria um erro de conexão num script de
+    geração de mapa, longe da causa. Conexão duplicada é assim: ela não acompanha
+    a mudança porque ninguém lembra que ela existe.
+    """
+    import realtime_ingest
+    return realtime_ingest.conectar()
 
 
 def carregar_pois(fonte: str) -> list:

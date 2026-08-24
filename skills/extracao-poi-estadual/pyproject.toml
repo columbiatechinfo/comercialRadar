@@ -1,0 +1,21 @@
+[project]
+name = "extracao-poi-estadual"
+version = "3.6.1"
+description = "Extracao multifonte de POIs em escala estadual (Overture + OSM + Foursquare), tratada em PT-BR, com dedup por evidencia, manifesto de execucao, auditoria linha a linha e validacao semantica de entrega."
+requires-python = ">=3.10"
+dependencies = [
+  "pandas>=2.0",
+  "numpy>=1.24",
+  "geopandas>=0.14",
+  "shapely>=2.0",
+  "pyarrow>=14.0",
+  "duckdb>=0.10",
+  "rapidfuzz>=3.0",
+]
+
+[project.optional-dependencies]
+overture = ["overturemaps>=0.9"]
+dev = ["pytest>=7.4", "osmium>=3.6"]   # osmium: gera o .pbf do teste de relation
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -12,6 +12,7 @@ O que faz:
 """
 
 import asyncio
+import json
 import socket
 import subprocess
 import sys
@@ -23,32 +24,42 @@ ROTATE_ITEMS = 10
 MAX_PROXIES = 30
 PROXY_REUSE_COOLDOWN_SEC = 120
 
-WEBSHARE_API_URL = (
-    "https://proxy.webshare.io/api/v2/proxy/list/download/"
-    "vpaocfaptrnkwvsosapbyooavlfnqdhehzjopvxe/-/any/username/backbone/-/"
-    "?plan_id=13228096"
-)
+# A API v2 AUTENTICADA, com a chave do `.env`.
+#
+# Aqui havia um link de download com token fixo no código e `plan_id=13228096`.
+# Token e plano mudaram, o link virou 404, e toda pergunta no chat imprimia
+# "API Webshare falhou — usando cache local". Não era só barulho: o relay que
+# abre o Maps lê esta lista, e rodava sempre do cache em disco. Proxy removido
+# do plano continuava sendo tentado; IP novo nunca entrava.
+#
+# `backbone` é o modo certo para os relays: devolve os pontos de saída com
+# usuário rotativo (`ezesjygi-1`, `-2`, ...). O `mode=direct` traz os IPs
+# estáticos, que é o que o `proxy_pool` usa.
+WEBSHARE_LISTA = "proxy/list/?mode=backbone&page_size=100"
 
 
 def _carregar_proxies() -> list:
     try:
         import urllib.request
 
+        import config
+
+        if not getattr(config, "WEBSHARE_API_KEY", ""):
+            raise RuntimeError("WEBSHARE_API_KEY ausente no .env")
+
         req = urllib.request.Request(
-            WEBSHARE_API_URL,
-            headers={"User-Agent": "ComercialRadar/1.0"},
+            config.WEBSHARE_API_BASE + WEBSHARE_LISTA,
+            headers={"Authorization": f"Token {config.WEBSHARE_API_KEY}",
+                     "User-Agent": "ComercialRadar/1.0"},
         )
-        data = urllib.request.urlopen(req, timeout=10).read().decode("utf-8")
+        dados = json.loads(urllib.request.urlopen(req, timeout=20).read())
+
         proxies = []
-
-        for linha in data.splitlines():
-            linha = linha.strip()
-            if not linha:
-                continue
-
-            partes = linha.split(":")
-            if len(partes) == 4:
-                proxies.append((partes[0], int(partes[1]), partes[2], partes[3]))
+        for r in dados.get("results", []):
+            if not r.get("valid", True):
+                continue          # proxy morto no plano não entra na rotação
+            proxies.append((r["proxy_address"], int(r["port"]),
+                            r.get("username", ""), r.get("password", "")))
 
         if proxies:
             print(f"   🌐 {len(proxies)} proxies carregados da API Webshare")
@@ -78,7 +89,12 @@ def _carregar_proxies() -> list:
             print(f"   🌐 {len(proxies)} proxies carregados do cache local")
             return proxies
 
-    return [("p.webshare.io", 80, f"ezesjygi-{i}", "m8ymuaquh5r1") for i in range(1, 101)]
+    # Aqui havia uma lista com a SENHA escrita no código. Segredo em fonte é
+    # segredo que vaza no primeiro `git push` e que ninguém lembra de trocar.
+    # Sem chave e sem cache, o certo é falhar dizendo o que falta.
+    raise RuntimeError(
+        "sem proxies: a API Webshare não respondeu e não há "
+        "Webshare_100_proxies.txt em cache. Confira WEBSHARE_API_KEY no .env.")
 
 
 PROXIES = _carregar_proxies()

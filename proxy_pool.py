@@ -215,11 +215,14 @@ class ProxyPool:
     @staticmethod
     def to_playwright(proxy: Dict) -> Dict:
         """Formato aceito por new_context(proxy=...) / launch_persistent_context."""
-        return {
-            "server": proxy["server"],
-            "username": proxy["username"],
-            "password": proxy["password"],
-        }
+        # Credencial só entra se existir. Proxy de RELAY vem sem usuário — e
+        # mandar usuário vazio ao Chromium ainda o joga no caminho de proxy
+        # autenticado, que é o que pendura o google.com por 35 s.
+        cfg = {"server": proxy["server"]}
+        if proxy.get("username"):
+            cfg["username"] = proxy["username"]
+            cfg["password"] = proxy.get("password", "")
+        return cfg
 
     @property
     def total(self) -> int:

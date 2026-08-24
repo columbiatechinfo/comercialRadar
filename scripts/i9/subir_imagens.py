@@ -1,6 +1,15 @@
 # -*- coding: utf-8 -*-
 """Sobe os bytes de imagem do Postgres local para o Storage da pilha no i9.
 
+CUMPRIDO E APOSENTADO — 13/08/2026. Este script leu a coluna `dados` do Postgres
+do notebook, e esse banco não existe mais: foram 71.917 imagens conferidas uma a
+uma contra o Storage antes do `DROP DATABASE`. Rodá-lo hoje só produz erro de
+conexão. Fica no repositório como registro de COMO a migração foi feita, não como
+ferramenta — quem gravar imagem nova usa `imagens.gravar_streetview` /
+`imagens.gravar_foto`, que já escrevem direto no Storage.
+
+O desenho original, para quem precisar repetir a manobra em outra ferramenta:
+
 São 72 mil objetos e 6,3 GB. Duas coisas mandam no desenho:
 
 1. **Retomável.** Linha que já tem `storage_path` no i9 é pulada. Uma queda no

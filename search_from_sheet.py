@@ -130,7 +130,20 @@ def nome_match(a: str, b: str, dist) -> tuple[bool, float]:
     if dist is not None and dist > 20000:
         return False, ra
 
-    if ra >= 0.72:
+    # SEM DISTÂNCIA, a barra sobe. Este é o buraco que deixou passar 73 POIs até
+    # 13/08/2026, e ele estava no `is not None` acima: quando a distância é
+    # desconhecida, o portão simplesmente não roda, e a similaridade decidia
+    # sozinha. Medido nos casos reais que escaparam:
+    #
+    #   'Colegio diocesano- quadra'  →  'Colégio Diocesano São Francisco'   0,76
+    #   'Teresina Shopping - NÃO EXISTE' → 'Teresina Shopping'              0,76
+    #   'ESF João XXIII'             →  'UBS PSF João XXIII' (outro estado) 0,81
+    #
+    # Os três passariam de novo por 0,72. Com a distância conhecida, os três são
+    # recusados — o problema nunca foi o limiar, foi decidir sem a coordenada.
+    # Não dá para distinguir homônimo de verdadeiro sem saber onde ele está,
+    # então só nome praticamente idêntico passa às cegas.
+    if ra >= (0.72 if dist is not None else 0.90):
         return True, ra
 
     ta, tb = _tokens(a), _tokens(b)
@@ -312,7 +325,8 @@ async def _abrir_url_e_extrair(sess, url):
         return None
 
 
-async def buscar_linha(sess, item, cidade, sessao_nome, target_uf=None, recuperar=False) -> dict:
+async def buscar_linha(sess, item, cidade, sessao_nome, target_uf=None,
+                       recuperar=False, manter_divergente=False) -> dict:
     page = sess.page
     nome_in = item["nome"]
     endereco_in = item.get("endereco", "")
@@ -370,7 +384,9 @@ async def buscar_linha(sess, item, cidade, sessao_nome, target_uf=None, recupera
             registro.update({
                 "nome": poi_ok.get("nome", ""), "categoria": poi_ok.get("categoria", ""),
                 "endereco": poi_ok.get("endereco", ""), "telefone": poi_ok.get("telefone", ""),
-                "website": poi_ok.get("website", ""), "avaliacao": poi_ok.get("avaliacao", ""),
+                "website": poi_ok.get("website", ""),
+                "website_url": poi_ok.get("website_url", ""),
+                "avaliacao": poi_ok.get("avaliacao", ""),
                 "total_avaliacoes": poi_ok.get("total_avaliacoes", 0), "plus_code": poi_ok.get("plus_code", ""),
                 "status_horario": poi_ok.get("status_horario", ""),
                 "maps_lat": poi_ok.get("maps_lat"), "maps_lng": poi_ok.get("maps_lng"),
@@ -424,6 +440,48 @@ async def buscar_linha(sess, item, cidade, sessao_nome, target_uf=None, recupera
             registro.update({"status": "encontrado_divergente", "nome": poi.get("nome", ""),
                              "similaridade": round(sim, 3),
                              "distancia_m": round(dist, 1) if dist is not None else None})
+            # No pipeline o dado divergente é descartado de propósito: entrar
+            # calado no banco cria POI errado que ninguém revisa. No chat quem
+            # lê é uma pessoa, e comparar "Atacadao Bela Vista" com "Atacadão -
+            # Teresina Bela Vista" é trivial para ela e impossível para o código
+            # sem coordenada. Então o dado vai junto, com o aviso colado.
+            if manter_divergente:
+                # ENRIQUECER TAMBÉM AQUI. Sem isto, o divergente trazia só o que
+                # o painel mostra de cara — endereço e telefone — e vinha SEM
+                # horário, site, avaliações e fotos, que dependem de abrir as
+                # abas. Medido no BussBier de Canoas:
+                #
+                #   pedido "Bussbier Cerveja Artesanal"  divergente  horarios {}
+                #   pedido "BussBier Chopp Para Festas"  ok          horarios cheios
+                #
+                # É o MESMO lugar, o mesmo painel. A única diferença era o nome
+                # pedido cair abaixo do limiar — e o usuário recebia metade dos
+                # campos por causa disso. Já que o dado vai ser entregue com
+                # aviso, vai inteiro.
+                try:
+                    poi = await enriquecer_poi(sess, poi)
+                except Exception:
+                    pass      # enriquecimento é bônus; nunca derruba o que já há
+                registro.update({
+                    "endereco": poi.get("endereco", ""),
+                    "telefone": poi.get("telefone", ""),
+                    "website": poi.get("website", ""),
+                    "website_url": poi.get("website_url", ""),
+                    "categoria": poi.get("categoria", ""),
+                    "avaliacao": poi.get("avaliacao", ""),
+                    "total_avaliacoes": poi.get("total_avaliacoes", 0),
+                    "horarios": poi.get("horarios", {}),
+                    "status_horario": poi.get("status_horario", ""),
+                    "plus_code": poi.get("plus_code", ""),
+                    "fotos": poi.get("fotos", []),
+                    "comentarios": poi.get("comentarios", []),
+                    "maps_lat": poi.get("maps_lat"), "maps_lng": poi.get("maps_lng"),
+                    "maps_url": poi.get("maps_url", ""),
+                    "nome_pedido": nome_in,
+                    "aviso": (f"o Maps abriu '{poi.get('nome','')}' para o pedido "
+                              f"'{nome_in}' (semelhança {round(sim, 3)}). Confira "
+                              f"se é o mesmo estabelecimento antes de usar."),
+                })
             await _recuperar()
             return registro
 
@@ -612,20 +670,32 @@ async def run(sheet_path: Path, n_workers: int, cidade: str, usar_proxy: bool, l
 
 
 def _place_ids_no_banco() -> set:
+    """Quem já está no banco, para não pagar busca de novo.
+
+    Duas coisas mudaram aqui em 13/08/2026, e a segunda é a que importa:
+
+    1. A conexão era montada aqui, lendo o `.env` na mão e apontando para as
+       variáveis `POSTGRES_*` — o Postgres do notebook, que foi aposentado.
+    2. O `except` devolvia CONJUNTO VAZIO. Vazio não significa "não sei", mas
+       "nenhum destes já existe": com o banco fora do ar, a planilha inteira
+       parecia nova, cada linha voltava a ser buscada na API paga do Maps e o
+       resultado entrava como POI duplicado. Uma falha de conexão vazando como
+       gasto e como duplicata, sem uma linha de erro.
+
+    Agora a conexão é a do resto do sistema e a falha APARECE. Continua sem
+    derrubar a execução — a busca funciona sem esta otimização — mas quem estiver
+    olhando fica sabendo que ela custou caro.
+    """
     try:
-        import psycopg2
-        env = {}
-        for ln in (config.BASE_DIR / ".env").read_text(encoding="utf-8").splitlines():
-            ln = ln.strip()
-            if ln and not ln.startswith("#") and "=" in ln:
-                k, v = ln.split("=", 1); env[k] = v.strip().strip('"')
-        c = psycopg2.connect(host=env.get("POSTGRES_HOST", "localhost"), port=env.get("POSTGRES_PORT", "5432"),
-                             user=env["POSTGRES_USER"], password=env["POSTGRES_PASSWORD"],
-                             dbname=env.get("POSTGRES_DB", "comercialradar"))
-        cur = c.cursor(); cur.execute("SELECT place_id FROM pois WHERE place_id IS NOT NULL")
-        ids = {r[0] for r in cur.fetchall()}; c.close()
-        return ids
-    except Exception:
+        import realtime_ingest
+        with realtime_ingest.conectar() as c:
+            with c.cursor() as cur:
+                cur.execute("SELECT place_id FROM pois WHERE place_id IS NOT NULL")
+                return {r[0] for r in cur.fetchall()}
+    except Exception as e:
+        print(f"  [aviso] não consegui ler os place_id já gravados ({str(e).strip()[:90]}). "
+              f"A busca vai seguir SEM deduplicar — o que já está no banco será "
+              f"buscado de novo, na API paga.", flush=True)
         return set()
 
 

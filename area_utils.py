@@ -22,6 +22,28 @@ AREA_PADRAO = "area_atual"
 
 
 def _esquema(cur):
+    """Cria a tabela na primeira execução — e desiste em silêncio se não puder.
+
+    `CREATE TABLE IF NOT EXISTS` exige CREATE no schema. O worker do pipeline
+    tem; o papel da APLICAÇÃO não tem, e não deve ter. Antes de 13/08/2026 isto
+    era chamado a cada LEITURA, dentro de um `try` que devolvia `None` em
+    qualquer falha: para todo usuário logado, a área de trabalho simplesmente
+    não existia. A tela dizia "Nenhuma área definida — desenhe o polígono", o
+    mapa abria no lugar errado e nenhum marcador aparecia — com 22 mil POIs
+    gravados e a área salva no banco.
+
+    O engano é fácil de repetir: a exceção era de PERMISSÃO, num CREATE que nem
+    precisava acontecer, escondida por um `except` que tratava tudo como
+    "não achei".
+    """
+    # PERGUNTA antes de tentar. Não é otimização: a primeira versão desta
+    # correção usava try/except com `rollback()`, e o rollback DESFAZIA o
+    # `set_config('app.tenant_id')` que a conexão do usuário tinha acabado de
+    # declarar — a RLS passava a negar tudo e a área sumia de novo, agora por
+    # outro motivo. Consultar o catálogo não mexe na transação.
+    cur.execute("select to_regclass('comercialradar.area_trabalho')")
+    if cur.fetchone()[0] is not None:
+        return
     cur.execute("""CREATE TABLE IF NOT EXISTS area_trabalho (
                      nome      text PRIMARY KEY,
                      polygon   jsonb NOT NULL,     -- [[lat, lng], ...]
@@ -40,9 +62,15 @@ def salvar_area(poligono, nome: str = AREA_PADRAO) -> int:
                 con.commit()
                 return 0
             pol = [[float(a), float(b)] for a, b in poligono]
+            # `ON CONFLICT (tenant_id, nome)`: a chave passou a ser por empresa
+            # em 13/08/2026. Com `(nome)` sozinho, a segunda empresa a desenhar
+            # sobrescrevia a área da primeira — que ela nem enxerga, porque a
+            # RLS esconde a linha mas a unicidade vale sobre a tabela inteira.
+            # `tenant_id` não aparece no INSERT de propósito: quem o preenche é
+            # a trigger, a partir da mesma variável de sessão que a RLS lê.
             cur.execute("""INSERT INTO area_trabalho (nome, polygon, salvo_em)
                            VALUES (%s, %s, now())
-                           ON CONFLICT (nome) DO UPDATE
+                           ON CONFLICT (tenant_id, nome) DO UPDATE
                              SET polygon = EXCLUDED.polygon, salvo_em = now()""",
                         (nome, json.dumps(pol)))
         con.commit()
@@ -85,13 +113,26 @@ def carregar_area(ref=AREA_PADRAO) -> list | None:
     try:
         with con.cursor() as cur:
             _esquema(cur)
-            con.commit()
+            # SEM `con.commit()` aqui. Ele existia para fechar o CREATE TABLE, e
+            # passou a ser destrutivo quando a conexão virou a do usuário: o
+            # `app.tenant_id` é declarado com `set_config(..., true)`, que é
+            # LOCAL À TRANSAÇÃO. Commitar apagava o tenant, e o SELECT logo
+            # abaixo rodava sem identidade — a RLS negava, `carregar_area`
+            # devolvia None e a tela dizia "nenhuma área definida", com a área
+            # salva no banco e visível para o worker.
+            #
+            # Nada aqui precisa de commit: é leitura.
             cur.execute("SELECT polygon FROM area_trabalho WHERE nome=%s", (str(ref),))
             r = cur.fetchone()
         if not r or not r[0] or len(r[0]) < 3:
             return None
         return [[float(a), float(b)] for a, b in r[0]]
-    except Exception:
+    except Exception as e:
+        # Falar. O silêncio aqui custou uma sessão inteira de diagnóstico: a
+        # área sumia para todo usuário logado e o sintoma aparecia três telas
+        # adiante, como "nenhum POI no mapa".
+        print(f"  [area] não consegui ler '{ref}': {type(e).__name__}: "
+              f"{str(e).splitlines()[0][:110]}", flush=True)
         return None
     finally:
         con.close()

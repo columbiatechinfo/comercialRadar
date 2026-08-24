@@ -117,11 +117,17 @@ def gravar_streetview(poi_id: int, dados: bytes, lat, lng, con,
     with con.cursor() as cur:
         cur.execute("DELETE FROM streetview_imgs WHERE poi_id=%s AND angulo=%s",
                     (poi_id, angulo))
+        # `lat/lng` e o ALVO; `cam_*`, `heading` e `fov` sao a CAMERA (0012).
+        # Sem a camera nao ha rumo, e sem rumo nao se projeta coordenada nenhuma
+        # na imagem — foi o que impediu marcar os vizinhos do CNEFE na fachada.
         cur.execute("""INSERT INTO streetview_imgs (poi_id, bytes_tam, lat, lng, angulo,
-                                                    data_captura, pano_id)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
+                                                    data_captura, pano_id,
+                                                    cam_lat, cam_lng, heading, fov)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
                     (poi_id, len(dados), lat, lng, angulo,
-                     extra.get("data_captura"), extra.get("pano_id")))
+                     extra.get("data_captura"), extra.get("pano_id"),
+                     extra.get("cam_lat"), extra.get("cam_lng"),
+                     extra.get("heading"), extra.get("fov")))
         sv_id = cur.fetchone()[0]
         caminho = f"fachada/{sv_id % 100:02d}/{sv_id}.jpg"
         if not enviar(caminho, dados):
@@ -161,3 +167,29 @@ def streetview_do_poi(poi_id: int, con, angulo: str = "facade", limite: int = 1)
 
 def fotos_do_poi(poi_id: int, con, limite: int = 4) -> list:
     return _buscar(con, "images_urls", "poi_id = %s order by id", (poi_id,), limite)
+
+
+def fotos_do_poi_com_id(poi_id: int, con, limite: int = 4) -> list:
+    """As fotos do Maps com o `id` e a DATA colados nos bytes.
+
+    Existe porque `fotos_do_poi` devolve só a lista de bytes e DESCARTA em
+    silêncio a linha cuja imagem não abre (ver `_buscar`). Quem casava essa
+    lista com as datas por posição — `zip(bytes, datas)` — recebia a data da
+    foto 1 grudada nos bytes da foto 2 assim que uma falhasse, sem erro nenhum.
+
+    Isso não é detalhe cosmético: a leitura de fachada pesa cada foto pela
+    IDADE dela em relação à data do Street View. Data trocada é peso trocado, e
+    o veredito muda sem que nada acuse.
+    """
+    with con.cursor() as cur:
+        cur.execute(f"""select id, data_imagem, storage_path
+                              {", dados" if _tem_coluna(con, "images_urls", "dados") else ""}
+                          from images_urls where poi_id = %s
+                         order by id limit {int(limite)}""", (poi_id,))
+        linhas = cur.fetchall()
+    saida = []
+    for r in linhas:
+        b = _de_linha(r[2], r[3] if len(r) > 3 else None)
+        if b:
+            saida.append({"id": r[0], "data": r[1] or "sem data", "b": b})
+    return saida

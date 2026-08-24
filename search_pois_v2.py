@@ -101,6 +101,16 @@ async def extract_panel(page) -> dict:
         data["website"] = await page.locator('a[data-item-id="authority"] div.Io6YTe').inner_text(timeout=3000)
     except Exception:
         data["website"] = ""
+    # O TEXTO DO LINK E TRUNCADO PELO GOOGLE ao dominio: uma loja cujo site e o
+    # Instagram aparecia como "instagram.com", sem o usuario. O `href` tem a URL
+    # inteira. Sem ele, o handle so podia ser adivinhado a partir do nome — e
+    # adivinhar handle e como adivinhar CNPJ.
+    try:
+        data["website_url"] = await page.locator(
+            'a[data-item-id="authority"]').first.get_attribute(
+                "href", timeout=3000) or ""
+    except Exception:
+        data["website_url"] = ""
     try:
         data["status_horario"] = await page.locator("span.ZDu9vd span").first.inner_text(timeout=3000)
     except Exception:
