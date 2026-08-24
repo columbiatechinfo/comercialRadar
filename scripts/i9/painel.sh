@@ -107,7 +107,13 @@ subir() {
     echo "▶ subindo o painel em 127.0.0.1:$PORTA_APP"
     # `nohup` + `setsid`: a sessão SSH fecha assim que o comando volta, e sem
     # isso o painel morreria junto — o modo de falha é achar que subiu.
-    PYTHONUTF8=1 PYTHONUNBUFFERED=1 CR_HOST=127.0.0.1 CR_PORTA="$PORTA_APP" \
+    # `env` e não prefixo de atribuição: o bash reconhece `VAR=x cmd` na ANÁLISE,
+    # antes de expandir — então `${EMPRESA:+CR_TENANT_ID=...}` não vira
+    # atribuição, vira NOME DE COMANDO. O erro é
+    # `CR_TENANT_ID=5944…: command not found`, e o painel simplesmente não sobe.
+    # Com `env`, as atribuições são argumentos, e a expansão condicional
+    # funciona: sem empresa, nenhum argumento é passado e vale o do `.env`.
+    env PYTHONUTF8=1 PYTHONUNBUFFERED=1 CR_HOST=127.0.0.1 CR_PORTA="$PORTA_APP" \
       MAPS_SESSOES="$SESSOES" ${EMPRESA:+CR_TENANT_ID="$EMPRESA"} \
       setsid nohup ./.venv/bin/python server.py >> "$LOG" 2>&1 &
     echo $! > "$PID"
