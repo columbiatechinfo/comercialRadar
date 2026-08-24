@@ -76,13 +76,19 @@ _caddyfile() {
 
 :$PORTA_TLS {
 	tls /certs/radar.crt /certs/radar.key
-	# `127.0.0.1` e não o IP do WSL: o container roda em rede do host, então
-	# o loopback dele É o loopback do WSL. Assim o tráfego em claro entre o
+	# Loopback, e nao o IP do WSL: o container roda em rede do host, entao o
+	# loopback dele E o loopback do WSL. Assim o trafego em claro entre o
 	# Caddy e o painel nunca toca uma interface de rede.
+	#
+	# SEM CRASE NESTE BLOCO: o heredoc abaixo nao tem delimitador entre aspas
+	# (precisa expandir as portas), e crase dentro dele e substituicao de
+	# comando. Um comentario com crase virou
+	#     painel.sh: line 71: 127.0.0.1: command not found
+	# — um erro que aponta para o `cat` e nao para o comentario que o causou.
 	reverse_proxy 127.0.0.1:$PORTA_APP {
 		# O painel usa WebSocket (/ws) para o mapa em tempo real. Sem estas
-		# duas linhas o upgrade é rejeitado e o mapa fica mudo — sem erro
-		# visível, só marcador que nunca cai.
+		# duas linhas o upgrade e rejeitado e o mapa fica mudo — sem erro
+		# visivel, so marcador que nunca cai.
 		header_up Host {host}
 		header_up X-Forwarded-For {remote_host}
 	}
