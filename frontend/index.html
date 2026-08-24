@@ -94,6 +94,15 @@
         <span><b>Mineração de área</b>
           <small>varre o mapa e descobre o que existe — captura + OCR, grátis</small></span>
       </button>
+      <!-- Base pública é COLETA: entra pelo mesmo lugar da planilha e da
+           mineração, porque produz a mesma coisa — POI. Colocá-la noutra
+           coluna sugeriria que o ponto vindo dela é de outra natureza. -->
+      <button class="fly-item" data-mode="cadastur">
+        <span class="fly-ico">🏛️</span>
+        <span><b>Bases públicas</b>
+          <small>Cadastur/MTur — hospedagem, restaurante e turismo, com
+            capacidade declarada</small></span>
+      </button>
     </div>
 
     <div class="fly-col">
@@ -262,6 +271,52 @@
      próprio. Sobe em http://127.0.0.1:8770 -->
 
   <!-- PASSO 2: modo enriquecimento (CASCATA) -->
+  <!-- BASES PÚBLICAS. Por MUNICÍPIO, e não por polígono: é assim que o governo
+       publica, e um recorte desenhado não teria como ser respeitado por um
+       arquivo trimestral nacional. -->
+  <section class="p-sec hidden" id="sec-cadastur">
+    <div class="p-title"><span class="p-step">1</span> Cadastur / Ministério do Turismo</div>
+    <div class="p-body">
+      <div class="hint">Cadastro obrigatório da Lei 11.771/2008. É a única fonte
+        que diz <b>quantos leitos</b> um meio de hospedagem declara — e leito é
+        consumo de água por pessoa/dia.</div>
+
+      <div class="cascata">
+        <div class="casc-step"><span class="casc-n">1</span><div><b>⬇️ Baixar</b><br>
+          <small>snapshot trimestral do portal do MTur</small></div></div>
+        <div class="casc-arrow">↓</div>
+        <div class="casc-step"><span class="casc-n">2</span><div><b>📍 Recorte</b><br>
+          <small>só o município pedido entra no banco</small></div></div>
+        <div class="casc-arrow">↓</div>
+        <div class="casc-step"><span class="casc-n">3</span><div><b>🔗 Cruzar</b><br>
+          <small>por CNPJ e endereço, contra POIs, Receita e o cadastro do cliente</small></div></div>
+        <div class="casc-arrow">↓ sobrou</div>
+        <div class="casc-step"><span class="casc-n">4</span><div><b>✨ Gerar POI</b><br>
+          <small>o que não cruzou com nada vira ponto novo</small></div></div>
+      </div>
+
+      <div class="linha-campos">
+        <label class="campo-inline">Município
+          <input id="cad-municipio" placeholder="Canoas" autocomplete="off"></label>
+        <label class="campo-inline campo-uf">UF
+          <input id="cad-uf" maxlength="2" placeholder="RS" autocomplete="off"></label>
+      </div>
+
+      <details class="opts">
+        <summary>Opções</summary>
+        <label class="opt"><input type="checkbox" id="cad-gerar" checked> Gerar POIs do que não cruzou
+          <small>(exige o cruzamento rodado — o próprio passo recusa se não estiver)</small></label>
+        <label class="opt"><input type="checkbox" id="cad-so-carregar"> Só carregar
+          <small>(não baixa de novo; usa o snapshot já em disco)</small></label>
+        <div class="hint" style="margin-top:8px">
+          Guia de turismo <b>não entra</b>: é cadastro de pessoa física, com CPF e
+          data de nascimento. Não é economia que consome água, e o sistema não
+          tem onde guardar dado pessoal sem finalidade.
+        </div>
+      </details>
+    </div>
+  </section>
+
   <section class="p-sec hidden" id="sec-enriquecimento">
     <div class="p-title"><span class="p-step">2</span> Enriquecimento em cascata</div>
     <div class="p-body">

@@ -28,25 +28,31 @@ import json
 import math
 import os
 import re
+import secrets
 import sys
 import time
 import asyncio
 import threading
 import subprocess
+import urllib.error      # explícito: `urllib.request` só o expõe por efeito colateral
 import urllib.request
 from pathlib import Path
 from datetime import datetime
 from collections import Counter
 
 from fastapi import (FastAPI, UploadFile, File, Request, WebSocket,
-                     WebSocketDisconnect, Body)
+                     WebSocketDisconnect, Body, Depends, HTTPException)
 from fastapi.responses import FileResponse, StreamingResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 import config  # .env + UTF-8
 import area_utils
+import psycopg2.extras        # `execute_values` na atribuição em lote
 import realtime_ingest
 import base_comum
+import auth as _auth          # o portao e a identidade do usuario da requisicao
+from chat_api import registrar_chat   # rotas do chat com historico
+from pydantic import BaseModel, Field
 
 BASE = Path(__file__).resolve().parent
 FRONT = BASE / "frontend"
@@ -74,6 +80,9 @@ async def _lifespan(_app):
 
 
 app = FastAPI(title="ComercialRadar", lifespan=_lifespan)
+# O chat vive em modulo proprio: o servidor ja e grande, e assim da para
+# mexer nas rotas de conversa sem tocar no que atende o mapa.
+registrar_chat(app)
 
 # ──────────────────────────────────────────────────────────────────────────
 # WebSocket — broadcast de eventos pro frontend
@@ -117,6 +126,20 @@ manager = WSManager()
 
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket):
+    """Progresso das rodadas, ao vivo.
+
+    O middleware HTTP não alcança WebSocket — é outro protocolo, e o Starlette
+    não passa o handshake por ele. Por isso a checagem é explícita aqui: sem
+    isto, a rota de progresso ficaria como a única porta aberta depois de todo o
+    portão, e ela transmite nome de estabelecimento e andamento de job.
+    O token vem por query porque o navegador não deixa mandar cabeçalho no
+    handshake de WebSocket.
+    """
+    try:
+        _auth.usuario_atual(f"Bearer {ws.query_params.get('token', '')}")
+    except HTTPException:
+        await ws.close(code=1008)      # 1008 = policy violation
+        return
     await manager.connect(ws)
     try:
         # manda o estado atual do job na conexão (reconexão não perde contexto)
@@ -146,10 +169,22 @@ def job_status() -> dict:
     return d
 
 
+LOGS = BASE / "logs"
+
+
 def _novo_job(modo: str, out_json: Path, extra: dict) -> dict:
+    # LOG EM ARQUIVO, um por rodada.
+    #
+    # Até 14/08/2026 o stdout do subprocesso ia só para o WebSocket: aparecia no
+    # painel e morria com a aba. Quando uma rodada saía com 47 falhas em 57 POIs,
+    # não havia o que reler — o número estava na tela, o motivo tinha rolado para
+    # fora, e a investigação começava por reprodução em vez de leitura.
+    LOGS.mkdir(exist_ok=True)
+    arq = LOGS / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{modo}.log"
     JOB.clear()
     JOB.update({
         "status": "rodando", "modo": modo, "inicio": datetime.now().isoformat(timespec="seconds"),
+        "log_arquivo": str(arq),
         "out_json": str(out_json), "total": 0, "feitos": 0,
         "cat": {"validos": 0, "recuperados": 0, "descobertos": 0, "fora_area": 0, "ingeridos": 0},
         "contadores": {"processados": 0, "validos": 0, "recuperados": 0, "descobertos": 0,
@@ -198,8 +233,14 @@ _ROTULO_FASE = {"captura": "fotografando o mapa", "deteccao": "detectando ícone
                 "streetview": "fotografando a fachada de cada ponto",
                 "fachada": "lendo a fachada de cada ponto"}
 # "📸 POIs 12/500 | aptos 9 | inaptos 1 | fora de escopo 2 | oportunidades 14"
-_RE_AV = re.compile(r"aptos\s+(\d+)\s*\|\s*inaptos\s+(\d+)\s*\|\s*"
-                    r"fora de escopo\s+(\d+)\s*\|\s*oportunidades\s+(\d+)")
+# A leitura em quatro fases fala outro vocabulário: a IA só devolve `aprovar`,
+# `reprovar` ou `revisar`, e o quarto balde é o POI sem evidência aproveitável.
+# O padrão antigo (`aptos | inaptos | fora de escopo | oportunidades`) fica: as
+# rodadas 1.5.0 gravadas em log ainda casam com ele.
+_RE_AV = re.compile(r"aprovar\s+(\d+)\s*\|\s*revisar\s+(\d+)\s*\|\s*"
+                    r"reprovar\s+(\d+)\s*\|\s*sem evid[êe]ncia\s+(\d+)")
+_RE_AV_ANTIGO = re.compile(r"aptos\s+(\d+)\s*\|\s*inaptos\s+(\d+)\s*\|\s*"
+                           r"fora de escopo\s+(\d+)\s*\|\s*oportunidades\s+(\d+)")
 # "📸 POIs 31/21701 | capturados 30 | sem pano 1 | Agelú Arte e Cia"
 _RE_SV = re.compile(r"capturados\s+(\d+)\s*\|\s*sem pano\s+(\d+)")
 # Na fase Street View os cartões medem outra coisa: não há "encontrado" nem
@@ -208,11 +249,23 @@ _RE_SV = re.compile(r"capturados\s+(\d+)\s*\|\s*sem pano\s+(\d+)")
 _ROTULOS_CARD = {"streetview": {"validos": "Fachadas capturadas",
                                 "semmatch": "Sem panorama",
                                 "ingeridos": "Gravadas no banco"},
-                 "fachada": {"validos": "Leituras aptas",
-                             "recuperados": "Oportunidades",
-                             "descobertos": "Imagem inapta",
-                             "semmatch": "Não é imóvel",
-                             "ingeridos": "Gravadas no banco"}}
+                 # Os quatro baldes da leitura em quatro fases, na ORDEM em que
+                 # `_RE_AV` os captura. `revisar` no lugar que era das
+                 # oportunidades porque é o que precisa de gente — é a fila que
+                 # alguém tem de trabalhar, e o painel deve mostrá-la crescendo.
+                 "fachada": {"validos": "A IA aprovou",
+                             "recuperados": "Pediu revisão humana",
+                             "descobertos": "A IA reprovou",
+                             "semmatch": "Sem evidência para ler",
+                             "ingeridos": "Gravadas no banco"},
+                 # A leitura anterior media outra coisa; rótulo antigo para
+                 # número antigo, senão um log de 1.5.0 reaberto mostraria
+                 # "oportunidades" embaixo de "pediu revisão humana".
+                 "fachada_1_5": {"validos": "Leituras aptas",
+                                 "recuperados": "Oportunidades",
+                                 "descobertos": "Imagem inapta",
+                                 "semmatch": "Não é imóvel",
+                                 "ingeridos": "Gravadas no banco"}}
 
 
 def _emitir_progresso():
@@ -227,15 +280,28 @@ def _emitir_progresso():
     if fase == "fachada":
         # Também grava direto no banco (`fachada_anotacao`), sem passar pelo
         # watcher — os números saem do log, como no Street View.
-        ap, ina, fora, oport = JOB.get("av", (0, 0, 0, 0))
-        cont = {"processados": min(feitos, total) if total else feitos,
-                "validos": ap, "recuperados": oport, "descobertos": ina,
-                "fora_area": 0, "sem_match": fora, "erros": 0, "ingeridos": ap}
+        #
+        # A ORDEM dos quatro depende do vocabulário que o processo fala, e as
+        # duas ordens NÃO coincidem: a leitura 1.5.0 emite
+        # `aptos | inaptos | fora de escopo | oportunidades`, a 2.0.0 emite
+        # `aprovar | revisar | reprovar | sem evidência`. Desempacotar as duas
+        # na mesma ordem punha o número de reprovados embaixo do rótulo de
+        # revisão — errado, e crível o bastante para ninguém desconfiar.
+        a, b, c_, d = JOB.get("av", (0, 0, 0, 0))
+        if JOB.get("av_vocab") == "1.5.0":
+            cont = {"validos": a, "recuperados": d, "descobertos": b,
+                    "sem_match": c_, "ingeridos": a}
+            rotulos = _ROTULOS_CARD["fachada_1_5"]
+        else:
+            cont = {"validos": a, "recuperados": b, "descobertos": c_,
+                    "sem_match": d, "ingeridos": a + b + c_ + d}
+            rotulos = _ROTULOS_CARD["fachada"]
+        cont.update({"processados": min(feitos, total) if total else feitos,
+                     "fora_area": 0, "erros": 0})
         JOB["contadores"] = cont
         manager.broadcast({"tipo": "progresso", "dados": {
             "contadores": cont, "total": total, "fase": fase,
-            "fase_rotulo": _ROTULO_FASE.get(fase, ""),
-            "rotulos": _ROTULOS_CARD.get(fase, {})}})
+            "fase_rotulo": _ROTULO_FASE.get(fase, ""), "rotulos": rotulos}})
         return
 
     if fase == "streetview":
@@ -277,10 +343,24 @@ def _emitir_progresso():
 
 def _thread_logs(proc: subprocess.Popen):
     """Lê o stdout do subprocess: retransmite como log e extrai o progresso real."""
+    arq = JOB.get("log_arquivo")
+    fh = None
+    if arq:
+        try:
+            fh = open(arq, "a", encoding="utf-8", buffering=1)   # linha a linha
+        except OSError:
+            fh = None
     for linha in iter(proc.stdout.readline, ""):
         linha = linha.replace("\r", "").rstrip()
         if not linha:
             continue
+        if fh:
+            # `buffering=1` grava a cada linha: o arquivo serve para acompanhar
+            # a rodada VIVA, não só para autópsia depois que ela morre.
+            try:
+                fh.write(linha + "\n")
+            except OSError:
+                fh = None
         mf = _RE_FASE.search(linha)
         if mf:
             # fase nova zera o andamento: a unidade mudou (tile → recorte → POI)
@@ -300,6 +380,12 @@ def _thread_logs(proc: subprocess.Popen):
         mav = _RE_AV.search(linha)
         if mav:
             JOB["av"] = tuple(int(mav.group(i)) for i in (1, 2, 3, 4))
+            JOB["av_vocab"] = "2.0.0"
+        else:
+            mav = _RE_AV_ANTIGO.search(linha)
+            if mav:
+                JOB["av"] = tuple(int(mav.group(i)) for i in (1, 2, 3, 4))
+                JOB["av_vocab"] = "1.5.0"
         m = _RE_TOTAL_SHEET.search(linha) or _RE_TOTAL_MINA.search(linha)
         if m:
             JOB["total"] = int(m.group(1))
@@ -319,6 +405,11 @@ def _thread_logs(proc: subprocess.Popen):
                 _emitir_progresso()
                 break
         manager.broadcast({"tipo": "log", "linha": linha[:300]})
+    if fh:
+        try:
+            fh.close()
+        except OSError:
+            pass
     try:
         proc.stdout.close()
     except Exception:
@@ -508,6 +599,16 @@ def _iniciar_subprocess(cmd: list, out_json: Path, poligono):
     # só o delta deste job (evita recontar/re-ingerir o que já estava lá).
     baseline = _baseline_do_arquivo(out_json)
     env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1")
+    # A EMPRESA DO USUÁRIO vai para o subprocesso.
+    #
+    # O coletor grava com o worker (BYPASSRLS) e carimba `tenant_id` a partir de
+    # `CR_TENANT_ID`. Sem sobrescrever aqui, todo job disparado pelo painel
+    # gravaria na empresa fixa do `.env` — a Corsan rodaria uma mineração e o
+    # resultado nasceria na Columbia Tech Info, sem erro nenhum, invisível para
+    # quem pediu.
+    u = _auth.USUARIO_DA_REQUISICAO.get()
+    if u is not None and u.tenant_id:
+        env["CR_TENANT_ID"] = u.tenant_id
     proc = subprocess.Popen(
         cmd, cwd=str(BASE), env=env,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -903,6 +1004,22 @@ def detalhe_poi(poi_id: int):
                 fa["data_imagem"] = (anot.get("imagem") or {}).get("data_captura")
                 fa["alertas"] = anot.get("alertas") or []
                 poi["fachada"] = fa
+
+            # AS MESMAS ABAS DA BANCADA, tambem aqui.
+            #
+            # Este e o popup que abre ao CLICAR NUM PONTO no mapa — a tela que
+            # o usuario realmente usa para olhar um estabelecimento. Ela montava
+            # endereco, telefone, site, Instagram e preco a mao, um `if` por
+            # campo, e por isso nao via nada que a extracao aprendeu depois.
+            #
+            # Agora le o mesmo catalogo que a fila do supervisor le. Campo novo
+            # aparece nas duas telas de uma vez, e nenhuma delas precisa saber
+            # que campo e esse.
+            try:
+                import ficha_abas
+                poi["abas"] = ficha_abas.montar(conn, poi, e_root=False)
+            except Exception:
+                poi["abas"] = []      # a ficha nao pode cair por causa das abas
             return poi
     finally:
         conn.close()
@@ -1114,7 +1231,13 @@ def _ORD_NOTA(nota: str) -> int:
 def dashboard(cidade: str = ""):
     """Retrato de uma cidade (ou de todas) + custo estimado do que foi feito."""
     cidade = (cidade or "").strip()
-    w = "lower(p.cidade) = lower(%s)" if cidade else "TRUE"
+    # `match_valido IS NOT FALSE` — o MESMO corte do mapa. Sem isto o dashboard
+    # dizia 22.231 e o mapa 22.221, e a diferença eram POIs com enriquecimento
+    # incoerente que ninguém deveria estar contando. Dois números para a mesma
+    # pergunta, na mesma tela, é pior que um número errado: quem lê não sabe em
+    # qual acreditar.
+    base = "p.match_valido IS NOT FALSE"
+    w = f"{base} AND lower(p.cidade) = lower(%s)" if cidade else base
     pc = [cidade] if cidade else []
     conn = realtime_ingest.conectar()
     try:
@@ -1181,14 +1304,32 @@ def dashboard(cidade: str = ""):
                              GROUP BY 1 ORDER BY 2 DESC""", pc)
             status = [{"status": a, "n": b} for a, b in cur.fetchall()]
 
-            cur.execute(f"""SELECT count(*), coalesce(sum(s.bytes_tam),0)
+            # IMAGEM é o dado mais caro de produzir aqui — cada fachada custou uma
+            # sessão de navegador, e cada foto uma abertura de ficha no Maps. O
+            # cartão antigo mostrava três linhas; estas contas respondem o que se
+            # pergunta na prática: quantos POIs têm fachada, quantos têm foto,
+            # quanto ocupa e quanto DEIXOU de ser capturado por não haver panorama.
+            cur.execute(f"""SELECT count(*), coalesce(sum(s.bytes_tam),0),
+                                   count(DISTINCT s.poi_id)
                               FROM streetview_imgs s JOIN pois p ON p.id = s.poi_id
                              WHERE {w}""", pc)
-            sv_n, sv_bytes = cur.fetchone()
+            sv_n, sv_bytes, sv_pois = cur.fetchone()
+
+            cur.execute(f"""SELECT count(*), coalesce(sum(i.bytes_tam),0),
+                                   count(DISTINCT i.poi_id),
+                                   count(*) FILTER (WHERE i.storage_path IS NOT NULL)
+                              FROM images_urls i JOIN pois p ON p.id = i.poi_id
+                             WHERE {w}""", pc)
+            fo_n, fo_bytes, fo_pois, fo_baixadas = cur.fetchone()
 
             # cadastro do cliente, se já houver
             cadastro = None
-            cur.execute("SELECT to_regclass('public.cadastro_cliente')")
+            # SEM o schema no nome: quem resolve é o `search_path`, que aponta
+            # para `comercialradar`. Fixar 'public.' aqui fazia a checagem
+            # devolver NULL e o painel dizer "nenhuma base de cadastro
+            # importada" com 102.065 imóveis gravados — sobra do tempo em que
+            # tudo morava em `public`.
+            cur.execute("SELECT to_regclass('cadastro_cliente')")
             if cur.fetchone()[0]:
                 wc = "lower(cidade) = lower(%s)" if cidade else "TRUE"
                 cur.execute(f"""SELECT coalesce(cruz_flag,'(não cruzado)'), count(*)
@@ -1207,10 +1348,22 @@ def dashboard(cidade: str = ""):
                 SELECT count(*) FILTER (WHERE c.poi_id IS NOT NULL),
                        count(*) FILTER (WHERE c.poi_id IS NULL),
                        count(*) FILTER (WHERE c.poi_id IS NOT NULL AND c.e_comercial),
-                       count(*) FILTER (WHERE c.poi_id IS NOT NULL AND NOT c.e_comercial)
+                       count(*) FILTER (WHERE c.poi_id IS NOT NULL AND NOT c.e_comercial),
+                       -- O DENOMINADOR QUE FAZ SENTIDO: o cadastro comercial.
+                       -- Comparar 22 mil POIs comerciais com 102 mil imoveis, a
+                       -- maioria residencias, produz uma "cobertura" que nao
+                       -- significa cobertura de coisa alguma.
+                       --
+                       -- Sem simbolo de porcentagem aqui de proposito: o psycopg2
+                       -- le esse caractere como marcador de parametro, inclusive
+                       -- dentro de comentario SQL, e a consulta morre com
+                       -- IndexError longe da causa.
+                       count(*) FILTER (WHERE c.e_comercial),
+                       count(*) FILTER (WHERE c.e_comercial AND c.poi_id IS NULL)
                   FROM cadastro_cliente c
                  WHERE {'lower(c.cidade) = lower(%s)' if cidade else 'TRUE'}""", pc)
-            cad_casado, cad_so, cad_com, cad_nao_com = cur.fetchone()
+            (cad_casado, cad_so, cad_com, cad_nao_com,
+             cad_com_total, cad_com_sem_poi) = cur.fetchone()
 
             cur.execute(f"""
                 SELECT count(*),
@@ -1236,6 +1389,9 @@ def dashboard(cidade: str = ""):
                 "cad_total": cad_casado + cad_so, "cad_casado": cad_casado,
                 "cad_so_deles": cad_so, "cad_comercial_casado": cad_com,
                 "cad_nao_comercial_casado": cad_nao_com,
+                # o recorte comercial, que é contra o que a comparação vale
+                "cad_comercial_total": cad_com_total,
+                "cad_comercial_sem_poi": cad_com_sem_poi,
                 "eu_dei_telefone": deu_tel, "eu_dei_cnpj": deu_cnpj,
                 "eu_dei_fachada": deu_sv,
             }
@@ -1321,7 +1477,11 @@ def dashboard(cidade: str = ""):
         return {"cidade": cidade, "cidades": cidades, "cobertura": cob,
                 "cnpj_confianca": conf, "faixas": faixas, "origem": origem,
                 "status": status, "convergencia": convergencia, "fachada": fach,
-                "streetview": {"imagens": sv_n, "bytes": int(sv_bytes or 0)},
+                "streetview": {
+                    "imagens": sv_n, "bytes": int(sv_bytes or 0), "pois": sv_pois,
+                    "fotos": fo_n, "fotos_bytes": int(fo_bytes or 0),
+                    "fotos_pois": fo_pois, "fotos_baixadas": fo_baixadas,
+                },
                 "cadastro": cadastro, "custo": custo}
     finally:
         conn.close()
@@ -1452,8 +1612,62 @@ async def upload(file: UploadFile = File(...)):
 # Cada card da aba é um RECORTE da leitura, e o mesmo recorte serve para contar e
 # para listar — assim o número do card e a lista que ele abre nunca divergem.
 _RECORTES_FACHADA = {
+    # ── A DECISÃO DA IA ────────────────────────────────────────────────────
+    # Os três primeiros são o processo de quatro fases: `acao_recomendada` só
+    # admite `aprovar`, `reprovar` ou `revisar`. `revisar` é o balde que
+    # alimenta a fila do supervisor — sem card, a leitura ficava gravada e
+    # ninguém via que havia trabalho humano esperando.
+    # APROVAR TEM DUAS FORMAS desde a leitura 3.0.0, e a divergente é a que o
+    # produto vende: comércio ativo num endereço que o cadastro do cliente
+    # conhece por outro nome — ou não conhece. `aprovar` sozinho é da leitura
+    # 2.0.0, que não fazia a distinção.
     "aprovadas":   ("Leituras aptas", "f.status = 'aprovado'"),
-    "oportunidade": ("Com oportunidade", "jsonb_array_length(f.oportunidades) > 0"),
+    "especifico":  ("Comércio confirmado — o esperado",
+                    "f.acao_recomendada = 'aprovar_especifico'"),
+    "divergente":  ("Comércio DIVERGENTE — outro nome no endereço",
+                    "f.acao_recomendada = 'aprovar_divergente'"),
+    "revisar":     ("A IA pediu revisão humana", "f.acao_recomendada = 'revisar'"),
+    "reprovadas":  ("Sem comércio na cena", "f.acao_recomendada = 'reprovar'"),
+    # O ponto pode estar na coordenada errada: a IA leu a cena e não achou o
+    # estabelecimento nela. É o recorte que mais rápido paga recaptura.
+    "alvo_ausente": ("Alvo não aparece na imagem", "f.alvo_encontrado = 'nao'"),
+    # O nome REAL no imóvel, que é o achado que diverge do cadastro.
+    "letreiro":    ("Letreiro legível na fachada",
+                    "COALESCE(f.texto_do_letreiro, '') <> ''"),
+    # Galpão pode ser qualquer coisa — depósito, igreja, transportadora — e é
+    # onde os dados auxiliares mais mudam o veredito.
+    "galpao":      ("Galpão", "f.tipo_imovel = 'galpao_industrial'"),
+    "multiplas":   ("Múltiplas unidades no lote", "f.multiplas_unidades IS TRUE"),
+    # Julgado SEM a fachada: a foto do Street View foi descartada e o veredito
+    # saiu só das fotos do Maps. Não é erro — é o caso do muro cego de 2018 com
+    # foto de cliente de 2025 —, mas é o que um auditor quer conferir primeiro.
+    "so_foto":     ("Julgado sem a fachada",
+                    "f.imagens_usadas IS NOT NULL AND f.imagens_usadas->>'fachada' IS NULL"),
+    # ── O QUE O PRODUTO VENDE ──────────────────────────────────────────────
+    # OPORTUNIDADE, na definição do negócio: é comercial segundo a IA e NÃO
+    # consta como comercial na base do cliente. As duas metades importam —
+    # comércio que o cliente já cadastrou como comércio não é achado, é cadastro
+    # em dia; e imóvel que a IA reprovou não é oportunidade, é ponto sem sinal.
+    #
+    # `revisar` entra junto com `aprovar` porque a ação da IA é SUGESTÃO, não
+    # decisão: o que está esperando olho humano segue sendo oportunidade em
+    # potencial, e escondê-la até alguém decidir seria esconder justamente a
+    # fila que precisa ser trabalhada.
+    #
+    # A leitura 1.5.0 continua contando pela coluna `oportunidades`, que era
+    # como ela expressava a mesma ideia.
+    # Na leitura 3.0.0 a oportunidade deixa de depender de `tipo_cliente`: o que
+    # define é a IA ter encontrado comércio. E o DIVERGENTE entra sempre, sem
+    # exigir tipo — um endereço com outro comércio ativo é, por definição,
+    # comércio que o cadastro não descreve.
+    "oportunidade": ("Oportunidade — comércio fora do cadastro",
+                     "(f.acao_recomendada IN ('aprovar_especifico',"
+                     " 'aprovar_divergente', 'revisar', 'aprovar')"
+                     " AND (f.acao_recomendada = 'aprovar_divergente'"
+                     "      OR f.tipo_cliente = 'comercial_empresarial_industrial')"
+                     " AND NOT EXISTS (SELECT 1 FROM cadastro_cliente c"
+                     "                  WHERE c.poi_id = f.poi_id AND c.e_comercial))"
+                     " OR jsonb_array_length(f.oportunidades) > 0"),
     "convergente": ("Achado convergente",
                     "f.oportunidades @> '[{\"nivel_evidencia\":\"achado_convergente\"}]'"),
     "uso_diverge": ("Uso divergente",
@@ -1473,6 +1687,17 @@ _RECORTES_FACHADA = {
 }
 
 
+# A LEITURA CORRENTE DE CADA POI, e só ela.
+#
+# `fachada_anotacao` é append-only: reler um ponto cria linha nova e preserva a
+# anterior, porque o histórico de como a IA mudou de ideia é dado. O preço é que
+# uma consulta ingênua conta o mesmo imóvel uma vez por releitura — o card diria
+# 3 onde há 1, e a lista mostraria o mesmo endereço três vezes com vereditos
+# diferentes, sem nada indicando qual vale.
+_ULTIMA_LEITURA = """(SELECT DISTINCT ON (poi_id) * FROM fachada_anotacao
+                       ORDER BY poi_id, criado_em DESC, id DESC) f"""
+
+
 @app.get("/api/fachada/resumo")
 def fachada_resumo():
     """Contagem de cada recorte, na área de trabalho em foco."""
@@ -1488,7 +1713,7 @@ def fachada_resumo():
                 return {"cards": [], "total": 0}
             sel = ", ".join(f"count(*) FILTER (WHERE {c})"
                             for _r, c in _RECORTES_FACHADA.values())
-            cur.execute(f"""SELECT count(*), {sel} FROM fachada_anotacao f
+            cur.execute(f"""SELECT count(*), {sel} FROM {_ULTIMA_LEITURA}
                               JOIN pois p ON p.id = f.poi_id WHERE {w}""", pc)
             r = cur.fetchone()
         cards = [{"chave": k, "rotulo": v[0], "n": n}
@@ -1517,14 +1742,23 @@ def fachada_lista(recorte: str = "aprovadas", limite: int = 400):
                        COALESCE(p.maps_lat, p.lat_origem), COALESCE(p.maps_lng, p.lng_origem),
                        f.status, f.uso_observado, f.tipologia, f.confianca,
                        jsonb_array_length(f.oportunidades),
-                       f.numero_lido, f.numero_confere, f.estado_conservacao
-                  FROM fachada_anotacao f JOIN pois p ON p.id = f.poi_id
+                       f.numero_lido, f.numero_confere, f.estado_conservacao,
+                       f.acao_recomendada, f.alvo_encontrado, f.tipo_cliente,
+                       f.tipo_imovel, f.texto_do_letreiro, f.ressalva,
+                       f.veredito_justificativa
+                  FROM {_ULTIMA_LEITURA} JOIN pois p ON p.id = f.poi_id
                  WHERE {w} AND ({cond})
-                 ORDER BY jsonb_array_length(f.oportunidades) DESC, f.confianca DESC
+                 -- COALESCE porque a leitura 2.0.0 não grava `oportunidades`:
+                 -- sem ele, todo item novo empataria em NULL e a ordenação
+                 -- ficaria por acaso.
+                 ORDER BY COALESCE(jsonb_array_length(f.oportunidades), 0) DESC,
+                          f.confianca DESC NULLS LAST
                  LIMIT %s""", pc)
             cols = ["id", "nome", "endereco", "lat", "lng", "status", "uso",
                     "tipologia", "confianca", "n_oport", "numero_lido",
-                    "numero_confere", "conservacao"]
+                    "numero_confere", "conservacao", "acao", "alvo_encontrado",
+                    "tipo_cliente", "tipo_imovel", "letreiro", "ressalva",
+                    "justificativa"]
             itens = [dict(zip(cols, r)) for r in cur.fetchall()]
         return {"recorte": recorte, "rotulo": _RECORTES_FACHADA[recorte][0],
                 "itens": itens}
@@ -1539,22 +1773,80 @@ def avaliar_estimativa(modelo: str = "gpt-4o-mini", refazer: bool = False):
     A conta só faz sentido com o recorte na frente: são 16 mil fachadas na área
     de Canoas, e a diferença entre os dois modelos é de uma ordem de grandeza."""
     import avaliar_fachada as AF
+    import leitura_fachada as LF
     poligono = area_utils.carregar_area()
     con = realtime_ingest.conectar()
     try:
         AF.esquema(con)
-        alvos = AF.carregar_alvos(poligono, 0, refazer, con)
+        # A elegibilidade é a do MOTOR QUE VAI RODAR, não a do antecessor. Com
+        # `AF.carregar_alvos` o card prometia ler 20.696 e o job lia 20.692,
+        # porque só o motor novo sabe quem já tem anotação da versão corrente.
+        alvos = LF.elegiveis(con, poligono, 0, refazer, None, False)
+        # Quantos da área NÃO entram, e por quê. O card mostrava só o número de
+        # alvos; numa área de 254 POIs com 40 fachadas capturadas, "40 fachadas
+        # a ler" lia-se como "a IA vai pular 214".
+        pano = AF.panorama_da_area(poligono, con)
         com_vinculo = sum(1 for a in alvos if a["vinculo"])
         with con.cursor() as cur:
             cur.execute("""SELECT count(*), count(*) FILTER (WHERE status='aprovado')
                              FROM fachada_anotacao""")
             feitos, aprovados = cur.fetchone()
+        # Com a conexão aberta: a estimativa prefere o histórico real das
+        # últimas leituras à constante do código.
+        est = LF.estimar(len(alvos), con)
     finally:
         con.close()
-    est = AF.estimar(len(alvos), modelo)
     return {**est, "com_vinculo": com_vinculo, "ja_avaliados": feitos,
-            "ja_aprovados": aprovados,
+            "ja_aprovados": aprovados, "area": pano,
             "cidade": area_utils.municipio_da_area(poligono)[0]}
+
+
+def _cod_municipio_da_area(poly) -> str | None:
+    """Código IBGE do município da área desenhada.
+
+    As duas skills novas trabalham POR MUNICÍPIO, e o município não é digitado:
+    sai de onde o usuário já definiu o recorte — o polígono no mapa. Pedir o
+    código de novo seria uma chance a mais de errar, e errar aqui é rodar a
+    cidade errada inteira."""
+    cidade, uf = area_utils.municipio_da_area(poly)
+    if not (cidade and uf):
+        return None
+    import unicodedata
+
+    def n(s):
+        return "".join(c for c in unicodedata.normalize("NFD", (s or "").upper())
+                       if unicodedata.category(c) != "Mn").strip()
+
+    # Comparação sem acento feita em PYTHON, e não por função do banco: a
+    # `unaccent` do Postgres é extensão, e depender dela aqui trocaria uma
+    # comparação de 500 nomes por uma dependência de instalação.
+    ref = base_comum.conectar_referencia()
+    try:
+        with ref.cursor() as cur:
+            cur.execute("select cod_municipio, nome from ibge_malha where uf = %s", (uf,))
+            alvo = n(cidade)
+            for cod, nome in cur.fetchall():
+                if n(nome) == alvo:
+                    return str(cod)
+    finally:
+        ref.close()
+    return None
+
+
+def _empresa_do_pedido() -> str:
+    """Nome da empresa de quem disparou o job. É o que os adaptadores exigem —
+    e é do TOKEN, nunca do corpo do pedido."""
+    u = _auth.USUARIO_DA_REQUISICAO.get()
+    if u is None or not u.tenant_id:
+        return ""
+    con = base_comum.conectar()
+    try:
+        with con.cursor() as cur:
+            cur.execute("select nome from tenants where id = %s::uuid", (u.tenant_id,))
+            r = cur.fetchone()
+            return r[0] if r else ""
+    finally:
+        con.close()
 
 
 @app.post("/api/jobs")
@@ -1564,12 +1856,17 @@ def iniciar_job(body: dict):
             return JSONResponse({"erro": "Já existe um job rodando. Pare-o antes de iniciar outro."},
                                 status_code=409)
 
-        poly = area_utils.carregar_area()
-        if not poly:
-            return JSONResponse({"erro": "Desenhe o polígono da área antes de iniciar."}, status_code=400)
-
         modo = body.get("modo")
         op = body.get("opcoes") or {}
+
+        # O polígono é obrigatório para quem trabalha SOBRE o mapa — planilha,
+        # mineração, avaliação. As bases públicas não: elas vêm por município,
+        # que é a unidade em que o governo publica. Exigir um retângulo
+        # desenhado para baixar o Cadastur de Canoas seria pedir um dado que a
+        # tarefa não usa, e o operador ficaria travado sem entender por quê.
+        poly = area_utils.carregar_area()
+        if not poly and modo not in ("cadastur",):
+            return JSONResponse({"erro": "Desenhe o polígono da área antes de iniciar."}, status_code=400)
 
         if modo == "planilha":
             arquivo = UPLOADS / Path(str(body.get("arquivo") or "")).name
@@ -1634,12 +1931,22 @@ def iniciar_job(body: dict):
             # registro para o watcher. O JSON aqui é só um destino inerte para o
             # watcher não ficar procurando arquivo que ninguém escreve.
             out_json = MINERACAO / "_avaliar_noop.json"
-            cmd = [PYTHON, "avaliar_fachada.py", "--area", area_utils.AREA_PADRAO,
-                   "--modelo", str(op.get("modelo") or "gpt-4o-mini"),
-                   "--workers", str(int(op.get("workers", 4))),
-                   "--teto-usd", str(float(op.get("teto_usd") or 0))]
+            # MOTOR NOVO: `leitura_fachada.py`, em quatro fases isoladas, contra
+            # o vLLM da Spark. O antecessor fazia uma chamada por POI pedindo
+            # tudo de uma vez e cobrava por token da OpenAI; por isso `teto_usd`
+            # não é mais repassado — o modelo é local e o teto que importa agora
+            # é o de TEMPO, que o painel estima antes de disparar.
+            cmd = [PYTHON, "leitura_fachada.py", "--area", area_utils.AREA_PADRAO,
+                   "--modelo", str(op.get("modelo") or "qwen3vl-moe")]
+            if op.get("limit"):
+                cmd += ["--limit", str(int(op["limit"]))]
             if op.get("refazer"):
                 cmd.append("--refazer")
+            # Quem ja e comercial no cadastro fica de fora por padrao: nao ha
+            # reclassificacao a propor. A caixa existe para quem quiser o
+            # dossie da carteira inteira.
+            if op.get("incluir_ja_comerciais"):
+                cmd.append("--incluir-ja-comerciais")
             _novo_job("avaliar", out_json, {})
 
         elif modo == "enriquecer_tudo":
@@ -1665,9 +1972,49 @@ def iniciar_job(body: dict):
                 cmd.append("--visivel")
             if op.get("sv_so_pobres"):
                 cmd.append("--sv-so-pobres")
+            if op.get("incluir_ja_comerciais"):
+                cmd.append("--incluir-ja-comerciais")
             if op.get("pular_streetview"):
                 cmd.append("--pular-streetview")
             _novo_job("enriquecer_tudo", out_json, {})
+
+        elif modo == "cnpj_receita":
+            # A skill `tratamento-cnpj` sobre a área de trabalho: cruza a Receita
+            # com o CNEFE e devolve perfil comercial, evidência de existência
+            # física e rota de tratamento. Grátis e sem chamada externa — é tudo
+            # base pública que já mora no banco de referência.
+            cod = _cod_municipio_da_area(poly)
+            if not cod:
+                return JSONResponse(
+                    {"erro": "Não identifiquei o município da área. Desenhe dentro de um município."},
+                    status_code=400)
+            out_json = MINERACAO / f"cnpj_{cod}_{datetime.now().strftime('%Y%m%d_%H%M')}_db.json"
+            cmd = [PYTHON, "tratamento_cnpj.py", "--municipio", cod,
+                   "--empresa", _empresa_do_pedido(), "--aplicar"]
+            if op.get("limite"):
+                cmd += ["--limite", str(int(op["limite"]))]
+            _novo_job("cnpj_receita", out_json, {"municipio": cod})
+
+        elif modo == "extracao_estadual":
+            # AQUISIÇÃO, não enriquecimento: traz POIs que as bases públicas já
+            # conhecem (Overture + OSM + Foursquare), sem custo por ponto. Fica
+            # ao lado da Captura + OCR pelo mesmo motivo — as duas ACHAM ponto;
+            # o enriquecimento é o que se faz depois de ter o ponto.
+            cod = _cod_municipio_da_area(poly)
+            if not cod:
+                return JSONResponse({"erro": "Não identifiquei o município da área."},
+                                    status_code=400)
+            saida = str(op.get("saida") or "").strip()
+            if not saida or not Path(saida).exists():
+                return JSONResponse(
+                    {"erro": "Informe a pasta da extração estadual já produzida."},
+                    status_code=400)
+            out_json = MINERACAO / f"estadual_{cod}_{datetime.now().strftime('%Y%m%d_%H%M')}_db.json"
+            cmd = [PYTHON, "extracao_estadual.py", "--saida", saida,
+                   "--municipio", cod, "--empresa", _empresa_do_pedido(), "--aplicar"]
+            if op.get("limite"):
+                cmd += ["--limite", str(int(op["limite"]))]
+            _novo_job("extracao_estadual", out_json, {"municipio": cod})
 
         elif modo == "minerar_web":
             # resíduo → Yahoo + pré-filtro + LLM barato + Receita Federal
@@ -1721,6 +2068,34 @@ def iniciar_job(body: dict):
                 cmd.append("--pular-streetview")
             _novo_job("baixar_imagens", out_json, {})
 
+
+        elif modo == "cadastur":
+            # Cadastur/MTur: cadastro obrigatório de prestador de serviço
+            # turístico. É a única fonte do sistema que traz CAPACIDADE
+            # declarada — UH e leitos —, e leito é consumo de água por
+            # pessoa/dia.
+            #
+            # Três etapas num comando: baixa o snapshot, carrega o recorte do
+            # município e gera POI do que não cruzou com nada. O `--gerar`
+            # exige o cruzamento rodado, e o próprio script recusa se não
+            # estiver — não é este lugar que decide isso.
+            municipio = str(op.get("municipio") or "").strip()
+            uf = str(op.get("uf") or "").strip().upper()
+            if not municipio or len(uf) != 2:
+                return JSONResponse(
+                    {"erro": "Informe o município e a UF — o Cadastur é "
+                             "publicado por município, não por área desenhada."},
+                    status_code=400)
+            out_json = MINERACAO / "_cadastur_noop.json"   # watcher fica ocioso
+            cmd = [PYTHON, "cadastur.py", "--uf", uf, "--municipio", municipio]
+            if op.get("datasets"):
+                cmd += ["--datasets", str(op["datasets"])]
+            if op.get("so_carregar"):
+                cmd.append("--so-carregar")
+            if op.get("gerar", True):
+                cmd.append("--gerar")
+            _novo_job("cadastur", out_json,
+                      {"municipio": municipio, "uf": uf})
 
         else:
             return JSONResponse({"erro": f"Modo inválido: {modo}"}, status_code=400)
@@ -1779,6 +2154,1166 @@ class _FrontSemCache(StaticFiles):
         r = super().file_response(*a, **kw)
         r.headers["Cache-Control"] = "no-cache"
         return r
+
+
+# ── O portão ─────────────────────────────────────────────────────────────────
+#
+# Fecha `/api/*` por padrão. O que é público entra na lista abaixo, e o padrão é
+# NEGAR — o inverso, abrir por padrão e proteger o que alguém lembrar, foi o que
+# deixou 29 rotas servindo dado sem token depois que a tela de login já existia.
+# A tela bloqueava a vista; a rota respondia a quem chamasse direto.
+#
+# Além de autenticar, o portão publica o usuário em `USUARIO_DA_REQUISICAO`. É
+# isso que faz `realtime_ingest.conectar()` — chamado por 10 rotas antigas —
+# devolver a conexão com RLS em vez da conexão do worker. Nenhuma daquelas rotas
+# precisou ser tocada.
+PUBLICAS = {
+    "/", "/api/login", "/api/renovar",
+    "/favicon.ico", "/docs", "/openapi.json", "/redoc",
+}
+
+# Ação só para quem executa processo. Leitura não entra aqui: `user` lê.
+SO_ADMIN = (
+    "/api/jobs", "/api/upload", "/api/limpar-fora", "/api/cadastro/",
+    "/api/area/municipio",
+)
+
+# ROTAS QUE O NAVEGADOR PEDE POR <img src>, E POR ISSO ACEITAM O TOKEN NA QUERY.
+#
+# `<img>` não manda cabeçalho `Authorization` — não há como. Desde que o portão
+# entrou, toda fachada no modal do mapa e toda foto de perfil vinham 401 e o
+# navegador desenhava o ícone de imagem quebrada. Ninguém viu porque `onerror`
+# removia a figura em silêncio, e a foto de perfil cai para as iniciais.
+#
+# A saída é a mesma já usada pelo WebSocket, que tem a mesma limitação: token na
+# query. Fica restrito a ESTAS rotas, e só quando não há cabeçalho — token em
+# URL aparece em log de servidor e em histórico, e não é para virar o caminho
+# padrão de autenticação do resto da API.
+TOKEN_NA_QUERY = ("/api/sv/", "/api/eu/foto", "/api/dossie/", "/api/modelos/")
+
+
+@app.middleware("http")
+async def portao(request: Request, call_next):
+    caminho = request.url.path
+    if not caminho.startswith("/api/") or caminho in PUBLICAS:
+        return await call_next(request)
+
+    cabecalho = request.headers.get("authorization", "")
+    if not cabecalho and any(caminho.startswith(p) for p in TOKEN_NA_QUERY):
+        tok = request.query_params.get("token", "")
+        if tok:
+            cabecalho = f"Bearer {tok}"
+    try:
+        u = _auth.usuario_atual(cabecalho)
+    except HTTPException as e:
+        return JSONResponse({"detail": e.detail}, status_code=e.status_code)
+
+    if request.method != "GET" and any(caminho.startswith(p) for p in SO_ADMIN):
+        if not u.pode("admin"):
+            return JSONResponse({"detail": "exige nível admin"}, status_code=403)
+
+    ficha = _auth.USUARIO_DA_REQUISICAO.set(u)
+    try:
+        return await call_next(request)
+    finally:
+        # `reset` e não `set(None)`: sem ele o contexto do worker do uvicorn
+        # guarda o último usuário e a requisição seguinte, se algo falhar antes
+        # do portão, herdaria o crachá alheio.
+        _auth.USUARIO_DA_REQUISICAO.reset(ficha)
+
+
+# ── Empresas clientes (CRUD) ─────────────────────────────────────────────────
+#
+# A conexão vem de `auth.conectar_como(u)`: o papel muda conforme o nível e a
+# transação declara `app.tenant_id`. Quem filtra é a policy, não o `WHERE`.
+
+
+class EmpresaEntrada(BaseModel):
+    nome: str = Field(min_length=2, max_length=120)
+    documento: str | None = Field(default=None, max_length=20)
+    ativo: bool = True
+
+
+@app.get("/api/empresas")
+def empresas_listar(u: _auth.Usuario = Depends(_auth.exige("admin"))):
+    """Root vê todas; o admin vê a própria — e isso é a policy, não um IF.
+
+    Exige `admin` porque abaixo disso ninguém precisa: `supervisor` e `user` já
+    recebem o nome da própria empresa no `/api/eu`. Deixar a rota aberta a
+    qualquer sessão não vazava nada — a policy limitava à empresa do usuário —
+    mas dava a quem não administra uma porta para um recurso de administração,
+    e a vistoria de hoje flagrou justamente isso.
+    """
+    con = _auth.conectar_como(u)
+    try:
+        with con.cursor() as cur:
+            cur.execute("""select id, nome, documento, ativo, criado_em
+                             from tenants order by nome""")
+            return {"empresas": [
+                {"id": str(i), "nome": n, "documento": d, "ativo": a,
+                 "criado_em": c.isoformat() if c else None}
+                for i, n, d, a, c in cur.fetchall()]}
+    finally:
+        con.close()
+
+
+@app.post("/api/empresas", status_code=201)
+def empresas_criar(e: EmpresaEntrada, u: _auth.Usuario = Depends(_auth.exige("root"))):
+    con = _auth.conectar_como(u)
+    try:
+        with con.cursor() as cur:
+            cur.execute("""insert into tenants (nome, documento, ativo)
+                           values (%s,%s,%s) returning id""",
+                        (e.nome.strip(), e.documento, e.ativo))
+            novo = cur.fetchone()[0]
+        con.commit()
+        return {"id": str(novo), "nome": e.nome.strip()}
+    finally:
+        con.close()
+
+
+@app.patch("/api/empresas/{empresa_id}")
+def empresas_editar(empresa_id: str, e: EmpresaEntrada,
+                    u: _auth.Usuario = Depends(_auth.exige("root"))):
+    con = _auth.conectar_como(u)
+    try:
+        with con.cursor() as cur:
+            cur.execute("""update tenants set nome=%s, documento=%s, ativo=%s
+                            where id=%s returning id""",
+                        (e.nome.strip(), e.documento, e.ativo, empresa_id))
+            if not cur.fetchone():
+                raise HTTPException(404, "empresa não encontrada")
+        con.commit()
+        return {"id": empresa_id, "nome": e.nome.strip()}
+    finally:
+        con.close()
+
+
+@app.delete("/api/empresas/{empresa_id}")
+def empresas_desativar(empresa_id: str, u: _auth.Usuario = Depends(_auth.exige("root"))):
+    """DESATIVA, não apaga.
+
+    Apagar empresa com dado embaixo é impossível — a FK recusa — e forçar em
+    cascata destruiria o acervo dela. Desativar tira o acesso e preserva o
+    histórico, que é o que auditoria e contestação exigem."""
+    con = _auth.conectar_como(u)
+    try:
+        with con.cursor() as cur:
+            cur.execute("update tenants set ativo=false where id=%s returning nome",
+                        (empresa_id,))
+            r = cur.fetchone()
+            if not r:
+                raise HTTPException(404, "empresa não encontrada")
+        con.commit()
+        return {"id": empresa_id, "nome": r[0], "ativo": False}
+    finally:
+        con.close()
+
+
+# ── Dossiê ───────────────────────────────────────────────────────────────────
+
+def _dossie_html(poi_id: int, u: "_auth.Usuario") -> str:
+    import dossie
+    con = _auth.conectar_como(u)
+    try:
+        dados = dossie.coletar(poi_id, con)
+    finally:
+        con.close()
+    if not dados:
+        # 404 e não 403: para quem não alcança o POI pela RLS, ele não existe.
+        # Responder 403 confirmaria que o registro existe em OUTRA empresa.
+        raise HTTPException(404, "POI não encontrado")
+    return dossie.montar_html(dados)
+
+
+@app.get("/api/dossie/{poi_id}")
+def dossie_html(poi_id: int, u: _auth.Usuario = Depends(_auth.usuario_atual)):
+    """Versão de tela. Qualquer nível lê o dossiê do que já alcança."""
+    return Response(content=_dossie_html(poi_id, u), media_type="text/html; charset=utf-8")
+
+
+@app.get("/api/dossie/{poi_id}/pdf")
+async def dossie_pdf(poi_id: int, u: _auth.Usuario = Depends(_auth.exige("supervisor"))):
+    """O documento físico.
+
+    Caminho com `/pdf` e não com sufixo `.pdf`: o FastAPI casa as rotas na
+    ordem em que foram declaradas, e `/api/dossie/{poi_id}` engolia
+    `159029.pdf` tentando lê-lo como inteiro — 422, nunca chegando aqui.
+
+    Renderizado pelo Chromium do Playwright, que já está instalado para a
+    captura — não vale trazer uma segunda engine de PDF para o projeto.
+
+    A página é carregada por `set_content`, não por URL: assim o Chromium não
+    precisa de sessão nem alcança a API, e o PDF sai idêntico ao que o usuário
+    autenticado veria. Carregar por URL exigiria repassar o token para dentro do
+    navegador — credencial atravessando mais uma fronteira sem necessidade.
+    """
+    from playwright.async_api import async_playwright
+    html_doc = _dossie_html(poi_id, u)
+    try:
+        async with async_playwright() as pw:
+            navegador = await pw.chromium.launch(headless=True)
+            pagina = await navegador.new_page()
+            # As imagens são data: URI, então não há rede a esperar — mas o
+            # `networkidle` protege contra uma fonte externa futura.
+            await pagina.set_content(html_doc, wait_until="networkidle")
+            pdf = await pagina.pdf(format="A4", print_background=True,
+                                   margin={"top": "16mm", "bottom": "16mm",
+                                           "left": "14mm", "right": "14mm"})
+            await navegador.close()
+    except Exception as e:
+        raise HTTPException(503, f"não consegui gerar o PDF: {type(e).__name__}")
+
+    nome = f"dossie-poi-{poi_id}.pdf"
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="{nome}"'})
+
+
+# ── Fila de aprovação ────────────────────────────────────────────────────────
+#
+# O admin distribui; o supervisor decide. As duas metades de uma coisa só: a
+# atribuição É a fila, e é ela que também define o que o supervisor enxerga —
+# a policy de `pois` faz um EXISTS contra esta tabela.
+
+class AtribuirEntrada(BaseModel):
+    poi_ids: list[int] = Field(min_length=1, max_length=2000)
+    supervisor_ids: list[str] = Field(min_length=1, max_length=50)
+
+
+class DecisaoEntrada(BaseModel):
+    status: str                          # aprovado | reprovado | devolvido | campo
+    motivo_generico: str | None = None
+    motivo_escrito: str | None = None
+    observacao: str | None = None
+    # Visita de campo nao e um rotulo, e uma PAUTA: o que ir verificar no local.
+    # Mandar alguem a campo sem dizer o que conferir e mandar de novo depois.
+    pauta: list[str] | None = None
+    # O FATO que sustenta cada item da pauta. Sem isso a pauta vira lista de
+    # desejos, e quem vai a campo nao sabe o que motivou cada linha.
+    pauta_porque: dict | None = None
+    # O que o supervisor preencheu. Chaves livres, mas `uso` e `atividade` são
+    # exigidos para aprovar — pelo CHECK do banco, não só por este arquivo.
+    revisao: dict | None = None
+
+
+# Os campos que a tela de revisão preenche. Ficam aqui, e não espalhados no
+# JavaScript, porque é esta lista que decide o que entra no `jsonb`: chave que
+# não está aqui é descartada, então uma tela adulterada não injeta campo
+# arbitrário no documento que vira prova para o cliente.
+CAMPOS_REVISAO = ("uso", "atividade", "nome_confirmado", "cnpj", "telefone",
+                  "economias_comerciais", "endereco_confere", "endereco_corrigido",
+                  "visita_necessaria", "observacao_tecnica")
+USOS_REVISAO = ("comercial", "misto", "residencial", "indefinido")
+
+
+@app.get("/api/fila/candidatos")
+def fila_candidatos(u: _auth.Usuario = Depends(_auth.exige("admin"))):
+    """Tudo que existe DENTRO da área de trabalho, com o que serve de filtro.
+
+    A distribuição antiga pegava os N primeiros POIs de `/api/pois` — que não
+    recorta área nenhuma. O admin lia "serão enviados os POIs da área atual" e
+    recebia os N primeiros da base inteira, ordenados por id: distribuição
+    aleatória com aparência de critério.
+
+    Aqui a área é o recorte de verdade, e vêm juntos os atributos pelos quais
+    faz sentido separar trabalho: o que o cruzamento com o cadastro disse, o que
+    a leitura de fachada viu, e que evidência existe para decidir. As facetas
+    saem do próprio conjunto — lista fixa de categorias mentiria sobre o que há
+    nesta área.
+    """
+    poligono = area_utils.carregar_area()
+    if not poligono:
+        raise HTTPException(422, "nenhuma área de trabalho definida")
+    lat0, lat1, lng0, lng1 = area_utils.bbox(poligono)
+
+    con = _auth.conectar_como(u)
+    try:
+        with con.cursor() as cur:
+            # A caixa vai no SQL (usa índice); o polígono é testado em Python
+            # sobre o que a caixa devolveu. PostGIS mora em `extensions`, fora do
+            # `search_path` desta conexão, e trazer a extensão para o caminho só
+            # por causa de um ST_Contains custa mais do que o laço.
+            cur.execute("""
+                select p.id, p.nome, p.categoria, p.endereco, p.cidade,
+                       coalesce(p.maps_lat, p.lat_origem),
+                       coalesce(p.maps_lng, p.lng_origem),
+                       nullif(btrim(coalesce(p.cnpj, '')), '') is not null,
+                       p.cnpj_conf,
+                       exists (select 1 from images_urls i where i.poi_id = p.id),
+                       (p.streetview_path is not null
+                        and p.streetview_path not in ('', 'NA')),
+                       f.tipo_edificacao, f.estado_conservacao, f.uso_observado,
+                       c.cruz_flag, c.e_comercial, c.num_ligacao,
+                       exists (select 1 from atribuicao a where a.poi_id = p.id)
+                  from pois p
+                  left join fachada_anotacao f on f.poi_id = p.id
+                  left join cadastro_cliente c on c.poi_id = p.id
+                 where p.match_valido is not false
+                   and coalesce(p.maps_lat, p.lat_origem) between %s and %s
+                   and coalesce(p.maps_lng, p.lng_origem) between %s and %s
+                 order by p.id""", (lat0, lat1, lng0, lng1))
+            linhas = cur.fetchall()
+    finally:
+        con.close()
+
+    cols = ("id nome categoria endereco cidade lat lng tem_cnpj cnpj_conf tem_foto "
+            "tem_sv edificacao conservacao uso_fachada cruz_flag e_comercial "
+            "num_ligacao na_fila").split()
+    itens = []
+    for r in linhas:
+        d = dict(zip(cols, r))
+        if not area_utils.ponto_no_poligono(d["lat"], d["lng"], poligono):
+            continue
+        # Sem linha de cadastro casada, o POI não é "não comercial": é ACHADO
+        # NOVO, que no processo é outra trilha (acrescer, não reclassificar).
+        # Deixar o campo nulo obrigaria a tela a inventar o rótulo.
+        d["cruz_flag"] = d["cruz_flag"] or "fora_do_cadastro"
+        # BANDEIRA PRÓPRIA, e não deduzida do `cruz_flag` na tela: quem já é
+        # comercial no cadastro não é ganho — mandar para a fila gasta o tempo
+        # do supervisor confirmando o que o cliente já cobra. O admin ainda pode
+        # mandar, mas tem de ver que está mandando.
+        d["ja_comercial"] = bool(d.pop("e_comercial", None))
+        itens.append(d)
+
+    def faceta(chave):
+        cont = {}
+        for i in itens:
+            v = i.get(chave) or "—"
+            cont[v] = cont.get(v, 0) + 1
+        return [{"v": k, "n": n} for k, n in
+                sorted(cont.items(), key=lambda kv: -kv[1])]
+
+    # O filtro roda no navegador — é instantâneo e faz "marcar os filtrados"
+    # significar exatamente o que está na tela. O teto existe para a área que
+    # cobre a cidade inteira: 22 mil linhas por requisição é o tipo de payload
+    # que só aparece na demonstração para o cliente. Truncar em silêncio seria
+    # pior; por isso o `truncado` volta e a tela avisa.
+    TETO = 8000
+    resp = {"total": len(itens), "truncado": len(itens) > TETO,
+            "na_fila": sum(1 for i in itens if i["na_fila"]),
+            "ja_comerciais": sum(1 for i in itens if i["ja_comercial"]),
+            "facetas": {"categoria": faceta("categoria"),
+                        "cruz_flag": faceta("cruz_flag"),
+                        "edificacao": faceta("edificacao"),
+                        "conservacao": faceta("conservacao")}}
+    resp["itens"] = itens[:TETO]
+    return resp
+
+
+@app.post("/api/fila/atribuir", status_code=201)
+def fila_atribuir(e: AtribuirEntrada, u: _auth.Usuario = Depends(_auth.exige("admin"))):
+    """Manda vários POIs para vários supervisores de uma vez.
+
+    `on conflict do nothing` porque reenviar o mesmo lote é o caso NORMAL: o
+    admin filtra uma área, manda, filtra de novo com o filtro um pouco diferente
+    e manda outra vez. Sem isso, o segundo envio estouraria por chave duplicada
+    e ele perderia o lote inteiro por causa de dois POIs repetidos.
+    """
+    con = _auth.conectar_como(u)
+    try:
+        with con.cursor() as cur:
+            # Só supervisores DESTA empresa — a policy de `usuarios` já barra o
+            # resto, e o `nivel` evita mandar ponto para quem não decide nada.
+            cur.execute("""select id from usuarios
+                            where id = any(%s::uuid[]) and ativo
+                              and nivel in ('supervisor','admin')""",
+                        ([str(s) for s in e.supervisor_ids],))
+            validos = [r[0] for r in cur.fetchall()]
+            if not validos:
+                raise HTTPException(422, "nenhum supervisor válido nesta empresa")
+
+            # E só POIs que ESTE usuário alcança: se ele mandar id de outra
+            # empresa, a policy não devolve a linha e o id não entra no lote.
+            cur.execute("select id from pois where id = any(%s)", (e.poi_ids,))
+            pois_ok = [r[0] for r in cur.fetchall()]
+            if not pois_ok:
+                raise HTTPException(422, "nenhum POI válido no lote")
+
+            pares = [(p, s, u.id) for s in validos for p in pois_ok]
+            psycopg2.extras.execute_values(
+                cur,
+                """insert into atribuicao (poi_id, supervisor_id, atribuido_por)
+                   values %s on conflict (poi_id, supervisor_id) do nothing""",
+                pares)
+            criadas = cur.rowcount
+        con.commit()
+        return {"supervisores": len(validos), "pois": len(pois_ok),
+                "atribuicoes_novas": criadas,
+                "ja_existiam": len(pares) - criadas}
+    finally:
+        con.close()
+
+
+@app.get("/api/fila")
+def fila_listar(status: str = "pendente", limite: int = 200,
+                u: _auth.Usuario = Depends(_auth.usuario_atual)):
+    """Supervisor vê a SUA fila; admin vê a da empresa. Quem separa é a policy."""
+    con = _auth.conectar_como(u)
+    try:
+        with con.cursor() as cur:
+            # A NOTA DA IA VEM JUNTO. O supervisor abre a fila com dezenas de
+            # itens iguais e precisa de uma ordem de ataque; sem ela, decide na
+            # ordem em que o admin distribuiu, que não é ordem de nada.
+            cur.execute("""select a.id, a.poi_id, p.nome, p.categoria, p.endereco,
+                                  a.status, a.atribuido_em, us.nome,
+                                  f.veredito_comercial, f.nota_comercial
+                             from atribuicao a
+                             join pois p     on p.id  = a.poi_id
+                             left join usuarios us on us.id = a.supervisor_id
+                             left join fachada_anotacao f on f.poi_id = a.poi_id
+                            where (%s = 'todos' or a.status::text = %s)
+                            order by a.atribuido_em desc
+                            limit %s""", (status, status, min(limite, 1000)))
+            return {"itens": [
+                {"id": i, "poi_id": pid, "nome": n, "categoria": c, "endereco": en,
+                 "status": st, "atribuido_em": at.isoformat() if at else None,
+                 "supervisor": sup, "veredito_ia": vc, "nota_ia": nc}
+                for i, pid, n, c, en, st, at, sup, vc, nc in cur.fetchall()]}
+    finally:
+        con.close()
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# API — fila do COMÉRCIO DIVERGENTE
+#
+# Fila separada porque a decisão é de outra natureza. Na fila normal o
+# supervisor CONFIRMA um imóvel que o cadastro do cliente já conhece; aqui ele
+# decide se um estabelecimento que ninguém conhecia entra na base. As perguntas
+# são outras, os motivos de recusa são outros, e misturar as duas numa tela só
+# faria as perguntas de uma aparecerem no trabalho da outra.
+# ──────────────────────────────────────────────────────────────────────────
+MOTIVOS_DIVERGENTE = {
+    "nao_e_comercio": "Não é comércio — a IA leu errado",
+    "letreiro_do_vizinho": "O letreiro é do imóvel vizinho",
+    "ja_cadastrado": "Já existe no cadastro com outro nome",
+    "encerrado": "Comércio encerrado",
+    "endereco_incerto": "Não dá para dizer a que endereço pertence",
+    "outro": "Outro",
+}
+
+
+class DecisaoDivergente(BaseModel):
+    status: str                                  # aceito | recusado | devolvido
+    motivo_generico: str | None = None
+    motivo_escrito: str | None = None
+    observacao: str | None = None
+
+
+@app.get("/api/divergentes")
+def divergentes_listar(status: str = "pendente", limite: int = 200,
+                       u: _auth.Usuario = Depends(_auth.usuario_atual)):
+    """O que a IA achou de comércio que o cadastro não descreve.
+
+    Traz LADO A LADO o nome do cadastro e o nome lido na parede: a decisão é
+    exatamente comparar os dois, e obrigar o supervisor a abrir a ficha só para
+    ver o que ele já poderia ter visto na lista é trabalho jogado fora.
+    """
+    con = _auth.conectar_como(u)
+    try:
+        with con.cursor() as cur:
+            cur.execute("""select d.id, d.poi_id, p.nome, p.endereco, p.categoria,
+                                  d.nome_lido, d.atividade, d.status,
+                                  d.atribuido_em, us.nome, f.confianca
+                             from atribuicao_divergente d
+                             join pois p on p.id = d.poi_id
+                             left join usuarios us on us.id = d.supervisor_id
+                             left join fachada_anotacao f on f.id = d.anotacao_id
+                            where (%s = 'todos' or d.status = %s)
+                            order by d.atribuido_em desc
+                            limit %s""", (status, status, min(limite, 1000)))
+            return {"itens": [
+                {"id": i, "poi_id": pid, "nome_cadastro": n, "endereco": e,
+                 "categoria": c, "nome_lido": nl, "atividade": at, "status": st,
+                 "atribuido_em": qd.isoformat() if qd else None,
+                 "supervisor": sup, "confianca": conf}
+                for i, pid, n, e, c, nl, at, st, qd, sup, conf in cur.fetchall()],
+                "motivos": MOTIVOS_DIVERGENTE}
+    finally:
+        con.close()
+
+
+@app.get("/api/divergentes/{item_id}/ficha")
+def divergente_ficha(item_id: int, u: _auth.Usuario = Depends(_auth.usuario_atual)):
+    """A MESMA evidência da fila normal — imagens, leitura, cadastro.
+
+    Reaproveita `dossie.coletar` pelo mesmo motivo de lá: duas coletas
+    divergiriam, e aí a tela mostraria uma coisa e o PDF provaria outra.
+    """
+    import dossie
+    con = _auth.conectar_como(u)
+    try:
+        with con.cursor() as cur:
+            cur.execute("""select d.id, d.poi_id, d.nome_lido, d.atividade,
+                                  d.status, d.motivo_generico, d.motivo_escrito,
+                                  d.observacao, d.atribuido_em
+                             from atribuicao_divergente d where d.id = %s""",
+                        (item_id,))
+            r = cur.fetchone()
+            if not r:
+                raise HTTPException(404, "item não encontrado na sua fila")
+            item = dict(zip("id poi_id nome_lido atividade status motivo_generico "
+                            "motivo_escrito observacao atribuido_em".split(), r))
+            item["atribuido_em"] = (item["atribuido_em"].isoformat()
+                                    if item["atribuido_em"] else None)
+        dados = dossie.coletar(item["poi_id"], con)
+    finally:
+        con.close()
+    return {"item": item, "poi": dados, "motivos": MOTIVOS_DIVERGENTE}
+
+
+@app.post("/api/divergentes/{item_id}/decidir")
+def divergente_decidir(item_id: int, d: DecisaoDivergente,
+                       u: _auth.Usuario = Depends(_auth.exige("supervisor"))):
+    """Aceitar, recusar ou devolver o achado divergente.
+
+    A exigência de motivo na recusa é CHECK no banco, como na fila normal. A
+    validação aqui existe só para devolver 422 com texto claro — regra de
+    negócio que mora só na aplicação some no primeiro cliente de API que
+    ninguém previu.
+    """
+    if d.status not in ("aceito", "recusado", "devolvido"):
+        raise HTTPException(422, "status deve ser aceito, recusado ou devolvido")
+    if d.status == "recusado":
+        if not d.motivo_generico or d.motivo_generico not in MOTIVOS_DIVERGENTE:
+            raise HTTPException(422, "recusar exige um motivo da lista")
+        if len((d.motivo_escrito or "").strip()) < 10:
+            raise HTTPException(422, "recusar exige o motivo escrito (10+ caracteres)")
+    con = _auth.conectar_como(u)
+    try:
+        with con.cursor() as cur:
+            cur.execute("""update atribuicao_divergente
+                              set status = %s, motivo_generico = %s,
+                                  motivo_escrito = %s, observacao = %s,
+                                  supervisor_id = %s, decidido_em = now()
+                            where id = %s returning poi_id""",
+                        (d.status, d.motivo_generico, d.motivo_escrito,
+                         d.observacao, u.id, item_id))
+            r = cur.fetchone()
+            if not r:
+                raise HTTPException(404, "item não encontrado na sua fila")
+        con.commit()
+        return {"ok": True, "poi_id": r[0], "status": d.status}
+    finally:
+        con.close()
+
+
+@app.get("/api/fila/{item_id}/ficha")
+def fila_ficha(item_id: int, u: _auth.Usuario = Depends(_auth.usuario_atual)):
+    """Tudo o que se sabe do ponto, para decidir sem sair da tela.
+
+    O supervisor decidia olhando nome e endereço — duas linhas — e o dossiê era
+    um PDF que abria em outra aba. Decidir sobre reclassificação de tarifa com
+    isso é chutar; a evidência (fachada, fotos, o que a IA leu, o que o cadastro
+    diz) precisa estar diante de quem assina.
+
+    Reaproveita `dossie.coletar`: é a MESMA coleta que vira o documento
+    comprobatório. Duas coletas diferentes acabariam divergindo, e aí a tela
+    mostraria uma coisa e o PDF provaria outra.
+    """
+    import dossie
+    con = _auth.conectar_como(u)
+    try:
+        with con.cursor() as cur:
+            cur.execute("""select a.id, a.poi_id, a.status, a.revisao,
+                                  a.motivo_generico, a.motivo_escrito, a.observacao,
+                                  a.atribuido_em, us.nome
+                             from atribuicao a
+                             left join usuarios us on us.id = a.supervisor_id
+                            where a.id = %s""", (item_id,))
+            r = cur.fetchone()
+            if not r:
+                # 404 e não 403: para quem não alcança o item, ele não existe.
+                raise HTTPException(404, "item não encontrado na sua fila")
+            item = {"id": r[0], "poi_id": r[1], "status": r[2], "revisao": r[3] or {},
+                    "motivo_generico": r[4], "motivo_escrito": r[5], "observacao": r[6],
+                    "atribuido_em": r[7].isoformat() if r[7] else None,
+                    "supervisor": r[8]}
+
+            # O que o CADASTRO DO CLIENTE diz daquele imóvel. É a outra metade da
+            # comparação: sem ela o supervisor não sabe do que está divergindo.
+            cur.execute("""select num_ligacao, categoria, e_comercial, cruz_flag,
+                                  cruz_dist_m, numero, endereco,
+                                  coalesce(economias_res,0) + coalesce(economias_com,0)
+                                    + coalesce(economias_ind,0) + coalesce(economias_pub,0)
+                                    + coalesce(economias_out,0),
+                                  coalesce(economias_com,0)
+                             from cadastro_cliente where poi_id = %s limit 1""",
+                        (item["poi_id"],))
+            c = cur.fetchone()
+            if c:
+                item["cadastro"] = dict(zip(
+                    "num_ligacao categoria e_comercial cruz_flag cruz_dist_m numero "
+                    "endereco economias economias_com".split(), c))
+
+        dados = dossie.coletar(item["poi_id"], con)
+        # AS ABAS SAEM DO CATALOGO, nao de campo fixo no JavaScript. Campo novo
+        # que a extracao aprender entra em `campo_catalogo` e aparece sozinho.
+        #
+        # A procedencia (IBGE, Google, Receita) e filtrada AQUI, no servidor:
+        # o RBAC so a libera para o `root`, e filtrar no navegador seria fingir
+        # — o dado teria chegado e qualquer console o leria.
+        import ficha_abas
+        abas = ficha_abas.montar(con, dados, e_root=(u.nivel == "root"))
+    finally:
+        con.close()
+    return {"item": item, "poi": dados, "abas": abas,
+            "pauta_possivel": list(ficha_abas.PAUTA_VALIDA),
+            "usos": list(USOS_REVISAO)}
+
+
+@app.post("/api/fila/{item_id}/decidir")
+def fila_decidir(item_id: int, d: DecisaoEntrada,
+                 u: _auth.Usuario = Depends(_auth.exige("supervisor"))):
+    """Aprovar, reprovar ou devolver.
+
+    As exigências de motivo NÃO são validadas aqui e sim no banco, por CHECK. A
+    validação daqui existe só para devolver 422 com texto claro; se ela sumir, o
+    banco continua recusando. Regra de negócio que mora só na aplicação some no
+    primeiro cliente de API que ninguém previu.
+    """
+    if d.status not in ("aprovado", "reprovado", "devolvido", "campo"):
+        raise HTTPException(
+            422, "status deve ser aprovado, reprovado, devolvido ou campo")
+    # A exigencia REAL e o CHECK `campo_exige_pauta` no banco; esta validacao
+    # existe para o erro chegar legivel, e nao como 500 de constraint.
+    if d.status == "campo":
+        if not (d.pauta or []):
+            raise HTTPException(
+                422, "visita de campo exige pauta: diga o que verificar no local")
+        import ficha_abas
+        fora = [x for x in d.pauta if x not in ficha_abas.PAUTA_VALIDA]
+        if fora:
+            raise HTTPException(422, f"pauta desconhecida: {', '.join(fora)}")
+    if d.status == "reprovado" and not (d.motivo_generico and (d.motivo_escrito or "").strip()):
+        raise HTTPException(422, "reprovar exige motivo genérico E motivo escrito")
+    if d.status == "devolvido" and not (d.observacao or "").strip():
+        raise HTTPException(422, "devolver exige dizer o que impede a aprovação")
+
+    # Só as chaves conhecidas entram, e o `uso` só se for um dos declarados. O
+    # `jsonb` aceitaria qualquer coisa, e o que se grava aqui vira texto do
+    # documento que a concessionária usa para mudar tarifa.
+    rev = {k: v for k, v in (d.revisao or {}).items()
+           if k in CAMPOS_REVISAO and v not in (None, "")}
+    if rev.get("uso") and rev["uso"] not in USOS_REVISAO:
+        raise HTTPException(422, f"uso deve ser um de {', '.join(USOS_REVISAO)}")
+    if d.status == "aprovado" and not (
+            rev.get("uso") and len(str(rev.get("atividade", "")).strip()) >= 3):
+        raise HTTPException(422, "aprovar exige o uso observado e a atividade do local")
+
+    con = _auth.conectar_como(u)
+    try:
+        with con.cursor() as cur:
+            # PRIORIDADE ALTA com tres ou mais itens na pauta: caso com muita
+            # coisa a verificar trava a fila se esperar a vez normal.
+            _pauta = d.pauta or None
+            _prio = "alta" if len(d.pauta or []) >= 3 else "normal"
+            cur.execute("""update atribuicao
+                              set status=%s::decisao_fila,
+                                  motivo_generico=%s::motivo_reprova,
+                                  motivo_escrito=%s, observacao=%s, decidido_em=now(),
+                                  pauta=%s::comercialradar.pauta_campo[],
+                                  pauta_porque=%s::jsonb,
+                                  prioridade=%s::comercialradar.prioridade_campo,
+                                  -- concatena para não perder o que já havia
+                                  -- sido preenchido numa devolução anterior
+                                  revisao = coalesce(revisao, '{}'::jsonb) || %s::jsonb
+                            where id=%s
+                        returning poi_id, status""",
+                        (d.status, d.motivo_generico, d.motivo_escrito, d.observacao,
+                         _pauta,
+                         json.dumps(d.pauta_porque or {}, ensure_ascii=False),
+                         _prio,
+                         json.dumps(rev, ensure_ascii=False), item_id))
+            r = cur.fetchone()
+            if not r:
+                # 404 e não 403: para quem não é dono do item, ele não existe.
+                raise HTTPException(404, "item não encontrado na sua fila")
+        con.commit()
+        return {"id": item_id, "poi_id": r[0], "status": r[1]}
+    finally:
+        con.close()
+
+
+# ── Usuários ─────────────────────────────────────────────────────────────────
+#
+# As travas de nível estão aqui, e não só no frontend, porque botão escondido
+# não é permissão: quem chamar a rota direto passa. Três regras:
+#
+#  1. Ninguém cria acima do próprio nível — senão `admin` vira `root` em dois
+#     passos, criando um root e entrando com ele.
+#  2. `root` só é criado por `root`. É o papel que atravessa todas as empresas.
+#  3. `admin` só mexe na PRÓPRIA empresa. O `tenant_id` vem do crachá dele,
+#     nunca do corpo do pedido — vindo do corpo, ele escolheria a empresa alheia.
+
+class UsuarioEntrada(BaseModel):
+    email: str = Field(max_length=200)
+    nome: str = Field(min_length=2, max_length=120)
+    nivel: str = Field(default="user")
+    cargo: str | None = Field(default=None, max_length=80)
+    telefone: str | None = Field(default=None, max_length=32)
+    tenant_id: str | None = None       # só o root usa; admin herda o próprio
+
+
+class UsuarioEdicao(BaseModel):
+    nome: str | None = Field(default=None, max_length=120)
+    nivel: str | None = None
+    cargo: str | None = Field(default=None, max_length=80)
+    telefone: str | None = Field(default=None, max_length=32)
+    ativo: bool | None = None
+
+
+def _validar_nivel(quem: _auth.Usuario, alvo: str):
+    if alvo not in _auth.NIVEIS:
+        raise HTTPException(422, f"nível inválido: {alvo}")
+    if alvo == "root" and quem.nivel != "root":
+        raise HTTPException(403, "apenas root cria outro root")
+    if _auth.NIVEIS.index(alvo) > _auth.NIVEIS.index(quem.nivel):
+        raise HTTPException(403, "não é possível criar usuário acima do seu nível")
+
+
+@app.get("/api/usuarios")
+def usuarios_listar(u: _auth.Usuario = Depends(_auth.exige("admin"))):
+    """Root vê todos; admin vê os da própria empresa — pela policy, não por IF."""
+    con = _auth.conectar_como(u)
+    try:
+        with con.cursor() as cur:
+            cur.execute("""select us.id, us.nome, us.email, us.nivel, us.cargo,
+                                  us.telefone, us.ativo, t.nome, us.criado_em
+                             from usuarios us
+                             left join tenants t on t.id = us.tenant_id
+                            order by t.nome nulls first, us.nivel, us.nome""")
+            return {"usuarios": [
+                {"id": str(i), "nome": n, "email": e, "nivel": nv, "cargo": c,
+                 "telefone": tel, "ativo": a, "empresa": emp,
+                 "criado_em": cr.isoformat() if cr else None}
+                for i, n, e, nv, c, tel, a, emp, cr in cur.fetchall()]}
+    finally:
+        con.close()
+
+
+@app.post("/api/usuarios", status_code=201)
+def usuarios_criar(novo: UsuarioEntrada, u: _auth.Usuario = Depends(_auth.exige("admin"))):
+    _validar_nivel(u, novo.nivel)
+
+    # A empresa do novo usuário: root escolhe, admin herda a sua. Aceitar
+    # `tenant_id` do corpo para o admin seria deixá-lo cadastrar gente dentro
+    # do cliente vizinho.
+    if u.nivel == "root":
+        destino = novo.tenant_id
+        if novo.nivel != "root" and not destino:
+            raise HTTPException(422, "informe a empresa para usuário que não é root")
+        if novo.nivel == "root":
+            destino = None
+    else:
+        destino = u.tenant_id
+
+    email = novo.email.strip().lower()
+    senha = secrets.token_urlsafe(12)
+    import auth as _a
+    req = urllib.request.Request(
+        f"{_a._GW}/auth/v1/admin/users", method="POST",
+        data=json.dumps({"email": email, "password": senha,
+                         "email_confirm": True}).encode(),
+        headers={"apikey": _a._ANON, "Authorization": f"Bearer {_a._ANON}",
+                 "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=25) as r:
+            uid = json.loads(r.read())["id"]
+    except urllib.error.HTTPError as e:
+        detalhe = e.read()[:200].decode("utf-8", "ignore")
+        if "already" in detalhe.lower() or e.code == 422:
+            raise HTTPException(409, "já existe usuário com esse e-mail")
+        raise HTTPException(502, "não consegui criar a credencial")
+    except Exception:
+        raise HTTPException(503, "serviço de autenticação indisponível")
+
+    con = _auth.conectar_como(u)
+    try:
+        with con.cursor() as cur:
+            cur.execute("""insert into usuarios
+                             (id, tenant_id, nivel, nome, email, cargo, telefone)
+                           values (%s,%s,%s,%s,%s,%s,%s)""",
+                        (uid, destino, novo.nivel, novo.nome.strip(), email,
+                         novo.cargo, novo.telefone))
+        con.commit()
+    finally:
+        con.close()
+    # A senha volta UMA vez, para quem criou repassar. Não fica guardada em
+    # lugar nenhum nosso — recuperação é pelo fluxo do Auth, não pelo nosso banco.
+    return {"id": uid, "email": email, "nivel": novo.nivel, "senha_inicial": senha}
+
+
+@app.patch("/api/usuarios/{usuario_id}")
+def usuarios_editar(usuario_id: str, alt: UsuarioEdicao,
+                    u: _auth.Usuario = Depends(_auth.exige("admin"))):
+    if alt.nivel:
+        _validar_nivel(u, alt.nivel)
+    if usuario_id == u.id and alt.ativo is False:
+        raise HTTPException(422, "você não pode desativar a si mesmo")
+
+    con = _auth.conectar_como(u)
+    try:
+        with con.cursor() as cur:
+            # A policy já impede alcançar usuário de outra empresa; este SELECT
+            # existe para responder 404 em vez de "0 linhas afetadas".
+            cur.execute("select nivel from usuarios where id=%s", (usuario_id,))
+            atual = cur.fetchone()
+            if not atual:
+                raise HTTPException(404, "usuário não encontrado")
+            if atual[0] == "root" and u.nivel != "root":
+                raise HTTPException(403, "apenas root altera um root")
+            cur.execute("""update usuarios
+                              set nome=coalesce(%s,nome), nivel=coalesce(%s,nivel),
+                                  cargo=coalesce(%s,cargo), telefone=coalesce(%s,telefone),
+                                  ativo=coalesce(%s,ativo), atualizado_em=now()
+                            where id=%s
+                        returning nome, nivel, ativo""",
+                        (alt.nome, alt.nivel, alt.cargo, alt.telefone, alt.ativo,
+                         usuario_id))
+            r = cur.fetchone()
+        con.commit()
+        return {"id": usuario_id, "nome": r[0], "nivel": r[1], "ativo": r[2]}
+    finally:
+        con.close()
+
+
+@app.delete("/api/usuarios/{usuario_id}")
+def usuarios_desativar(usuario_id: str, u: _auth.Usuario = Depends(_auth.exige("admin"))):
+    """Desativa; não apaga. Histórico de quem aprovou o quê tem de sobreviver
+    à saída da pessoa — é disso que auditoria é feita."""
+    if usuario_id == u.id:
+        raise HTTPException(422, "você não pode desativar a si mesmo")
+    con = _auth.conectar_como(u)
+    try:
+        with con.cursor() as cur:
+            cur.execute("select nivel from usuarios where id=%s", (usuario_id,))
+            atual = cur.fetchone()
+            if not atual:
+                raise HTTPException(404, "usuário não encontrado")
+            if atual[0] == "root" and u.nivel != "root":
+                raise HTTPException(403, "apenas root desativa um root")
+            cur.execute("update usuarios set ativo=false, atualizado_em=now() where id=%s",
+                        (usuario_id,))
+        con.commit()
+        return {"id": usuario_id, "ativo": False}
+    finally:
+        con.close()
+
+
+@app.get("/api/eu")
+def quem_sou_eu(u: _auth.Usuario = Depends(_auth.usuario_atual)):
+    """O crachá que o frontend usa para decidir o que mostrar.
+
+    `fontes_visiveis` é o requisito comercial: para o cliente, a fonte do dado
+    somos nós. A procedência continua GRAVADA — o que muda é a exibição."""
+    con = _auth.conectar_como(u)
+    try:
+        with con.cursor() as cur:
+            cur.execute("""select us.nome, us.email, us.telefone, us.cargo,
+                                  us.foto_path, t.nome, t.logo_path
+                             from usuarios us
+                             left join tenants t on t.id = us.tenant_id
+                            where us.id = %s""", (u.id,))
+            r = cur.fetchone() or (None,) * 7
+    finally:
+        con.close()
+    return {"id": u.id, "nivel": u.nivel, "tenant_id": u.tenant_id,
+            "nome": r[0], "email": r[1], "telefone": r[2], "cargo": r[3],
+            "tem_foto": bool(r[4]), "empresa": r[5],
+            # A marca do TENANT, no terceiro espaco do cabecalho (ADR 0005).
+            # Nulo mostra so o nome em texto: ausencia de logo nao pode virar
+            # espaco quebrado.
+            "empresa_logo": r[6],
+            "fontes_visiveis": u.nivel == "root"}
+
+
+class LoginEntrada(BaseModel):
+    email: str = Field(max_length=200)
+    senha: str = Field(max_length=200)
+
+
+@app.post("/api/login")
+def login(e: LoginEntrada):
+    """Troca e-mail e senha por um token.
+
+    O navegador NÃO fala com o GoTrue direto, e isso não é preciosismo: a chave
+    `anon` e o endereço do serviço de autenticação ficariam no código da página.
+    Passando por aqui, o frontend conhece apenas `/api/login` — coerente com a
+    regra de que, para o cliente, a origem do que ele vê somos nós.
+
+    A mensagem de erro é a mesma para e-mail inexistente e senha errada, de
+    propósito: distinguir os dois transforma a tela de login em um verificador
+    de quem tem conta no sistema.
+    """
+    import auth as _a
+    corpo = json.dumps({"email": e.email.strip().lower(), "password": e.senha}).encode()
+    req = urllib.request.Request(
+        f"{_a._GW}/auth/v1/token?grant_type=password", data=corpo, method="POST",
+        headers={"apikey": _a._ANON, "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            tok = json.loads(r.read())
+    except urllib.error.HTTPError:
+        raise HTTPException(401, "e-mail ou senha inválidos")
+    except Exception:
+        raise HTTPException(503, "serviço de autenticação indisponível")
+    return {"access_token": tok.get("access_token"),
+            "refresh_token": tok.get("refresh_token"),
+            "expira_em": tok.get("expires_in")}
+
+
+class RenovarEntrada(BaseModel):
+    refresh_token: str
+
+
+@app.post("/api/renovar")
+def renovar(e: RenovarEntrada):
+    """Troca o refresh_token por um access_token novo.
+
+    O token de acesso do GoTrue dura uma hora. Sem esta rota o painel guardava
+    só ele e descartava o refresh que o login já devolvia — de modo que, ao
+    completar a hora, QUALQUER chamada tomava 401 e a tela caía no login.
+
+    Isso não é incômodo de usabilidade: acontecia no meio de uma carga de 16 mil
+    fachadas, e quem estava acompanhando perdia a tela do processo que continuava
+    rodando no servidor, sem barra, sem log e sem saber se ainda estava vivo.
+
+    Rota PÚBLICA porque a credencial é o próprio refresh_token — exigir o
+    access_token aqui seria exigir justamente o que expirou.
+    """
+    import auth as _a
+    corpo = json.dumps({"refresh_token": e.refresh_token}).encode()
+    req = urllib.request.Request(
+        f"{_a._GW}/auth/v1/token?grant_type=refresh_token", data=corpo, method="POST",
+        headers={"apikey": _a._ANON, "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            tok = json.loads(r.read())
+    except urllib.error.HTTPError:
+        raise HTTPException(401, "sessão não pôde ser renovada")
+    except Exception:
+        raise HTTPException(503, "serviço de autenticação indisponível")
+    return {"access_token": tok.get("access_token"),
+            "refresh_token": tok.get("refresh_token"),
+            "expira_em": tok.get("expires_in")}
+
+
+class PerfilEntrada(BaseModel):
+    nome: str | None = Field(default=None, max_length=120)
+    telefone: str | None = Field(default=None, max_length=32)
+    cargo: str | None = Field(default=None, max_length=80)
+
+
+@app.patch("/api/eu")
+def editar_perfil(p: PerfilEntrada, u: _auth.Usuario = Depends(_auth.usuario_atual)):
+    """Cada um edita o PRÓPRIO cadastro.
+
+    Repare no `where us.id = %s` com o id vindo do TOKEN: não há parâmetro de
+    rota dizendo qual usuário editar. Se houvesse, alguém trocaria o id e
+    editaria o perfil do vizinho — e nível, empresa e e-mail não estão aqui de
+    propósito: quem muda nível é o root, e e-mail é credencial, muda no Auth.
+    """
+    con = _auth.conectar_como(u)
+    try:
+        with con.cursor() as cur:
+            cur.execute("""update usuarios
+                              set nome     = coalesce(%s, nome),
+                                  telefone = coalesce(%s, telefone),
+                                  cargo    = coalesce(%s, cargo),
+                                  atualizado_em = now()
+                            where id = %s
+                        returning nome, telefone, cargo""",
+                        (p.nome, p.telefone, p.cargo, u.id))
+            r = cur.fetchone()
+            if not r:
+                raise HTTPException(404, "usuário não encontrado")
+        con.commit()
+        return {"nome": r[0], "telefone": r[1], "cargo": r[2]}
+    finally:
+        con.close()
+
+
+@app.post("/api/eu/foto")
+async def enviar_foto(arquivo: UploadFile = File(...),
+                      u: _auth.Usuario = Depends(_auth.usuario_atual)):
+    """Foto de perfil: bytes no Storage, caminho no banco.
+
+    Limite de 4 MB porque foto de perfil é exibida em 64 px — aceitar o JPEG de
+    12 MB que a câmera do celular produz gastaria banda e Storage para nada."""
+    if (arquivo.content_type or "") not in ("image/jpeg", "image/png", "image/webp"):
+        raise HTTPException(415, "envie JPEG, PNG ou WebP")
+    dados = await arquivo.read()
+    if len(dados) > 4 * 1024 * 1024:
+        raise HTTPException(413, "imagem acima de 4 MB")
+
+    import imagens
+    caminho = f"perfil/{u.id}.jpg"
+    if not imagens.enviar(caminho, dados, arquivo.content_type):
+        raise HTTPException(502, "falha ao gravar no Storage")
+
+    con = _auth.conectar_como(u)
+    try:
+        with con.cursor() as cur:
+            cur.execute("update usuarios set foto_path=%s, atualizado_em=now() where id=%s",
+                        (caminho, u.id))
+        con.commit()
+    finally:
+        con.close()
+    return {"ok": True, "bytes": len(dados)}
+
+
+@app.get("/api/eu/foto")
+def ler_foto(u: _auth.Usuario = Depends(_auth.usuario_atual)):
+    con = _auth.conectar_como(u)
+    try:
+        with con.cursor() as cur:
+            cur.execute("select foto_path from usuarios where id=%s", (u.id,))
+            r = cur.fetchone()
+    finally:
+        con.close()
+    if not r or not r[0]:
+        raise HTTPException(404, "sem foto")
+    import imagens
+    b = imagens.baixar(r[0])
+    if not b:
+        raise HTTPException(404, "foto não encontrada no Storage")
+    return Response(content=b, media_type="image/jpeg",
+                    headers={"Cache-Control": "no-cache"})
+
+
+# ── Logo da empresa cliente ──────────────────────────────────────────────────
+#
+# Mesma mecanica da foto de perfil — bytes no Storage, caminho no banco — mas o
+# dono e o TENANT, nao o usuario: todos da mesma empresa veem a mesma marca.
+
+
+@app.post("/api/empresa/logo")
+async def enviar_logo(arquivo: UploadFile = File(...),
+                      u: _auth.Usuario = Depends(_auth.usuario_atual)):
+    """Quem troca a marca da empresa e `admin` ou `root`.
+
+    Supervisor e user nao trocam: a marca identifica a empresa inteira no
+    cabecalho de todo mundo, e nao e preferencia individual.
+    """
+    if not u.pode("admin"):
+        raise HTTPException(403, "so admin ou root trocam a marca da empresa")
+    if (arquivo.content_type or "") not in ("image/jpeg", "image/png",
+                                            "image/webp", "image/svg+xml"):
+        raise HTTPException(415, "envie JPEG, PNG, WebP ou SVG")
+    dados = await arquivo.read()
+    if len(dados) > 2 * 1024 * 1024:
+        # 2 MB e generoso para uma marca exibida em 22 px de altura. O limite
+        # existe para o Storage nao virar deposito de PSD exportado errado.
+        raise HTTPException(413, "imagem acima de 2 MB")
+
+    import imagens
+    caminho = f"marca/{u.tenant_id}"
+    if not imagens.enviar(caminho, dados, arquivo.content_type):
+        raise HTTPException(502, "falha ao gravar no Storage")
+
+    con = _auth.conectar_como(u)
+    try:
+        with con.cursor() as cur:
+            cur.execute("update tenants set logo_path=%s where id=%s",
+                        (caminho, u.tenant_id))
+        con.commit()
+    finally:
+        con.close()
+    return {"ok": True, "bytes": len(dados)}
+
+
+@app.get("/api/empresa/logo")
+def ler_logo(u: _auth.Usuario = Depends(_auth.usuario_atual)):
+    con = _auth.conectar_como(u)
+    try:
+        with con.cursor() as cur:
+            cur.execute("select logo_path from tenants where id=%s",
+                        (u.tenant_id,))
+            r = cur.fetchone()
+    finally:
+        con.close()
+    if not r or not r[0]:
+        raise HTTPException(404, "empresa sem marca")
+    import imagens
+    b = imagens.baixar(r[0])
+    if not b:
+        raise HTTPException(404, "marca nao encontrada no Storage")
+    # `image/png` cobre PNG e serve JPEG/WebP no navegador; SVG precisa do tipo
+    # certo ou o navegador baixa em vez de desenhar.
+    tipo = "image/svg+xml" if b[:5] in (b"<?xml", b"<svg ") else "image/png"
+    return Response(content=b, media_type=tipo,
+                    headers={"Cache-Control": "no-cache"})
+
+
+# ── A bancada de validacao ───────────────────────────────────────────────────
+#
+# A tela vem de `assets/modelo_frontend/tela_radar_comercial.zip`: 149 KB de
+# CSS, 319 KB de JS e 327 KB de HTML, ja especificada, com lateral de fila,
+# regua de probabilidade, tabela de cruzamento, mapa por camadas e barra de
+# decisao. Reimplementar aquilo a mao sairia pior.
+#
+# Ela foi desenhada para CARREGAR UM DATASET. Entao o trabalho e produzir o
+# nosso naquele contrato — `bancada_dataset.montar` — e servir os dois.
+
+
+@app.get("/api/bancada/dataset")
+def bancada_dataset(limite: int = 40, poi: int | None = None,
+                    u: _auth.Usuario = Depends(_auth.usuario_atual)):
+    """A fila do usuario no formato que a bancada consome.
+
+    `root` e `admin` veem a fila inteira do tenant; supervisor ve so o que lhe
+    foi atribuido — a mesma regra da rota `/api/fila`, aqui de novo porque quem
+    le esta funcao precisa saber, e nao descobrir num `join` distante.
+    """
+    import bancada_dataset as BD
+
+    con = _auth.conectar_como(u)
+    try:
+        with con.cursor() as cur:
+            so_meus = "" if u.pode("admin") else "and a.supervisor_id = %s"
+            args = (limite,) if u.pode("admin") else (u.id, limite)
+            cur.execute(f"""select a.id, a.poi_id, a.status::text, a.observacao,
+                                   a.motivo_escrito, a.decidido_em,
+                                   a.prioridade::text, a.pauta::text[], us.nome
+                              from atribuicao a
+                              left join usuarios us on us.id = a.supervisor_id
+                             where true {so_meus}
+                             order by (a.status = 'pendente') desc,
+                                      a.prioridade desc, a.id
+                             limit %s""", args)
+            colunas = ["id", "poi_id", "status", "observacao", "motivo_escrito",
+                       "decidido_em", "prioridade", "pauta", "supervisor"]
+            itens = [dict(zip(colunas, r)) for r in cur.fetchall()]
+            for it in itens:
+                if it["decidido_em"]:
+                    it["decidido_em"] = it["decidido_em"].isoformat()
+
+            # O PONTO PEDIDO ENTRA MESMO SEM ESTAR NA FILA.
+            #
+            # Clicar num ponto do mapa abre a bancada nele — e a maioria dos
+            # 27 mil POIs nunca foi atribuida a ninguem. Exigir atribuicao
+            # antes de olhar transformaria a bancada em tela de supervisor, e
+            # ela e a tela de quem examina um ponto.
+            if poi is not None and not any(i["poi_id"] == poi for i in itens):
+                cur.execute("""select id from pois where id = %s""", (poi,))
+                if cur.fetchone():
+                    itens.insert(0, {"poi_id": poi, "status": "pendente",
+                                     "prioridade": "normal"})
+
+        return BD.montar(con, itens, e_root=(u.nivel == "root"),
+                         base=f"fila de {u.nome or u.nivel}")
+    finally:
+        con.close()
+
+
+@app.get("/bancada")
+def bancada_pagina():
+    """A tela. O HTML e servido como esta no modelo; os dados vem da rota acima."""
+    alvo = FRONT / "bancada.html"
+    if not alvo.exists():
+        raise HTTPException(404, "bancada.html nao instalada — rode "
+                                 "`python instalar_bancada.py`")
+    return FileResponse(str(alvo), media_type="text/html")
 
 
 app.mount("/static", _FrontSemCache(directory=str(FRONT)), name="static")

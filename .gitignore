@@ -38,6 +38,11 @@ mapa_pois.html
 *.sql
 *.backup
 *.tar
+# ...mas MIGRAÇÃO É CÓDIGO, não saída. O `*.sql` acima nasceu para dumps e
+# levou junto as 26 migrações: até 24/08/2026 nenhuma estava versionada, e a
+# história do schema — que é o que explica por que cada coluna existe — vivia
+# só no disco de quem a escreveu. 157 KB de texto.
+!migrations/*.sql
 # Backups do banco (bem pesados — DB tem os bytes das imagens)
 backups_bd/
 
@@ -57,6 +62,11 @@ rebusca_resultados.json
 
 # Config local do Claude Code
 .claude/
+
+# Skills de design instaladas por `npx skills add` (taste-skill). Reinstalam-se
+# com um comando e o `.claude/skills` aponta para cá por junção — versionar
+# significaria duplicar 4,7 MB de instrução de terceiro dentro do repo.
+.agents/
 
 # Pesos de modelos (baixados on-demand)
 *.pt
@@ -94,3 +104,20 @@ cache_ibge/
 migracao.log
 migracao_saida.log
 t.dump
+
+# Credenciais iniciais dos usuarios — NUNCA versionar
+USUARIOS-INICIAIS.csv
+
+# Log de cada rodada, um arquivo por job. Serve para acompanhar a rodada viva e
+# para reler o motivo de uma falha depois — nada disso pertence ao repositorio.
+logs/
+
+# Bancada instalada a partir de assets/modelo_frontend/tela_radar_comercial.zip.
+# 472 KB gerados: versionar faria cada ajuste virar um diff ilegivel, e a copia
+# competiria com o zip pela verdade. Refaz com `python instalar_bancada.py`.
+frontend/bancada.html
+
+# Snapshot do Cadastur baixado do portal do MTur (Parquet + CSV + cache). Sao
+# centenas de MB regeraveis com `python cadastur.py`, e o que vale deles ja
+# esta em `cadastur_prestador`.
+dados_externos/cadastur/

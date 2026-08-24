@@ -1028,6 +1028,11 @@ document.querySelectorAll(".fly-item").forEach((b) => {
     $("sec-planilha").classList.toggle("hidden", modo !== "planilha");
     $("sec-mineracao").classList.toggle("hidden", modo !== "mineracao");
     $("sec-enriquecimento").classList.toggle("hidden", modo !== "enriquecimento");
+    $("sec-cadastur")?.classList.toggle("hidden", modo !== "cadastur");
+    // A base pública vem por MUNICÍPIO. A área desenhada não participa, e
+    // deixar o painel dela visível sugeriria que participa — o operador
+    // desenharia um polígono e esperaria que o recorte o respeitasse.
+    $("sec-area")?.classList.toggle("hidden", modo === "cadastur");
     $("sec-avaliar")?.classList.toggle("hidden", modo !== "avaliar");
     // O DASHBOARD NÃO É UM PASSO DO PROCESSO — é tela de leitura. Some com tudo
     // que serve para operar: área de trabalho, cards do processo atual, busca no
@@ -1040,7 +1045,11 @@ document.querySelectorAll(".fly-item").forEach((b) => {
     $("dashboard").classList.toggle("hidden", !dash);
     for (const id of ["sec-area", "sec-execucao", "stats", "busca-wrap",
                       "filtros", "log-panel"]) {
-      $(id)?.classList.toggle("hidden", dash);
+      // `sec-area` tem DOIS motivos para sumir: o dashboard e a base pública.
+      // Sem o segundo aqui, sair do dashboard para o Cadastur a traria de
+      // volta — o laço roda depois e venceria a linha acima.
+      const esconder = dash || (id === "sec-area" && modo === "cadastur");
+      $(id)?.classList.toggle("hidden", esconder);
     }
     if (dash) carregarDashboard();
     // os cards da leitura substituem os do processo genérico só nesta aba
@@ -1106,7 +1115,8 @@ $("file-input").onchange = async () => {
    não inicia job nenhum e o botão nem aparece. */
 const MODOS_JOB = { planilha: "da planilha", mineracao: "de mineração",
                     enriquecimento: "de enriquecimento",
-                    avaliar: "de avaliação de fachada" };
+                    avaliar: "de avaliação de fachada",
+                    cadastur: "de base pública (Cadastur)" };
 
 /* QUEM PODE DISPARAR PROCESSO. O servidor já nega — `/api/jobs` exige admin — e
    é ele que manda. Isto aqui só evita o pior tipo de silêncio: o `user` clicava
@@ -1127,6 +1137,13 @@ function aplicarNivel() {
   }
 }
 document.addEventListener("cr:sessao", aplicarNivel);
+
+/* Os campos da base pública reavaliam o botão A CADA TECLA. Sem isto ele só
+   acenderia na próxima troca de etapa: a pessoa digitaria o município inteiro
+   olhando um botão apagado e concluiria que a tela travou. */
+for (const id of ["cad-municipio", "cad-uf"]) {
+  document.getElementById(id)?.addEventListener("input", atualizarBotoes);
+}
 
 /* Dispara o job e MOSTRA a falha. O `.json()` direto sobre a resposta engolia
    403 e 500: o corpo do erro tem `detail`, não `erro`, então nenhum toast
@@ -1150,14 +1167,33 @@ function atualizarBotoes() {
   // o modo Quadras tem o seu próprio botão e NÃO passa pelo job de POIs
   const usaJob = modo in MODOS_JOB;
   const executa = podeExecutar();
-  const pronto = usaJob && temArea && !jobRodando && executa &&
+  // A base pública não usa a área desenhada: ela vem por município, que é como
+  // o governo publica. Exigir polígono aqui deixaria o botão morto sem que
+  // nada na tela dissesse o que faltava.
+  const precisaArea = modo !== "cadastur";
+  // Cada modo tem a SUA pré-condição, e o botão só acende quando ela está
+  // satisfeita. A planilha precisa do arquivo; a base pública, do município.
+  // Deixar o botão aceso com o aviso escrito ao lado convida ao clique que vai
+  // falhar — e a mensagem, que estava certa, passa a parecer decorativa.
+  const temMunicipio = modo !== "cadastur" ||
+        (($("cad-municipio")?.value || "").trim() &&
+         ($("cad-uf")?.value || "").trim().length === 2);
+  const pronto = usaJob && (temArea || !precisaArea) && !jobRodando && executa &&
+                 !!temMunicipio &&
                  (modo !== "planilha" || !!arquivoImportado);
   $("btn-iniciar").disabled = !pronto;
   $("btn-iniciar").classList.toggle("hidden", jobRodando || !usaJob);
   $("btn-parar").classList.toggle("hidden", !jobRodando || !executa);
   if (!executa) $("job-status-txt").textContent =
     "Seu nível de acesso vê os dados, mas não dispara processo. Peça a um admin da sua empresa.";
-  else if (!temArea) $("job-status-txt").textContent = "Defina a área (passo 1) para liberar o início.";
+  else if (!temArea && precisaArea) $("job-status-txt").textContent = "Defina a área (passo 1) para liberar o início.";
+  // Dizer "pronto" com o botão travado é pior que não dizer nada: a pessoa
+  // conclui que a tela quebrou em vez de procurar o campo que falta. A
+  // mensagem cobre os DOIS campos, e não só o primeiro.
+  else if (modo === "cadastur" && !($("cad-municipio")?.value || "").trim())
+    $("job-status-txt").textContent = "Informe o município — o Cadastur é publicado por município, não por área.";
+  else if (modo === "cadastur" && ($("cad-uf")?.value || "").trim().length !== 2)
+    $("job-status-txt").textContent = "Falta a UF — duas letras, ex.: RS.";
   else if (modo === "planilha" && !arquivoImportado && !jobRodando) $("job-status-txt").textContent = "Importe a planilha (passo 2).";
   else if (!jobRodando) $("job-status-txt").textContent = "Pronto para iniciar.";
 }
@@ -1424,6 +1460,17 @@ $("btn-iniciar").onclick = async () => {
       no_proxy: !$("op-proxy").checked,
       cidade: $("op-cidade").value.trim(),
     };
+  } else if (modo === "cadastur") {
+    const municipio = ($("cad-municipio")?.value || "").trim();
+    const uf = ($("cad-uf")?.value || "").trim().toUpperCase();
+    // Valida AQUI também, e não só no servidor. O servidor é quem manda — e
+    // nega igual —, mas deixar o pedido sair para levar 400 faz o operador
+    // esperar o ida-e-volta para descobrir que faltava a UF.
+    if (!municipio) return toast("Informe o município.", "err");
+    if (uf.length !== 2) return toast("Informe a UF com duas letras.", "err");
+    opcoes = { municipio, uf,
+               gerar: $("cad-gerar")?.checked !== false,
+               so_carregar: !!$("cad-so-carregar")?.checked };
   } else if (modo === "mineracao") {
     const motor = $("op-motor")?.value || "captura";
     opcoes = { motor, sessao: $("op-sessao").value.trim() || "mineracao" };

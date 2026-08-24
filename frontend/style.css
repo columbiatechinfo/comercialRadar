@@ -1253,6 +1253,29 @@ body.lista-aberta #painel { display: none; }
 .mc-scroll { max-height: 300px; overflow: auto; border: 1px solid var(--linha);
   border-radius: var(--r-caixa); background: var(--branco); }
 
+
+/* ── Campos em linha ─────────────────────────────────────────────
+   Município e UF andam juntos e têm larguras muito diferentes — a UF tem duas
+   letras. Em colunas iguais, o campo da UF ficaria com espaço para um parágrafo
+   e a pessoa hesitaria sobre o que escrever ali. */
+.linha-campos { display: flex; gap: var(--e3); align-items: flex-end;
+  margin: var(--e4) 0 var(--e2); }
+.campo-inline { display: flex; flex-direction: column; gap: var(--e1);
+  flex: 1 1 auto; font-size: var(--fs-sm); font-weight: 600;
+  color: var(--texto); }
+.campo-inline input {
+  padding: 9px 12px; border: 1px solid var(--linha-2);
+  border-radius: var(--r-controle); font: var(--fs-base)/1.4 var(--f-c);
+  color: var(--texto); background: var(--branco); width: 100%;
+  transition: border-color var(--rapido), box-shadow var(--rapido);
+}
+.campo-inline input:focus { outline: none; border-color: var(--azul);
+  box-shadow: 0 0 0 3px rgba(0, 109, 255, .14); }
+/* A UF cabe em duas letras, e o campo diz isso pelo tamanho. */
+.campo-uf { flex: 0 0 76px; }
+.campo-uf input { text-transform: uppercase; font-family: var(--f-m);
+  letter-spacing: .06em; }
+
 /* ── Acesso ──────────────────────────────────────────────────────────────
    Estrutura do PNG "pagina de acesso": formulario a esquerda, arte a direita.
    A arte e CSS puro — um campo de radar em navy. Foto de banco de imagem num
