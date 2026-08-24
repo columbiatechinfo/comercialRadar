@@ -4,7 +4,7 @@
   "perfil": "saas-multi-cliente",
   "versao": "0.1.0",
   "ambiente": "wsl-dev",
-  "atualizado_em": "2026-08-24T15:10:00-03:00",
+  "atualizado_em": "2026-08-24T15:40:00-03:00",
   "atualizado_por": "(analise de estado)",
   "commit": "daeba39",
   "seguranca": {
@@ -15,12 +15,8 @@
     "criticos": [],
     "recomendados": [
       {
-        "item": "4 tabelas sem RLS: atribuicao_divergente, fachada_triagem, foto_maps_triagem, ifood_merchant",
-        "acao": "sao as tabelas criadas DEPOIS do passe de RLS de 12/08. Rodar /modelo-acesso de novo, ou ligar a policy padrao de tenant nas quatro. Enquanto isso, qualquer papel enxerga a linha de qualquer empresa nelas"
-      },
-      {
-        "item": "25.432 linhas de codigo nunca commitadas",
-        "acao": "30+ modulos, 2 skills e 3 documentos existem so no disco desta maquina — entre eles chat_api.py, leitura_fachada.py, extracao_estadual.py, tratamento_cnpj.py e a familia iFood. Nao estao no .gitignore: nunca foram adicionados. Perda de disco perde tudo"
+        "item": "66 registros de auditoria com tenant_id nulo",
+        "acao": "sao anteriores ao ajuste e nenhum papel os enxerga. NAO retro-atribuir: trilha de auditoria editada depois do fato vale menos que trilha incompleta. Decidir se ficam como estao ou saem"
       },
       {
         "item": "Reconferir a restricao de referrer das duas chaves de navegador",
@@ -65,8 +61,8 @@
     {
       "id": "rls",
       "nome": "tenant_id + RLS",
-      "status": "parcial",
-      "detalhe": "27 tabelas com tenant_id, 24 com RLS ligada e policy, 52 indices com tenant_id na primeira coluna. PENDENCIA: 4 tabelas criadas depois do passe de RLS ficaram de fora — atribuicao_divergente, fachada_triagem, foto_maps_triagem, ifood_merchant",
+      "status": "ok",
+      "detalhe": "28 tabelas com tenant_id, TODAS com RLS ligada, policy tenant_isolado e o gatilho preencher_tenant (excecoes de projeto: auditoria tem escritor proprio, e o root de usuarios nao pertence a empresa). Migration 0029 fechou as 4 que faltavam. tests/test_isolamento_tenant.py passou a cobrar a REGRA, nao a lista — tabela nova sem policy reprova a suite",
       "nota": "4 niveis com escopo real: supervisor ve so o que lhe foi atribuido (provado com numero — 3 POIs de 22.231 da empresa). Fila de aprovacao com aprovar, reprovar (motivo escrito E generico, exigidos por CHECK no banco) e devolver. Auditoria por trigger, append-only. Procedencia embacada para quem nao e root. 62 testes verdes."
     },
     {
@@ -91,7 +87,7 @@
       "id": "testes",
       "nome": "Testes",
       "status": "ok",
-      "detalhe": "suite propria com 264 testes em tests/ — 229 passando e 35 puladas (as que exigem servico externo), medido em 24/08/2026. Mais prova_ponta_a_ponta.py (49 asseroes sobre o sistema de pe) e prova_carga_chat.py. O CI compila e roda o selftest da skill de fachada"
+      "detalhe": "suite propria com 266 testes em tests/ — 231 passando e 35 puladas (as que exigem servico externo), medido em 24/08/2026. Mais prova_ponta_a_ponta.py (49/49) e prova_carga_chat.py. O CI compila e roda o selftest da skill de fachada"
     },
     {
       "id": "backup",
@@ -140,16 +136,11 @@
   ],
   "operacional": {
     "cobertura_testes": 0,
-    "tabelas_sem_rls": [
-      "atribuicao_divergente",
-      "fachada_triagem",
-      "foto_maps_triagem",
-      "ifood_merchant"
-    ],
-    "indice_tenant": 52,
+    "tabelas_sem_rls": [],
+    "indice_tenant": 54,
     "ultimo_backup": "2026-08-12",
     "restauracao_validada": "2026-08-12",
-    "policies": 24,
+    "policies": 28,
     "policies_com_initplan": 13,
     "empresas": 42,
     "usuarios_por_nivel": {
@@ -160,7 +151,7 @@
     },
     "rotas_autenticadas": 45,
     "rotas_sem_auth": 0,
-    "testes": 229,
+    "testes": 231,
     "auditoria_registros": 1746,
     "pois_validos": 31005,
     "skills_integradas": [
@@ -173,7 +164,7 @@
     "pois_estadual": 300,
     "cnpj_tratado": 27147,
     "testes_pulados": 35,
-    "testes_coletados": 264,
+    "testes_coletados": 266,
     "pois_total": 31255,
     "cadastro_cliente": 102065,
     "cadastur_prestador": 5443,
@@ -507,6 +498,13 @@
       "nivel": "ok",
       "evento": "Dez commits de um dia so, e o retrato do que eles deixaram",
       "detalhe": "O Cadastur/MTur virou passo do processo e gerador de POI, com atualizacao incremental e o CNEFE como terceira ancora de coordenada (secao 27). A coordenada passou a declarar procedencia — porta 15 m, porta_aprox 40 m, via 150 m, desconhecida — e ganhou cascata Photon → Nominatim → painel do Maps, com o geocodificador conferindo a via que devolve; 5.608 POIs sairam de desconhecida para classe provada (secao 28). A varredura achou 13 POIs com foto e analise de IA capturadas na coordenada errada, tratados em tres destinos diferentes, e 41 objetos orfaos sairam do Storage (secao 29). O portproxy do i9 passou a se reaplicar sozinho no boot por tarefa agendada como SYSTEM, e verificar_servicos.py verifica FUNCAO e nao porta (secao 30). E o front inteiro passou a ler o vocabulario de frontend/tokens.css: de 15 reprovacoes de contraste em 796 elementos para zero (secao 31). MEDIDO HOJE: 31.255 POIs, 229 testes passando, 7/7 na verificacao de servicos. DOIS ACHADOS QUE NAO SAO DE CODIGO: o working tree estava no branch master, um mes atras do trabalho real em processo-quadras, e os 19 commits desde a migracao para o i9 nunca tinham sido enviados ao origin (enviados agora); e 25.432 linhas nunca foram commitadas."
+    },
+    {
+      "data": "2026-08-24",
+      "skill": "(modelo-acesso)",
+      "nivel": "ok",
+      "evento": "As quatro tabelas sem politica de isolamento, e a regra que impede a quinta",
+      "detalhe": "atribuicao_divergente, fachada_triagem, foto_maps_triagem e ifood_merchant estavam sem RLS — e o estado.json afirmava tabelas_sem_rls: []. Sao as MESMAS quatro que a migration 0024 ja tinha pego por outro motivo (escreviam e nao liam): tabela nova nao herda a politica. Como worker e root tem BYPASSRLS, o pipeline nunca sentiu; quem era submetido e o comercialradar_app, o papel do servidor web — ou seja, era por ali que o painel de uma empresa alcancava linha de outra. O ifood_merchant tinha 1.598 linhas com tenant_id NULO: ligar a RLS naquele estado as tornaria invisiveis, que e pior que o problema. Atribuidas por municipio, a criterio do dono do produto — 1.002 Aegea, 596 Columbia — e a coluna virou not null. Uma linha tinha a cidade grafada 'porto-alergre' e teria ficado orfa; a migration corrige antes de cruzar e ABORTA se sobrar alguma. O teste novo pergunta pela REGRA e nao pela lista: tabela com tenant_id sem RLS, sem policy ou sem gatilho reprova a suite. Foi ele que achou duas excecoes legitimas (auditoria e usuarios) e, de quebra, 66 registros de auditoria com tenant_id nulo que ninguem enxerga. 231 testes, 49/49 na prova de ponta."
     }
   ],
   "caminho_dados": "psycopg",

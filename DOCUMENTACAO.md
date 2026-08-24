@@ -2647,3 +2647,69 @@ no chip de alerta reprovava (4,09:1) — por isso o arquivo **mede** em vez de c
 então matiz novo no CSS da moldura quebra o teste. Cor que codifica **dado** (ramo,
 fonte, face de quadra) segue no `app.js`, com a regra de que toda cor de chip leia com
 branco por cima.
+
+---
+
+## 32. As quatro tabelas que nasceram sem política (24/08/2026)
+
+Migração [`0029`](migrations/0029_rls_nas_quatro_que_ficaram_de_fora.sql) ·
+`tests/test_isolamento_tenant.py`.
+
+Ao medir o estado do sistema, quatro tabelas apareceram sem RLS:
+`atribuicao_divergente`, `fachada_triagem`, `foto_maps_triagem` e
+`ifood_merchant`. O `docs/estado.json` afirmava `tabelas_sem_rls: []`, e afirmava
+isso desde 13/08.
+
+**São as mesmas quatro da migração 0024**, que já as tinha pego por outro motivo
+(escreviam e não liam). O padrão, então, não é descuido pontual: **tabela nova
+não herda a política**. Quem cria tabela precisa escrever quatro linhas — enable,
+force, policy, trigger — e quatro vezes isso não aconteceu.
+
+### Por que ninguém tinha notado
+
+`comercialradar_worker` e `comercialradar_root` têm `rolbypassrls`. O pipeline
+inteiro, portanto, não sentia nada. Quem é submetido às políticas é
+`comercialradar_app`, o papel do servidor web — ou seja, **era exatamente por ali
+que o painel de uma empresa alcançava linha de outra**, nas quatro tabelas.
+
+### O `tenant_id` do `ifood_merchant`
+
+As outras três já tinham a coluna preenchida em todas as linhas. O
+`ifood_merchant` não tinha em **nenhuma** das 1.598: ligar a RLS naquele estado
+tornaria as 1.598 invisíveis para o painel, que é pior que o problema que a RLS
+resolve.
+
+As linhas vêm de uma raspagem única de 19/08 (1h21 de execução) sobre a região
+metropolitana inteira, **sem vínculo a POI** e com CNPJ em 16 das 1.598. A
+atribuição escolhida foi **por município** — cada linha para a empresa que mais
+tem POI naquela cidade: 1.002 Aegea-Corsan, 596 Columbia Tech Info. Fica
+registrado que é **decisão, não derivação óbvia**: o critério diz onde cada
+empresa trabalhou, não de quem o dado é.
+
+Uma linha tinha a cidade grafada `porto-alergre` e teria ficado órfã. A migração
+corrige a grafia antes de cruzar e **aborta** se sobrar qualquer linha sem dono —
+uma órfã com RLS ligada é uma linha que ninguém mais vê, e ninguém seria avisado.
+Depois disso a coluna virou `not null`.
+
+### A trava pergunta pela REGRA, não pela lista
+
+Conferir as quatro por nome não impediria a quinta.
+`test_nenhuma_tabela_com_tenant_id_fica_sem_politica` varre o schema: se a tabela
+tem `tenant_id`, ela precisa ter RLS, policy **e** o gatilho `preencher_tenant`.
+
+O gatilho importa tanto quanto a policy — sem ele a linha nasce com `tenant_id`
+nulo, e nulo não casa com policy nenhuma: some do painel de todo mundo, sem erro
+nenhum.
+
+**Duas exceções, ambas de projeto:** `auditoria` tem escritor próprio
+(`registrar_auditoria` já resolve a empresa — da sessão, e quando não há, da
+própria linha auditada), e o `root` de `usuarios` não pertence a empresa nenhuma.
+
+### O que o teste achou de quebra
+
+**66 registros de `auditoria` com `tenant_id` nulo** — nenhum papel os enxerga.
+São anteriores ao ajuste e **não foram retro-atribuídos**: trilha de auditoria
+editada depois do fato vale menos que trilha incompleta.
+
+**Estado final:** 28 tabelas com `tenant_id`, todas com política. 231 testes
+passando, 49/49 na prova de ponta a ponta.

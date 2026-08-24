@@ -135,3 +135,93 @@ def test_policy_usa_indice_e_nao_varre(cenario):
         plano = " ".join(r[0] for r in cur.fetchall())
     con.close()
     assert "Seq Scan" not in plano, f"varredura completa apesar do índice:\n{plano}"
+
+
+def test_nenhuma_tabela_com_tenant_id_fica_sem_politica():
+    """A regra geral, e não a lista das quatro que já falharam.
+
+    Em 24/08/2026 quatro tabelas estavam sem RLS — `atribuicao_divergente`,
+    `fachada_triagem`, `foto_maps_triagem` e `ifood_merchant` —, e o
+    `docs/estado.json` afirmava `tabelas_sem_rls: []`. Eram as criadas DEPOIS do
+    passe de 12/08, e são as mesmas que a migration 0024 já tinha pego por outro
+    motivo (escreviam e não liam).
+
+    O padrão, portanto, não é descuido pontual: **tabela nova não herda a
+    política**. Conferir as quatro por nome não impediria a quinta. Este teste
+    pergunta pela REGRA: se a tabela tem `tenant_id`, ela tem RLS, policy e o
+    gatilho que carimba a empresa no INSERT.
+
+    O gatilho importa tanto quanto a policy. Sem ele a linha nasce com
+    `tenant_id` nulo, e nula não casa com policy nenhuma: some do painel de
+    todo mundo, sem erro nenhum.
+
+    DUAS EXCEÇÕES, e as duas são de projeto, não pendência:
+
+      `auditoria`  tem escritor próprio. `registrar_auditoria` já resolve a
+                   empresa — da sessão, e quando não há, da própria linha
+                   auditada. Somar `preencher_tenant` seria um segundo dono
+                   para a mesma coluna.
+      `usuarios`   o `root` não pertence a empresa nenhuma. Carimbar a empresa
+                   da sessão no INSERT prenderia o root à empresa de quem o
+                   criou.
+    """
+    SEM_GATILHO_POR_PROJETO = {"auditoria", "usuarios"}
+    con = bc.conectar()
+    with con.cursor() as cur:
+        cur.execute("""
+            select c.relname,
+                   c.relrowsecurity,
+                   (select count(*) from pg_policies p
+                     where p.schemaname = 'comercialradar'
+                       and p.tablename = c.relname),
+                   (select count(*) from pg_trigger tg
+                     join pg_proc pr on pr.oid = tg.tgfoid
+                    where tg.tgrelid = c.oid
+                      and not tg.tgisinternal
+                      and pr.proname = 'preencher_tenant')
+              from pg_class c
+              join pg_namespace n on n.oid = c.relnamespace
+             where n.nspname = 'comercialradar'
+               and c.relkind = 'r'
+               and exists (select 1 from pg_attribute a
+                            where a.attrelid = c.oid
+                              and a.attname = 'tenant_id'
+                              and a.attnum > 0
+                              and not a.attisdropped)
+             order by 1""")
+        tabelas = cur.fetchall()
+    con.close()
+
+    assert tabelas, "nenhuma tabela com tenant_id — a consulta não achou o schema"
+
+    sem_rls = [t[0] for t in tabelas if not t[1]]
+    sem_policy = [t[0] for t in tabelas if t[2] == 0]
+    sem_gatilho = [t[0] for t in tabelas
+                   if t[3] == 0 and t[0] not in SEM_GATILHO_POR_PROJETO]
+
+    assert not sem_rls, f"tabelas com tenant_id e sem RLS ligada: {sem_rls}"
+    assert not sem_policy, f"tabelas com RLS e sem policy: {sem_policy}"
+    assert not sem_gatilho, (
+        "tabelas sem o gatilho preencher_tenant — a linha nasce sem empresa e "
+        f"some do painel de todos: {sem_gatilho}")
+
+
+def test_ifood_merchant_nao_tem_linha_sem_empresa():
+    """As 1.598 linhas da raspagem de 19/08 nasceram com `tenant_id` nulo.
+
+    Ligar a RLS naquele estado teria tornado as 1.598 invisíveis para o painel —
+    pior que o problema que a RLS resolve. A 0029 atribuiu por município e pôs a
+    coluna em `not null`, que é o que impede o caso de voltar.
+    """
+    con = bc.conectar()
+    with con.cursor() as cur:
+        cur.execute("select count(*) from ifood_merchant where tenant_id is null")
+        orfas = cur.fetchone()[0]
+        cur.execute("""select is_nullable from information_schema.columns
+                        where table_schema = 'comercialradar'
+                          and table_name = 'ifood_merchant'
+                          and column_name = 'tenant_id'""")
+        anulavel = cur.fetchone()[0]
+    con.close()
+    assert orfas == 0, f"{orfas} merchants sem empresa — invisíveis para o painel"
+    assert anulavel == "NO", "tenant_id voltou a aceitar nulo em ifood_merchant"
