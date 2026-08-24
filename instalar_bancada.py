@@ -32,7 +32,17 @@ import sys
 import zipfile
 
 RAIZ = pathlib.Path(__file__).parent
-ZIP = RAIZ / "assets" / "modelo_frontend" / "tela_radar_comercial.zip"
+# DOIS lugares, e o segundo não é redundância: em 24/08/2026 os assets foram
+# reorganizados e o zip passou de `modelo_frontend/` para `skills_locais/`. O
+# `instalar_bancada.py` ficou apontando para o caminho antigo e só falhou na
+# primeira publicação no i9 — aqui no notebook o `frontend/bancada.html` já
+# existia de antes, então nada acusou. Arquivo movido não quebra quem já tem o
+# resultado; quebra quem for gerar de novo, meses depois.
+_CANDIDATOS = (
+    RAIZ / "assets" / "skills_locais" / "tela_radar_comercial.zip",
+    RAIZ / "assets" / "modelo_frontend" / "tela_radar_comercial.zip",
+)
+ZIP = next((p for p in _CANDIDATOS if p.exists()), _CANDIDATOS[0])
 ALVO = RAIZ / "frontend" / "bancada.html"
 
 # O enxerto. Fica no fim do `body`, depois de todo o JavaScript do modelo, para

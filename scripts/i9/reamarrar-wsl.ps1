@@ -96,6 +96,7 @@ $regras = @(
   @{ escuta = $tailscale; porta = 5444 },   # postgres do produto
   @{ escuta = $tailscale; porta = 6543 },   # pooler transacional
   @{ escuta = $tailscale; porta = 8000 },   # kong / api
+  @{ escuta = $tailscale; porta = 8443 },   # painel do comercialRadar (Caddy/TLS)
   @{ escuta = '0.0.0.0';  porta = 2322 },   # photon
   @{ escuta = '0.0.0.0';  porta = 5000 },   # osrm carro
   @{ escuta = '0.0.0.0';  porta = 5001 },   # osrm a pe
