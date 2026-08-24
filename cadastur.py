@@ -714,15 +714,27 @@ def _poi_por_cnpj(con, cnpjs: list) -> dict:
 #     porta_face   número idêntico, coordenada anotada na mesma face
 #     nao_casou    o resto — e o resto NÃO vira POI
 #
-# `nv_geo_coord` diz de onde o IBGE tirou a coordenada:
-#     1  colhida no endereço                     → aceita
-#     2  endereço modificado (apto no mesmo nº)   → aceita, é verticalização
-#     3  estimada na localidade                   → recusada
-#     4+ centróide de setor, erro de quilômetros  → recusada
+# `nv_geo_coord` diz de onde o IBGE tirou a coordenada. O domínio é do
+# `Dicionario_CNEFE_Censo_2022.xls`:
 #
-# O piso é 2 e não 3 porque aqui a coordenada VIRA PONTO NO MAPA para alguém
-# visitar. A skill `tratamento-cnpj` usa 3 porque lá ela alimenta um score, e
-# score tolera ruído que uma visita a campo não tolera.
+#     1  ENDERECO_ORIGINAL    colhida naquele endereço no Censo   → aceita
+#     2  ENDERECO_MODIFICADO  apartamentos no mesmo número        → aceita
+#     3  ENDERECO_ESTIMADO    não havia original, ou era inválida → recusada
+#     4  FACE_QUADRA          a face da quadra, não a porta       → recusada
+#     5  LOCALIDADE           a localidade                        → recusada
+#     6  SETOR_CENSITARIO     centróide do setor                  → recusada
+#
+# MEDIDO, e não estimado. Nas três cidades carregadas, os níveis 1 e 2 cobrem
+# de 97% a 99% dos endereços; 3 e 4 somados ficam abaixo de 1%, o 5 não aparece
+# e o 6 aparece duas vezes em 176 mil.
+#
+# E o teste que decide: aceitar 3 e 4 resgataria ZERO dos prestadores que hoje
+# ficam sem coordenada. Eles falham por outro motivo — endereço sem número,
+# nome de rua abreviado, número indexado dentro de um condomínio no CNEFE.
+#
+# Ou seja: o piso em 2 não custa cobertura nenhuma, e evita que um ponto de
+# face de quadra vire porta no mapa. A skill `tratamento-cnpj` aceita até 3
+# porque lá o número alimenta um score; aqui ele manda alguém a um endereço.
 NV_ACEITO = ("1", "2")
 
 # Cache do código IBGE por UF. A lista de municípios de um estado tem ~4 KB e

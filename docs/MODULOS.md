@@ -122,10 +122,27 @@ Em ordem de qualidade da chave, e a origem fica gravada em `fonte_dado`:
 A terceira é a que destrava o caso geral: em Esteio — município sem nenhuma
 cobertura de `cnpj_tratado` — ela sozinha gerou 16 dos 17 pontos.
 
-`nv_geo_coord` 3 (estimada na localidade) e 4+ (centróide de setor, erro de km)
-são **recusados**. A skill `tratamento-cnpj` aceita até 3 porque lá o número
-alimenta um score; aqui ele vira ponto para alguém visitar, e visita não tolera
-o ruído que um score tolera.
+O `nv_geo_coord` diz de onde o IBGE tirou a coordenada
+(`Dicionario_CNEFE_Censo_2022.xls`):
+
+| NV | Classe | O que é | Aqui |
+|---|---|---|---|
+| 1 | `ENDERECO_ORIGINAL` | colhida naquele endereço no Censo 2022 | aceita |
+| 2 | `ENDERECO_MODIFICADO` | apartamentos num mesmo número | aceita |
+| 3 | `ENDERECO_ESTIMADO` | não havia original, ou era inválida | recusada |
+| 4 | `FACE_QUADRA` | a face da quadra, não a porta | recusada |
+| 5 | `LOCALIDADE` | a localidade | recusada |
+| 6 | `SETOR_CENSITARIO` | centróide do setor | recusada |
+
+**O piso em 2 não custa cobertura.** Medido nas três cidades carregadas: os
+níveis 1 e 2 cobrem de 97% a 99% dos endereços; 3 e 4 somados ficam abaixo de
+1%, o 5 não aparece e o 6 aparece duas vezes em 176 mil. E o teste que decide —
+aceitar 3 e 4 resgataria **zero** dos prestadores que hoje ficam sem coordenada:
+eles falham por endereço sem número, nome de rua abreviado ou número indexado
+dentro de um condomínio, não por nível.
+
+A skill `tratamento-cnpj` aceita até 3 porque lá o número alimenta um score;
+aqui ele manda alguém a um endereço.
 
 Via **ambígua é recusada, não resolvida**: em Cachoeirinha existem uma AVENIDA e
 uma RUA "Flores da Cunha". Escolher a primeira produziria base limpa e ponto

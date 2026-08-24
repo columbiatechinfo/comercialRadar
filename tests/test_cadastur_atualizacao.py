@@ -119,10 +119,34 @@ def test_a_tabela_de_totais_nao_identifica_ninguem():
 # ── A âncora por CNEFE ───────────────────────────────────────────────────────
 
 def test_o_nivel_de_coordenada_tem_piso(cad):
-    """`nv_geo_coord` 3 é coordenada estimada na localidade e 4+ é centróide de
-    setor, com erro de quilômetros. Aqui a coordenada VIRA PONTO para alguém
-    visitar, e visita não tolera o ruído que um score tolera."""
+    """Só nível de ENDEREÇO entra: 1 (colhida ali) e 2 (apto no mesmo número).
+
+    3 é endereço ESTIMADO — o IBGE não tinha coordenada original ou ela era
+    inválida. 4 é a FACE DA QUADRA, não a porta. 5 é a localidade e 6 é o
+    centróide do setor.
+
+    Medido: 1 e 2 cobrem de 97% a 99% dos endereços das cidades carregadas, e
+    aceitar 3 e 4 resgataria zero prestadores. O piso não custa cobertura.
+    """
     assert cad.NV_ACEITO == ("1", "2")
+
+
+def test_a_semantica_do_nivel_esta_escrita_certa(cad):
+    """Já documentei isto errado uma vez — trocando localidade (5) e setor (6)
+    por 3 e 4, o que fazia a regra parecer mais dura do que os dados justificam.
+
+    O domínio é do `Dicionario_CNEFE_Censo_2022.xls` e não é opinião; deixá-lo
+    escrito onde a decisão é tomada é o que impede a próxima leitura de repetir
+    o erro.
+    """
+    fonte = io.open(RAIZ / "cadastur.py", encoding="utf-8").read()
+    bloco = fonte[fonte.index("`nv_geo_coord` diz de onde"):]
+    bloco = bloco[:bloco.index("NV_ACEITO")]
+    for nivel, classe in ((1, "ENDERECO_ORIGINAL"), (2, "ENDERECO_MODIFICADO"),
+                          (3, "ENDERECO_ESTIMADO"), (4, "FACE_QUADRA"),
+                          (5, "LOCALIDADE"), (6, "SETOR_CENSITARIO")):
+        assert re.search(rf"^#\s+{nivel}\s+{classe}\b", bloco, re.M), \
+            f"o nível {nivel} deixou de estar descrito como {classe}"
 
 
 @pytest.mark.parametrize("nome, esperado", [
