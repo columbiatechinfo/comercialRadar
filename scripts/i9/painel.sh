@@ -84,7 +84,7 @@ _caddyfile() {
 	# (precisa expandir as portas), e crase dentro dele e substituicao de
 	# comando. Um comentario com crase virou
 	#     painel.sh: line 71: 127.0.0.1: command not found
-	# — um erro que aponta para o `cat` e nao para o comentario que o causou.
+	# — um erro que aponta para o cat e nao para o comentario que o causou.
 	reverse_proxy 127.0.0.1:$PORTA_APP {
 		# O painel usa WebSocket (/ws) para o mapa em tempo real. Sem estas
 		# duas linhas o upgrade e rejeitado e o mapa fica mudo — sem erro
