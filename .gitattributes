@@ -1,0 +1,28 @@
+# Fim de linha — e isto não é preferência de editor.
+#
+# O repositório é editado no Windows e EXECUTADO no Linux do i9. O Git converte
+# LF em CRLF ao materializar o arquivo aqui; `git archive` leva o que está
+# materializado, e o `\r` viaja junto. No shell o efeito é este:
+#
+#     /usr/bin/env: 'bash\r': No such file or directory
+#
+# O `\r` é invisível em qualquer editor e em `cat` — a mensagem culpa o `bash`,
+# que não tem nada a ver com o assunto. Foi o que quebrou a primeira subida do
+# painel no i9 em 24/08/2026.
+#
+# `eol=lf` obriga LF NO DISCO, mesmo no Windows, para tudo que um Linux executa
+# ou interpreta.
+*.sh        text eol=lf
+*.bash      text eol=lf
+Caddyfile   text eol=lf
+Dockerfile  text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.toml      text eol=lf
+
+# Binários — nunca converter, senão o arquivo corrompe em silêncio.
+*.png  binary
+*.jpg  binary
+*.zip  binary
+*.pt   binary
+*.xlsx binary
