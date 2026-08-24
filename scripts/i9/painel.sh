@@ -36,6 +36,26 @@ set -euo pipefail
 RAIZ="${CR_DIR:-/home/orbisgrid/comercialradar}"
 PORTA_APP="${CR_PORTA_APP:-8765}"
 PORTA_TLS="${CR_PORTA_TLS:-8443}"
+
+# A EMPRESA EM QUE O TRABALHO NASCE — e por que ela é argumento e não implícito.
+#
+# O `root` não pertence a nenhuma empresa (é o único usuário assim, de
+# propósito). Sem crachá de empresa, tudo que ele grava — a área de trabalho e
+# todo POI dos jobs que dispara — é carimbado com `CR_TENANT_ID`.
+#
+# Se ficasse só no `.env`, o painel subiria calado na empresa que estivesse
+# escrita lá, e uma mineração de 80 minutos nasceria dentro do cliente errado
+# sem nada na tela dizer. Já quase aconteceu: o `.env` aponta para a Columbia e
+# o trabalho de 24/08 era da Aegea.
+#
+# Então: vem do ambiente de quem chama, e o `subir` IMPRIME a empresa antes de
+# ligar. Sem `CR_TENANT_ID`, avisa que está usando o do `.env`.
+EMPRESA="${CR_TENANT_ID:-}"
+
+# Quantas sessões de Maps em paralelo. No notebook o teto útil era 3-4 (cada
+# Chromium come ~300 MB). O i9 tem 16 CPUs e 94 GB — daí o padrão maior. Baixe
+# se quiser um teste mais leve.
+SESSOES="${MAPS_SESSOES:-10}"
 NOME_TS="${CR_NOME_TS:-desktop-s8l7nat.tail7e301b.ts.net}"
 CERTS="${CR_CERTS:-/mnt/c/ferramentas}"
 PID="$RAIZ/.painel.pid"
@@ -73,10 +93,22 @@ EOF
 subir() {
   if _vivo; then echo "painel já está de pé (PID $(cat "$PID"))"; else
     [ -f .env ] || { echo "❌ .env ausente. Rode publicar.sh --env do notebook."; exit 1; }
+
+    # A empresa é DITA antes de subir. Um painel que não diz em nome de quem
+    # está trabalhando é um painel que grava no cliente errado em silêncio.
+    if [ -n "$EMPRESA" ]; then
+      echo "▶ empresa (CR_TENANT_ID): $EMPRESA"
+    else
+      DO_ENV=$(grep '^CR_TENANT_ID=' .env 2>/dev/null | cut -d= -f2- | tr -d '"' || true)
+      echo "▶ empresa: ${DO_ENV:-NENHUMA} (do .env — nada foi passado na chamada)"
+      [ -n "$DO_ENV" ] || echo "  ⚠️  Sem empresa, o root não consegue salvar área nem gravar POI."
+    fi
+    echo "▶ sessões de Maps em paralelo: $SESSOES"
     echo "▶ subindo o painel em 127.0.0.1:$PORTA_APP"
     # `nohup` + `setsid`: a sessão SSH fecha assim que o comando volta, e sem
     # isso o painel morreria junto — o modo de falha é achar que subiu.
     PYTHONUTF8=1 PYTHONUNBUFFERED=1 CR_HOST=127.0.0.1 CR_PORTA="$PORTA_APP" \
+      MAPS_SESSOES="$SESSOES" ${EMPRESA:+CR_TENANT_ID="$EMPRESA"} \
       setsid nohup ./.venv/bin/python server.py >> "$LOG" 2>&1 &
     echo $! > "$PID"
     sleep 4
@@ -110,7 +142,18 @@ parar() {
 }
 
 estado() {
-  _vivo && echo "painel  : de pé (PID $(cat "$PID"))" || echo "painel  : parado"
+  if _vivo; then
+    p=$(cat "$PID")
+    echo "painel  : de pé (PID $p)"
+    # A empresa do processo VIVO, lida de /proc — não a do .env nem a da
+    # variável de agora. É a única que responde "onde este painel está
+    # gravando neste momento".
+    emp=$(tr '\0' '\n' < "/proc/$p/environ" 2>/dev/null | sed -n 's/^CR_TENANT_ID=//p')
+    [ -z "$emp" ] && emp=$(grep '^CR_TENANT_ID=' "$RAIZ/.env" 2>/dev/null | cut -d= -f2- | tr -d '"')" (do .env)"
+    echo "empresa : ${emp:-NENHUMA}"
+  else
+    echo "painel  : parado"
+  fi
   docker ps --format '{{.Names}}' | grep -q "$CADDY_CT" && echo "TLS     : de pé" || echo "TLS     : parado"
   echo -n "responde: "
   curl -sk -o /dev/null -w '%{http_code}\n' "https://127.0.0.1:$PORTA_TLS/" || echo "sem resposta"
