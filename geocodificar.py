@@ -91,10 +91,109 @@ def _no_brasil(la: float, lo: float) -> bool:
     return -34 <= la <= 6 and -74 <= lo <= -34
 
 
-def _resposta(la, lo, precisao: str, fonte: str, texto: str = "") -> dict:
+def _resposta(la, lo, precisao: str, fonte: str, texto: str = "",
+              via: str = "") -> dict:
     return {"lat": float(la), "lng": float(lo), "precisao": precisao,
             "fonte": fonte, "incerteza_m": INCERTEZA.get(precisao),
-            "encontrado": texto}
+            "encontrado": texto, "via": via}
+
+
+# Tipo de via e conectivo saem da comparacao: um lado escreve "Rua Bento
+# Goncalves" e o outro "BENTO GONCALVES", e comparar com o tipo dentro faria
+# tudo divergir.
+_TIPO_VIA = {"RUA", "AVENIDA", "AV", "TRAVESSA", "TV", "RODOVIA", "ROD",
+             "ESTRADA", "ESTR", "PRACA", "ALAMEDA", "AL", "LARGO", "BECO",
+             "LINHA", "SERVIDAO", "ACESSO", "VIELA", "R"}
+_SEM_PESO = {"DE", "DA", "DO", "DAS", "DOS", "E", "SAO", "SANTA", "SANTO",
+             "DOM", "DONA", "GENERAL", "CORONEL", "DOUTOR", "PROFESSOR"}
+
+
+# Numeral por extenso -> algarismo. "Rua Sete de Setembro" e "Rua 7 de
+# Setembro" sao a MESMA rua, e o Brasil esta cheio delas: 15 de Novembro, 1o de
+# Maio, 24 de Outubro. Sem esta tabela elas reprovavam todas.
+_NUMERAL = {
+    "PRIMEIRO": "1", "UM": "1", "DOIS": "2", "TRES": "3", "QUATRO": "4",
+    "CINCO": "5", "SEIS": "6", "SETE": "7", "OITO": "8", "NOVE": "9",
+    "DEZ": "10", "ONZE": "11", "DOZE": "12", "TREZE": "13", "QUATORZE": "14",
+    "CATORZE": "14", "QUINZE": "15", "DEZESSEIS": "16", "DEZESSETE": "17",
+    "DEZOITO": "18", "DEZENOVE": "19", "VINTE": "20", "TRINTA": "30",
+}
+
+
+def _nucleo_via(nome: str) -> set:
+    """As palavras que dao IDENTIDADE a uma via.
+
+    NUMERO DE PORTA FICA DE FORA. O leitor de endereco nem sempre consegue
+    separa-lo — "Santana 402 1a" e "RUA DAS NACOES 640 SANDER" chegam aqui com
+    o numero colado no nome —, e um "402" dentro do nucleo faz a via nunca casar
+    com a "Rua Santana" que o geocodificador devolve.
+
+    A EXCECAO e o numero que ABRE o nome: em "7 de Setembro" ele E a via. Numero
+    no comeco fica; nos demais lugares, sai.
+    """
+    palavras = [p for p in _norm(nome).replace(",", " ").replace("-", " ").split()
+                if p]
+    nucleo = set()
+    for i, p in enumerate(palavras):
+        p = _NUMERAL.get(p, p)
+        if p.isdigit():
+            # So o que abre o nome. "7 de Setembro" fica; "Santana 402" nao.
+            if i <= 1:
+                nucleo.add(p)
+            continue
+        if len(p) > 2 and p not in _TIPO_VIA and p not in _SEM_PESO:
+            nucleo.add(p)
+    return nucleo
+
+
+def via_confere(pedida: str, devolvida: str) -> bool:
+    """A via devolvida e mesmo a que se pediu?
+
+    ISTO EXISTE PORQUE O PHOTON E DIFUSO. Medido em 24/08/2026, comparando o
+    endereco pedido com o que ele devolveu:
+
+        pedido "Rua Hipolito Jose da Costa"  ->  "Rua Daniel Cruz da Costa"
+        pedido "Avenida Esperanca"           ->  "Avenida Getulio Vargas"
+        pedido "Rua Bruna Mastroiani"        ->  "Rua Emilio Grando"
+
+    Ele casa por semelhanca e devolve OUTRA RUA com cara de acerto. Sem esta
+    conferencia, 7% dos pontos saiam rotulados `via` — que promete "a rua
+    certa" — apontando para uma rua que ninguem pediu. Rotulo errado e pior que
+    ausencia, porque rotulo e acreditado.
+
+    A regra e 60% das palavras de identidade. "Metade" era frouxa demais: com
+    tres palavras ela pedia uma so, e "Hipolito Jose da Costa" passava contra
+    "Daniel Cruz da Costa" — os dois tem "Costa". Exigir TODAS reprovaria
+    abreviacao legitima ("Frederico Augusto Ritter" contra "Frederico Ritter").
+
+    A comparacao entre palavras tolera GRAFIA. O Cadastur escreve "Aristides
+    Stumph" e o OSM tem "Aristides Stumpf"; ha "Mello" contra "Melo" e
+    "Goncalves" contra "Gonsalves" aos montes. Com casamento exato, 29,7% dos
+    pontos reprovavam — e a maioria era a mesma rua escrita de outro jeito.
+
+    O piso de 0,82 foi medido: aceita Stumph/Stumpf (0,833) e Mello/Melo
+    (0,889), e recusa Hipolito/Daniel (0,286) e Esperanca/Getulio (0,125).
+    """
+    from difflib import SequenceMatcher
+
+    a, b = _nucleo_via(pedida), _nucleo_via(devolvida)
+    if not a:
+        return True          # nao havia o que conferir
+    if not b:
+        return False
+    def cobertura(alvo, contra):
+        n = sum(1 for x in alvo
+                if any(x == y or SequenceMatcher(None, x, y).ratio() >= 0.82
+                       for y in contra))
+        return n / len(alvo)
+
+    # NOS DOIS SENTIDOS, e vale o maior. O lado pedido chega sujo — com bairro e
+    # complemento que o leitor nao conseguiu separar —, enquanto o devolvido
+    # vem limpo. Medir so a cobertura do sujo reprovava "NACOES 640 SANDER"
+    # contra "Rua das Nacoes", que e a mesma rua: 1 de 2. Pelo lado limpo, 1 de
+    # 1. O maior dos dois e o que reflete se as duas falam da mesma via.
+    return max(cobertura(a, b), cobertura(b, a)) >= 0.6
+
 
 
 def _consultas(endereco: str, cidade: str, uf: str) -> list:
@@ -180,7 +279,8 @@ def por_photon(endereco: str, cidade: str = "", uf: str = "") -> dict | None:
                              ", ".join(x for x in (pr.get("name"),
                                                    pr.get("street"),
                                                    pr.get("housenumber"),
-                                                   pr.get("city")) if x))
+                                                   pr.get("city")) if x),
+                             via=(pr.get("street") or pr.get("name") or ""))
     return None
 
 
@@ -217,7 +317,9 @@ def por_nominatim(endereco: str, cidade: str = "", uf: str = "") -> dict | None:
             if not classe:
                 continue
             return _resposta(la, lo, classe, "nominatim",
-                             a.get("display_name", "")[:120])
+                             a.get("display_name", "")[:120],
+                             via=(end.get("road") or end.get("pedestrian")
+                                  or a.get("name") or ""))
     return None
 
 
@@ -318,12 +420,27 @@ def buscar(endereco: str = "", cidade: str = "", uf: str = "",
     isso é a diferença entre minutos e dias. Para o resíduo que o OSM não
     resolve, vale a pena.
     """
+    # A VIA PEDIDA, para conferir contra a devolvida.
+    via_pedida = ""
+    try:
+        import cruzar_bases as cb
+        via_pedida = cb.partes_cadastur(endereco, cidade)[0] or ""
+    except Exception:
+        pass
+
     def confere(r):
-        """O achado vale? A malha decide; sem malha, o nome já decidiu."""
+        """O achado vale? Município pelo polígono, via pelo nome."""
         if not r:
             return None
-        dentro = dentro_do_municipio(r["lat"], r["lng"], cidade, uf)
-        return r if dentro is not False else None
+        if dentro_do_municipio(r["lat"], r["lng"], cidade, uf) is False:
+            return None
+        # O achado do MAPS é o estabelecimento, não uma via — conferir nome de
+        # rua ali reprovaria o acerto. As outras duas fontes interpretam texto,
+        # e é lá que a semelhança engana.
+        if r["fonte"] != "maps_painel" and via_pedida:
+            if not via_confere(via_pedida, r.get("via") or r.get("encontrado", "")):
+                return None
+        return r
 
     if usar_maps:
         r = confere(por_maps(nome, cidade, endereco))
