@@ -152,20 +152,28 @@ function trocarBase(chave) {
    Estilo dos markers por categoria (padrão Google/Waze)
 ──────────────────────────────────────────────────────────── */
 const CATS = [
-  { re: /restaurante|lanchonete|pizzari|hamburg|churrasc|comida|alimenta|café|cafeteria|padaria|sorveter|açai|acai|bar\b|petiscaria|self service|marmita/i, cor: "#e8710a", emo: "🍽️" },
-  { re: /supermercado|mercado|mercearia|mercadinho|atacad|hortifruti|conveni|frios|distribuidora de bebidas|bebidas/i, cor: "#1e8e3e", emo: "🛒" },
+  { re: /restaurante|lanchonete|pizzari|hamburg|churrasc|comida|alimenta|café|cafeteria|padaria|sorveter|açai|acai|bar\b|petiscaria|self service|marmita/i, cor: "#ba5a08", emo: "🍽️" },
+  { re: /supermercado|mercado|mercearia|mercadinho|atacad|hortifruti|conveni|frios|distribuidora de bebidas|bebidas/i, cor: "#1c853a", emo: "🛒" },
   { re: /farm[aá]cia|drogaria|hospital|cl[ií]nica|laborat[oó]rio|dentista|odonto|m[eé]dic|sa[uú]de|fisioter|psicol|veterin|pet/i, cor: "#d93025", emo: "💊" },
   { re: /escola|col[eé]gio|creche|faculdade|universi|curso|educa/i, cor: "#5b3cc4", emo: "🎓" },
   { re: /hotel|pousada|hostel|motel|hospedagem/i, cor: "#12805c", emo: "🛏️" },
   { re: /banco|caixa eletr|lot[eé]rica|financ|cr[eé]dito|seguros/i, cor: "#186a3b", emo: "🏦" },
   { re: /oficina|mec[aâ]nica|auto ?pe[cç]as|autope[cç]as|borracharia|lava.?jato|concession|moto|el[eé]trica automotiva|posto de (comb|gas)/i, cor: "#455a75", emo: "🔧" },
-  { re: /sal[aã]o|barbearia|beleza|est[eé]tica|manicure|cabele/i, cor: "#d6408b", emo: "✂️" },
+  { re: /sal[aã]o|barbearia|beleza|est[eé]tica|manicure|cabele/i, cor: "#cb3d84", emo: "✂️" },
   { re: /academia|gym|crossfit|esporte|fitness/i, cor: "#00838f", emo: "💪" },
   { re: /igreja|templo|par[oó]quia|assembleia/i, cor: "#8d6e63", emo: "⛪" },
   { re: /constru|madeirei|ferragem|material|tinta|vidra[cç]|serralheria|marmoraria/i, cor: "#a05c10", emo: "🧱" },
   { re: /loja|boutique|magazine|variedade|utilidade|presente|papelaria|livraria|cal[cç]ado|roupa|confec|m[oó]veis|eletro|celular|inform[aá]tica|[oó]tica|joalheria|relojoaria|shopping/i, cor: "#8430ce", emo: "🛍️" },
 ];
 function catInfo(cat, fonte) {
+  /* O ACHADO DA IA VEM ANTES DA CATEGORIA.
+   *
+   * Estes pontos não existiam em cadastro nenhum: a IA os leu numa parede, e a
+   * coordenada é APROXIMADA — deslocada pelo lado em que o comércio apareceu no
+   * quadro. Pintá-los como qualquer outro faria um ponto que ninguém conferiu
+   * parecer tão firme quanto um vindo da planilha do cliente. O losango âmbar
+   * diz, sem legenda, que aquilo ali é achado a confirmar. */
+  if (fonte === "ia_fachada") return { cor: "#b45309", emo: "🔎", ia: true };
   const c = (cat || "").toString();
   for (const k of CATS) if (k.re.test(c)) return k;
   if (fonte === "descoberto") return { cor: "#6d28d9", emo: "✨" };
@@ -174,12 +182,13 @@ function catInfo(cat, fonte) {
 
 function makeIcon(poi, novo) {
   const k = catInfo(poi.categoria, poi.fonte);
+  const iaf = k.ia ? " m-ia-fachada" : "";
   const ver = poi.veredito === "aprovado" ? "v-ok"
             : poi.veredito === "reprovado" ? "v-no" : "";
   const rec = poi.recomendar_visita ? " rec" : "";
   return L.divIcon({
     className: "pin-wrap",
-    html: `<div class="pin ${novo ? "novo" : ""} ${ver}${rec}" style="--c:${k.cor}">
+    html: `<div class="pin ${novo ? "novo" : ""} ${ver}${rec}${iaf}" style="--c:${k.cor}">
              <div class="pin-head">${k.emo}</div><div class="pin-tail"></div>
              ${poi.recomendar_visita ? '<div class="pin-star">★</div>' : ""}
            </div>`,
@@ -213,10 +222,13 @@ const ORIGENS = [
   { key: "captura", label: "Captura + OCR", cor: "#0f766e", teste: (p) => p.fonte === "pipeline" },
   { key: "maps",    label: "Maps direto",  cor: "#1a73e8", teste: (p) => p.status === "ok" },
   { key: "proximo", label: "Vizinhos",     cor: "#00838f", teste: (p) => p.status === "recuperado_proximo" },
-  { key: "ia",      label: "OpenAI",       cor: "#10a37f", teste: (p) => p.status === "recuperado_ia" },
+  { key: "ia",      label: "OpenAI",       cor: "#0d8668", teste: (p) => p.status === "recuperado_ia" },
   { key: "gemini",  label: "Gemini",       cor: "#a142f4", teste: (p) => p.status === "recuperado_gemini" },
   { key: "web",     label: "Web",          cor: "#d81b60", teste: (p) => p.status === "recuperado_web" },
-  { key: "desc",    label: "Descobertos",  cor: "#e8710a", teste: (p) => p.status === "descoberto" || p.status === "minerado" },
+  { key: "desc",    label: "Descobertos",  cor: "#ba5a08", teste: (p) => p.status === "descoberto" || p.status === "minerado" },
+  // Chip próprio, e antes do fallback: é a lista que o supervisor precisa
+  // trabalhar, e no balde "Outros" ninguém a encontraria.
+  { key: "iafach",  label: "Lidos na parede", cor: "#b45309", teste: (p) => p.fonte === "ia_fachada" },
   { key: "outros",  label: "Outros",       cor: "#5f6368", teste: () => true }, // fallback
 ];
 const filtrosAtivos = new Set(ORIGENS.map((o) => o.key));
@@ -391,8 +403,8 @@ function renderChips() {
     html += `<span class="ia-tag">🤖 IA</span>`;
     html += `<button class="fchip ia ${vereditoFiltro === "aprovado" ? "on" : ""}" data-v="aprovado" style="--c:#1f7a4d">✅ Aprovados <span class="n">${cAp.toLocaleString("pt-BR")}</span></button>`;
     html += `<button class="fchip ia ${vereditoFiltro === "reprovado" ? "on" : ""}" data-v="reprovado" style="--c:#c0392b">❌ Reprovados <span class="n">${cRp.toLocaleString("pt-BR")}</span></button>`;
-    html += `<button class="fchip ia ${flagsIA.has("recomendar") ? "on" : ""}" data-f="recomendar" style="--c:#b8860b">⭐ Recomendar visita <span class="n">${cRec.toLocaleString("pt-BR")}</span></button>`;
-    if (cRev) html += `<button class="fchip ia ${flagsIA.has("revisar") ? "on" : ""}" data-f="revisar" style="--c:#e8710a">🔍 Revisar manual <span class="n">${cRev}</span></button>`;
+    html += `<button class="fchip ia ${flagsIA.has("recomendar") ? "on" : ""}" data-f="recomendar" style="--c:#976e09">⭐ Recomendar visita <span class="n">${cRec.toLocaleString("pt-BR")}</span></button>`;
+    if (cRev) html += `<button class="fchip ia ${flagsIA.has("revisar") ? "on" : ""}" data-f="revisar" style="--c:#ba5a08">🔍 Revisar manual <span class="n">${cRev}</span></button>`;
   }
   html += '</div><div class="frow frow-attr">';
   for (const a of ATRIBUTOS) {
@@ -680,7 +692,26 @@ function _normEnd(s) {
     .replace(/[^a-z0-9]/g, "");
 }
 
-async function abrirPoi(poiLeve) {
+/* CLICAR NUM PONTO ABRE A BANCADA, em tela cheia.
+ *
+ * Antes abria um modal pequeno no centro. O modal foi crescendo — ganhou fotos,
+ * analise da IA, abas por fonte — e continuava sendo um modal: 620 px no meio
+ * da tela para o trabalho que a pessoa passa o dia fazendo.
+ *
+ * A bancada (`assets/modelo_frontend`) e a tela desse trabalho: lateral com a
+ * fila, regua de probabilidade por fonte, tabela de cruzamento, mapa por
+ * camadas e barra de decisao com atalho de teclado.
+ *
+ * O modal continua existindo e alcancavel — `abrirPoiModal` — porque a lista de
+ * quadras e o fluxo de revisao ainda o usam, e trocar isso agora mudaria
+ * comportamento que nao foi pedido. */
+function abrirPoi(poi) {
+  const id = poi && poi.id;
+  if (id == null) return abrirPoiModal(poi);   // sem id nao ha o que abrir
+  location.href = "/bancada?poi=" + encodeURIComponent(id);
+}
+
+async function abrirPoiModal(poiLeve) {
   let poi = poiLeve;
   if (poiLeve.id != null) {
     try { poi = await (await fetch(`/api/pois/${poiLeve.id}`)).json(); } catch { /* usa o leve */ }
@@ -694,8 +725,13 @@ async function abrirPoi(poiLeve) {
   // streetview/. Eram 2,6 GB de arquivo dentro do diretório do sistema
   // duplicando o que já estava gravado — conferido: as 4.108 fotos com
   // streetview_path têm linha 'facade' no banco, sem uma falta.
+  // COM TOKEN. `/api/sv/` esta em `TOKEN_NA_QUERY` no servidor — imagem em
+  // `<img>` nao manda cabecalho, entao o token vai na query. Esta linha era a
+  // unica do arquivo que montava a URL sem ele: a foto principal do popup
+  // devolvia 401 e virava o texto quebrado "Street View (fachada)", enquanto
+  // as da galeria (que usam `comToken`) apareciam normalmente.
   const sv = poi.streetview_path && poi.streetview_path !== "NA" && poi.id != null
-    ? `/api/sv/${poi.id}/facade` : null;
+    ? window.comToken(`/api/sv/${poi.id}/facade`) : null;
   if (fotos.length) {
     html += `<div class="m-fotos">${sv ? `<img src="${sv}" loading="lazy" title="Street View (fachada)">` : ""}${fotos.map((u) => `<img src="${esc(u)}" loading="lazy" referrerpolicy="no-referrer">`).join("")}</div>`;
   } else if (sv) {
@@ -711,19 +747,30 @@ async function abrirPoi(poiLeve) {
        <small>(${(poi.total_avaliacoes || 0).toLocaleString("pt-BR")})</small></span>`;
   html += `</div>`;
 
+  // AS ABAS POR FONTE, o mesmo desenho da fila do supervisor. O endereco fica
+  // fora delas, logo abaixo, porque e' o que localiza o ponto e tem de estar
+  // visivel sem clicar em aba nenhuma.
+  const _abas = window.abasEvidencia ? window.abasEvidencia(poi.abas) : "";
+
   html += `<div class="m-rows">`;
   if (poi.endereco) {
     const fonte = FONTE_END[poi.endereco_fonte] || FONTE_END[poi.fonte_dado] || FONTE_END[poi.status] || null;
     html += `<div class="m-row"><span class="ico">📍</span><span>${esc(poi.endereco)}` +
-      (fonte ? ` <span class="src-tag" style="--c:${fonte.cor}">${fonte.label}</span>` : "") + `</span></div>`;
+      // `fonte-dado`: de onde veio o endereço (IBGE, CNEFE, Google). Some para
+      // quem não é root — para o cliente, a origem do que ele vê somos nós.
+      (fonte ? ` <span class="src-tag fonte-dado" style="--c:${fonte.cor}">${fonte.label}</span>` : "") + `</span></div>`;
   }
+  // Telefone e site continuam AQUI, e nao so na aba: sao acionaveis — quem
+  // abre o ponto costuma querer ligar ou visitar o site sem procurar.
   if (poi.telefone) html += `<div class="m-row"><span class="ico">📞</span><a href="tel:${esc(poi.telefone)}">${esc(poi.telefone)}</a></div>`;
   if (poi.website) html += `<div class="m-row"><span class="ico">🌐</span><a href="${esc(poi.website)}" target="_blank" rel="noopener">${esc(poi.website.replace(/^https?:\/\//, "").slice(0, 48))}</a></div>`;
-  if (poi.status_horario) html += `<div class="m-row"><span class="ico">🕒</span><span>${esc(poi.status_horario)}</span></div>`;
-  if (poi.instagram) html += `<div class="m-row"><span class="ico">📷</span><a href="${esc(poi.instagram)}" target="_blank" rel="noopener">@${esc(poi.instagram.replace(/\/$/, "").split("/").pop())}</a></div>`;
-  if (poi.email) html += `<div class="m-row"><span class="ico">✉️</span><a href="mailto:${esc(poi.email.split(",")[0].trim())}">${esc(poi.email.slice(0, 48))}</a></div>`;
-  if (poi.preco_medio) html += `<div class="m-row"><span class="ico">💰</span><span>Preço médio: ${esc(poi.preco_medio)}</span></div>`;
   html += `</div>`;
+
+  // O resto — horario, Instagram, e-mail, preco, CNPJ, razao social, situacao,
+  // CNAE, socios, delivery, veredito da IA — vem do CATALOGO, agrupado por
+  // fonte. Antes eram seis `if` escritos a mao que ignoravam tudo que a
+  // extracao aprendeu depois de escritos.
+  html += _abas;
 
   // 🤖 Análise visual por IA (descrever_imagens.py)
   if (poi.ia) {
@@ -753,7 +800,7 @@ async function abrirPoi(poiLeve) {
     const angs = a.angulos_sv || [];
     if (angs.length) {
       html += `<div class="ia-360">` + angs.map((g) =>
-        `<figure><img src="/api/sv/${poi.id}/${esc(g)}" loading="lazy" onerror="this.closest('figure').remove()"><figcaption>${ROT[g] || g}</figcaption></figure>`).join("") + `</div>`;
+        `<figure><img src="${window.comToken(`/api/sv/${poi.id}/${esc(g)}`)}" loading="lazy" onerror="this.closest('figure').remove()"><figcaption>${ROT[g] || g}</figcaption></figure>`).join("") + `</div>`;
     }
     html += `</div>`;
   }
@@ -798,8 +845,8 @@ async function abrirPoi(poiLeve) {
     const diverge = numA && numB && numA[1] !== numB[1];
     html += `<div class="m-origem"><b>📄 Como veio na planilha:</b> ${esc(poi.nome_original || "")}` +
       (poi.endereco_original ? `<br><span class="ico">📍</span> ${esc(poi.endereco_original)}` +
-        ` <span class="src-tag" style="--c:#8a6d00">planilha</span>` : "") +
-      (diverge ? `<br><span class="src-tag" style="--c:#e8710a">⚠️ número da via difere do obtido — confira</span>` : "") +
+        ` <span class="src-tag fonte-dado" style="--c:#8a6d00">planilha</span>` : "") +
+      (diverge ? `<br><span class="src-tag" style="--c:#ba5a08">⚠️ número da via difere do obtido — confira</span>` : "") +
       (poi.distancia_m != null ? `<br><small>Distância planilha ↔ ponto: ${Math.round(poi.distancia_m)} m</small>` : "") + `</div>`;
   }
   html += `<div class="m-actions">`;
@@ -809,6 +856,8 @@ async function abrirPoi(poiLeve) {
   html += `</div>`;
 
   $("modal-card").innerHTML = html;
+  // As abas so respondem ao clique depois de existirem no DOM.
+  if (window.ligarAbas) window.ligarAbas($("modal-card"));
   $("modal-overlay").classList.remove("hidden");
 }
 /* Modal genérico — o de POI monta o HTML dele à mão; este serve a qualquer
@@ -996,8 +1045,7 @@ document.querySelectorAll(".fly-item").forEach((b) => {
     if (dash) carregarDashboard();
     // os cards da leitura substituem os do processo genérico só nesta aba
     const av = modo === "avaliar";
-    $("stats-fachada")?.classList.toggle("hidden", !av);
-    $("stats-processo")?.classList.toggle("hidden", av && !jobRodando);
+    sincronizarPaineis();
     if (!av) fecharListaFachada();
     if (av) { estimarAvaliacao(); carregarCardsFachada(); }
     atualizarBotoes();
@@ -1008,12 +1056,19 @@ document.querySelectorAll(".fly-item").forEach((b) => {
 // zoom, a Places tem passo de grade e coleta profunda paga. Mostrar as duas
 // listas ao mesmo tempo sugeriria que a escolha de uma vale para a outra.
 function trocarMotorMineracao() {
-  const places = ($("op-motor")?.value || "captura") === "places";
+  const motor = $("op-motor")?.value || "captura";
+  const places = motor === "places";
+  const estadual = motor === "estadual";
   $("op-step-wrap")?.classList.toggle("hidden", !places);
   $("op-details-wrap")?.classList.toggle("hidden", !places);
-  $("op-zoom-wrap")?.classList.toggle("hidden", places);
+  // A extração estadual não tem zoom nem grade: o ponto já existe na base
+  // pública, não há tile a fotografar. Ela pede só a pasta da extração da UF.
+  $("op-zoom-wrap")?.classList.toggle("hidden", places || estadual);
+  $("op-estadual-wrap")?.classList.toggle("hidden", !estadual);
+  $("hint-estadual")?.classList.toggle("hidden", !estadual);
   const h = $("hint-captura");
   if (h) {
+    h.classList.toggle("hidden", estadual);
     h.innerHTML = places
       ? "Consulta a <b>Places API paga</b> célula a célula. Precisa de "
         + "<code>MAPS_API_KEY</code> no <code>.env</code>; sem ela o Google recusa "
@@ -1053,16 +1108,56 @@ const MODOS_JOB = { planilha: "da planilha", mineracao: "de mineração",
                     enriquecimento: "de enriquecimento",
                     avaliar: "de avaliação de fachada" };
 
+/* QUEM PODE DISPARAR PROCESSO. O servidor já nega — `/api/jobs` exige admin — e
+   é ele que manda. Isto aqui só evita o pior tipo de silêncio: o `user` clicava
+   em "Iniciar processo", levava 403, e a tela não dizia absolutamente nada.
+   Fonte única: o crachá que o sessao.js publica em `body[data-nivel]`. */
+const podeExecutar = () => ["admin", "root"].includes(document.body.dataset.nivel);
+
+/* O crachá chega depois do boot (`/api/eu` é assíncrono), então a primeira
+   pintura acontece sem nível nenhum. Sem este aviso, o admin também via o botão
+   bloqueado até recarregar a página. */
+function aplicarNivel() {
+  atualizarBotoes();
+  // Links que NAVEGAM (aba nova, download) tambem nao mandam cabecalho.
+  const modelo = $("link-modelo-cadastro");
+  if (modelo && window.comToken) modelo.href = window.comToken("/api/modelos/cadastro");
+  for (const id of ["btn-cnpj-skill", "btn-baixar-imgs"]) {
+    if ($(id)) $(id).classList.toggle("hidden", !podeExecutar());
+  }
+}
+document.addEventListener("cr:sessao", aplicarNivel);
+
+/* Dispara o job e MOSTRA a falha. O `.json()` direto sobre a resposta engolia
+   403 e 500: o corpo do erro tem `detail`, não `erro`, então nenhum toast
+   aparecia e o clique parecia não ter acontecido. */
+async function pedirJob(body) {
+  const resp = await fetch("/api/jobs", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const j = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    toast(j.detail || `falha ao iniciar (HTTP ${resp.status})`, "err");
+    return null;
+  }
+  if (j.erro) { toast(j.erro, "err"); return null; }
+  return j;
+}
+
 function atualizarBotoes() {
   const temArea = !!areaLayer;
   // o modo Quadras tem o seu próprio botão e NÃO passa pelo job de POIs
   const usaJob = modo in MODOS_JOB;
-  const pronto = usaJob && temArea && !jobRodando &&
+  const executa = podeExecutar();
+  const pronto = usaJob && temArea && !jobRodando && executa &&
                  (modo !== "planilha" || !!arquivoImportado);
   $("btn-iniciar").disabled = !pronto;
   $("btn-iniciar").classList.toggle("hidden", jobRodando || !usaJob);
-  $("btn-parar").classList.toggle("hidden", !jobRodando);
-  if (!temArea) $("job-status-txt").textContent = "Defina a área (passo 1) para liberar o início.";
+  $("btn-parar").classList.toggle("hidden", !jobRodando || !executa);
+  if (!executa) $("job-status-txt").textContent =
+    "Seu nível de acesso vê os dados, mas não dispara processo. Peça a um admin da sua empresa.";
+  else if (!temArea) $("job-status-txt").textContent = "Defina a área (passo 1) para liberar o início.";
   else if (modo === "planilha" && !arquivoImportado && !jobRodando) $("job-status-txt").textContent = "Importe a planilha (passo 2).";
   else if (!jobRodando) $("job-status-txt").textContent = "Pronto para iniciar.";
 }
@@ -1081,25 +1176,44 @@ async function estimarAvaliacao() {
     const q = new URLSearchParams({ modelo: $("av-modelo").value,
                                     refazer: $("av-refazer").checked ? "true" : "false" });
     const e = await (await fetch("/api/avaliar/estimativa?" + q)).json();
+    // A CONTA DA ÁREA, sempre visível. A IA só lê quem tem fachada capturada —
+    // e quando isso não aparece, "40 fachadas a ler" numa área de 254 pontos
+    // parece a IA pulando 214.
+    const a = e.area || {};
+    const fora = (a.nunca_capturados || 0) + (a.sem_panorama || 0);
+    const conta = a.validos
+      ? `<div class="av-conta"><b>${nfmt(a.validos)}</b> POIs na área
+           · <b>${nfmt(a.com_fachada)}</b> com fachada capturada
+           ${a.sem_panorama ? `· ${nfmt(a.sem_panorama)} sem panorama no Street View` : ""}
+           ${a.nunca_capturados
+             ? `· <b class="aviso">${nfmt(a.nunca_capturados)} nunca capturados</b>` : ""}
+           ${a.ja_comerciais
+             ? `· ${nfmt(a.ja_comerciais)} já comerciais no cadastro (fora por padrão)` : ""}
+         ${a.nunca_capturados
+           ? `<br><small>A IA não alcança quem não tem imagem. Rode a <b>Fase 4 —
+              Street View</b> <b>sem</b> "só nos pobres" para fechar a área.</small>` : ""}
+         </div>`
+      : "";
     if (!e.pois) {
-      el.innerHTML = e.ja_avaliados
-        ? `Tudo lido nesta área — <b>${e.ja_avaliados.toLocaleString("pt-BR")}</b> fachadas
-           já avaliadas (${e.ja_aprovados.toLocaleString("pt-BR")} aprovadas).
+      el.innerHTML = conta + (e.ja_avaliados
+        ? `Tudo lido nesta área — <b>${nfmt(e.ja_avaliados)}</b> fachadas
+           já avaliadas (${nfmt(e.ja_aprovados)} aprovadas).
            Marque <b>reavaliar</b> para passar de novo.`
         : "Nenhum ponto da área tem fachada capturada. Rode a <b>Fase 4</b> do "
-          + "enriquecimento primeiro — a leitura precisa da imagem.";
+          + "enriquecimento primeiro — a leitura precisa da imagem.");
       return;
     }
-    el.innerHTML =
-      `<b>${e.pois.toLocaleString("pt-BR")}</b> fachadas a ler`
+    el.innerHTML = conta +
+      `<b>${nfmt(e.pois)}</b> fachadas a ler`
       + (e.cidade ? ` em ${esc(e.cidade)}` : "")
       + (e.local
          ? ` · <b>grátis</b> na GPU do i9 · ~<b>${e.horas} h</b> de processamento<br>`
          : ` · custo estimado <b>US$ ${e.usd}</b> (US$ ${e.usd_por_poi}/ponto)<br>`)
-      + `<b>${e.com_vinculo.toLocaleString("pt-BR")}</b> têm imóvel casado no cadastro `
+      + `<b>${nfmt(e.com_vinculo)}</b> têm imóvel casado no cadastro `
       + `— só esses podem virar <b>achado convergente</b>; o resto para em sinal de imagem.`
-      + (e.ja_avaliados ? `<br><small>${e.ja_avaliados.toLocaleString("pt-BR")} já lidas
-          antes (${e.ja_aprovados.toLocaleString("pt-BR")} aprovadas).</small>` : "");
+      + (fora ? `<br><small>${nfmt(fora)} pontos da área ficam de fora desta rodada.</small>` : "")
+      + (e.ja_avaliados ? `<br><small>${nfmt(e.ja_avaliados)} já lidas
+          antes (${nfmt(e.ja_aprovados)} aprovadas).</small>` : "");
   } catch {
     el.textContent = "não consegui calcular a estimativa (servidor fora?).";
   }
@@ -1108,12 +1222,24 @@ async function estimarAvaliacao() {
    CARDS DA LEITURA DE FACHADA + lista navegável sobre o mapa
 ──────────────────────────────────────────────────────────── */
 const FA_ICO = {
-  aprovadas: "✅", oportunidade: "⚖️", convergente: "🎯", uso_diverge: "🏷️",
+  // leitura em quatro fases
+  aprovadas: "✅", especifico: "🎯", divergente: "🔀", revisar: "👁️",
+  reprovadas: "⛔", alvo_ausente: "📍",
+  letreiro: "🔤", galpao: "🏭", multiplas: "🏘️", so_foto: "📷",
+  // leitura anterior
+  oportunidade: "⚖️", convergente: "🎯", uso_diverge: "🏷️",
   unidades: "🏢", coletiva: "🔗", medicao: "🔧", numero: "❗",
   conservacao: "🧱", inapto: "🚫", fora_escopo: "🗺️",
 };
 const FA_COR = {
-  aprovadas: "c-green", convergente: "c-green", oportunidade: "c-purple",
+  // `revisar` em âmbar de propósito: não é erro nem aprovação, é trabalho
+  // humano esperando. Pintado de vermelho viraria fila de problema; de verde,
+  // ninguém abriria.
+  aprovadas: "c-green", especifico: "c-green", divergente: "c-purple",
+  revisar: "c-orange", reprovadas: "c-red",
+  alvo_ausente: "c-red", letreiro: "c-purple", galpao: "c-blue",
+  multiplas: "c-orange", so_foto: "c-blue",
+  convergente: "c-green", oportunidade: "c-purple",
   uso_diverge: "c-orange", unidades: "c-orange", coletiva: "c-orange",
   medicao: "c-blue", numero: "c-red", conservacao: "c-gray",
   inapto: "c-gray", fora_escopo: "c-gray",
@@ -1161,6 +1287,14 @@ async function abrirListaFachada(recorte) {
         <div class="fa-item-nome">${esc(p.nome || "(sem nome)")}</div>
         <div class="fa-item-sub">${esc((p.endereco || "").slice(0, 52))}</div>
         <div class="fa-item-tags">
+          ${p.acao ? `<span class="tag ${p.acao === "aprovar" ? "alto"
+                        : p.acao === "reprovar" ? "baixo" : "med"}">${esc(p.acao)}</span>` : ""}
+          ${/* O letreiro é o que o auditor lê primeiro: é o nome REAL na
+                parede, e ver que ele diverge do nome do cadastro é metade do
+                trabalho de decidir. */""}
+          ${p.letreiro ? `<span class="tag">🔤 ${esc(p.letreiro.slice(0, 26))}</span>` : ""}
+          ${p.alvo_encontrado === "nao" ? `<span class="tag baixo">alvo não achado</span>` : ""}
+          ${p.tipo_imovel ? `<span class="tag">${esc(p.tipo_imovel)}</span>` : ""}
           ${p.uso ? `<span class="tag">${esc(p.uso)}</span>` : ""}
           ${p.n_oport ? `<span class="tag med">${p.n_oport} oport.</span>` : ""}
           ${p.numero_confere === false ? `<span class="tag baixo">nº ${esc(p.numero_lido || "?")}</span>` : ""}
@@ -1211,7 +1345,7 @@ async function selecionarFachada(i) {
 
   const poi = await (await fetch("/api/pois/" + p.id)).json();
   if (faAtual !== i) return;              // o usuário já mudou de item
-  const imgs = [{ src: `/api/sv/${p.id}/facade`, rot: "Fachada avaliada (Street View)" }]
+  const imgs = [{ src: window.comToken(`/api/sv/${p.id}/facade`), rot: "Fachada avaliada (Street View)" }]
     .concat((poi.fotos || []).slice(0, 8).map((u, k) => ({ src: u, rot: `Foto do Maps ${k + 1}`, ext: true })));
   $("fa-ficha-imgs").innerHTML = imgs.map((im, k) => `
     <figure class="fa-img" data-k="${k}">
@@ -1293,7 +1427,14 @@ $("btn-iniciar").onclick = async () => {
   } else if (modo === "mineracao") {
     const motor = $("op-motor")?.value || "captura";
     opcoes = { motor, sessao: $("op-sessao").value.trim() || "mineracao" };
-    if (motor === "places") {
+    if (motor === "estadual") {
+      // Modo próprio no servidor: o município sai do polígono e a empresa do
+      // token, então a única coisa que falta é onde está a extração da UF.
+      modoJob = "extracao_estadual";
+      const dir = ($("op-estadual-dir")?.value || "").trim();
+      if (!dir) return toast("Informe a pasta da extração estadual.", "err");
+      opcoes = { saida: dir };
+    } else if (motor === "places") {
       opcoes.step = parseFloat($("op-step").value) || 150;
       opcoes.details = $("op-details").checked;
     } else {
@@ -1309,24 +1450,26 @@ $("btn-iniciar").onclick = async () => {
       pular_web: !$("enr-web").checked,
       pular_streetview: !$("enr-sv").checked,
       sv_so_pobres: !!$("enr-sv-pobres")?.checked,
+      incluir_ja_comerciais: !!$("enr-ja-comerciais")?.checked,
       visivel: !!$("enr-visivel")?.checked,
     };
   } else if (modo === "avaliar") {
     modoJob = "avaliar";
     opcoes = {
       modelo: $("av-modelo").value,
-      workers: parseInt($("av-workers").value) || 4,
-      teto_usd: parseFloat($("av-teto").value) || 0,
+      // `workers` e `teto_usd` saíram com o motor antigo: a concorrência agora
+      // é do lado do vLLM (LEITURA_CONCORRENCIA no .env) e não há dólar a
+      // limitar num modelo local.
+      limit: parseInt($("av-limit").value) || 0,
       refazer: !!$("av-refazer").checked,
+      incluir_ja_comerciais: !!$("av-ja-comerciais")?.checked,
     };
   }
   const body = { modo: modoJob, opcoes };
   if (arquivoImportado) body.arquivo = arquivoImportado;
 
-  const r = await (await fetch("/api/jobs", {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-  })).json();
-  if (r.erro) return toast(r.erro, "err");
+  const r = await pedirJob(body);
+  if (!r) return;
   aplicarJob(r);
   $("log-panel").classList.remove("collapsed");
   toast(`Processo ${MODOS_JOB[modo]} iniciado ▶`, "ok");
@@ -1343,7 +1486,25 @@ $("btn-parar").onclick = () => confirmar(
 const MODO_LABEL = { planilha: "planilha", mineracao: "mineração", minerar_web: "mineração web",
                      enriquecer_maps: "enriquecimento Maps", streetview: "Street View",
                      enriquecer_tudo: "enriquecimento (cascata)", baixar_imagens: "download de imagens",
+                     cnpj_receita: "CNPJ x CNEFE (skill)", extracao_estadual: "extração estadual",
                      avaliar: "avaliação de fachada" };
+/* QUAL PAINEL DA DIREITA APARECE.
+ *
+ * Na aba "Avaliar candidatos" os cards da leitura substituem os do processo
+ * genérico — "Encontrados"/"Sem match" não medem nada ali. Mas o cartão de
+ * PROGRESSO precisa voltar assim que uma rodada começa, e essa decisão vivia
+ * dentro do clique que troca de aba: quem já estava na aba e disparava o
+ * processo dali nunca a executava de novo, e ficava sem barra nenhuma com a
+ * carga andando — só reaparecia se saísse da aba e voltasse.
+ *
+ * Por isso a decisão virou função: o clique de aba chama, e `aplicarJob`
+ * também, a cada mudança de estado do job. */
+function sincronizarPaineis() {
+  const av = modo === "avaliar";
+  $("stats-fachada")?.classList.toggle("hidden", !av);
+  $("stats-processo")?.classList.toggle("hidden", av && !jobRodando);
+}
+
 function aplicarJob(j) {
   jobRodando = j && j.status === "rodando";
   if (j && j.status && j.status !== "ocioso") ultimoJob = j;
@@ -1358,7 +1519,9 @@ function aplicarJob(j) {
   if (j && (j.status === "finalizado" || j.status === "parado" || j.status === "erro")) {
     carregarPois(); // sincroniza o mapa com o estado final do banco
     carregarStats();
+    if (modo === "avaliar") carregarCardsFachada();  // o placar da leitura fecha
   }
+  sincronizarPaineis();
   atualizarBotoes();
 }
 
@@ -1444,8 +1607,20 @@ function agendarStats() { // pontos chegando ao vivo → atualiza o grupo do ban
 const UNIDADE_FASE = { captura: "tiles", deteccao: "tiles", ocr: "recortes", busca: "POIs" };
 
 // Rótulo padrão de cada cartão, para restaurar quando a fase sai do Street View.
-const ROTULO_PADRAO = { validos: "Encontrados", semmatch: "Sem match",
+/* OS CINCO cartões que trocam de rótulo conforme a fase — e eram três.
+ *
+ * `recuperados` e `descobertos` estavam de fora, então na leitura de fachada o
+ * painel mostrava o número de revisões pedidas embaixo de "Recuperados (IA)" e
+ * o de reprovações embaixo de "Descobertos". É o defeito contra o qual o
+ * comentário lá embaixo já avisava: o número certo debaixo da palavra errada é
+ * tão ruim quanto o número errado. O `id` de cada um vem do próprio nome da
+ * chave (`st-` + chave), por isso `recup` e não `recuperados`. */
+const ROTULO_PADRAO = { validos: "Encontrados", recup: "Recuperados (IA)",
+                        desc: "Descobertos", semmatch: "Sem match",
                         ingeridos: "Gravados no banco" };
+// A chave do rótulo que vem do servidor é o NOME DO CONTADOR; o id do elemento
+// é abreviado. Sem esta ponte, `rotulos.recuperados` nunca encontraria `st-recup`.
+const CHAVE_CONTADOR = { recup: "recuperados", desc: "descobertos" };
 
 function aplicarContadores(c, total, fase, faseRotulo, rotulos) {
   setVal("st-proc", c.processados);
@@ -1460,7 +1635,7 @@ function aplicarContadores(c, total, fase, faseRotulo, rotulos) {
   // quanto o número errado.
   for (const [k, padrao] of Object.entries(ROTULO_PADRAO)) {
     const el = $("st-" + k)?.parentElement?.querySelector(".stat-label");
-    if (el) el.textContent = (rotulos && rotulos[k]) || padrao;
+    if (el) el.textContent = (rotulos && (rotulos[k] || rotulos[CHAVE_CONTADOR[k]])) || padrao;
   }
   const un = UNIDADE_FASE[fase] || "";
   const etapa = faseRotulo ? ` · ${faseRotulo}` : "";
@@ -1483,10 +1658,36 @@ function aplicarContadores(c, total, fase, faseRotulo, rotulos) {
 let ws = null;
 let dbCountLocal = 0;
 
-function conectarWS() {
-  ws = new WebSocket(`ws://${location.host}/ws`);
+async function conectarWS() {
+  // O token vai na query: o navegador não permite cabeçalho no handshake de
+  // WebSocket, então `Authorization` não existe aqui. É o mesmo token da
+  // sessão, e o servidor recusa se faltar ou estiver vencido.
+  //
+  // RENOVA ANTES de apresentar o crachá. Este caminho não passa pelo
+  // `window.fetch`, então não herda a renovação automática: sem esta linha, ao
+  // vencer a hora o soquete caía e a reconexão insistia com o token morto a
+  // cada 2,5 s indefinidamente — barra parada e log mudo com o processo vivo.
+  if (window.crVencendo && window.crVencendo()) await window.crRenovar?.();
+  const _tok = sessionStorage.getItem("cr_token") || "";
+  if (!_tok) {
+    // SEM SESSÃO, não tenta. O `onclose` reagenda a cada 2,5 s, então tentar
+    // antes do login enchia o servidor de 403 num laço que só parava quando
+    // alguém entrasse — e o log ficava ilegível justamente na hora em que se
+    // quer ler o log. Em vez de sondar, espera o aviso de que a sessão existe.
+    document.addEventListener("cr:sessao", conectarWS, { once: true });
+    return;
+  }
+  ws = new WebSocket(`ws://${location.host}/ws?token=${encodeURIComponent(_tok)}`);
   ws.onopen = () => $("ws-badge").classList.add("on");
-  ws.onclose = () => { $("ws-badge").classList.remove("on"); setTimeout(conectarWS, 2500); };
+  ws.onclose = () => {
+    $("ws-badge").classList.remove("on");
+    // Sem token não adianta reagendar: a sessão caiu e quem devolve o WebSocket
+    // é o próximo login, pelo evento acima.
+    // Na reconexão, tenta renovar: se o soquete caiu POR o token ter vencido,
+    // reapresentar o mesmo não vai adiantar nunca.
+    if (sessionStorage.getItem("cr_token")) setTimeout(conectarWS, 2500);
+    else document.addEventListener("cr:sessao", conectarWS, { once: true });
+  };
   ws.onmessage = (ev) => {
     let msg; try { msg = JSON.parse(ev.data); } catch { return; }
     if (msg.tipo === "poi" && msg.poi) {
@@ -1603,7 +1804,7 @@ function renderResultados(termo) {
       const k = catInfo(p.categoria, p.fonte);
       const sub = [p.categoria, p.endereco].filter(Boolean).join(" · ");
       const tags = [];
-      if (p.tem_cnpj) tags.push('<span class="bres-tag" style="background:#e6f4ea;color:#1e8e3e">CNPJ</span>');
+      if (p.tem_cnpj) tags.push('<span class="bres-tag" style="background:#e6f4ea;color:#1c853a">CNPJ</span>');
       if (p.status === "recuperado_web") tags.push('<span class="bres-tag" style="background:#fce4ec;color:#c2185b">web</span>');
       return `<div class="bres" data-i="${i}">
         <div class="bres-pin" style="--c:${k.cor}">${k.emo}</div>
@@ -1660,14 +1861,23 @@ bInput.addEventListener("keydown", (e) => {
 bClear.onclick = () => { bInput.value = ""; bClear.classList.add("hidden"); renderResultados(""); bInput.focus(); };
 bOverlay.onclick = fecharBusca;
 
+/* Skill `tratamento-cnpj` — por MUNICÍPIO, à parte da cascata.
+   Não é caixa da cascata porque a unidade de trabalho é outra: a cascata anda
+   POI a POI, esta roda o município inteiro de uma vez. E como só há um job por
+   vez, encaixá-la ali obrigaria a encadear. */
+if ($("btn-cnpj-skill")) $("btn-cnpj-skill").onclick = async () => {
+  if (jobRodando) { toast("Já há um processo rodando.", "err"); return; }
+  const r = await pedirJob({ modo: "cnpj_receita", opcoes: {} });
+  if (!r) return;
+  aplicarJob(r);
+  toast("Cruzando Receita × CNEFE no município da área…");
+};
+
 /* Botão "Baixar imagens" (passo pós, à parte da cascata) */
 $("btn-baixar-imgs").onclick = async () => {
   if (jobRodando) { toast("Já há um processo rodando.", "err"); return; }
-  const body = { modo: "baixar_imagens", opcoes: { workers: 8 } };
   try {
-    const j = await (await fetch("/api/jobs", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body) })).json();
-    if (j.erro) return toast(j.erro, "err");
+    if (!await pedirJob({ modo: "baixar_imagens", opcoes: { workers: 8 } })) return;
     toast("📥 Baixando imagens para o banco…", "ok");
   } catch { toast("Falha ao iniciar o download", "err"); }
 };
@@ -1682,6 +1892,7 @@ $("btn-baixar-imgs").onclick = async () => {
   carregarMalha();                 // divisas municipais (IBGE) — enquadra na malha; clique seleciona
   map.on("moveend", malhaSegueMapa);   // navegou para outro estado? baixa a malha de lá
   atualizarBannerMunicipio();      // badge "clique num município"
+  aplicarNivel();                  // esconde o que este nível não executa
   conectarWS();
   try { aplicarJob(await (await fetch("/api/jobs/atual")).json()); } catch { /* ok */ }
   atualizarBotoes();
@@ -2252,29 +2463,57 @@ function cardCnpj(conf, cob) {
     g.n += c.n;
     g.itens.push(c);
   }
-  const grupos = [...porNota.values()];
-  const somaConf = porNota.get("4/4")?.n || 0;
-  return `<div class="d-card g-roxo">
-    <div class="d-tit">CNPJ por confiança</div>
-    <div class="d-num">${nfmt(cob.cnpj)}<small>${pctd(cob.cnpj, cob.total)}% da base</small></div>
-    <div class="d-destaque">
-      <b>${nfmt(somaConf)}</b> conferidos ponta a ponta
-      <span>${pctd(somaConf, cob.cnpj)}% dos CNPJs</span>
-    </div>
-    ${grupos.map((g) => `<div class="conf-grupo">
+  // TRÊS FAIXAS, não seis notas.
+  //
+  // A versão anterior mostrava 4/4, 3/4, 2/4, 1/4, 0/4 e "?" com o critério
+  // técnico de cada uma — "dígito verificador · existe na Receita · UF confere".
+  // É a informação certa para depurar o casamento e a errada para decidir o que
+  // fazer: quem lê o painel quer saber em quais pode cobrar, quais valem
+  // visitar e quais ignorar. O detalhe continua acessível ao expandir.
+  const soma = (p) => [...porNota.values()]
+    .filter((g) => p.test(g.nota)).reduce((a, g) => a + g.n, 0);
+  const confirmado = soma(/^4\//);
+  const provavel = soma(/^[23]\//);
+  const fraco = soma(/^[01]\//) + soma(/^\?/);
+
+  const faixa = (rot, n, explica, cls) => `<div class="conf-faixa ${cls}">
+      <div class="conf-faixa-top"><b>${nfmt(n)}</b>
+        <span>${pctd(n, cob.cnpj)}% dos CNPJs</span></div>
+      <div class="conf-faixa-rot">${rot}</div>
+      <small>${explica}</small></div>`;
+
+  const detalhe = [...porNota.values()].map((g) => `<div class="conf-grupo">
       <div class="conf-cab">
         <span class="tag ${cls(g.nota)}">${esc(g.nota)}</span>
         <span class="conf-n">${nfmt(g.n)}</span>
       </div>
       ${g.itens.map((i) => `<div class="conf-lin">
         <span>${esc(i.criterio)}</span><b>${nfmt(i.n)}</b></div>`).join("")}
-    </div>`).join("")}
-    <div class="d-nota"><b>4/4</b> = dígito verificador + existe na Receita + UF e
-      município conferem. É o corte para cobrança; o resto serve para prospecção.</div>
+    </div>`).join("");
+
+  return `<div class="d-card g-roxo">
+    <div class="d-tit">CNPJ por confiança</div>
+    <div class="d-num">${nfmt(cob.cnpj)}<small>de ${nfmt(cob.total)} POIs têm CNPJ</small></div>
+    ${faixa("Confirmado — pode cobrar", confirmado,
+            "dígito verificador confere, existe na Receita, e UF e município batem", "ok")}
+    ${faixa("Provável — vale visitar", provavel,
+            "existe na Receita, mas falta confirmar endereço ou município", "med")}
+    ${faixa("Fraco — não sustenta decisão", fraco,
+            "só a forma do número, ou origem não registrada", "baixo")}
+    <details class="conf-det">
+      <summary>Ver o critério de cada faixa</summary>
+      ${detalhe}
+    </details>
   </div>`;
 }
 
-function cardCadastro(cad) {
+/* O FOCO É O COMERCIAL, NÃO O TAMANHO DA BASE.
+   Este card abria com "102.065 imóveis na base" — o número que menos importa
+   aqui. A carteira inteira é majoritariamente residência, e o produto não
+   promete cobrir residência: promete dizer quanto da base é comércio, quanto
+   disso nós confirmamos e quanto nós acrescentamos. O total continua visível,
+   em linha discreta, porque serve de denominador — não de manchete. */
+function cardCadastro(cad, v) {
   if (!cad) {
     return `<div class="d-card g-laranja">
       <div class="d-tit">Cadastro do cliente</div>
@@ -2284,14 +2523,52 @@ function cardCadastro(cad) {
   const cor = { ja_cadastrado: "baixo", reclassificar_alta: "ok",
                 reclassificar_media: "med", reclassificar_baixa: "med",
                 novo_comercial: "ok", sem_poi: "" };
+  const total = cad.total || 0;
+  // Um denominador só — a base inteira — para as quatro linhas somarem entre si.
+  // Misturar "% do comercial" com "% da base" na mesma coluna produz números que
+  // parecem comparáveis e não são.
+  const pct = (n) => (total ? 100 * n / total : 0);
+  const fp = (n) => pct(n).toFixed(1).replace(".", ",") + "%";
+  const porFlag = Object.fromEntries((cad.flags || []).map((f) => [f.flag, f.n]));
+  const reclass = (porFlag.reclassificar_alta || 0) + (porFlag.reclassificar_media || 0)
+                + (porFlag.reclassificar_baixa || 0);
+  // `cad_comercial_total` é o recorte comercial declarado pelo próprio cliente;
+  // sem ele (payload antigo) cai para o que o cruzamento conseguiu ver.
+  const comHoje = (v && v.cad_comercial_total) || porFlag.ja_cadastrado || 0;
+  const confirmado = (v && v.cad_comercial_casado) || porFlag.ja_cadastrado || 0;
+  const possivel = comHoje + reclass;
+  const ganhoPp = (pct(possivel) - pct(comHoje)).toFixed(1).replace(".", ",");
+  const lin = (rot, n, cls, nota) => `<div class="d-lin d-lin-larga ${cls || ""}">
+      <span class="rot">${rot}</span>
+      <span class="barra"><i style="width:${pct(n).toFixed(1)}%"></i></span>
+      <span class="val">${nfmt(n)} <em>${fp(n)}</em></span>
+    </div>${nota ? `<div class="d-lin-nota">${nota}</div>` : ""}`;
   return `<div class="d-card wide g-laranja">
-    <div class="d-tit">Cadastro do cliente × POIs</div>
-    <div class="d-num">${nfmt(cad.total)}<small>imóveis na base</small></div>
-    <table class="d-tab">${cad.flags.map((f) => `<tr>
-      <td><span class="tag ${cor[f.flag] || ""}">${esc(f.flag)}</span></td>
-      <td style="text-align:left;color:var(--ink-2);font-size:12px">
-        ${esc(cad.descricoes[f.flag] || "")}</td>
-      <td>${nfmt(f.n)}</td></tr>`).join("")}</table>
+    <div class="d-tit">Cadastro do cliente — o que é comércio</div>
+    <div class="d-num">${fp(possivel)}<small>da base é comércio depois do processamento</small></div>
+    <div class="d-delta">o cliente hoje classifica <b>${fp(comHoje)}</b> como comercial
+      · <b class="up">+${ganhoPp} pp</b> que o processo acrescenta</div>
+
+    ${lin("Comercial segundo o cadastro", comHoje, "")}
+    ${lin("Confirmado pela mineração", confirmado, "alta",
+          `${total ? Math.round(100 * confirmado / (comHoje || 1)) : 0}% do comercial que o
+           cliente já conhece — não é ganho, é complemento de informação`)}
+    ${lin("Acrescentado pela mineração", reclass, "baixa",
+          "está na base como não-comercial e há estabelecimento identificado no local —"
+          + " é a reclassificação, o ganho de fato")}
+    ${lin("Total possível pós-processamento", possivel, "alta")}
+
+    <div class="d-nota">${nfmt(total)} registros na base
+      · ${nfmt(porFlag.sem_poi || 0)} sem POI correspondente.
+      O total serve de denominador; o que se mede aqui é o comércio.</div>
+    <details class="conf-det">
+      <summary>Ver o cruzamento registro a registro</summary>
+      <table class="d-tab">${cad.flags.map((f) => `<tr>
+        <td><span class="tag ${cor[f.flag] || ""}">${esc(f.flag)}</span></td>
+        <td style="text-align:left;color:var(--ink-2);font-size:12px">
+          ${esc(cad.descricoes[f.flag] || "")}</td>
+        <td>${nfmt(f.n)}</td></tr>`).join("")}</table>
+    </details>
   </div>`;
 }
 
@@ -2329,32 +2606,57 @@ function cardConvergencia(v) {
       <span class="rot">${rot}</span>
       <span class="barra"><i style="width:${pct(n, tot)}%"></i></span>
       <span class="val">${nfmt(n)} <em>${pct(n, tot)}%</em></span></div>`;
+  // O DENOMINADOR é o cadastro COMERCIAL, não a base inteira.
+  //
+  // Comparar 22 mil POIs — que são comércio — com 102 mil imóveis, a maioria
+  // residências, produz "22% de cobertura" que não mede cobertura de nada: o
+  // mapeamento nunca teve por objetivo achar casa. Contra o recorte comercial
+  // a conta passa a responder a pergunta certa: do comércio que o cliente já
+  // conhece, quanto eu encontrei — e o que encontrei que ele não tem.
+  const comTot = v.cad_comercial_total || 0;
+  const semPoi = v.cad_comercial_sem_poi || 0;
   return `<div class="d-card wide g-laranja">
-    <div class="d-tit">Meu mapeamento × cadastro do cliente</div>
+    <div class="d-tit">Meu mapeamento × cadastro COMERCIAL do cliente</div>
     <div class="conv-par">
       <div class="conv-lado">
         <div class="conv-rot">Meu mapeamento</div>
         <div class="conv-n">${nfmt(v.poi_total)}</div>
-        <small>POIs na cidade</small>
+        <small>POIs válidos</small>
       </div>
       <div class="conv-meio">
         <div class="conv-n">${nfmt(v.poi_casado)}</div>
-        <small>casaram</small>
+        <small>casaram com um imóvel</small>
       </div>
       <div class="conv-lado">
-        <div class="conv-rot">Cadastro do cliente</div>
-        <div class="conv-n">${nfmt(v.cad_total)}</div>
-        <small>imóveis na base</small>
+        <div class="conv-rot">Comercial no cadastro</div>
+        <div class="conv-n">${nfmt(comTot)}</div>
+        <small>de ${nfmt(v.cad_total)} imóveis na base</small>
       </div>
     </div>
 
-    <div class="d-sub">Onde cada lado viu sozinho</div>
-    ${barra("só eu vi", v.poi_so_meu, v.poi_total, v.poi_so_meu > v.poi_casado ? "baixa" : "")}
-    ${barra("só o cadastro", v.cad_so_deles, v.cad_total, "baixa")}
-    <div class="d-nota">Os <b>${nfmt(v.poi_so_meu)}</b> que só eu vi são candidatos a
-      <b>acrescer</b> à base do cliente. Os <b>${nfmt(v.cad_so_deles)}</b> que só o
-      cadastro tem são imóveis onde o mapeamento não chegou — na maioria residências,
-      que não geram POI comercial.</div>
+    <div class="d-sub">O que isto vale, em ordem de retorno</div>
+    <table class="d-tab d-tab-destaque">
+      <tr class="ganho">
+        <td><b>Reclassificar</b> — cadastrado como não-comercial, e há estabelecimento
+            identificado no local</td>
+        <td>${nfmt(v.cad_nao_comercial_casado)}</td></tr>
+      <tr>
+        <td><b>Acrescer</b> — achei e não existe no cadastro</td>
+        <td>${nfmt(v.poi_so_meu)}</td></tr>
+      <tr class="neutro">
+        <td>Já é comercial no cadastro — não é ganho, é complemento de informação</td>
+        <td>${nfmt(v.cad_comercial_casado)}</td></tr>
+      <tr class="neutro">
+        <td>Comercial no cadastro que eu ainda não encontrei</td>
+        <td>${nfmt(semPoi)}</td></tr>
+    </table>
+    <div class="d-nota">A primeira linha é a de maior retorno: o cliente cobra como
+      não-comercial e há comércio ali. A terceira <b>não é ganho</b> — o cliente já
+      sabe; o que agregamos é dado, não a descoberta.</div>
+
+    <div class="d-sub">Cobertura do comércio que o cliente já conhece</div>
+    ${barra("encontrei", comTot - semPoi, comTot, "")}
+    ${barra("ainda não encontrei", semPoi, comTot, "baixa")}
 
     <div class="d-sub">O que eu acrescentei ao imóvel casado</div>
     <table class="d-tab">
@@ -2362,18 +2664,9 @@ function cardConvergencia(v) {
       <tr><td>CNPJ</td><td>${nfmt(v.eu_dei_cnpj)}</td></tr>
       <tr><td>foto de fachada</td><td>${nfmt(v.eu_dei_fachada)}</td></tr>
     </table>
-
-    <div class="d-sub">O que o cadastro me deu de volta</div>
-    <table class="d-tab">
-      <tr><td>POIs com matrícula, economias e categoria tarifária</td>
-        <td>${nfmt(v.poi_casado)}</td></tr>
-      <tr><td>— desses, <b>comerciais</b> na base do cliente</td>
-        <td>${nfmt(v.cad_comercial_casado)}</td></tr>
-      <tr><td>— <b>não</b> comerciais na base, mas com POI: reclassificar</td>
-        <td>${nfmt(v.cad_nao_comercial_casado)}</td></tr>
-    </table>
-    <div class="d-nota">A última linha é a fila de maior retorno: o cliente cobra como
-      não-comercial e há um estabelecimento identificado ali.</div>
+    <div class="d-nota">Os ${nfmt(v.cad_so_deles)} imóveis da base sem POI ficam de
+      fora desta conta de propósito: são majoritariamente residências, e residência
+      não gera POI comercial.</div>
   </div>`;
 }
 
@@ -2408,7 +2701,19 @@ function cardFachada(f) {
 /* MEDIÇÃO — a tampa, a bateria e o acesso. É a parte que serve a QUALQUER
    concessionária, e a que vira ordem de serviço em vez de fila de receita. */
 function cardMedicao(f) {
+  // A condição certa é ter DADO DE MEDIÇÃO, não ter fachada lida. Com o guarda
+  // antigo (`!f.lidas`) o cartão aparecia sempre que houvesse qualquer leitura,
+  // exibindo uma coluna de zeros — e zero aqui não é informação: significa que
+  // o modelo não olhou o hidrômetro, não que não existe bateria coletiva.
+  // Cartão de zeros ocupa a tela e ensina a ignorar o painel.
   if (!f || !f.lidas) return "";
+  // Só MEDIÇÃO conta para decidir se o cartão existe. `numero_diverge` e
+  // `unidades_acima` são divergência cadastral — moram no cartão de fachada, e
+  // usá-las aqui fazia o cartão aparecer inteiro de zeros só porque alguma
+  // fachada tinha número diferente do cadastro.
+  const temMedicao = (f.medicao_coletiva || 0) + (f.tampa_problema || 0)
+    + (f.acesso_obstruido || 0) + (f.abrigos || []).length;
+  if (!temMedicao) return "";
   const alto = (n) => n > 0 ? "med" : "";
   return `<div class="d-card">
     <div class="d-tit">Medição e acesso</div>
@@ -2533,16 +2838,55 @@ function cardRetorno(faixas, c) {
 }
 
 function cardImagens(sv, cob) {
-  const mb = sv.bytes / 1048576;
-  return `<div class="d-card">
-    <div class="d-tit">Imagens no banco</div>
-    <div class="d-num">${nfmt(sv.imagens)}<small>fachadas</small></div>
-    <table class="d-tab">
-      <tr><td>tamanho</td><td>${mb > 1024 ? (mb / 1024).toFixed(1) + " GB" : mb.toFixed(0) + " MB"}</td></tr>
-      <tr><td>sem panorama</td><td>${nfmt(cob.sem_panorama)}</td></tr>
-      <tr><td>fotos do Maps</td><td>${nfmt(cob.fotos)}</td></tr>
-    </table>
-    <div class="d-nota">Gravadas em <code>streetview_imgs</code>, não em pasta.</div>
+  // IMAGEM é o dado mais caro de produzir: cada fachada custou uma sessão de
+  // navegador; cada foto, a abertura de uma ficha no Maps. E é a evidência que
+  // sustenta o dossiê — sem ela, a divergência de uso é afirmação sem prova.
+  // Por isso o cartão é largo e mostra COBERTURA, não só contagem.
+  const tam = (b) => {
+    const m = (b || 0) / 1048576;
+    return m > 1024 ? (m / 1024).toFixed(1) + " GB" : m.toFixed(0) + " MB";
+  };
+  const tot = cob.total || 0;
+  const pct = (n) => tot ? Math.round(100 * n / tot) : 0;
+  const barra = (rot, n, cls = "") => `<div class="d-lin ${cls}">
+      <span class="rot">${rot}</span>
+      <span class="barra"><i style="width:${pct(n)}%"></i></span>
+      <span class="val">${nfmt(n)} <em>${pct(n)}%</em></span></div>`;
+
+  const semPano = cob.sem_panorama || 0;
+  const semNada = Math.max(0, tot - (sv.pois || 0) - (sv.fotos_pois || 0));
+  return `<div class="d-card wide g-azul">
+    <div class="d-tit">Evidência visual</div>
+    <div class="conv-par">
+      <div class="conv-lado">
+        <div class="conv-rot">Fachadas</div>
+        <div class="conv-n">${nfmt(sv.imagens)}</div>
+        <small>${nfmt(sv.pois)} POIs · ${tam(sv.bytes)}</small>
+      </div>
+      <div class="conv-lado">
+        <div class="conv-rot">Fotos do Maps</div>
+        <div class="conv-n">${nfmt(sv.fotos)}</div>
+        <small>${nfmt(sv.fotos_pois)} POIs · ${tam(sv.fotos_bytes)}</small>
+      </div>
+      <div class="conv-lado">
+        <div class="conv-rot">Total</div>
+        <div class="conv-n">${nfmt((sv.imagens || 0) + (sv.fotos || 0))}</div>
+        <small>${tam((sv.bytes || 0) + (sv.fotos_bytes || 0))}</small>
+      </div>
+    </div>
+
+    <div class="d-sub">Cobertura sobre ${nfmt(tot)} POIs</div>
+    ${barra("com fachada do Street View", sv.pois || 0)}
+    ${barra("com foto do Maps", sv.fotos_pois || 0)}
+    ${semPano ? barra("sem panorama disponível", semPano, "baixa") : ""}
+    ${semNada ? barra("sem imagem nenhuma", semNada, "baixa") : ""}
+
+    ${sv.fotos && sv.fotos_baixadas < sv.fotos ? `<div class="d-nota">
+      <b>${nfmt(sv.fotos - sv.fotos_baixadas)}</b> fotos são só URL — o endereço foi
+      registrado mas o arquivo nunca foi baixado. Elas somem se o Google trocar o
+      link, e não servem para o dossiê, que precisa da imagem embutida.</div>` : ""}
+    <div class="d-nota">Os bytes moram no Storage; o banco guarda o caminho. É o que
+      mantém backup e replicação leves — imagem não precisa de transação.</div>
   </div>`;
 }
 
@@ -2550,7 +2894,9 @@ function cardOrigem(origem, status) {
   return `<div class="d-card">
     <div class="d-tit">Origem e status</div>
     <table class="d-tab">
-      ${origem.slice(0, 6).map((o) => `<tr><td>${esc(o.fonte)} / ${esc(o.dado)}</td>
+      ${/* A CONTAGEM continua visível; o NOME da fonte é que embaça. O cliente
+             precisa saber quantos achados existem — não de onde vieram. */""}
+      ${origem.slice(0, 6).map((o) => `<tr><td class="fonte-dado">${esc(o.fonte)} / ${esc(o.dado)}</td>
         <td>${nfmt(o.n)}</td></tr>`).join("")}
     </table>
     <div class="d-tit" style="margin-top:13px">Status</div>
@@ -2573,7 +2919,7 @@ function renderDashboard() {
   let html = "";
   if (g === "tudo" || g === "cobertura") html += cardCobertura(c);
   if (g === "tudo" || g === "cnpj") html += cardCnpj(d.cnpj_confianca, c);
-  if (g === "tudo" || g === "cadastro") html += cardCadastro(d.cadastro);
+  if (g === "tudo" || g === "cadastro") html += cardCadastro(d.cadastro, d.convergencia);
   if (g === "tudo" || g === "cadastro") html += cardConvergencia(d.convergencia);
   if (g === "tudo" || g === "fachada") html += cardFachada(d.fachada) + cardMedicao(d.fachada);
   if (g === "tudo" || g === "retorno") html += cardRetorno(d.faixas, d.custo);

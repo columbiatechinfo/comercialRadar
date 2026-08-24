@@ -10,6 +10,10 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
 <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css">
+<!-- Os tokens vem ANTES: `style.css` agora consome as variaveis daqui.
+     Inverter a ordem faria o :root do sistema apontar para nomes que
+     ainda nao existem, e a tela abriria sem cor nenhuma. -->
+<link rel="stylesheet" href="/static/tokens.css">
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -25,6 +29,16 @@
       </svg>
     </div>
     <div class="brand-name">Comercial<b>Radar</b></div>
+    <!-- TRES MARCAS, tres papeis (ADR 0005): o produto, quem o usa, quem o fez.
+         Fundir os dois primeiros esconderia de quem e o sistema.
+         Fica vazio ate o `/api/eu` responder — e se a empresa nao tiver logo,
+         mostra o nome em texto: ausencia nao pode virar espaco quebrado. -->
+    <div class="brand-cliente hidden" id="brand-cliente">
+      <span class="brand-para">para</span>
+      <img id="brand-logo" class="hidden" alt="">
+      <span id="brand-empresa"></span>
+    </div>
+    <div class="brand-por">por <b>A2L</b></div>
   </div>
 
   <!-- Menu único: o nome da etapa em que se está, e o painel que abre por baixo
@@ -40,6 +54,17 @@
            stroke-linejoin="round"><path d="M6 8l4 4 4-4"/></svg>
     </button>
   </nav>
+
+  <!-- A BANCADA sem `?poi=`: o painel geral, com a fila inteira, os filtros por
+       status e a busca. Clicar num ponto do mapa abre a mesma tela ja focada
+       naquele ponto — sao a mesma bancada, dois jeitos de chegar. -->
+  <a class="btn-bancada" href="/bancada" title="Abrir a bancada de validação">
+    <svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor"
+         stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="2.5" y="3" width="15" height="14" rx="2"/><path d="M2.5 7.5h15M7 7.5V17"/>
+    </svg>
+    Bancada
+  </a>
 
   <div class="top-right">
     <div class="db-badge" id="db-badge" title="Município selecionado — clique num polígono no mapa para trocar">
@@ -167,7 +192,7 @@
       <div class="hint">A carteira de imóveis da empresa. Depois de importar, ela é
         cruzada com os POIs e cada imóvel recebe a flag de campo.</div>
       <div class="row">
-        <a class="btn ghost" href="/api/modelos/cadastro" download>⬇️ Modelo</a>
+        <a class="btn ghost" id="link-modelo-cadastro" href="/api/modelos/cadastro" download>⬇️ Modelo</a>
         <button class="btn" id="btn-cadastro">🏢 Importar cadastro…</button>
         <input type="file" id="file-cadastro" accept=".csv" hidden>
       </div>
@@ -193,8 +218,22 @@
         <select id="op-motor">
           <option value="captura" selected>Captura + OCR (padrão)</option>
           <option value="places">Places API (paga)</option>
+          <option value="estadual">Extração estadual (bases públicas)</option>
         </select>
       </label>
+      <!-- A extração estadual é AQUISIÇÃO, como os outros dois motores: as três
+           acham ponto. O que muda é a origem — aqui o ponto já existe numa base
+           pública e não custa captura. Por isso ela mora neste seletor, e não no
+           enriquecimento, que é o que se faz depois de ter o ponto. -->
+      <div class="opt inline hidden" id="op-estadual-wrap">Pasta da extração
+        <input type="text" id="op-estadual-dir" placeholder="…/extracao_poi_rs_2026-08-10"
+               style="min-width:260px">
+      </div>
+      <div class="hint hidden" id="hint-estadual">Traz o que <b>Overture, OpenStreetMap e
+        Foursquare</b> já conhecem no município da área, com dedup por evidência.
+        Não substitui a captura: a captura vê o que está na rua hoje e traz foto;
+        esta traz alcance, em segundos e sem custo por ponto. Aponte a pasta da
+        extração já produzida para a UF.</div>
       <div class="hint" id="hint-captura">Fotografa o Maps em tiles 4K com o estilo limpo
         (só os markers), detecta os ícones, lê os nomes por <b>OCR</b> e busca cada um.
         <b>Não custa por chamada</b> — só tempo de captura.</div>
@@ -244,11 +283,18 @@
           <small>(só o resíduo sem CNPJ · lenta e paga)</small></label>
         <label class="opt"><input type="checkbox" id="enr-sv" checked> Fase 4 — Street View
           <small>(fachada de cada ponto · grátis)</small></label>
-        <label class="opt sub"><input type="checkbox" id="enr-sv-pobres" checked>
+        <label class="opt sub"><input type="checkbox" id="enr-sv-pobres">
           ↳ só nos pobres
-          <small>(sem foto, sem telefone ou sem avaliação. De quem já tem os três
-          a fachada acrescenta pouco e custa o mesmo — são ~1.380 fachadas por
+          <small>(sem foto, sem telefone ou sem avaliação. <b>Desmarcado por
+          padrão</b>: quem não tem fachada capturada NÃO entra na avaliação da
+          IA, e marcar isto deixava a maioria da área de fora. Marque só se
+          quiser economizar hora de captura — são ~1.380 fachadas por
           hora)</small></label>
+        <label class="opt sub"><input type="checkbox" id="enr-ja-comerciais">
+          ↳ incluir quem já é comercial no cadastro
+          <small>(por padrão eles ficam de fora: o cliente já cobra como
+          comercial, não há reclassificação a propor. Marque para montar o
+          dossiê da carteira inteira)</small></label>
         <label class="opt"><input type="checkbox" id="enr-visivel">
           👁️ Navegador visível na Fase 3
           <small>(1 janela por worker, com a busca sendo digitada · use para
@@ -258,7 +304,18 @@
       </details>
       <div class="hint">Custo estimado para Parnaíba: <b>~R$ 4</b> (quase tudo é grátis).</div>
 
-      <div class="casc-sep">Passo final (à parte)</div>
+      <div class="casc-sep">Passos à parte</div>
+
+      <!-- A skill roda por MUNICÍPIO, não por POI, e por isso não é caixa da
+           cascata: encaixá-la ali obrigaria a encadear jobs, e só roda um por
+           vez. Botão próprio deixa claro que é outra unidade de trabalho. -->
+      <button class="btn-outline" id="btn-cnpj-skill">🏛️ CNPJ × CNEFE — skill tratamento-cnpj</button>
+      <div class="hint">Cruza a <b>Receita</b> com o <b>CNEFE do IBGE</b> no município da área e
+        devolve, por CNPJ: perfil comercial, evidência de existência física, aptidão da
+        coordenada e a <b>rota de tratamento</b> — reclassificar 1:1 ou individualizar
+        multi-economia. Tudo base pública já no banco: <b>grátis</b>, sem chamada externa.
+        Em Canoas, 3.000 CNPJs levaram 22&nbsp;s.</div>
+
       <button class="btn-outline" id="btn-baixar-imgs">📥 Baixar imagens para o banco</button>
       <div class="hint">Salva os bytes de todas as fotos + Street View no banco, com a data
         de cada imagem (EXIF / data do panorama). Rode <b>depois</b> de enriquecer. ~1,6 GB.</div>
@@ -286,20 +343,25 @@
 
       <details class="opts" open>
         <summary>▾ Opções</summary>
+        <!-- Um modelo só. Os da OpenAI saíram porque a leitura passou a ser
+             local, e os `qwen2.5vl` porque rodavam no Ollama, que recusava
+             requisição paralela nesta arquitetura e punha a carga em 213 h.
+             Manter opção que não se pretende usar é convidar a rodar
+             errado. -->
         <label class="opt inline">Modelo
           <select id="av-modelo">
-            <option value="gpt-4o-mini" selected>gpt-4o-mini (barato)</option>
-            <option value="gpt-4o">gpt-4o (caro, lê melhor)</option>
-            <option value="qwen2.5vl:7b">qwen2.5vl 7b — i9 local (grátis)</option>
-            <option value="qwen2.5vl:3b">qwen2.5vl 3b — i9 local (grátis, pior)</option>
+            <option value="qwen3vl-moe" selected>Qwen3-VL MoE — Spark (grátis)</option>
           </select></label>
-        <label class="opt inline">Workers
-          <input type="number" id="av-workers" min="1" max="8" value="4"></label>
-        <label class="opt inline">Teto de gasto US$
-          <input type="number" id="av-teto" min="0" step="1" value="20"></label>
+        <label class="opt inline">Ler no máximo
+          <input type="number" id="av-limit" min="0" step="100" value="0"
+                 title="0 = sem limite"></label>
         <label class="opt"><input type="checkbox" id="av-refazer">
           Reavaliar quem já tem leitura
           <small>(por padrão só entra quem ainda não foi lido)</small></label>
+        <label class="opt"><input type="checkbox" id="av-ja-comerciais">
+          Avaliar também quem já é comercial no cadastro
+          <small>(por padrão ficam de fora — já são comerciais na base do
+          cliente, não há reclassificação a propor)</small></label>
       </details>
 
       <div class="hint" id="av-estimativa">calculando o que há para avaliar…</div>
@@ -494,6 +556,12 @@
      de mapa) sem trocar o Leaflet, então todas as camadas de POIs, quadras e
      desenho seguem iguais. -->
 <script src="https://unpkg.com/leaflet.gridlayer.googlemutant@0.14.1/dist/Leaflet.GoogleMutant.js"></script>
+<script src="/static/sessao.js"></script>
+<script src="/static/admin.js"></script>
+<!-- `abas.js` antes de quem o usa: o popup do mapa (app.js) e a fila do
+     supervisor (fila.js) desenham as mesmas abas por fonte. -->
+<script src="/static/abas.js"></script>
+<script src="/static/fila.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

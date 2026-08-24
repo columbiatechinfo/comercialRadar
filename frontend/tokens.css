@@ -1,0 +1,257 @@
+/* Tokens do ComercialRadar — extraidos do painel `Radar_Comercial.html`.
+ *
+ * DE ONDE VIERAM, e por que isso importa
+ *
+ * Nao sao escolha minha: sao os valores do `:root` do painel que o usuario
+ * aprovou, lidos do proprio arquivo. Inventar uma paleta "parecida" faria o
+ * sistema e a bancada divergirem no primeiro ajuste, e a bancada e a tela que o
+ * cliente mais usa.
+ *
+ * Os PNGs da pasta `assets/modelo_frontend` sao referencia de ESTRUTURA — como
+ * um formulario de perfil se organiza, como uma lista de usuarios se apresenta.
+ * Cor e tipografia vem daqui.
+ *
+ * UMA LINGUAGEM, TRES TRAVAS
+ *
+ * 1. UM acento. `--azul` e o unico. Nada de um botao roxo numa tela e verde na
+ *    outra porque pareceu bonito naquele dia.
+ * 2. UMA escala de raio. 10px para caixa, 8px para controle, 99px para pilula.
+ *    Botao redondo em tela de cantos retos e desenho quebrado.
+ * 3. UMA familia de cinza. Frio, do painel. Misturar cinza quente e frio na
+ *    mesma tela e o tipo de coisa que ninguem sabe nomear mas todo mundo ve.
+ */
+
+:root {
+  /* ── Marca ─────────────────────────────────────────────────────────────── */
+  --navy:        #0B2E59;   /* titulo, barra superior, botao primario */
+  --navy-2:      #0E3A6E;   /* hover do navy */
+  --navy-3:      #12213A;   /* fundo de visor e mapa */
+
+  --azul:        #006DFF;   /* O acento. Um so. */
+  --azul-texto:  #0063E6;   /* o mesmo azul, legivel sobre branco */
+  --laranja:     #F28C28;   /* atencao, e a faixa da marca */
+  /* Laranja e claro por natureza: #F28C28 sobre branco da 2.45:1, metade do
+     minimo. Como FUNDO ele e a cor da marca; como TEXTO, e este. Mesma razao
+     de `--azul-texto` e `--critico-texto` existirem. */
+  --laranja-texto: #9D5B1A;
+
+  /* ── Superficie e texto ────────────────────────────────────────────────── */
+  --branco:      #fff;
+  --claro:       #F2F4F7;   /* fundo da pagina */
+  --grafite:     #2A2E35;
+  --texto:       #2A2E35;
+  --texto-fraco: #63697A;
+  --linha:       #E0E4EB;
+  --linha-2:     #D3D9E2;   /* linha que precisa aparecer mais */
+
+  /* ── Estado ────────────────────────────────────────────────────────────── */
+  --ok:      #1F9D62;
+  /* O verde tambem precisa do par escuro quando e TEXTO sobre a propria
+     tinta. Sao quatro variantes -texto no total: azul, laranja, vermelho e
+     este. Quatro, e nao "cada um vai vendo". */
+  --ok-texto: #17734A;
+  --alerta:  #F28C28;
+  --critico: #D64545;
+  /* #D64545 da 4.38:1 sobre branco — reprova no AA por pouco, e "por pouco"
+     em texto de erro e justamente onde nao se pode falhar. Este e o mesmo
+     vermelho, um passo mais escuro, para quando ele e TEXTO. E a mesma razao
+     de `--azul-texto` existir. */
+  --critico-texto: #BA3C3C;
+  --neutro:  #6B7684;
+  /* Roxo NAO e um segundo acento. E o tom de "processo em maquina": status
+     `campo` na bancada, chamada de ferramenta no chat. Cor que codifica dado
+     pode existir; cor que so enfeita, nao. */
+  --roxo:    #7C4DFF;
+
+  /* Sobre fundo ESCURO o estado inverte de papel: `--ok` (#1F9D62) some no
+     visor do Street View. Estes tres sao os mesmos estados, com luminosidade
+     para o outro lado. Nao sao cores novas — sao a mesma familia lida no
+     escuro. */
+  --ok-vivo:      #22E07A;
+  --azul-vivo:    #7FD4FF;
+  --critico-vivo: #FF8A80;
+
+  /* ── Tinta de estado ───────────────────────────────────────────────────
+     Fundo claro de chip, alerta e destaque. SOLIDA, nunca com alpha: a
+     versao translucida mudava de tom conforme o que estivesse atras, e o
+     contraste do texto por cima ia junto — o MESMO codigo de cor reprovava
+     em oito lugares e passava em quinze. Calculada uma vez sobre branco.
+     O sufixo -2 e a mesma tinta um passo mais forte, para quando ela precisa
+     se destacar de um fundo que ja e claro. */
+  --tinta-critico: #FCF0F0;
+  --tinta-ok: #EDF7F3;
+  --tinta-alerta: #FEF6EE;
+  --tinta-info: #EBF4FF;
+  --tinta-roxo: #F5F1FF;
+  --tinta-critico-2: #FBEDED;
+  --tinta-ok-2: #EAF6F0;
+  --tinta-alerta-2: #FEF4EB;
+
+  /* ── Tipografia ────────────────────────────────────────────────────────── */
+  /* O painel usa SF Pro quando ha, e cai para a fonte do sistema. Mantido:
+     trocar por webfont custa uma requisicao bloqueante na primeira pintura, e a
+     diferenca visual nao paga. */
+  --f-t: "SF Pro Display", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-c: "SF Pro Text", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  /* NUMERO E MONO, sempre. Coordenada, CNPJ, matricula e contagem alinham em
+     coluna e se comparam de relance — em fonte proporcional, nao alinham. */
+  --f-m: "SF Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --fs-display: 34px;
+  --fs-xl:      24px;
+  --fs-lg:      18px;
+  --fs-md:      15px;
+  --fs-base:    13px;
+  --fs-sm:      12px;
+  --fs-xs:      11px;
+  --fs-2xs:     10px;
+
+  --tk2:     -.008em;   /* titulo grande respira melhor apertado */
+  --tk-olho:  .075em;   /* rotulo em caixa alta precisa do contrario */
+
+  /* ── Forma ─────────────────────────────────────────────────────────────── */
+  --r-caixa:    10px;
+  --r-controle:  8px;
+  --r-chip:      6px;
+  --r-pilula:   99px;
+
+  /* Sombra TINGIDA de navy, nunca preta: preto puro sobre fundo claro cria uma
+     borda cinza-suja que nao existe em nada impresso. */
+  --sombra-1: 0 1px 2px rgba(11, 46, 89, .06);
+  --sombra-2: 0 4px 14px rgba(11, 46, 89, .10);
+  --sombra-3: 0 12px 36px rgba(11, 46, 89, .16);
+
+  /* ── Ritmo ─────────────────────────────────────────────────────────────── */
+  --e1: 4px;  --e2: 8px;  --e3: 12px; --e4: 16px;
+  --e5: 24px; --e6: 32px; --e7: 48px;
+
+  --top: 68px;    /* altura da barra superior, do painel */
+  --sb:  272px;   /* largura da lateral, do painel */
+
+  /* Uma curva so, para tudo. Curvas diferentes por componente fazem a tela
+     parecer montada por pessoas diferentes. */
+  --curva: cubic-bezier(.16, 1, .3, 1);
+  --rapido: .14s var(--curva);
+  --normal: .24s var(--curva);
+}
+
+/* ── Base ────────────────────────────────────────────────────────────────── */
+
+.cr {
+  font-family: var(--f-c);
+  font-size: var(--fs-base);
+  color: var(--texto);
+  -webkit-font-smoothing: antialiased;
+}
+
+.cr h1, .cr h2, .cr h3 { font-family: var(--f-t); color: var(--navy);
+  letter-spacing: var(--tk2); margin: 0; }
+.cr h1 { font-size: var(--fs-xl); font-weight: 700; }
+.cr h2 { font-size: var(--fs-lg); font-weight: 700; }
+.cr h3 { font-size: var(--fs-md); font-weight: 600; }
+
+/* O rotulo em caixa alta do painel: pequeno, espacado, cinza. Ele organiza sem
+   competir com o dado, que e o que importa na tela. */
+.cr-olho {
+  font-size: var(--fs-2xs); text-transform: uppercase;
+  letter-spacing: var(--tk-olho); color: var(--texto-fraco);
+  font-weight: 700;
+}
+
+.cr-num { font-family: var(--f-m); font-variant-numeric: tabular-nums; }
+
+/* ── Controles ───────────────────────────────────────────────────────────── */
+
+.cr-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  gap: var(--e2); border: 1px solid transparent;
+  border-radius: var(--r-controle); padding: 9px 16px;
+  font: 600 var(--fs-base)/1 var(--f-c); cursor: pointer;
+  transition: background var(--rapido), transform var(--rapido);
+  white-space: nowrap;   /* rotulo de botao NAO quebra em duas linhas */
+}
+.cr-btn:active { transform: translateY(1px); }
+.cr-btn:focus-visible { outline: 2px solid var(--azul); outline-offset: 2px; }
+
+.cr-btn--primario { background: var(--navy); color: var(--branco); }
+.cr-btn--primario:hover { background: var(--navy-2); }
+
+.cr-btn--acento { background: var(--azul); color: var(--branco); }
+.cr-btn--acento:hover { filter: brightness(1.08); }
+
+.cr-btn--fantasma { background: var(--branco); color: var(--navy);
+  border-color: var(--linha-2); }
+.cr-btn--fantasma:hover { background: var(--claro); }
+
+/* Acao destrutiva nao e vermelha por padrao: vermelho constante na tela vira
+   ruido e some quando importa. Ela e neutra, e vermelha no hover. */
+.cr-btn--risco { background: var(--branco); color: var(--critico);
+  border-color: var(--linha-2); }
+.cr-btn--risco:hover { background: var(--critico); color: var(--branco);
+  border-color: var(--critico); }
+
+.cr-btn[disabled] { opacity: .5; cursor: default; transform: none; }
+
+/* ── Formulario ──────────────────────────────────────────────────────────── */
+/* Rotulo ACIMA do campo, sempre. Rotulo dentro do campo some quando a pessoa
+   comeca a digitar, e e justamente ai que ela precisa dele. */
+
+.cr-campo { display: flex; flex-direction: column; gap: var(--e1);
+  margin-bottom: var(--e4); }
+.cr-campo > label { font-size: var(--fs-sm); font-weight: 600;
+  color: var(--texto); }
+.cr-campo > label .obrig { color: var(--critico); margin-left: 2px; }
+
+.cr-campo input, .cr-campo select, .cr-campo textarea {
+  font: var(--fs-base)/1.4 var(--f-c); color: var(--texto);
+  background: var(--branco); border: 1px solid var(--linha-2);
+  border-radius: var(--r-controle); padding: 9px 12px; width: 100%;
+  transition: border-color var(--rapido), box-shadow var(--rapido);
+}
+.cr-campo input:focus, .cr-campo select:focus, .cr-campo textarea:focus {
+  outline: none; border-color: var(--azul);
+  box-shadow: 0 0 0 3px rgba(0, 109, 255, .14);
+}
+/* Placeholder passa no contraste AA: cinza claro demais e decoracao, nao texto. */
+.cr-campo ::placeholder { color: var(--texto-fraco); opacity: .75; }
+
+.cr-ajuda { font-size: var(--fs-xs); color: var(--texto-fraco); }
+.cr-erro  { font-size: var(--fs-xs); color: var(--critico); font-weight: 600; }
+.cr-campo--erro input, .cr-campo--erro select { border-color: var(--critico); }
+
+/* ── Caixa, chip, estado ─────────────────────────────────────────────────── */
+
+.cr-caixa { background: var(--branco); border: 1px solid var(--linha);
+  border-radius: var(--r-caixa); }
+.cr-caixa--sombra { box-shadow: var(--sombra-2); border-color: transparent; }
+
+.cr-chip { display: inline-flex; align-items: center; gap: var(--e1);
+  padding: 2px 9px; border-radius: var(--r-pilula);
+  font-size: var(--fs-xs); font-weight: 600; }
+.cr-chip--ok      { background: #EAF6F0; color: var(--ok); }
+.cr-chip--alerta  { background: #FEF4EB; color: var(--laranja-texto); }
+.cr-chip--critico { background: #FBEDED; color: var(--critico); }
+.cr-chip--neutro  { background: var(--claro);  color: var(--neutro); }
+
+/* ── Vazio, carregando, erro ─────────────────────────────────────────────── */
+/* As tres telas que a maioria dos sistemas esquece, e que sao a maior parte do
+   tempo de quem usa. */
+
+.cr-vazio { text-align: center; padding: var(--e7) var(--e5);
+  color: var(--texto-fraco); }
+.cr-vazio h3 { color: var(--texto); margin-bottom: var(--e2); }
+
+.cr-esqueleto {
+  background: linear-gradient(90deg, var(--claro) 25%, #E9EDF3 37%, var(--claro) 63%);
+  background-size: 400% 100%; border-radius: var(--r-chip);
+  animation: cr-brilho 1.3s ease-in-out infinite;
+}
+@keyframes cr-brilho { to { background-position: -135% 0; } }
+
+/* Movimento e opcional para quem pediu para nao ver movimento. */
+@media (prefers-reduced-motion: reduce) {
+  .cr-esqueleto { animation: none; background: var(--claro); }
+  .cr *, .cr *::before, .cr *::after {
+    animation-duration: .01ms !important; transition-duration: .01ms !important;
+  }
+}

@@ -1,0 +1,505 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ComercialRadar — Chat</title>
+<link rel="stylesheet" href="/static/tokens.css">
+<style>
+  /* O chat era a unica tela com acento VERDE e roxo — outra linguagem inteira
+     dentro do mesmo produto. Estes nomes agora sao apelidos dos tokens; o
+     arquivo continua usando `--acento` em 30 regras, e nenhuma precisou mudar.
+
+     O modo ESCURO fica: quem conversa com a IA passa tempo aqui, e a escolha do
+     sistema operacional merece resposta. No escuro, estado e acento sobem de
+     luminosidade — a mesma familia lida do outro lado. */
+  :root {
+    --fg: var(--texto); --fg2: var(--texto-fraco);
+    --bg: var(--branco); --painel: var(--claro);
+    --acento: var(--azul);  --acento-bg: var(--tinta-info);
+    --erro: var(--critico); --ferr: var(--roxo); --ferr-bg: var(--tinta-roxo);
+  }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme=light]) {
+    --fg:#E6E8EC; --fg2:#98A0AE; --bg: var(--navy-3); --painel:#18293F;
+    --linha:#26374F; --acento: var(--azul-vivo); --acento-bg:#7FD4FF14;
+    --erro: var(--critico-vivo); --ferr:#B9A4FF; --ferr-bg:#7C4DFF1F;
+  } }
+  :root[data-theme=dark] {
+    --fg:#E6E8EC; --fg2:#98A0AE; --bg: var(--navy-3); --painel:#18293F;
+    --linha:#26374F; --acento: var(--azul-vivo); --acento-bg:#7FD4FF14;
+    --erro: var(--critico-vivo); --ferr:#B9A4FF; --ferr-bg:#7C4DFF1F;
+  }
+  * { box-sizing:border-box; }
+  html,body { height:100%; margin:0; }
+  body { display:flex; font: var(--fs-md)/1.55 var(--f-c);
+         color:var(--fg); background:var(--bg); }
+
+  /* lateral: as conversas */
+  aside { width:270px; flex:0 0 270px; border-right:1px solid var(--linha);
+          background:var(--painel); display:flex; flex-direction:column; }
+  aside header { padding:14px 16px; border-bottom:1px solid var(--linha); }
+  aside h1 { font-size:14px; margin:0 0 10px; letter-spacing:.02em; }
+  #nova { width:100%; padding:8px; border:1px solid var(--linha); border-radius:8px;
+          background:var(--bg); color:var(--fg); cursor:pointer; font-size:13.5px; }
+  #nova:hover { border-color:var(--acento); color:var(--acento); }
+  #lista { flex:1; overflow-y:auto; padding:8px; }
+  .conv { padding:9px 10px; border-radius:8px; cursor:pointer; font-size:13.5px;
+          display:flex; gap:8px; align-items:baseline; }
+  .conv:hover { background:var(--bg); }
+  .conv.ativa { background:var(--acento-bg); color:var(--acento); }
+  .conv b { font-weight:500; overflow:hidden; text-overflow:ellipsis;
+            white-space:nowrap; flex:1; }
+  .conv small { color:var(--fg2); font-size:11px; }
+
+  /* conversa */
+  main { flex:1; display:flex; flex-direction:column; min-width:0; }
+  #topo { padding:12px 20px; border-bottom:1px solid var(--linha);
+          display:flex; align-items:center; gap:12px; }
+  #titulo { font-size:14px; font-weight:500; flex:1; }
+  #modo { font-size:11.5px; color:var(--fg2); }
+  #fala { flex:1; overflow-y:auto; padding:22px 20px; }
+  .msg { max-width:min(760px,100%); margin:0 auto 18px; }
+  .msg .quem { font-size:11px; text-transform:uppercase; letter-spacing:.06em;
+               color:var(--fg2); margin-bottom:5px; }
+  .msg .txt { word-wrap:break-word; }
+  .msg.user .txt { white-space:pre-wrap; }
+  .txt .cab1, .txt .cab2 { font-size:17px; font-weight:700; margin:16px 0 6px; }
+  .txt .cab3, .txt .cab4 { font-size:14px; font-weight:700; margin:14px 0 4px;
+    text-transform:uppercase; letter-spacing:.04em; opacity:.75; }
+  .txt .item { margin:3px 0 3px 16px; text-indent:-11px; }
+  .txt .item::before { content:"· "; opacity:.5; }
+  .txt .linha { margin:4px 0; }
+  .txt .vazia { height:8px; }
+  .txt hr { border:none; border-top:1px solid var(--borda); margin:14px 0; }
+  .conv { position:relative; }
+  .conv .acao { position:absolute; top:50%; transform:translateY(-50%);
+    border:none; background:transparent; color:var(--fg2); font-size:16px;
+    line-height:1; cursor:pointer; padding:3px 6px; border-radius:6px;
+    opacity:0; transition:opacity .12s; }
+  .conv .renomear { right:30px; }
+  .conv .apagar { right:5px; font-size:19px; }
+  /* So aparecem com o mouse em cima: botao permanente em cada linha convida ao
+   * clique errado, e a lista vira um campo minado. */
+  .conv:hover .acao, .conv.ativa .acao { opacity:.55; }
+  .conv .acao:hover { opacity:1; background:var(--linha,#0001); }
+  .conv .apagar:hover { background:#e5484d22; color:#e5484d; }
+  .fotos { display:flex; gap:6px; overflow-x:auto; padding:8px 0; }
+  .fotos img { height:104px; width:auto; border-radius:8px; display:block;
+    border:1px solid var(--borda); }
+  .msg.user .txt { background:var(--painel); padding:11px 14px;
+                   border-radius:10px; }
+  .passo { max-width:min(760px,100%); margin:0 auto 8px; font-size:12.5px;
+           color:var(--ferr); background:var(--ferr-bg); padding:7px 11px;
+           border-radius:8px; font-family:ui-monospace,monospace;
+           overflow-x:auto; white-space:pre; }
+  .erro { color:var(--erro); }
+  .vazio { color:var(--fg2); text-align:center; margin-top:60px; }
+  .vazio code { background:var(--painel); padding:2px 6px; border-radius:4px; }
+
+  /* composição */
+  #baixo { border-top:1px solid var(--linha); padding:14px 20px; }
+  #caixa { max-width:min(760px,100%); margin:0 auto; display:flex; gap:10px; }
+  #texto { flex:1; resize:none; padding:11px 13px; border-radius:10px;
+           border:1px solid var(--linha); background:var(--bg); color:var(--fg);
+           font:inherit; max-height:180px; }
+  #texto:focus { outline:none; border-color:var(--acento); }
+  #enviar { padding:0 18px; border-radius:10px; border:none; cursor:pointer;
+            background:var(--acento); color:#fff; font-weight:500; }
+  #enviar:disabled { opacity:.5; cursor:default; }
+  .dica { max-width:min(760px,100%); margin:8px auto 0; font-size:11.5px;
+          color:var(--fg2); }
+
+  /* anexos */
+  #anexos { max-width:min(760px,100%); margin:0 auto 8px; display:flex;
+            flex-wrap:wrap; gap:6px; }
+  .anexo { display:flex; align-items:center; gap:6px; font-size:12px;
+           background:var(--painel); border:1px solid var(--linha);
+           border-radius:7px; padding:4px 8px; }
+  .anexo.ruim { border-color:var(--erro); color:var(--erro); }
+  .anexo .x { cursor:pointer; color:var(--fg2); font-weight:600; }
+  .anexo .x:hover { color:var(--erro); }
+  .anexo small { color:var(--fg2); }
+  #clipe { padding:0 12px; border-radius:10px; cursor:pointer; font-size:17px;
+           border:1px solid var(--linha); background:var(--bg); color:var(--fg); }
+  #clipe:hover { border-color:var(--acento); }
+  body.arrastando { outline:3px dashed var(--acento); outline-offset:-8px; }
+</style>
+</head>
+<body>
+<aside>
+  <header>
+    <h1>ComercialRadar</h1>
+    <button id="nova">+ Nova conversa</button>
+  </header>
+  <div id="lista"></div>
+</aside>
+
+<main>
+  <div id="topo">
+    <div id="titulo">—</div>
+    <div id="modo"></div>
+  </div>
+  <div id="fala">
+    <div class="vazio">
+      Pergunte sobre a base. O assistente consulta o banco e a internet —
+      <br>ele não responde de memória.
+      <br><br>
+      <code>quantas lojas do iFood ainda estão sem endereço?</code>
+    </div>
+  </div>
+  <div id="baixo">
+    <div id="anexos"></div>
+    <div id="caixa">
+      <input type="file" id="arquivo" multiple hidden>
+      <button id="clipe" title="Anexar imagem, PDF, Word, planilha ou ZIP">📎</button>
+      <textarea id="texto" rows="1" placeholder="Pergunte…"></textarea>
+      <button id="enviar">Enviar</button>
+    </div>
+    <div class="dica">Enter envia · Shift+Enter quebra linha · arraste arquivos para anexar</div>
+  </div>
+</main>
+
+<script>
+const API = '/api/chat';
+
+/* O token vem do login feito no mapa e vive em `sessionStorage` (por aba).
+ *
+ * Esta página NÃO carrega o `sessao.js` de propósito: além de anexar o token,
+ * ele injeta a tela de login e o painel de perfil, cujo CSS mora no
+ * `index.html`. Sem aquele CSS, os elementos caem por cima do chat. Ler a
+ * chave e montar o cabeçalho custa três linhas e não traz layout alheio. */
+const token = () => sessionStorage.getItem('cr_token') || '';
+
+async function api(caminho, opcoes = {}) {
+  const t = token();
+  if (!t) return { status: 401, json: async () => ({}) };
+  const cab = Object.assign({}, opcoes.headers || {},
+                            { Authorization: 'Bearer ' + t });
+  return fetch(caminho, Object.assign({}, opcoes, { headers: cab }));
+}
+let atual = null, ocupado = false;
+
+const $ = s => document.querySelector(s);
+const el = (t, c, txt) => { const e = document.createElement(t);
+  if (c) e.className = c; if (txt != null) e.textContent = txt; return e; };
+
+function pedirLogin() {
+  $('#lista').innerHTML = '';
+  $('#fala').innerHTML =
+    '<div class="vazio">Sessão não iniciada.<br><br>' +
+    'Entre pelo <a href="/" style="color:var(--acento)">mapa</a> ' +
+    'e volte para esta página <b>na mesma aba</b> —<br>' +
+    'a sessão vive na aba, então abrir noutra pede login de novo.</div>';
+  $('#enviar').disabled = true;
+  $('#texto').disabled = true;
+}
+
+async function carregarLista() {
+  const r = await api(`${API}/conversas`);
+  if (r.status === 401) { pedirLogin(); return; }
+  const convs = await r.json();
+  if (!Array.isArray(convs)) { pedirLogin(); return; }
+  const lista = $('#lista'); lista.innerHTML = '';
+  for (const c of convs) {
+    const d = el('div', 'conv' + (c.id === atual ? ' ativa' : ''));
+    d.append(el('b', null, c.titulo), el('small', null, c.mensagens || ''));
+    d.onclick = () => abrir(c.id, c.titulo);
+
+    /* O botao vive DENTRO da linha, que ja abre a conversa no clique. Sem
+     * `stopPropagation` o apagar abriria a conversa antes de sumir com ela, e a
+     * tela piscaria no que acabou de ser removido. */
+    const lapis = el('button', 'acao renomear', '✎');
+    lapis.title = 'Renomear esta conversa';
+    lapis.onclick = ev => { ev.stopPropagation();
+                            renomearConversa(c.id, c.titulo); };
+
+    const x = el('button', 'acao apagar', '×');
+    x.title = 'Apagar esta conversa';
+    x.onclick = ev => { ev.stopPropagation(); apagarConversa(c.id, c.titulo); };
+
+    d.append(lapis, x);
+
+    lista.append(d);
+  }
+}
+
+async function renomearConversa(id, titulo) {
+  /* O titulo automatico sai do comeco da primeira pergunta — "procure os dados
+   * seguindo a escada de extracao e busca de…" — e descreve o PEDIDO, nao o
+   * assunto. Dez buscas comecam igual e nenhuma se distingue na lista. */
+  const novo = prompt('Novo nome da conversa:', titulo || '');
+  if (novo === null) return;                       // cancelou
+  const limpo = novo.trim().slice(0, 120);         // o servidor corta em 120;
+  if (!limpo || limpo === titulo) return;          // cortar aqui e' honesto
+
+  const r = await api(`${API}/conversas/${id}`, { method:'PATCH',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ titulo: limpo }) });
+  if (!r.ok) { alert('Não consegui renomear (HTTP ' + r.status + ').'); return; }
+
+  if (id === atual) $('#titulo').textContent = limpo;
+  carregarLista();
+}
+
+
+async function apagarConversa(id, titulo) {
+  /* A confirmacao diz o que REALMENTE acontece.
+   *
+   * A rota arquiva: a conversa some da lista e nunca mais volta ao modelo, mas
+   * o registro fica no banco. Prometer "apagar para sempre" e cumprir outra
+   * coisa e pior que explicar — ainda mais num sistema onde a conversa registra
+   * decisao de campo. */
+  if (!confirm(`Apagar "${titulo || 'esta conversa'}"?\n\n` +
+               `Ela sai da lista e deixa de ser usada como contexto. ` +
+               `O registro fica guardado no banco e pode ser recuperado por ` +
+               `quem tem acesso ao servidor.`)) return;
+
+  const r = await api(`${API}/conversas/${id}`, { method: 'DELETE' });
+  if (!r.ok) { alert('Não consegui apagar (HTTP ' + r.status + ').'); return; }
+
+  if (id === atual) {          // era a aberta: a tela nao pode ficar orfa
+    atual = null;
+    $('#titulo').textContent = 'ComercialRadar';
+    $('#fala').innerHTML = '<div class="vazio">Conversa apagada.<br><br>' +
+                           'Comece uma nova pelo botão acima.</div>';
+  }
+  carregarLista();
+}
+
+
+/* Marcação reconhecida vira nó no DOM; o resto continua texto.
+ *
+ * Antes era `textContent` puro, e por isso TODA resposta aparecia com o
+ * markdown cru na tela — "### **Endereço:**" em vez de um título. Não se usa
+ * `innerHTML`: parte deste texto vem de páginas que o agente abriu, e injetar
+ * HTML de fonte dessas seria abrir a porta de par em par. */
+const RE_IMG = /https?:\/\/\S+?\.(?:jpe?g|png|webp)(?:\?\S*)?|https?:\/\/(?:lh\d\.googleusercontent|[\w-]*\.cdninstagram|[\w-]*\.fbcdn)\.\S+/gi;
+
+function comEnfase(destino, linha) {
+  /* **negrito**, [texto](url) e o resto como texto. */
+  const re = /\*\*(.+?)\*\*|\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g;
+  let fim = 0, m;
+  while ((m = re.exec(linha))) {
+    if (m.index > fim) destino.append(document.createTextNode(linha.slice(fim, m.index)));
+    if (m[1] != null) destino.append(el('b', null, m[1]));
+    else { const a = el('a', null, m[2]); a.href = m[3]; a.target = '_blank';
+           a.rel = 'noopener noreferrer'; destino.append(a); }
+    fim = re.lastIndex;
+  }
+  if (fim < linha.length) destino.append(document.createTextNode(linha.slice(fim)));
+}
+
+function tiraDeFotos(urls) {
+  const tira = el('div', 'fotos');
+  urls.slice(0, 8).forEach(u => {
+    const a = el('a'); a.href = u; a.target = '_blank'; a.rel = 'noopener noreferrer';
+    const i = el('img'); i.src = u; i.loading = 'lazy'; i.alt = 'foto do local';
+    a.append(i); tira.append(a);
+  });
+  return tira;
+}
+
+function renderizar(caixa, texto) {
+  const fotos = [...(texto || '').matchAll(RE_IMG)].map(m => m[0]);
+  const semFotos = (texto || '').replace(RE_IMG, '').trimEnd();
+
+  semFotos.split('\n').forEach(linha => {
+    const t = linha.replace(/\s+$/, '');
+    if (!t.trim()) { caixa.append(el('div', 'vazia')); return; }
+    const cab = t.match(/^(#{1,4})\s+(.*)$/);
+    if (cab) { const h = el('div', 'cab' + cab[1].length);
+               /* Sem podar o `**` final antes: isso quebrava o par e o titulo
+                * saia com os asteriscos na frente. O negrito e resolvido por
+                * `comEnfase`, que ve os dois lados. */
+               comEnfase(h, cab[2].trim());
+               caixa.append(h); return; }
+    if (/^\s*[-*]\s+/.test(t)) { const li = el('div', 'item');
+                                  comEnfase(li, t.replace(/^\s*[-*]\s+/, ''));
+                                  caixa.append(li); return; }
+    if (/^\s*[-—_]{3,}\s*$/.test(t)) { caixa.append(el('hr')); return; }
+    const p = el('div', 'linha'); comEnfase(p, t); caixa.append(p);
+  });
+
+  if (fotos.length) caixa.append(tiraDeFotos(fotos));
+}
+
+function pinta(papel, texto) {
+  const m = el('div', 'msg ' + papel);
+  const caixa = el('div', 'txt');
+  if (papel === 'user') caixa.textContent = texto;   // do usuário, nada se interpreta
+  else renderizar(caixa, texto);
+  m.append(el('div', 'quem', papel === 'user' ? 'você' : 'assistente'), caixa);
+  $('#fala').append(m);
+  return m;
+}
+
+function pintaPasso(txt, erro) {
+  const p = el('div', 'passo' + (erro ? ' erro' : ''), txt);
+  $('#fala').append(p);
+  $('#fala').scrollTop = $('#fala').scrollHeight;
+  return p;
+}
+
+async function abrir(id, titulo) {
+  atual = id;
+  $('#titulo').textContent = titulo || 'Conversa';
+  const r = await api(`${API}/conversas/${id}`);
+  const msgs = await r.json();
+  $('#fala').innerHTML = '';
+  for (const m of msgs) {
+    // as chamadas de ferramenta aparecem como passo, não como fala: elas são
+    // o "como", e misturá-las ao texto esconde a resposta
+    if (m.papel === 'assistant' && m.ferramenta) {
+      pintaPasso(`🔧 ${m.ferramenta}(${JSON.stringify(
+        (m.dados && m.dados.argumentos) || {})})`);
+    } else if (m.papel === 'tool') {
+      pintaPasso(`↩  ${m.ferramenta} · ${m.conteudo.length} bytes`);
+    } else if (m.conteudo) {
+      pinta(m.papel, m.conteudo);
+    }
+  }
+  $('#fala').scrollTop = $('#fala').scrollHeight;
+  carregarLista();
+}
+
+async function nova() {
+  const r = await api(`${API}/conversas`, { method:'POST',
+    headers:{'Content-Type':'application/json'}, body:'{}' });
+  const { id } = await r.json();
+  await carregarLista();
+  abrir(id, 'Nova conversa');
+}
+
+async function enviar() {
+  const t = $('#texto').value.trim();
+  if ((!t && !pendentes.length) || ocupado) return;
+  if (!atual) await nova();
+  ocupado = true; $('#enviar').disabled = true;
+  $('#texto').value = ''; $('#texto').style.height = 'auto';
+  if ($('#fala').querySelector('.vazio')) $('#fala').innerHTML = '';
+  pinta('user', t);
+  $('#fala').scrollTop = $('#fala').scrollHeight;
+
+  const resp = await api(`${API}/conversas/${atual}`, { method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ pergunta: t,
+                           anexos: pendentes.filter(a => !a.erro).map(a => a.id) }) });
+  if (pendentes.length) { pendentes = []; pintaAnexos(); }
+
+  // SSE lido à mão: a resposta pode levar meio minuto entre buscas, e uma tela
+  // parada esse tempo todo parece travada. Cada passo aparece assim que ocorre.
+  const leitor = resp.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  while (true) {
+    const { value, done } = await leitor.read();
+    if (done) break;
+    buf += dec.decode(value, { stream:true });
+    let corte;
+    while ((corte = buf.indexOf('\n\n')) >= 0) {
+      const linha = buf.slice(0, corte).replace(/^data: /, '');
+      buf = buf.slice(corte + 2);
+      if (!linha) continue;
+      let ev; try { ev = JSON.parse(linha); } catch { continue; }
+      if (ev.tipo === 'ferramenta') {
+        pintaPasso(`🔧 ${ev.dado.nome}(${JSON.stringify(ev.dado.args)})`);
+      } else if (ev.tipo === 'retorno') {
+        const s = JSON.stringify(ev.dado.saida);
+        const err = ev.dado.saida && ev.dado.saida.erro;
+        pintaPasso(`↩  ${ev.dado.nome} · ${s.length} bytes` +
+                   (err ? `  ⚠ ${err}` : ''), !!err);
+        /* As fotos do Maps e do Instagram aparecem AQUI, e não só se o modelo
+         * lembrar de citá-las no texto. Fachada é o que decide se vale a
+         * visita; deixar isso na sorte da redação seria perder o dado. */
+        const fts = ev.dado.saida && ev.dado.saida.fotos;
+        if (Array.isArray(fts) && fts.length) $('#fala').append(tiraDeFotos(fts));
+      } else if (ev.tipo === 'titulo') {
+        $('#titulo').textContent = ev.dado; carregarLista();
+      } else if (ev.tipo === 'fim') {
+        /* SÓ em `fim`. O agente emite `resposta` ao concluir e o `chat_api`
+         * emite `fim` logo depois, com o mesmo texto — pintar nos dois
+         * duplicava toda resposta na tela. `fim` é o que a API garante;
+         * `resposta` é sinal interno do agente, que a linha de comando usa. */
+        pinta('assistant', ev.dado);
+      } else if (ev.tipo === 'erro') {
+        pintaPasso('⚠ ' + ev.dado, true);
+      }
+      $('#fala').scrollTop = $('#fala').scrollHeight;
+    }
+  }
+  ocupado = false; $('#enviar').disabled = false;
+  $('#texto').focus();
+}
+
+
+/* ─── anexos ────────────────────────────────────────────────────────────────
+ * Os arquivos sobem ASSIM QUE são escolhidos, não junto com a pergunta. O
+ * servidor extrai na hora e devolve o que leu — então você vê "PDF sem texto
+ * extraível" antes de gastar a pergunta, em vez de receber uma resposta vazia
+ * e não entender por quê. */
+let pendentes = [];
+
+function pintaAnexos() {
+  const cx = $('#anexos'); cx.innerHTML = '';
+  for (const a of pendentes) {
+    const d = el('div', 'anexo' + (a.erro ? ' ruim' : ''));
+    d.append(el('span', null, a.erro ? '⚠' : icone(a.tipo)));
+    d.append(el('span', null, a.nome));
+    if (a.aviso || a.erro) d.append(el('small', null, a.erro || a.aviso));
+    const x = el('span', 'x', '×');
+    x.onclick = () => { pendentes = pendentes.filter(p => p !== a); pintaAnexos(); };
+    d.append(x);
+    cx.append(d);
+  }
+}
+
+const icone = t => ({ imagem:'🖼', pdf:'📕', word:'📘', planilha:'📗',
+                      zip:'🗜', texto:'📄' })[t] || '📎';
+
+async function subir(lista) {
+  if (!lista.length) return;
+  if (!atual) await nova();
+  const fd = new FormData();
+  for (const f of lista) fd.append('arquivos', f);
+  const marca = pintaPasso(`⬆ enviando ${lista.length} arquivo(s)…`);
+  try {
+    const r = await api(`${API}/conversas/${atual}/anexos`,
+                        { method:'POST', body: fd });
+    const lidos = await r.json();
+    marca.remove();
+    if (Array.isArray(lidos)) { pendentes.push(...lidos); pintaAnexos(); }
+    else pintaPasso('⚠ não consegui ler os arquivos', true);
+  } catch (e) {
+    marca.remove();
+    pintaPasso('⚠ falha no envio: ' + e.message, true);
+  }
+}
+
+$('#clipe').onclick = () => $('#arquivo').click();
+$('#arquivo').onchange = e => { subir([...e.target.files]); e.target.value = ''; };
+
+/* arrastar e soltar em qualquer lugar da janela */
+document.addEventListener('dragover', e => {
+  e.preventDefault(); document.body.classList.add('arrastando');
+});
+document.addEventListener('dragleave', e => {
+  if (e.relatedTarget === null) document.body.classList.remove('arrastando');
+});
+document.addEventListener('drop', e => {
+  e.preventDefault(); document.body.classList.remove('arrastando');
+  subir([...(e.dataTransfer.files || [])]);
+});
+
+$('#nova').onclick = nova;
+$('#enviar').onclick = enviar;
+$('#texto').addEventListener('input', e => {
+  e.target.style.height = 'auto';
+  e.target.style.height = Math.min(e.target.scrollHeight, 180) + 'px';
+});
+$('#texto').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); enviar(); }
+});
+carregarLista();
+</script>
+</body>
+</html>
