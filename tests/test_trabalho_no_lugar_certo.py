@@ -24,6 +24,23 @@ POR QUE POLÍGONO E NÃO DISTÂNCIA
 Distância do centróide reprova ponto legítimo em município grande — Santa
 Vitória do Palmar tem 5.244 km². E não pega o inverso: um ponto a 3 km, mas
 dentro do vizinho, é outro município e passa despercebido.
+
+O CAMPO `cidade` NÃO É AUTORIDADE — E ESSA LIÇÃO CUSTOU CARO
+
+A primeira versão deste teste comparava a coordenada contra o polígono do
+município que o campo `cidade` declara. Com base nela apaguei 8 fotos e 3
+análises de IA de três POIs — e estavam certas. O que errava era o rótulo:
+
+    Centro Distribuição CORSAN   `cidade`=Esteio     CEP 92420 = Canoas
+    Camping Porto Batista        `cidade`=Triunfo    CEP 92330 = Canoas
+    MBK pousada                  `cidade`=Luís Corr. CEP 64200 = Parnaíba
+
+Nos três, o pin do Google e o CEP concordavam entre si e discordavam do rótulo.
+O CEP é uma terceira fonte independente — vem do CNEFE do IBGE — e vale mais
+que um campo de texto que qualquer etapa do enriquecimento pode ter escrito.
+
+Então o teste só acusa quando a coordenada discorda do rótulo **E** do CEP.
+Discordar só do rótulo é problema de rótulo, e rótulo não invalida foto.
 """
 from __future__ import annotations
 
@@ -67,7 +84,10 @@ def test_nenhuma_foto_ou_analise_fora_do_municipio():
                        (select count(*) from comercialradar.streetview_imgs s
                          where s.poi_id = p.id) as fotos,
                        (select count(*) from comercialradar.analise_ia a
-                         where a.poi_id = p.id) as analises
+                         where a.poi_id = p.id) as analises,
+                       -- O CEP do endereço: a terceira fonte, que desempata
+                       -- entre o rótulo e a coordenada.
+                       substring(p.endereco from '[0-9]{5}') as cep
                   from comercialradar.pois p
                  where p.cidade is not null and p.uf is not null
                    and coalesce(p.maps_lat, p.lat_origem) is not null
@@ -96,7 +116,7 @@ def test_nenhuma_foto_ou_analise_fora_do_municipio():
                 cod_de.setdefault((_norm(nome_m), uf), cod)
 
             ids, cods, las, los = [], [], [], []
-            for i, _, cidade, uf, la, lo, _, _ in linhas:
+            for i, _, cidade, uf, la, lo, _, _, _ in linhas:
                 cod = cod_de.get((_norm(cidade), uf))
                 if not cod:
                     continue     # sem malha daquele município: não dá para julgar
@@ -121,15 +141,45 @@ def test_nenhuma_foto_ou_analise_fora_do_municipio():
                              %s)
                      order by 2 desc""", (ids, cods, las, los, FOLGA_M))
                 fora = rc.fetchall()
+
+            # ── O CEP DESEMPATA ──────────────────────────────────────────
+            #
+            # Para cada suspeito, pergunta ao CNEFE a que município pertence o
+            # CEP do endereço. Se ele bate com onde a COORDENADA está, quem
+            # errou foi o rótulo — e rótulo errado não invalida foto.
+            ceps = {i: c for i, _, _, _, _, _, _, _, c in linhas if c}
+            perdoados = set()
+            for i, _ in fora:
+                cep = ceps.get(i)
+                if not cep:
+                    continue
+                rc.execute("""select m.cod_municipio from ibge_cnefe c
+                               join ibge_malha m on m.cod_municipio = c.cod_municipio
+                              where c.cep like %s
+                              group by 1 order by count(*) desc limit 1""",
+                           (cep + "%",))
+                linha_cep = rc.fetchone()
+                if not linha_cep:
+                    continue
+                idx = ids.index(i)
+                rc.execute("""select ST_DWithin(geom::geography,
+                                ST_SetSRID(ST_MakePoint(%s,%s),4326)::geography, %s)
+                               from ibge_malha where cod_municipio = %s""",
+                           (los[idx], las[idx], FOLGA_M, linha_cep[0]))
+                bate = rc.fetchone()
+                if bate and bate[0]:
+                    perdoados.add(i)
+            fora = [(i, d) for i, d in fora if i not in perdoados]
     finally:
         ref.close()
 
     info = {i: (nome, cidade, fotos, analises)
-            for i, nome, cidade, _, _, _, fotos, analises in linhas}
+            for i, nome, cidade, _, _, _, fotos, analises, _ in linhas}
     detalhe = [f"{i} {info[i][0][:28]!r} ({info[i][1]}) a {d} km · "
                f"{info[i][2]} fotos, {info[i][3]} análises"
                for i, d in fora]
     assert not fora, (
         f"{len(fora)} POIs têm foto ou análise de IA capturada numa coordenada "
-        f"FORA do município que declaram — a foto é de outro prédio e o veredito "
-        f"julgou o estabelecimento errado:\n  " + "\n  ".join(detalhe[:10]))
+        f"FORA do município que declaram, E o CEP do endereço não os perdoa — "
+        f"a foto é de outro prédio e o veredito julgou o estabelecimento "
+        f"errado:\n  " + "\n  ".join(detalhe[:10]))

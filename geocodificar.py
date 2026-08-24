@@ -10,19 +10,25 @@ uma vírgula.
 
 A ORDEM, E POR QUE ELA É ESTA
 
-    1. PAINEL DO MAPS   busca o ESTABELECIMENTO pelo nome e devolve o pin que o
+    1. PHOTON           geocodificador do OSM, aqui no i9. Tolerante a endereço
+                        sujo: devolve algo em 11 de 14 endereços que o Nominatim
+                        recusa inteiros. Custa 0,1 s.
+    2. NOMINATIM        mais estrito, também no i9. Segunda chance quando o
+                        Photon não achou.
+    3. PAINEL DO MAPS   busca o ESTABELECIMENTO pelo nome e devolve o pin que o
                         Google desenha para ele. É a única fonte que ganha
-                        `porta`, porque é a única que encontra o negócio em vez
-                        de interpretar um texto.
-    2. PHOTON           geocodificador do OSM, tolerante a endereço sujo.
-                        Devolve algo em 11 de 14 endereços que o Nominatim
-                        recusa inteiros.
-    3. NOMINATIM        mais estrito. Entra como confirmação e como segunda
-                        chance quando o Photon não achou.
+                        `porta`, porque é a única que encontra o NEGÓCIO em vez
+                        de interpretar um texto — "Hotel Kleinville, Esteio"
+                        acha o hotel; "Rua Tal, 402, 1a" acha, no melhor caso,
+                        a rua.
 
-Maps primeiro porque é a fonte principal do projeto — e porque procurar o
-NEGÓCIO é diferente de procurar o endereço. "Hotel Kleinville, Esteio" acha o
-hotel; "Rua Tal, 402, 1a" acha, no melhor caso, a rua.
+O Maps é o MELHOR e vem por ÚLTIMO, e isso não é contradição: ele abre um
+navegador com proxy e leva dezenas de segundos por consulta. Numa varredura de
+doze mil endereços a diferença entre ele e o OSM é a diferença entre minutos e
+dias. Então o barato tenta primeiro, e o caro só entra no resíduo — que é onde
+ele vale cada segundo.
+
+**Só depois que os três falharem é que existe "não encontrado".**
 
 CASAR TEXTO NUNCA VALE "PORTA"
 
@@ -425,9 +431,12 @@ def buscar(endereco: str = "", cidade: str = "", uf: str = "",
            nome: str = "", usar_maps: bool = False) -> dict | None:
     """A cascata inteira. Devolve o melhor achado, ou None.
 
-    `usar_maps` é opcional porque abre navegador: numa rodada de 13 mil POIs
-    isso é a diferença entre minutos e dias. Para o resíduo que o OSM não
-    resolve, vale a pena.
+    `usar_maps` liga o ÚLTIMO degrau. Ele abre navegador com proxy, e numa
+    rodada de 13 mil POIs isso é a diferença entre minutos e dias — por isso é
+    opção, e não padrão. Mas para o resíduo que o OSM não resolve ele vale cada
+    segundo: é a única fonte que dá `porta`.
+
+    Sem ele, "não encontrado" significa apenas "o OSM não achou".
     """
     # A VIA PEDIDA, para conferir contra a devolvida.
     via_pedida = ""
@@ -455,12 +464,19 @@ def buscar(endereco: str = "", cidade: str = "", uf: str = "",
                 return None
         return r
 
-    if usar_maps:
-        r = confere(por_maps(nome, cidade, endereco))
-        if r:
-            return r
+    # O BARATO PRIMEIRO. Photon e Nominatim moram no i9 e respondem em
+    # centésimos de segundo.
     for tentativa in (por_photon, por_nominatim):
         r = confere(tentativa(endereco, cidade, uf))
+        if r:
+            return r
+
+    # E SÓ ENTÃO O MAPS, que abre navegador com proxy. Ele é o único que dá
+    # precisão de PORTA, porque procura o estabelecimento em vez de interpretar
+    # o texto do endereço — e é justamente no resíduo que o OSM não resolve que
+    # essa diferença aparece.
+    if usar_maps:
+        r = confere(por_maps(nome, cidade, endereco))
         if r:
             return r
     return None
