@@ -208,22 +208,31 @@ def _consultas(endereco: str, cidade: str, uf: str) -> list:
     saida = []
     if endereco:
         saida.append(f"{endereco}, {lugar}")
-    try:
-        import cruzar_bases as cb
-        rua, numero, bairro = cb.partes_cadastur(endereco, cidade)
-        if rua:
+    # OS DOIS FORMATOS. `partes_cadastur` le o do MTur, que nao tem separador
+    # nenhum ("Getulio Vargas 4861 Canoas Centro CEP: 9201024"); `partes_endereco`
+    # le o do Maps, separado por virgula e traco ("R. Vera Cruz - Mato Grande,
+    # Canoas - RS, 92415-000").
+    #
+    # Tentar so um deixava o outro sem consulta limpa: numa conferencia de 13
+    # POIs vindos do Maps, DEZ nao geocodificaram — e nao por falta de dado, mas
+    # porque o leitor errado devolvia o endereco inteiro como nome de rua.
+    for ler in ("partes_endereco", "partes_cadastur"):
+        try:
+            import cruzar_bases as cb
+            rua, numero, bairro = getattr(cb, ler)(endereco, cidade)
+            if not rua:
+                continue
             # A forma LIMPA entra sempre, mesmo quando o nome da rua já aparece
             # no endereço cru — é obvio que aparece, ela foi extraída dali. A
             # primeira versão testava justamente isso e descartava a consulta
-            # que funciona: o endereço cru carrega CEP, bairro e complemento
-            # colados sem separador, e o geocodificador não devolve nada.
+            # que funciona.
             limpo = f"{rua}, {numero}" if numero else rua
             saida.append(f"{limpo}, {lugar}")
             # Com o bairro, para desempatar rua homônima dentro da cidade.
             if bairro:
                 saida.append(f"{limpo}, {bairro}, {lugar}")
-    except Exception:
-        pass
+        except Exception:
+            continue
     # Vistos, mas sem repetir — perguntar duas vezes a mesma coisa é uma ida à
     # rede por nada.
     vistos, unicas = set(), []
@@ -422,11 +431,15 @@ def buscar(endereco: str = "", cidade: str = "", uf: str = "",
     """
     # A VIA PEDIDA, para conferir contra a devolvida.
     via_pedida = ""
-    try:
-        import cruzar_bases as cb
-        via_pedida = cb.partes_cadastur(endereco, cidade)[0] or ""
-    except Exception:
-        pass
+    for ler in ("partes_endereco", "partes_cadastur"):
+        try:
+            import cruzar_bases as cb
+            v = getattr(cb, ler)(endereco, cidade)[0]
+            if v:
+                via_pedida = v
+                break
+        except Exception:
+            continue
 
     def confere(r):
         """O achado vale? Município pelo polígono, via pelo nome."""
