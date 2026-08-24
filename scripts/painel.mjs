@@ -335,14 +335,28 @@ function secServicos(e, agora) {
   <div class="tbl"><table>
     <thead><tr><th>Serviço</th><th>Endpoint</th><th>Estado</th><th>Idade do dado</th></tr></thead>
     <tbody>${sv.map((s) => {
+      // Três casos distintos, que antes viravam um só "nunca ⚠": a idade não se
+      // APLICA (Ollama, OpenAI — não têm base cartográfica), a idade é
+      // DESCONHECIDA (OSRM não publica a data do PBF: é pendência de verdade),
+      // ou a idade é velha. Marcar os três com ⚠ enche o painel de alerta falso,
+      // e alerta que sempre acende é alerta que ninguém mais lê.
+      const naoSeAplica = !s.dado_em || s.dado_em === 'n/a';
+      const desconhecida = s.dado_em === 'desconhecido';
       const i = idade(s.dado_em, agora);
-      const velho = i.dias > 60;
-      const p = s.status === 'ok' ? 'p-ok' : s.status === 'fora' ? 'p-no' : 'p-ne';
+      const velho = !naoSeAplica && (desconhecida || i.dias > 60);
+      const txtIdade = naoSeAplica ? '—' : desconhecida ? 'desconhecida' : i.texto;
+      // `inutilizavel` pinta de vermelho junto com `fora`, e não é exagero: o
+      // OpenTopoData do i9 responde HTTP 200 com elevação de ~98,99 m para
+      // QUALQUER coordenada, porque só tem o dataset de demonstração carregado.
+      // Serviço mudo se percebe na primeira chamada; serviço que mente com
+      // número plausível entra no relatório e ninguém confere.
+      const p = s.status === 'ok' ? 'p-ok'
+        : (s.status === 'fora' || s.status === 'inutilizavel') ? 'p-no' : 'p-ne';
       return `<tr>
         <td class="sk">${esc(s.nome)}</td>
         <td><code>${esc(s.endpoint ?? '—')}</code></td>
         <td><span class="pill ${p}">${esc(s.status ?? 'desconhecido')}</span></td>
-        <td class="${velho ? 'velho' : ''}">${esc(i.texto)}${velho ? ' ⚠' : ''}</td>
+        <td class="${velho ? 'velho' : ''}">${esc(txtIdade)}${velho ? ' ⚠' : ''}</td>
       </tr>`;
     }).join('')}</tbody>
   </table></div>

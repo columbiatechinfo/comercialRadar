@@ -1,5 +1,6 @@
 import { chromium, Browser, BrowserContext, Page } from 'playwright';
 import * as fs from 'fs';
+import * as http from 'http';
 import * as path from 'path';
 import { CaptureConfig, TileCoord, CaptureSession } from './types';
 import { calculateGrid } from './geo';
@@ -11,7 +12,16 @@ const WORKERS               = Number(process.env.CAPTURE_WORKERS || 10);
 // código continua no histórico (commit 1c7f081) e PRECISA ser girada — trocar
 // aqui não desfaz o que já foi publicado.
 const MAPS_API_KEY          = process.env.MAPS_JS_KEY || process.env.MAPS_API_KEY || '';
-const MAPS_MAP_ID           = '33696f50cbe8e2d228094f61'; // estilo vetorial clean (só POIs)
+// `mapa_pois` — sem nomes de rua, o mais limpo possível, só os markers de POI.
+// É ele que faz o OCR ler estabelecimento em vez de rótulo de rua, e por isso
+// NÃO é o mesmo mapa do painel (GOOGLE_MAP_ID no .env, que é o mapa de leitura
+// humana e mostra ruas de propósito). Trocar um pelo outro não quebra nada e
+// piora tudo em silêncio — já foi feito por engano em 13/08/2026.
+//
+// O console avisa "Attempted to load a Vector Map, but failed. Falling back to
+// Raster" com este ID. É só aviso: a estilização da nuvem vale igual no raster,
+// e é a estilização que importa aqui. Não troque o mapa por causa desse aviso.
+const MAPS_MAP_ID           = process.env.CAPTURE_MAP_ID || '33696f50cbe8e2d228094f61';
 const TILE_WAIT_MS          = 6000;  // espera extra para labels/POIs depois do carregamento
 const EXTRA_WAIT_MS         = 2500;  // colchão adicional antes do screenshot
 const TILE_LOAD_TIMEOUT_MS  = 12000; // tempo máximo aguardando estabilidade visual
@@ -34,6 +44,13 @@ function buildMapHtml(apiKey: string, mapId: string, zoom: number): string {
 let map;
 let ready = false;
 
+// O Google chama esta funcao quando RECUSA a chave: referrer nao autorizado,
+// chave invalida, API desativada ou faturamento ausente. Sem ela a recusa
+// aparece so como um mapa que nunca fica pronto, e a captura salva a tela de
+// erro como se fosse um bairro sem comercio. Quem le a bandeira e o
+// waitMapReady, que interrompe a rodada.
+window.gm_authFailure = function () { window.__authFailure = true; };
+
 function initMap() {
   map = new google.maps.Map(document.getElementById('map'), {
     center: { lat: -29.7, lng: -53.8 },
@@ -51,15 +68,43 @@ function initMap() {
   });
 }
 
-// Navega para lat/lng e retorna quando o mapa parar de carregar
+// Navega para lat/lng e retorna quando o mapa parar de carregar.
+//
+// DUAS TRAVAS FORAM CORRIGIDAS AQUI EM 13/08/2026, e as duas produziam o mesmo
+// sintoma mudo: worker vivo, CPU perto de zero, nenhum tile em disco, nenhuma
+// mensagem de erro. Uma captura de 6 quadras ficou 8 minutos sem escrever nada.
+//
+//  1. CORRIDA. O setCenter vinha ANTES de registrar o ouvinte. Se o mapa
+//     ficasse ocioso nesse intervalo, o evento idle disparava sem ninguem
+//     escutando e nunca mais voltava. Agora o ouvinte entra primeiro.
+//  2. SEM PRAZO. A Promise so resolvia dentro do idle. Faltando o evento, ela
+//     esperava para sempre — e o page.evaluate que a aguarda tambem nao tem
+//     timeout, entao o worker parava de vez. Agora ha um teto: se o idle nao
+//     vier em 8 s, seguimos assim mesmo. Tile borrado e prejuizo de um tile;
+//     worker travado e prejuizo da rodada inteira.
+//
+//  ATENCAO ao editar daqui para baixo: este bloco vive DENTRO de um template
+//  literal — repare na interpolacao de zoom e mapId logo acima. Duas coisas
+//  quebram tudo aqui e nao parecem codigo: CRASE, que fecha a string, e cifrao
+//  seguido de chave, que vira interpolacao em vez de texto. As duas foram
+//  cometidas na primeira tentativa desta correcao.
 window.goTo = function(lat, lng) {
   return new Promise((resolve) => {
-    map.setCenter({ lat, lng });
+    let respondido = false;
+    const terminar = (viaIdle) => {
+      if (respondido) return;
+      respondido = true;
+      resolve(viaIdle);
+    };
 
     google.maps.event.addListenerOnce(map, 'idle', () => {
-      // Colchão maior para o renderer vetorial e labels aparecerem
-      setTimeout(() => resolve(true), 1800);
+      // Colchao maior para o renderer vetorial e labels aparecerem
+      setTimeout(() => terminar(true), 1800);
     });
+
+    map.setCenter({ lat, lng });
+
+    setTimeout(() => terminar(true), 8000);
   });
 };
 
@@ -107,17 +152,36 @@ function humanDelay(baseMs: number): number {
   return Math.round(baseMs + (Math.random() * jitter * 2 - jitter));
 }
 
+/** Espera o mapa inicializar. Lanca se o Google RECUSOU a chave.
+ *
+ * A recusa precisa interromper, e nao virar mais um "nao ficou pronto". Em
+ * 13/08/2026 uma rodada inteira terminou com "Total OCR: 0" numa area cheia de
+ * comercio: a chave estava restrita por referrer, o mapa nunca carregou, e cada
+ * tile salvo era um retrato da tela cinza "Ops! Algo deu errado". O relatorio
+ * final dizia zero POIs — indistinguivel de uma area vazia de verdade.
+ *
+ * O Google chama `gm_authFailure` quando recusa, e diz o motivo exato no
+ * console (RefererNotAllowedMapError, InvalidKeyMapError, ApiNotActivated,
+ * BillingNotEnabled). Sem capturar isso, as quatro causas viram o mesmo
+ * silencio. */
 async function waitMapReady(page: Page, timeout = MAP_READY_TIMEOUT_MS): Promise<boolean> {
   const t0 = Date.now();
   while (Date.now() - t0 < timeout) {
-    const ready = await page
+    const estado = await page
       .evaluate(() => {
         const w = globalThis as any;
-        return w.isReady?.() ?? false;
+        return { pronto: w.isReady?.() ?? false, recusou: !!w.__authFailure };
       })
-      .catch(() => false);
+      .catch(() => ({ pronto: false, recusou: false }));
 
-    if (ready) return true;
+    if (estado.recusou) {
+      throw new Error(
+        'O Google RECUSOU a chave da Maps JavaScript API — o mapa não carrega e ' +
+        'toda imagem capturada seria a tela de erro. Motivo exato no console do ' +
+        'navegador (ex.: RefererNotAllowedMapError). Confira MAPS_JS_KEY no .env ' +
+        'e, no console do Google, se o referrer http://127.0.0.1:* está autorizado.');
+    }
+    if (estado.pronto) return true;
     await page.waitForTimeout(300);
   }
   return false;
@@ -173,6 +237,48 @@ async function navigateAndCapture(
   }
 }
 
+/** Serve UM arquivo HTML em 127.0.0.1, em porta FIXA.
+ *
+ * Existe para a página do mapa ter origem e referrer HTTP — sem isso a chave da
+ * Maps JavaScript API restrita por referrer recusa a página, que era o caso até
+ * 13/08/2026 com `file://`.
+ *
+ * A porta é fixa de propósito, e essa é a decisão de projeto aqui. Porta
+ * sorteada pelo SO nunca colide, mas obriga a autorizar um CURINGA
+ * (`http://127.0.0.1:*` /*) no console do Google — e curinga de porta autoriza
+ * qualquer processo local, inclusive o que não é nosso. Com porta fixa basta
+ * UMA entrada exata na lista de referenciadores, e ela vale para sempre.
+ *
+ * Se a porta estiver ocupada a captura PARA com a causa dita por extenso, em
+ * vez de cair para uma porta aleatória — que renderia justamente o erro de
+ * referrer que este servidor existe para evitar. */
+const PORTA_MAPA = Number(process.env.CAPTURE_MAP_PORT || 8766);
+
+function servirPagina(htmlPath: string): Promise<{ url: string; fechar: () => void }> {
+  const html = fs.readFileSync(htmlPath);
+  return new Promise((resolve, reject) => {
+    const srv = http.createServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(html);
+    });
+    srv.on('error', (e: NodeJS.ErrnoException) => {
+      reject(e.code === 'EADDRINUSE'
+        ? new Error(
+            `A porta ${PORTA_MAPA} já está em uso, e é nela que a página do mapa ` +
+            `precisa ser servida para o referrer bater com o autorizado no Google. ` +
+            `Feche o processo que a ocupa, ou defina CAPTURE_MAP_PORT no .env com ` +
+            `outra porta — e autorize a nova em Referenciadores HTTP da chave.`)
+        : e);
+    });
+    srv.listen(PORTA_MAPA, '127.0.0.1', () => {
+      resolve({
+        url: `http://127.0.0.1:${PORTA_MAPA}/_map.html`,
+        fechar: () => { try { srv.close(); } catch { /* já caiu */ } },
+      });
+    });
+  });
+}
+
 async function runWorker(
   workerId: number,
   queue: TileCoord[],
@@ -182,7 +288,7 @@ async function runWorker(
   lock: { writing: boolean },
   config: CaptureConfig,
   stats: { done: number; failed: number; t0: number },
-  htmlPath: string,
+  mapUrl: string,
 ): Promise<void> {
   // Mantém 10 workers, mas abre de forma escalonada para reduzir estouro no início
   await new Promise(r => setTimeout(r, workerId * 1500));
@@ -205,10 +311,19 @@ async function runWorker(
   const page: Page = await ctx.newPage();
 
   // Abre a página HTML local com Maps JS — ÚNICA vez durante toda a sessão
-  await page.goto(`file://${htmlPath}`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  await page.goto(mapUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
   // Aguarda o mapa inicializar
-  const ready = await waitMapReady(page, MAP_READY_TIMEOUT_MS);
+  let ready = false;
+  try {
+    ready = await waitMapReady(page, MAP_READY_TIMEOUT_MS);
+  } catch (e) {
+    // Chave recusada não é problema de UM worker: é da rodada inteira. Fecha
+    // este browser e propaga, para a captura parar aqui em vez de gerar
+    // milhares de retratos da tela de erro e terminar dizendo "0 POIs".
+    await browser.close().catch(() => {});
+    throw e;
+  }
   if (!ready) {
     console.log(`\n  [W${workerId}] ⚠️ Mapa não inicializou — encerrando worker`);
     await browser.close();
@@ -349,6 +464,22 @@ export async function runCaptureSession(config: CaptureConfig): Promise<CaptureS
   const htmlPath = path.join(config.outputDir, '_map.html');
   fs.writeFileSync(htmlPath, buildMapHtml(MAPS_API_KEY, MAPS_MAP_ID, config.zoomLevel));
 
+  // A página é SERVIDA por HTTP local, não aberta como arquivo.
+  //
+  // Até 13/08/2026 os workers faziam `page.goto('file://' + htmlPath)`. Página
+  // `file://` não envia cabeçalho Referer, e chave da Maps JavaScript API
+  // restrita por referrer HTTP recusa exatamente esse caso — devolvendo
+  // `RefererNotAllowedMapError`. O efeito era mudo: o mapa não inicializava, o
+  // evento `idle` nunca vinha, e cada tile salvo era um retrato da tela cinza
+  // "Ops! Algo deu errado". O OCR então lia zero POIs numa área cheia deles.
+  //
+  // Servindo em 127.0.0.1 a requisição passa a ter origem e referrer reais, e a
+  // chave pode continuar RESTRITA no console do Google — que é o ponto: a
+  // alternativa seria remover a restrição da chave, trocando um problema de
+  // configuração por um de segurança.
+  const servidor = await servirPagina(htmlPath);
+  console.log(`🔐 Página servida em ${servidor.url} (referrer real; a chave segue restrita)`);
+
   const workers = WORKERS;
   const secsPerTile = (TILE_WAIT_MS + EXTRA_WAIT_MS + 500) / 1000;
   const estMin = Math.ceil(tiles.length * secsPerTile / workers / 60);
@@ -370,11 +501,17 @@ export async function runCaptureSession(config: CaptureConfig): Promise<CaptureS
   const lock = { writing: false };
   const stats = { done: existing.size, failed: 0, t0: Date.now() };
 
-  await Promise.all(
-    Array.from({ length: workers }, (_, i) =>
-      runWorker(i, tiles, queueIndex, session, sessionFile, lock, config, stats, htmlPath)
-    )
-  );
+  try {
+    await Promise.all(
+      Array.from({ length: workers }, (_, i) =>
+        runWorker(i, tiles, queueIndex, session, sessionFile, lock, config, stats, servidor.url)
+      )
+    );
+  } finally {
+    // O servidor precisa cair mesmo se um worker estourar, senão a porta fica
+    // presa e a próxima rodada sobe outro por cima.
+    servidor.fechar();
+  }
 
   // Remove HTML temporário
   try { fs.unlinkSync(htmlPath); } catch {}

@@ -23,14 +23,25 @@ docker exec supabase-db rm -f /tmp/r.dump
 
 echo "  conferindo contagem: original x restaurado"
 FALHAS=0
-for T in pois cadastro_cliente fachada_anotacao cnefe_coletiva comentarios \
-         horario_funcionamento analise_ia streetview_imgs images_urls; do
-  A=$(docker exec supabase-db psql -U postgres -d postgres          -tAc "select count(*) from comercialradar.$T" 2>/dev/null | tr -d ' ')
-  B=$(docker exec supabase-db psql -U postgres -d teste_restauracao -tAc "select count(*) from comercialradar.$T" 2>/dev/null | tr -d ' ')
+# QUALIFICADAS POR SCHEMA, e de TODAS as ferramentas. O dump ja e do banco
+# inteiro, entao `radartelhados` sempre veio junto — o que faltava era CONFERIR.
+# Uma restauracao "validada" que so olha um schema atesta menos do que parece:
+# o schema novo poderia voltar vazio e o teste continuaria dizendo que passou.
+for T in comercialradar.pois comercialradar.cadastro_cliente \
+         comercialradar.fachada_anotacao comercialradar.cnefe_coletiva \
+         comercialradar.comentarios comercialradar.horario_funcionamento \
+         comercialradar.analise_ia comercialradar.streetview_imgs \
+         comercialradar.images_urls \
+         radartelhados.telhado radartelhados.telhado_fonte \
+         radartelhados.quadra radartelhados.quadra_face \
+         radartelhados.quadra_ponto radartelhados.via_osm \
+         radartelhados.varredura radartelhados.analise_sessao; do
+  A=$(docker exec supabase-db psql -U postgres -d postgres          -tAc "select count(*) from $T" 2>/dev/null | tr -d ' ')
+  B=$(docker exec supabase-db psql -U postgres -d teste_restauracao -tAc "select count(*) from $T" 2>/dev/null | tr -d ' ')
   if [ "$A" = "$B" ] && [ -n "$A" ]; then
-    printf "    %-24s %12s  confere\n" "$T" "$A"
+    printf "    %-34s %12s  confere\n" "$T" "$A"
   else
-    printf "    %-24s %12s  x %-12s  DIVERGE\n" "$T" "$A" "${B:-vazio}"
+    printf "    %-34s %12s  x %-12s  DIVERGE\n" "$T" "$A" "${B:-vazio}"
     FALHAS=$((FALHAS+1))
   fi
 done
