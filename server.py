@@ -1941,19 +1941,36 @@ def iniciar_job(body: dict):
                              "da ferramenta. A mineração usa a captura + OCR, que não "
                              "custa por chamada. Recarregue a página."},
                     status_code=410)
-            # O watcher lê o arquivo NORMALIZADO, não o `search_resultado.json`:
-            # aquele guarda o POI aninhado em `poi:{...}` e o ingester procura
+            # AS DUAS FONTES, NUM JOB SÓ (24/08/2026). `minerar_tudo.py` roda as
+            # bases públicas e depois a captura + OCR. Elas deixaram de ser
+            # alternativas porque enxergam coisas diferentes: a base pública não
+            # sabe do comércio que abriu mês passado, e a captura não vê o que
+            # não tem marcador no mapa.
+            #
+            # O watcher segue no arquivo da CAPTURA, e não é descuido: a etapa
+            # das bases públicas ingere direto (`--aplicar`), como o Cadastur
+            # faz. O watcher existe para o marcador cair no mapa ao vivo, e é a
+            # captura que produz registro a registro.
+            #
+            # E é o arquivo NORMALIZADO, não o `search_resultado.json`: aquele
+            # guarda o POI aninhado em `poi:{...}` e o ingester procura
             # `nome`/`maps_lat` no topo — leria tudo e gravaria nada. Quem achata
             # é o `db_export`, chamado de 10 em 10 s pelo minerar_captura.
             out_json = CAPTURAS / sessao / "crops" / f"{sessao}_db.json"
-            cmd = [PYTHON, "minerar_captura.py", "--area", area_utils.AREA_PADRAO,
+            cmd = [PYTHON, "minerar_tudo.py", "--area", area_utils.AREA_PADRAO,
                    "--sessao", sessao,
                    "--zoom", str(int(op.get("zoom", 19))),
                    "--workers", str(int(op.get("workers", 10))),
-                   "--capture-workers", str(int(op.get("capture_workers", 10)))]
+                   "--capture-workers", str(int(op.get("capture_workers", 10))),
+                   "--empresa", _empresa_do_pedido()]
             if op.get("no_proxy"):
                 cmd.append("--no-proxy")
-            _novo_job("mineracao", out_json, {"sessao": sessao, "motor": "captura"})
+            # Só para depurar a captura isolada. Não há caixa no painel: as duas
+            # fontes SÃO o processo, e uma opção na tela viraria "desligar a
+            # metade barata" no dia em que a rodada estivesse demorando.
+            if op.get("pular_bases"):
+                cmd.append("--pular-bases")
+            _novo_job("mineracao", out_json, {"sessao": sessao, "motor": "duas-fontes"})
 
         elif modo == "avaliar":
             # A leitura de fachada grava DIRETO em `fachada_anotacao` — não passa

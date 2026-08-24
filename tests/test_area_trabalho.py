@@ -142,8 +142,11 @@ def test_a_tela_nao_oferece_mais_o_motor_pago():
     """O `<option>` sumiu do HTML, e o JS não decide mais nada por ele."""
     html = open(os.path.join(RAIZ, "frontend", "index.html"), encoding="utf-8").read()
     assert 'value="places"' not in html, "o motor pago ainda aparece no seletor"
-    assert 'value="captura"' in html and 'value="estadual"' in html, \
-        "as duas fontes gratuitas precisam continuar no seletor"
+    # As duas fontes gratuitas não estão mais num `<select>` — elas rodam as
+    # duas, e o painel descreve as etapas em vez de oferecer escolha. Ver
+    # `test_a_mineracao_roda_as_duas_fontes`.
+    assert "Bases públicas" in html and "Captura + OCR" in html, \
+        "o painel deixou de descrever as duas fontes da mineração"
 
     js = open(os.path.join(RAIZ, "frontend", "app.js"), encoding="utf-8").read()
     # Comentário citando a remoção é bem-vindo; CÓDIGO que ramifica por 'places'
@@ -168,3 +171,38 @@ def test_o_front_confere_a_resposta_antes_de_dizer_que_salvou():
         "salvarArea precisa dizer ao chamador se o banco aceitou"
     assert re.search(r"if \(await salvarArea\(latlngs\)\)", js), \
         'o "Área salva ✔" precisa depender do retorno de salvarArea'
+
+
+def test_a_mineracao_roda_as_duas_fontes():
+    """Deixaram de ser alternativas: o painel não oferece escolha de motor.
+
+    A regra vale nos dois lados. No HTML, porque um `<select>` de motor é o que
+    convida a desligar metade do processo. No servidor, porque é ele quem
+    executa — e é `minerar_tudo.py`, não `minerar_captura.py` direto, que roda as
+    duas em sequência.
+    """
+    html = open(os.path.join(RAIZ, "frontend", "index.html"), encoding="utf-8").read()
+    assert 'id="op-motor"' not in html, "o seletor de motor voltou ao painel"
+
+    srv = open(os.path.join(RAIZ, "server.py"), encoding="utf-8").read()
+    i = srv.index('elif modo == "mineracao":')
+    bloco = srv[i:i + 2600]
+    assert '"minerar_tudo.py"' in bloco,         "a mineracao voltou a chamar so uma fonte"
+    assert '"minerar_captura.py"' not in bloco,         "a mineracao chama a captura direto — pularia as bases publicas"
+
+
+def test_o_dataset_da_uf_e_reaproveitado():
+    """Produzir a UF inteira é caro; fazer isso a cada mineração seria absurdo.
+
+    O marcador é escrito só quando a skill termina INTEIRA. Uma execução
+    interrompida na etapa 6 de 8 tem pasta e tem arquivos, e não serve para
+    importar — por isso a existência da pasta não basta como prova.
+    """
+    sys.path.insert(0, RAIZ)
+    import minerar_tudo
+    fonte = open(os.path.join(RAIZ, "minerar_tudo.py"), encoding="utf-8").read()
+    assert "MARCADOR" in fonte and "_pronto.txt" in fonte
+    i = fonte.index("def garantir_dataset")
+    corpo = fonte[i:i + 1400]
+    assert "MARCADOR).exists()" in corpo,         "garantir_dataset nao confere o marcador antes de reproduzir a UF"
+    assert minerar_tudo.DATASETS.name == "estadual", minerar_tudo.DATASETS

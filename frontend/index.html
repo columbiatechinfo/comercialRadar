@@ -223,32 +223,26 @@
     <div class="p-title"><span class="p-step">2</span> Mineração</div>
     <div class="p-body">
       <label class="opt inline">Nome da sessão <input type="text" id="op-sessao" placeholder="ex.: parnaiba_centro"></label>
-      <label class="opt inline">Motor
-        <!-- A Places API saiu em 24/08/2026: cobrava por chamada e trazia o
-             mesmo tipo de ponto que a captura traz de graça. Restaram as duas
-             fontes gratuitas, e elas não são alternativas — ver o comentário
-             do bloco abaixo. -->
-        <select id="op-motor">
-          <option value="captura" selected>Captura + OCR (padrão)</option>
-          <option value="estadual">Extração estadual (bases públicas)</option>
-        </select>
-      </label>
-      <!-- A extração estadual é AQUISIÇÃO, como os outros dois motores: as três
-           acham ponto. O que muda é a origem — aqui o ponto já existe numa base
-           pública e não custa captura. Por isso ela mora neste seletor, e não no
-           enriquecimento, que é o que se faz depois de ter o ponto. -->
-      <div class="opt inline hidden" id="op-estadual-wrap">Pasta da extração
-        <input type="text" id="op-estadual-dir" placeholder="…/extracao_poi_rs_2026-08-10"
-               style="min-width:260px">
-      </div>
-      <div class="hint hidden" id="hint-estadual">Traz o que <b>Overture, OpenStreetMap e
-        Foursquare</b> já conhecem no município da área, com dedup por evidência.
-        Não substitui a captura: a captura vê o que está na rua hoje e traz foto;
-        esta traz alcance, em segundos e sem custo por ponto. Aponte a pasta da
-        extração já produzida para a UF.</div>
-      <div class="hint" id="hint-captura">Fotografa o Maps em tiles 4K com o estilo limpo
-        (só os markers), detecta os ícones, lê os nomes por <b>OCR</b> e busca cada um.
-        <b>Não custa por chamada</b> — só tempo de captura.</div>
+      <!-- NÃO HÁ MAIS SELETOR DE MOTOR (24/08/2026).
+           A Places API saiu por cobrar por chamada o que as outras trazem de
+           graça. E as duas que ficaram deixaram de ser alternativas: elas
+           enxergam coisas diferentes, então rodam as DUAS, nesta ordem. Uma
+           caixa para desligar a barata viraria "desligar metade do processo" no
+           dia em que a rodada estivesse demorando. -->
+      <div class="hint">As <b>duas fontes gratuitas</b>, em sequência — nenhuma
+        substitui a outra:</div>
+      <div class="casc-step"><span class="casc-n">1</span><div>
+        <b>📚 Bases públicas</b><br><small>o que <b>Overture, OpenStreetMap e
+        Foursquare</b> já sabem do município. Minutos, alcance grande — mas não
+        sabe do comércio que abriu mês passado</small></div></div>
+      <div class="casc-step"><span class="casc-n">2</span><div>
+        <b>📷 Captura + OCR</b><br><small>fotografa o Maps em tiles 4K com o
+        estilo limpo (só os markers), detecta os ícones, lê os nomes por
+        <b>OCR</b> e busca cada um. Horas, e é a única que traz painel e
+        foto</small></div></div>
+      <div class="hint" id="hint-captura"><b>Nenhuma das duas custa por chamada.</b>
+        O dataset da UF é produzido uma vez e reaproveitado por toda mineração
+        seguinte naquele estado.</div>
       <label class="opt inline" id="op-zoom-wrap">Zoom da captura
         <select id="op-zoom">
           <option value="19" selected>19 — rua com POIs (padrão)</option>

@@ -1141,30 +1141,13 @@ document.querySelectorAll(".fly-item").forEach((b) => {
   };
 });
 
-// As duas fontes de mineração não compartilham opção nenhuma: a captura tem
-// zoom e tile, a extração estadual já tem o ponto pronto na base pública.
-// Mostrar as duas listas ao mesmo tempo sugeriria que a escolha de uma vale
-// para a outra.
-//
-// A Places API saiu daqui em 24/08/2026. O passo de grade e a "coleta profunda"
-// eram opções SÓ dela; sumiram junto.
+// O seletor de motor sumiu em 24/08/2026: a mineração roda as DUAS fontes
+// gratuitas, em sequência. Não sobrou nada para alternar — o zoom é da captura
+// e vale sempre. A função fica como no-op tolerante para o caso de uma aba
+// antiga ainda ter o `<select>` em cache.
 function trocarMotorMineracao() {
-  const motor = $("op-motor")?.value || "captura";
-  const estadual = motor === "estadual";
-  // A extração estadual não tem zoom nem grade: o ponto já existe na base
-  // pública, não há tile a fotografar. Ela pede só a pasta da extração da UF.
-  $("op-zoom-wrap")?.classList.toggle("hidden", estadual);
-  $("op-estadual-wrap")?.classList.toggle("hidden", !estadual);
-  $("hint-estadual")?.classList.toggle("hidden", !estadual);
-  const h = $("hint-captura");
-  if (h) {
-    h.classList.toggle("hidden", estadual);
-    h.innerHTML = "Fotografa o Maps em tiles 4K com o estilo limpo (só os markers), "
-      + "detecta os ícones, lê os nomes por <b>OCR</b> e busca cada um. "
-      + "<b>Não custa por chamada</b> — só tempo de captura.";
-  }
+  $("op-zoom-wrap")?.classList.remove("hidden");
 }
-if ($("op-motor")) $("op-motor").onchange = trocarMotorMineracao;
 trocarMotorMineracao();
 
 $("btn-importar").onclick = () => $("file-input").click();
@@ -1644,18 +1627,12 @@ $("btn-iniciar").onclick = async () => {
                sem_pessoa_fisica: !!$("cad-sem-pf")?.checked,
                so_carregar: !!$("cad-so-carregar")?.checked };
   } else if (modo === "mineracao") {
-    const motor = $("op-motor")?.value || "captura";
-    opcoes = { motor, sessao: $("op-sessao").value.trim() || "mineracao" };
-    if (motor === "estadual") {
-      // Modo próprio no servidor: o município sai do polígono e a empresa do
-      // token, então a única coisa que falta é onde está a extração da UF.
-      modoJob = "extracao_estadual";
-      const dir = ($("op-estadual-dir")?.value || "").trim();
-      if (!dir) return toast("Informe a pasta da extração estadual.", "err");
-      opcoes = { saida: dir };
-    } else {
-      opcoes.zoom = parseInt($("op-zoom").value) || 19;
-    }
+    // Sem motor a escolher: `minerar_tudo.py` roda bases públicas e depois
+    // captura + OCR. O município e a UF saem do polígono, no servidor — pedir
+    // de novo aqui seria uma chance a mais de errar, e errar aqui é rodar a
+    // cidade errada inteira.
+    opcoes = { sessao: $("op-sessao").value.trim() || "mineracao",
+               zoom: parseInt($("op-zoom").value) || 19 };
   } else if (modo === "enriquecimento") {  // cascata única Maps→Web→StreetView
     modoJob = "enriquecer_tudo";
     opcoes = {
