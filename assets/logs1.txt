@@ -1,0 +1,75 @@
+🗺  Área 'area_atual': 25 vértices · caixa N-29.85920 S-29.97150 L-51.10600 O-51.24960
+📁 Sessão: C:\Users\ceo\Documents\Sistemas\comercialRadar\capturas\teste_1_20260824_1536
+──────────────────────────────────────────────────────────────
+▶ 1/4 captura dos tiles
+──────────────────────────────────────────────────────────────
+🗺  Área: 25 vértices — 264 tiles dentro dela (a caixa inteira teria 304)
+— 264 células
+🔐 Página servida em http://127.0.0.1:8766/_map.html (referrer real; a chave segue restrita)
+🚀 Iniciando captura: teste_1_20260824_1536
+📦 Tiles restantes  : 264 de 264
+🗺  Modo            : Maps JavaScript API (sem proxy, sem CAPTCHA)
+🔌 Workers          : 10 browsers paralelos
+⏱  Estimativa       : ~4 min
+  [W2] ✅ Mapa pronto
+  [W1] ✅ Mapa pronto
+  [W0] ✅ Mapa pronto
+  [W3] ✅ Mapa pronto
+  [W4] ✅ Mapa pronto
+  [W5] ✅ Mapa pronto
+  [W6] ✅ Mapa pronto
+  [W7] ✅ Mapa pronto
+  [W8] ✅ Mapa pronto
+  [W9] ✅ Mapa pronto
+📸 [     1/264] 0.4% | ✔1 ✗0 | ~80min
+célula 1/264
+📸 [     2/264] 0.8% | ✔2 ✗0 | ~41min
+célula 2/264
+📸 [     3/264] 1.1% | ✔3 ✗0 | ~27min
+célula 3/264
+📸 [     4/264] 1.5% | ✔4 ✗0 | ~21min
+célula 4/264
+📸 [     5/264] 1.9% | ✔5 ✗0 | ~17min
+célula 5/264
+📸 [     6/264] 2.3% | ✔6 ✗0 | ~16min
+célula 6/264
+📸 [     7/264] 2.7% | ✔7 ✗0 | ~14min
+célula 7/264
+📸 [     8/264] 3.0% | ✔8 ✗0 | ~12min
+célula 8/264
+📸 [     9/264] 3.4% | ✔9 ✗0 | ~12min
+célula 9/264
+📸 [    10/264] 3.8% | ✔10 ✗0 | ~12min
+célula 10/264
+📸 [    11/264] 4.2% | ✔11 ✗0 | ~11min
+célula 11/264
+📸 [    12/264] 4.5% | ✔12 ✗0 | ~11min
+célula 12/264
+📸 [    13/264] 4.9% | ✔13 ✗0 | ~10min
+célula 13/264
+📸 [    14/264] 5.3% | ✔14 ✗0 | ~9min
+célula 14/264
+📸 [    15/264] 5.7% | ✔15 ✗0 | ~9min
+célula 15/264
+📸 [    16/264] 6.1% | ✔16 ✗0 | ~9min
+célula 16/264
+📸 [    17/264] 6.4% | ✔17 ✗0 | ~8min
+célula 17/264
+📸 [    18/264] 6.8% | ✔18 ✗0 | ~8min
+célula 18/264
+📸 [    19/264] 7.2% | ✔19 ✗0 | ~8min
+célula 19/264
+📸 [    20/264] 7.6% | ✔20 ✗0 | ~8min
+célula 20/264
+📸 [    21/264] 8.0% | ✔21 ✗0 | ~8min
+célula 21/264
+📸 [    22/264] 8.3% | ✔22 ✗0 | ~8min
+célula 22/264
+📸 [    23/264] 8.7% | ✔23 ✗0 | ~8min
+célula 23/264
+📸 [    24/264] 9.1% | ✔24 ✗0 | ~7min
+célula 24/264
+📸 [    25/264] 9.5% | ✔25 ✗0 | ~7min
+célula 25/264
+📸 [    26/264] 9.8% | ✔26 ✗0 | ~7min
+célula 26/264

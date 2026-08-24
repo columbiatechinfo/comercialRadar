@@ -84,6 +84,12 @@ versionamento [SemVer](https://semver.org/lang/pt-BR/).
 - Street View passou a ser opcional, restrito a POIs pobres.
 
 ### Corrigido
+- **A área de trabalho desenhada não era gravada, e a tela dizia que sim.** O
+  `root` não pertence a empresa nenhuma, `auth.conectar_como` não declarava
+  `app.tenant_id`, a trigger não tinha o que carimbar e o `NOT NULL` recusava a
+  linha — `POST /api/area` respondia 500. O front chamava `fetch` sem olhar a
+  resposta e anunciava "Área salva ✔". Resultado: a mineração varreu 264 tiles
+  do município errado, a partir de uma área de nove dias antes.
 - 13 POIs tinham foto de fachada e análise de IA capturadas na coordenada errada —
   três pousadas do Piauí com seis fotos cada, a até 20 km do próprio endereço.
   Tratados em três destinos; 41 objetos órfãos removidos do Storage.
@@ -95,6 +101,11 @@ versionamento [SemVer](https://semver.org/lang/pt-BR/).
   notação de faixa da Receita ("de 3501 a 5101 - lado impar") virava número.
 
 ### Removido
+- **Google Places API.** Cobrava por chamada e trazia o mesmo tipo de ponto que
+  a captura + OCR traz de graça. Saíram com ela o "passo da grade" e a "coleta
+  profunda", que eram opções só dela. A rota recusa `motor=places` com 410 em
+  vez de ignorar em silêncio — aba antiga no navegador dispararia outro job sem
+  dizer por quê. `minerar_area.py` fica no repositório como histórico.
 - Processo de quadras, régua de numeração e biblioteca de recortes de construção —
   foram para o **radarTelhados** em 11/08/2026.
 

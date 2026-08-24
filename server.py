@@ -628,10 +628,44 @@ def get_area():
     return {"polygon": poly or []}
 
 
+def _tenant_para_gravar():
+    """A empresa em que ESTA requisição grava — do token, nunca do corpo.
+
+    Devolve `(tenant_id | None, erro | None)`.
+
+    Para quem tem empresa, devolve `None`: a conexão de `auth.conectar_como` já
+    declarou `app.tenant_id`, e reescrever a variável a partir daqui seria abrir
+    a porta para um usuário gravar na empresa do vizinho. Só o ROOT precisa de
+    resposta, porque ele é o único sem empresa — e sem ela nenhuma trigger tem
+    o que carimbar.
+
+    Para o root vale a MESMA convenção que os jobs já usam desde 13/08/2026:
+    `CR_TENANT_ID` do ambiente do servidor. É de propósito que seja a mesma —
+    era isso que faltava para gravar e enxergar concordarem. Se o root define
+    uma área, ela nasce na empresa em que as mineracões dele já gravam.
+    """
+    u = _auth.USUARIO_DA_REQUISICAO.get()
+    if u is not None and u.tenant_id:
+        return None, None
+    tid = (os.environ.get("CR_TENANT_ID") or "").strip()
+    if tid:
+        return tid, None
+    return None, ("Você entrou como root, que não pertence a nenhuma empresa, e "
+                  "o servidor subiu sem CR_TENANT_ID. Não há empresa para gravar. "
+                  "Suba o servidor com CR_TENANT_ID=<id da empresa> ou entre com "
+                  "um usuário da empresa.")
+
+
 @app.post("/api/area")
 async def post_area(body: dict):
     poly = body.get("polygon") or []
-    n = area_utils.salvar_area(poly, body.get("nome") or area_utils.AREA_PADRAO)
+    tenant, erro = _tenant_para_gravar()
+    # Apagar não precisa de empresa: o DELETE é filtrado pela RLS (ou pelo
+    # BYPASSRLS do root), e exigir empresa aqui impediria de limpar a área.
+    if erro and poly:
+        return JSONResponse({"erro": erro}, status_code=409)
+    n = area_utils.salvar_area(poly, body.get("nome") or area_utils.AREA_PADRAO,
+                               tenant=tenant)
     return {"ok": True, "vertices": n, "polygon": poly if n else []}
 
 
@@ -807,7 +841,10 @@ def area_do_municipio(cod: str):
         coords = max(coords, key=lambda p: len(p[0]))
     anel = coords[0]
     poly = [[lat, lng] for lng, lat in anel]
-    area_utils.salvar_area(poly)
+    tenant, erro = _tenant_para_gravar()
+    if erro:
+        return JSONResponse({"erro": erro}, status_code=409)
+    area_utils.salvar_area(poly, tenant=tenant)
     return JSONResponse({"ok": True, "municipio": nome, "uf": uf,
                          "vertices": len(poly), "polygon": poly})
 
@@ -1892,39 +1929,31 @@ def iniciar_job(body: dict):
         elif modo == "mineracao":
             sessao = re.sub(r"[^\w-]", "_", str(op.get("sessao") or "mineracao"))
             sessao = f"{sessao}_{datetime.now().strftime('%Y%m%d_%H%M')}"
-            # O motor PADRÃO é a captura + OCR (`minerar_captura.py`): é o
-            # processo principal do projeto e não custa por chamada. A Places API
-            # continua disponível como `motor="places"`, mas é paga e depende de
-            # MAPS_API_KEY no .env — sem a chave ela devolve 0 POIs em silêncio.
-            if str(op.get("motor") or "captura") == "places":
-                out_json = MINERACAO / f"{sessao}_db.json"
-                cmd = [PYTHON, "minerar_area.py", "--area", area_utils.AREA_PADRAO,
-                       "--sessao", sessao, "--out", str(out_json),
-                       "--step", str(float(op.get("step", 150))),
-                       "--radius", str(float(op.get("radius", 110)))]
-                if op.get("details"):
-                    cmd.append("--details")
-                if not os.getenv("MAPS_API_KEY"):
-                    return JSONResponse(
-                        {"erro": "O motor 'places' precisa de MAPS_API_KEY no .env. "
-                                 "Sem ela o Google recusa cada célula e o job termina "
-                                 "com 0 POIs. Use o motor padrão (captura)."},
-                        status_code=400)
-                _novo_job("mineracao", out_json, {"sessao": sessao, "motor": "places"})
-            else:
-                # O watcher lê o arquivo NORMALIZADO, não o `search_resultado.json`:
-                # aquele guarda o POI aninhado em `poi:{...}` e o ingester procura
-                # `nome`/`maps_lat` no topo — leria tudo e gravaria nada. Quem achata
-                # é o `db_export`, chamado de 10 em 10 s pelo minerar_captura.
-                out_json = CAPTURAS / sessao / "crops" / f"{sessao}_db.json"
-                cmd = [PYTHON, "minerar_captura.py", "--area", area_utils.AREA_PADRAO,
-                       "--sessao", sessao,
-                       "--zoom", str(int(op.get("zoom", 19))),
-                       "--workers", str(int(op.get("workers", 10))),
-                       "--capture-workers", str(int(op.get("capture_workers", 10)))]
-                if op.get("no_proxy"):
-                    cmd.append("--no-proxy")
-                _novo_job("mineracao", out_json, {"sessao": sessao, "motor": "captura"})
+            # A PLACES API SAIU DA FERRAMENTA (24/08/2026, decisão do dono do
+            # produto). Ela cobrava por chamada e produzia o mesmo tipo de dado
+            # que a captura + OCR produz de graça. `minerar_area.py` continua no
+            # repositório como histórico, mas o painel não o alcança mais e a
+            # rota RECUSA o modo — em vez de ignorar em silêncio um pedido que
+            # ainda venha de uma aba antiga aberta no navegador.
+            if str(op.get("motor") or "").strip() == "places":
+                return JSONResponse(
+                    {"erro": "O motor 'places' (Google Places API, pago) foi removido "
+                             "da ferramenta. A mineração usa a captura + OCR, que não "
+                             "custa por chamada. Recarregue a página."},
+                    status_code=410)
+            # O watcher lê o arquivo NORMALIZADO, não o `search_resultado.json`:
+            # aquele guarda o POI aninhado em `poi:{...}` e o ingester procura
+            # `nome`/`maps_lat` no topo — leria tudo e gravaria nada. Quem achata
+            # é o `db_export`, chamado de 10 em 10 s pelo minerar_captura.
+            out_json = CAPTURAS / sessao / "crops" / f"{sessao}_db.json"
+            cmd = [PYTHON, "minerar_captura.py", "--area", area_utils.AREA_PADRAO,
+                   "--sessao", sessao,
+                   "--zoom", str(int(op.get("zoom", 19))),
+                   "--workers", str(int(op.get("workers", 10))),
+                   "--capture-workers", str(int(op.get("capture_workers", 10)))]
+            if op.get("no_proxy"):
+                cmd.append("--no-proxy")
+            _novo_job("mineracao", out_json, {"sessao": sessao, "motor": "captura"})
 
         elif modo == "avaliar":
             # A leitura de fachada grava DIRETO em `fachada_anotacao` — não passa

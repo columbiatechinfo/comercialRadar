@@ -960,11 +960,29 @@ function setAreaLayer(latlngs) {
   }
 }
 
+// Devolve true se o banco ACEITOU. Quem chama precisa disso: até 24/08/2026
+// este `fetch` era disparado sem olhar a resposta e o chamador dizia
+// "Área salva ✔" de qualquer jeito. Com o root, que não tem empresa, a rota
+// respondia 500 e a tela anunciava sucesso — o usuário desenhava 4 quadras, o
+// banco seguia com a área de nove dias antes e a mineração varria o município
+// inteiro. Erro que a tela esconde é pior que erro que ela mostra.
 async function salvarArea(latlngs) {
-  await fetch("/api/area", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ polygon: latlngs || [] }),
-  });
+  try {
+    const r = await fetch("/api/area", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ polygon: latlngs || [] }),
+    });
+    if (!r.ok) {
+      let msg = "";
+      try { msg = (await r.json()).erro || ""; } catch { /* corpo vazio no 500 */ }
+      toast(msg || `A área NÃO foi salva (HTTP ${r.status}).`, "err");
+      return false;
+    }
+    return true;
+  } catch (e) {
+    toast(`A área NÃO foi salva: ${e.message}`, "err");
+    return false;
+  }
 }
 
 async function carregarArea() {
@@ -991,8 +1009,14 @@ $("btn-desenhar").onclick = () => {
 map.on(L.Draw.Event.CREATED, async (e) => {
   const latlngs = e.layer.getLatLngs()[0].map((p) => [p.lat, p.lng]);
   setAreaLayer(latlngs);
-  await salvarArea(latlngs);
-  toast("Área salva ✔", "ok");
+  if (await salvarArea(latlngs)) {
+    toast("Área salva ✔", "ok");
+  } else {
+    // A tela volta a mostrar o que o BANCO tem. Deixar o desenho na tela depois
+    // de a gravação falhar é o que produziu o defeito: o painel dizia "4
+    // vértices" e o coletor lia outra coisa — e é o coletor que manda.
+    await carregarArea();
+  }
 });
 
 $("btn-apagar-area").onclick = async () => {
@@ -1117,30 +1141,27 @@ document.querySelectorAll(".fly-item").forEach((b) => {
   };
 });
 
-// os dois motores de mineração não compartilham opção nenhuma: a captura tem
-// zoom, a Places tem passo de grade e coleta profunda paga. Mostrar as duas
-// listas ao mesmo tempo sugeriria que a escolha de uma vale para a outra.
+// As duas fontes de mineração não compartilham opção nenhuma: a captura tem
+// zoom e tile, a extração estadual já tem o ponto pronto na base pública.
+// Mostrar as duas listas ao mesmo tempo sugeriria que a escolha de uma vale
+// para a outra.
+//
+// A Places API saiu daqui em 24/08/2026. O passo de grade e a "coleta profunda"
+// eram opções SÓ dela; sumiram junto.
 function trocarMotorMineracao() {
   const motor = $("op-motor")?.value || "captura";
-  const places = motor === "places";
   const estadual = motor === "estadual";
-  $("op-step-wrap")?.classList.toggle("hidden", !places);
-  $("op-details-wrap")?.classList.toggle("hidden", !places);
   // A extração estadual não tem zoom nem grade: o ponto já existe na base
   // pública, não há tile a fotografar. Ela pede só a pasta da extração da UF.
-  $("op-zoom-wrap")?.classList.toggle("hidden", places || estadual);
+  $("op-zoom-wrap")?.classList.toggle("hidden", estadual);
   $("op-estadual-wrap")?.classList.toggle("hidden", !estadual);
   $("hint-estadual")?.classList.toggle("hidden", !estadual);
   const h = $("hint-captura");
   if (h) {
     h.classList.toggle("hidden", estadual);
-    h.innerHTML = places
-      ? "Consulta a <b>Places API paga</b> célula a célula. Precisa de "
-        + "<code>MAPS_API_KEY</code> no <code>.env</code>; sem ela o Google recusa "
-        + "cada chamada e o job termina com 0 POIs."
-      : "Fotografa o Maps em tiles 4K com o estilo limpo (só os markers), detecta "
-        + "os ícones, lê os nomes por <b>OCR</b> e busca cada um. "
-        + "<b>Não custa por chamada</b> — só tempo de captura.";
+    h.innerHTML = "Fotografa o Maps em tiles 4K com o estilo limpo (só os markers), "
+      + "detecta os ícones, lê os nomes por <b>OCR</b> e busca cada um. "
+      + "<b>Não custa por chamada</b> — só tempo de captura.";
   }
 }
 if ($("op-motor")) $("op-motor").onchange = trocarMotorMineracao;
@@ -1632,9 +1653,6 @@ $("btn-iniciar").onclick = async () => {
       const dir = ($("op-estadual-dir")?.value || "").trim();
       if (!dir) return toast("Informe a pasta da extração estadual.", "err");
       opcoes = { saida: dir };
-    } else if (motor === "places") {
-      opcoes.step = parseFloat($("op-step").value) || 150;
-      opcoes.details = $("op-details").checked;
     } else {
       opcoes.zoom = parseInt($("op-zoom").value) || 19;
     }
@@ -2565,8 +2583,16 @@ let qTimer = null;
     if (!selMun.value) return;
     try {
       const r = await fetch(`/api/area/municipio?cod=${selMun.value}`, { method: "POST" });
-      const d = await r.json();
-      if (d.erro) { toast(d.erro, "err"); return; }
+      // `r.ok` ANTES do corpo: um 500 vem sem `erro` no JSON, e olhar só o campo
+      // deixava passar como sucesso — seguia para `setAreaLayer(undefined)` e a
+      // tela dizia "nenhuma área", com a área ANTIGA intacta no banco.
+      let d = {};
+      try { d = await r.json(); } catch { /* corpo vazio */ }
+      if (!r.ok || d.erro) {
+        toast(d.erro || `O município NÃO foi aplicado (HTTP ${r.status}).`, "err");
+        await carregarArea();
+        return;
+      }
       setAreaLayer(d.polygon);                 // mesma camada do desenho manual
       map.fitBounds(areaLayer.getBounds().pad(0.05));
       toast(`Área: ${d.municipio}/${d.uf} — ${d.vertices} vértices ✔`, "ok");

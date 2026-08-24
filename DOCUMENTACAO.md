@@ -2713,3 +2713,107 @@ editada depois do fato vale menos que trilha incompleta.
 
 **Estado final:** 28 tabelas com `tenant_id`, todas com política. 231 testes
 passando, 49/49 na prova de ponta a ponta.
+
+---
+
+## 33. A área que a tela mostrava não era a que o coletor lia (24/08/2026)
+
+`area_utils.salvar_area` · `server.py` (`_tenant_para_gravar`) ·
+`frontend/app.js` · `tests/test_area_trabalho.py`.
+
+### O sintoma
+
+O usuário selecionou Cachoeirinha, desenhou **4 quadras**, a tela respondeu
+**"Área salva ✔"** e o painel confirmou *"Área definida (4 vértices)"*. A
+mineração então começou assim:
+
+```
+Área 'area_atual': 25 vértices · caixa N-29.85920 S-29.97150 L-51.10600 O-51.24960
+Área: 25 vértices — 264 tiles dentro dela
+Estimativa: ~4 min          →  na prática, ~80 min
+```
+
+Vinte e cinco vértices, e a caixa é a de **Canoas** — nem Cachoeirinha, nem o
+desenho. A linha no banco era de **15/08**, nove dias antes.
+
+### As duas metades, e por que o erro ficou mudo
+
+**No servidor.** Dentro de uma requisição, `realtime_ingest.conectar()` devolve
+a conexão do **usuário** (`auth.conectar_como`), e ela só declara
+`app.tenant_id` quando o usuário tem empresa:
+
+```python
+if u.tenant_id:
+    cur.execute("select set_config('app.tenant_id', %s, true)", (u.tenant_id,))
+```
+
+O **root não tem empresa** — é o único usuário assim, e é de propósito: ele
+atravessa todas. Sem a variável, a trigger `preencher_tenant` não tinha o que
+carimbar e o `NOT NULL` de `area_trabalho.tenant_id` recusava a linha. A rota
+estourava **500**.
+
+Provado nos dois sentidos, com a mesma requisição:
+
+| quem | resultado |
+|---|---|
+| `root` | 500 · `null value in column "tenant_id" violates not-null constraint` |
+| `admin.corsan` | 200 · 4 vértices salvos |
+
+**No navegador.** `salvarArea` chamava `fetch` e descartava a resposta; quem
+chamava anunciava sucesso incondicionalmente:
+
+```js
+await salvarArea(latlngs);
+toast("Área salva ✔", "ok");   // sempre
+```
+
+Sozinho, o 500 teria aparecido na tela. Sozinha, a mentira do front não teria o
+que esconder. **Foram precisas as duas** — e o custo não é o erro, é a rodada:
+80 minutos fotografando o município errado.
+
+> Isto não era só da área. **Todo INSERT em tabela com dono, feito pelo root,
+> falhava do mesmo jeito** — a área foi só onde apareceu primeiro.
+
+### A correção
+
+`salvar_area` aceita `tenant`, declarado por `set_config(..., true)` — local à
+transação, igual ao que o `auth` faz, morrendo no commit.
+
+Quem resolve o valor é `_tenant_para_gravar()`, e ele **só responde para o
+root**: para quem tem empresa devolve `None`, porque a conexão já declarou a
+variável e reescrevê-la a partir da rota seria abrir a porta para gravar na
+empresa do vizinho.
+
+Para o root vale a **mesma convenção que os jobs usam desde 13/08/2026**:
+`CR_TENANT_ID` do ambiente do servidor. Ser a mesma variável é o ponto — é o que
+faz a área em que ele grava e a empresa em que a mineração dele escreve serem a
+mesma coisa. Sem nenhuma das duas, a rota responde **409 com o motivo**, nunca
+500: o 500 vem sem corpo, então a tela não teria o que mostrar nem que quisesse.
+
+No front, `salvarArea` devolve se o banco aceitou, o `toast` de sucesso fica
+atrás desse retorno, e **quando falha a tela volta a desenhar o que o banco
+tem** — deixar o polígono na tela depois de a gravação falhar é exatamente o que
+produziu o defeito.
+
+### A trava
+
+`tests/test_area_trabalho.py`, seis testes: o root salva; a rota nunca responde
+500; o que foi salvo é o que volta; e — a metade do navegador — `salvarArea`
+olha `r.ok`, devolve `true`/`false`, e o `"Área salva ✔"` depende disso.
+
+---
+
+## 34. A Places API saiu da ferramenta (24/08/2026)
+
+Decisão do dono do produto. Ela cobrava por chamada e trazia o mesmo tipo de
+ponto que a **captura + OCR** traz de graça.
+
+- O `<option value="places">` saiu do seletor; sobraram as duas fontes
+  gratuitas: **Captura + OCR** e **Extração estadual**.
+- "Passo da grade" e "Coleta profunda" eram opções **só dela** e saíram junto —
+  a captura varre por *tile*, não por célula de grade.
+- A rota **recusa** `motor=places` com **410**, em vez de ignorar em silêncio.
+  Uma aba antiga aberta no navegador dispararia a captura achando que pediu a
+  Places: o job rodaria, o resultado seria outro, e nada diria por quê.
+- `minerar_area.py` continua no repositório como histórico. O painel não o
+  alcança mais.

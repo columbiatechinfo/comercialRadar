@@ -50,13 +50,35 @@ def _esquema(cur):
                      salvo_em  timestamp DEFAULT now())""")
 
 
-def salvar_area(poligono, nome: str = AREA_PADRAO) -> int:
-    """Grava a área NO BANCO. Lista vazia apaga."""
+def salvar_area(poligono, nome: str = AREA_PADRAO, tenant: str | None = None) -> int:
+    """Grava a área NO BANCO. Lista vazia apaga.
+
+    `tenant` existe por causa do ROOT, e o motivo merece ficar escrito.
+
+    Dentro de uma requisição, `bc.conectar()` devolve a conexão do USUÁRIO
+    (`auth.conectar_como`), e ela só declara `app.tenant_id` quando o usuário
+    tem empresa. O `root` não tem — é o único usuário sem `tenant_id`, de
+    propósito, porque ele atravessa todas as empresas. Resultado: a trigger
+    `preencher_tenant` não achava o que carimbar, o `NOT NULL` recusava a linha
+    e a rota estourava 500.
+
+    Foi o defeito de 24/08/2026: o usuário desenhava a área, a tela dizia
+    "Área salva ✔" (o front não olhava a resposta) e o banco seguia com a área
+    de NOVE DIAS antes. A mineração então rodava sobre a área velha — 264 tiles
+    do município inteiro em vez das 4 quadras desenhadas.
+
+    Quando `tenant` vem preenchido, ele é declarado por `set_config(..., true)`
+    — LOCAL À TRANSAÇÃO, igual ao que o `auth` faz. Vale só para este INSERT e
+    morre no commit; a conexão não leva o crachá para a requisição seguinte.
+    """
     import base_comum as bc
     con = bc.conectar()
     try:
         with con.cursor() as cur:
             _esquema(cur)
+            if tenant:
+                cur.execute("select set_config('app.tenant_id', %s, true)",
+                            (str(tenant),))
             if not poligono or len(poligono) < 3:
                 cur.execute("DELETE FROM area_trabalho WHERE nome=%s", (nome,))
                 con.commit()

@@ -224,9 +224,12 @@
     <div class="p-body">
       <label class="opt inline">Nome da sessão <input type="text" id="op-sessao" placeholder="ex.: parnaiba_centro"></label>
       <label class="opt inline">Motor
+        <!-- A Places API saiu em 24/08/2026: cobrava por chamada e trazia o
+             mesmo tipo de ponto que a captura traz de graça. Restaram as duas
+             fontes gratuitas, e elas não são alternativas — ver o comentário
+             do bloco abaixo. -->
         <select id="op-motor">
           <option value="captura" selected>Captura + OCR (padrão)</option>
-          <option value="places">Places API (paga)</option>
           <option value="estadual">Extração estadual (bases públicas)</option>
         </select>
       </label>
@@ -252,15 +255,9 @@
           <option value="18">18 — quadra (mais área, menos POI)</option>
         </select>
       </label>
-      <label class="opt inline hidden" id="op-step-wrap">Passo da grade
-        <select id="op-step">
-          <option value="120">120 m (denso)</option>
-          <option value="150" selected>150 m (padrão)</option>
-          <option value="220">220 m (rápido)</option>
-          <option value="300">300 m (amplo)</option>
-        </select>
-      </label>
-      <label class="opt hidden" id="op-details-wrap"><input type="checkbox" id="op-details"> Coleta profunda — telefone, horários e reviews <small>(Place Details, pago)</small></label>
+      <!-- "Passo da grade" e "Coleta profunda" eram opções da Places API, que
+           saiu em 24/08/2026. Saíram com ela: a captura varre por TILE, não por
+           célula de grade, e traz painel completo sem cobrar por chamada. -->
       <div class="hint">Varre toda a área do polígono e traz <b>tudo que existir</b> de comércio/serviço.</div>
     </div>
   </section>
