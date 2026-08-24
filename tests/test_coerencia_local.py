@@ -109,10 +109,31 @@ def test_nenhum_poi_valido_longe_da_cidade_que_declara():
                 continue          # sem malha daquele municipio: nao da para julgar
             ids.append(i); cods.append(cod); las.append(float(la)); los.append(float(lo))
 
+        # DUAS CLASSES DE ERRO, e confundi-las custa caro nos dois sentidos.
+        #
+        # DESLOCAMENTO: o ponto esta noutro lugar. Medido em 24/08/2026, quando
+        # o geocodificador por endereco entrou: 171 km, 270 km e 499 km — o
+        # ultimo era Sarandi do PARANA em vez de Sarandi do RS. Isso e defeito,
+        # e derruba a suite.
+        #
+        # ROTULO DE CIDADE: a coordenada esta certa e o campo `cidade` esta
+        # errado. Canoas, Esteio e Sapucaia do Sul fazem divisa, e o Maps
+        # atribui a cidade vizinha com frequencia — o "Zoologico sapucaia do
+        # sul" esta gravado como Canoas, a 6,4 km da divisa. Sao 19 casos, de
+        # 2 a 39 km, quase todos anteriores a esta medicao.
+        #
+        # A regra ANTIGA — 50 km do centroide — nao via nem uma coisa nem
+        # outra: reprovava ponto legitimo em municipio grande (Santa Vitoria do
+        # Palmar tem 5.244 km2) e deixava passar deslocamento de 40 km.
+        LONGE_KM = 25          # acima disto e outro lugar, nao divisa
+        ROTULO_CONHECIDOS = 19  # o que ja existia; nao pode CRESCER em silencio
+
         fora = []
         if ids:
             rc.execute("""
-                select v.id
+                select v.id,
+                       ST_Distance(m.geom::geography,
+                         ST_SetSRID(ST_MakePoint(v.lo, v.la), 4326)::geography) / 1000
                   from unnest(%s::bigint[], %s::text[], %s::float8[], %s::float8[])
                        as v(id, cod, la, lo)
                   join ibge_malha m on m.cod_municipio = v.cod
@@ -123,9 +144,18 @@ def test_nenhum_poi_valido_longe_da_cidade_que_declara():
                          -- na divisa cai fora por dezenas de metros. E a mesma
                          -- tolerancia do `geocodificar.dentro_do_municipio`.
                          2000)""", (ids, cods, las, los))
-            fora = [r[0] for r in rc.fetchall()]
+            fora = [(i, float(d)) for i, d in rc.fetchall()]
     ref.close()
 
-    assert not fora, (
-        f"{len(fora)} POIs validos FORA do poligono do municipio que declaram: "
-        f"{fora[:10]}")
+    longe = [(i, round(d, 1)) for i, d in fora if d > LONGE_KM]
+    assert not longe, (
+        f"{len(longe)} POIs a mais de {LONGE_KM} km do municipio que declaram — "
+        f"isso e OUTRO LUGAR, nao divisa: {longe[:10]}")
+
+    rotulo = [i for i, d in fora if d <= LONGE_KM]
+    assert len(rotulo) <= ROTULO_CONHECIDOS, (
+        f"{len(rotulo)} POIs fora do poligono do municipio que declaram (ate "
+        f"{LONGE_KM} km), contra {ROTULO_CONHECIDOS} conhecidos. A coordenada "
+        f"costuma estar certa e o campo `cidade` errado — mas a lista CRESCEU, "
+        f"e crescer significa que algo novo esta gravando cidade errada: "
+        f"{sorted(set(rotulo) )[:10]}")
