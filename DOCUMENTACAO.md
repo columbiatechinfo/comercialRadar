@@ -221,8 +221,26 @@ Ambos gravam no **PostgreSQL** e geram um **mapa HTML** (Leaflet/OpenStreetMap).
 
 ## 2. Ambiente (.env — NUNCA commitar, está no .gitignore)
 
+> **O `.env` é a fonte única das chaves.** Nenhuma chave vive em código —
+> `tests/test_portao.py` e o gitleaks do pre-commit reprovam quem tentar.
+
 ```
 WEBSHARE_API_KEY=<chave da API Webshare (proxies)>
+
+# Banco do PRODUTO — Supabase self-hosted no i9 desde 12/08/2026 (ADR 0003).
+# Definir I9_POSTGRES_HOST liga o pipeline ao i9; esvaziar volta ao Postgres local.
+I9_POSTGRES_HOST=<ip Tailscale do i9>
+I9_POSTGRES_PORT=<porta>
+I9_POSTGRES_DB=<banco>             # schema `comercialradar` (ADR 0004)
+
+# Banco de REFERÊNCIA — CNEFE, malha IBGE, CNPJ. Container à parte, sem JOIN.
+REF_POSTGRES_HOST=<ip>
+REF_POSTGRES_PORT=<porta>
+REF_POSTGRES_DB=<banco>
+
+SUPABASE_SERVICE_ROLE_KEY=<chave>  # Storage: bytes de imagem fora do banco
+
+# Postgres local — só o legado/fallback quando I9_POSTGRES_HOST está vazio
 POSTGRES_HOST=localhost
 POSTGRES_PORT=5432
 POSTGRES_USER=postgres
@@ -243,9 +261,14 @@ MAPS_API_KEY=<chave Places>         # só p/ o motor pago de mineração; ausent
 # Metabuscador próprio — várias instâncias, em ordem de preferência
 SEARXNG_URL=http://100.115.117.49:8888,http://localhost:8888
 ```
-⚠️ Chaves foram coladas no chat durante o desenvolvimento — **rotacionar** por
-segurança. A `MAPS_JS_KEY` em especial: ela viveu em texto puro no
-`src/capture.ts` e **está no histórico do git** (commit `1c7f081`).
+✅ **Resolvido em 12/08/2026** (commits `c472f59`, `54c0530`, `116ffbb`). A
+`MAPS_JS_KEY` viveu em texto puro no `src/capture.ts` e está no histórico do git
+(commit `1c7f081`) — reescrever commit não apaga chave exposta, então ela foi
+**revogada e confirmada morta** (`REQUEST_DENIED`/expired). Três chaves novas,
+separadas por função, e a chave de servidor deixou de ser a mesma do navegador.
+gitleaks roda no pre-commit e no CI. Pendência menor: reconferir se a restrição
+de referrer está de fato sendo aplicada — em 12/08 o controle ainda passava de
+endereço fora da lista.
 
 **Dependências Python** (no .venv): `playwright, playwright-stealth, opencv-python, numpy, easyocr,
 scikit-learn, openpyxl, aiohttp, python-dotenv, psycopg2-binary, openai`. `playwright install chromium`.
@@ -256,9 +279,25 @@ Ao rodar Python via Bash tool, prefixar `PYTHONUTF8=1`.
 
 ---
 
-## 3. Banco de dados (PostgreSQL, gerenciado por Prisma)
+## 3. Banco de dados (Postgres no i9; Prisma é legado)
 
-- DB `comercialradar` em `localhost:5432`. Schema em `prisma/schema.prisma`.
+> **Mudou em 12/08/2026.** O banco saiu do `localhost` para o **Supabase
+> self-hosted no i9**, os bytes de imagem saíram do banco para o **Storage**, e o
+> schema passou a ser `comercialradar` em vez de `public` (um schema por
+> ferramenta). Ver ADRs [0002](docs/adr/0002-prisma-legado.md),
+> [0003](docs/adr/0003-onde-mora-cada-banco.md) e
+> [0004](docs/adr/0004-schema-por-ferramenta.md), e a seção 30 para o que quebra
+> quando o i9 reinicia.
+
+- **Banco do produto:** schema `comercialradar` no Supabase do i9, alcançado por
+  Tailscale. Hoje 0,51 GB — era 60 GB antes de as imagens irem para o Storage.
+- **Banco de referência:** container `cr-referencia`, à parte. CNEFE (111,1 mi de
+  endereços), malha do IBGE (3.560 municípios) e CNPJ. **Nunca há JOIN entre os
+  dois** — é base pública, rebaixável da fonte, e por isso fica fora do backup.
+- **Migrações:** 26 arquivos `*.sql` versionados desde `f3024c0` (antes disso a
+  história do schema vivia só no disco — o `.gitignore` as levava junto com os
+  dumps). O `prisma/schema.prisma` continua no repositório como **legado**: ele
+  não é mais quem manda no schema.
 - **Banco EXCLUSIVO deste projeto** — verificado: as únicas tabelas são as nossas (`pois` +
   derivadas 1:N `images_urls`, `comentarios`, `horario_funcionamento`, `streetview_imgs`; cada
   derivada referencia `poi_id`, `onDelete: Cascade`) + `_prisma_migrations`. Os outros projetos
@@ -444,40 +483,125 @@ abre com duplo-clique. **Regenerado ao fim de todo run.**
 
 ---
 
-## 10. Estado atual do dataset (Parnaíba / Aegea PI)
+## 10. Estado atual do dataset (medido em 24/08/2026)
 
-Planilha: `C:\Users\ceo\Downloads\Contratos\Aegea PI\parnaiba_calebe_buscar.xlsx` (6.741 POIs, UF=PI).
-Resultado no banco (`comercialradar`) **após os saneamentos de 02/07/2026** (lição 6 + corte
-pelo polígono municipal do IBGE — todo POI do banco está DENTRO do município de Parnaíba):
-- **3.978 POIs** — 2.396 ok + 394 recuperado_ia + 404 recuperado_gemini + 199
-  recuperado_proximo + 585 descobertos.
-- Fila de reprocesso no JSON (`--retry-failed`): ~2.028 linhas (inclui 69 que estavam fora do
-  município e foram marcadas `erro`). Planilha + JSON de estado em `uploads/`.
-- Resíduo não localizável segue no JSON com match_valido=false (não ingere).
+Números tirados do banco no i9, não de memória. `verificar_servicos.py` passou 7/7
+e a suíte deu **229 passando, 35 puladas** na mesma sessão.
+
+**31.255 POIs.** A base deixou de ser de uma cidade só: Parnaíba foi a origem, Canoas
+é hoje o grosso do trabalho.
+
+| Por fonte | | Por município | |
+|---|---:|---|---:|
+| `planilha` | 16.287 | Canoas | 22.002 |
+| `pipeline` (captura+OCR) | 9.691 | Parnaíba | 4.239 |
+| `cadastur` | 4.238 | Porto Alegre | 906 |
+| `descoberto` | 560 | Gramado | 381 |
+| `estadual` | 300 | Esteio | 325 |
+| `ia_fachada` | 177 | Cachoeirinha | 279 |
+| `captura` | 2 | (demais) | ~3.100 |
+
+**Precisão da coordenada** — a classificação da seção 28, aplicada à base inteira:
+
+| classe | POIs | raio declarado |
+|---|---:|---:|
+| `porta` | 15.625 | 15 m |
+| `via` | 5.952 | 150 m |
+| `porta_aprox` | 1.967 | 40 m |
+| `desconhecida` | 7.711 | — |
+
+`desconhecida` **não** quer dizer ruim: é coordenada de planilha do cliente que
+ninguém conferiu ainda. Confundir as duas coisas faria descartar 7,7 mil pontos que
+podem ser ótimos.
+
+**Trabalho acumulado nas derivadas:** 40.560 fotos do Maps · 37.738 imagens de Street
+View · 31.777 comentários · 4.068 análises de IA.
+
+**O banco do produto tem 0,51 GB** — 244 MB só de `cadastro_cliente`. Ele era de 60 GB
+até 12/08/2026: os bytes de imagem saíram para o Storage (ADR 0003) e o que ficou é
+metadado. É o que torna o dump diário de 31 MB possível.
 
 ---
 
 ## 11. Arquivos-chave (mapa mental)
-```
-server.py (FastAPI+WS)  frontend/ (mapa web)  area_utils.py  realtime_ingest.py  minerar_area.py
-config.py  proxy_pool.py  spatial_clustering.py  human_browser.py  extract_full.py
-search_pois_v2.py  recover_pois_v2.py  search_from_sheet.py  db_export.py
-ai_decisor.py (OpenAI)  gemini_localizador.py (Gemini)  gerar_mapa_html.py
-src/ingest.ts (Prisma)  prisma/schema.prisma  user_agents.json  camada1_serp_TODO.py (stub)
-areas/area_atual.json (polígono)  uploads/ (planilhas)  mineracao/ (saídas do minerador)
-.env (segredos)  mapa_pois.html (saída legado)  PIPELINE.md (doc pipeline)  DOCUMENTACAO.md (este)
-descrever_imagens.py (análise IA)  docs/processo.html (mapa visual do fluxo)
-base_comum.py  base_cnpj.py  base_cnefe.py (bases externas p/ enriquecer)
-quadras.py (CLI dos 5 passos)  quadras_analise.py  quadras_db.py  quadras_canonico.py
 
-io_atomico.py       gravação de JSON que não derruba a rodada (seção 21)
-cnpj_local.py       CNPJ pela Receita já no banco; tem CLI própria (seção 22)
-cadastro_cliente.py carteira de imóveis do cliente + cruzamento com POIs (seção 23)
-minerar_captura.py  orquestra captura → recortes → OCR → busca (seção 20)
-src/capture-cli.ts  captura não-interativa, chamada pelo painel
-assets/icone_poi_generico.png  template do detector de ícones cinza (seção 20)
-exemplos/           biblioteca few-shot da análise visual (confirmada com o cliente)
+**O núcleo — servidor, mapa e ingestão**
 ```
+server.py            FastAPI + WebSocket + orquestração de jobs + APIs do painel
+frontend/            index.html · app.js · style.css (mapa, abas, ficha, dashboard)
+realtime_ingest.py   ESCRITOR ÚNICO de POI: dedup, merge não-destrutivo, gate de área
+area_utils.py        gate de polígono      config.py  constantes + .env + UTF-8
+io_atomico.py        gravação de JSON que não derruba a rodada (seção 21)
+auth.py              usuários, níveis e o tenant da requisição
+```
+
+**Como um POI nasce — as fontes**
+```
+search_from_sheet.py planilha → Maps (+ 4 camadas de recuperação)
+minerar_captura.py   captura → recortes → OCR → busca   (o motor do painel, seção 20)
+detect_crops.py      ocr_pois.py      src/capture.ts · src/capture-cli.ts
+minerar_area.py      polígono → Places Nearby (pago)
+cadastur.py          Cadastur/MTur: baixar → carregar → cruzar → gerar POI (seção 27)
+extracao_estadual.py POI em escala estadual (Overture + OSM + Foursquare)
+coletivas_radar.py   unidades coletivas do CNEFE   coletivas_importar.py
+extrair_ifood.py     família iFood: carregar_ifood_zip · cruzar_ifood_receita ·
+                     enriquecer_ifood · marcar_ifood_nos_pois · validar_cnpj_ifood
+```
+
+**Como ele engorda — enriquecimento**
+```
+enriquecer_tudo.py   a cascata Maps → web → Street View (aceita --poi-ids)
+enriquecer_maps.py   reabre o maps_url    minerar_web.py  SearXNG + estruturação
+streetview_capture.py fachada + giro 360°  baixar_imagens.py  bytes → Storage
+cnpj_local.py        CNPJ pela Receita já no banco (seção 22)
+tratamento_cnpj.py   Receita × CNEFE → aptidão, perfil e rota
+cadastro_cliente.py  carteira de imóveis do cliente (seção 23)
+cruzar_bases.py      o cruzamento de qualquer base contra os POIs
+```
+
+**Onde ele fica no lugar certo — coordenada (seções 28 e 29)**
+```
+geocodificar.py           Photon → Nominatim → painel do Maps; precisão declarada
+conferir_coordenadas.py   varredura da base; só move quem cai FORA do município
+identificar_divergente.py acha o trabalho pago capturado no lugar errado
+```
+
+**Como ele é julgado — IA**
+```
+descrever_imagens.py  veredito visual, estágio 04 (seção 12)
+avaliar_fachada.py    leitura de fachada com o validador da skill como porteiro
+leitura_fachada.py    prompts_fachada.py  prompts_estrutura.py  julgar_identidade.py
+anotar.py             fachada_anotacao / fachada_triagem
+```
+
+**O chat com ferramentas — o resgate do resíduo (seção 26)**
+```
+agente_local.py    chat_api.py    ferramenta_maps.py    ferramenta_instagram.py
+ferramenta_ponto.py (guardar_ponto)  ferramenta_lote.py  ferramenta_memoria.py
+ferramenta_skills.py  buscar_empresa.py  candidatos_receita.py  dossie.py
+```
+
+**Bases externas e infraestrutura**
+```
+base_comum.py  base_cnpj.py  base_cnefe.py      scripts/i9/  (banco, Storage, backup)
+verificar_servicos.py  7 verificações de FUNÇÃO, não de porta (seção 30)
+relay_proxy.py  worker_rede.py  cliente_rede.py  proxy_pool.py  human_browser.py
+```
+
+**Provas e documentos**
+```
+tests/                  229 testes (pytest)
+prova_ponta_a_ponta.py  49 asserções sobre o sistema de pé
+prova_carga_chat.py     capacidade do chat em paralelo
+docs/PRD.md · ARQUITETURA.md · MODULOS.md · RBAC.md · INFRA.md · CHECKLIST.md
+docs/adr/               5 ADRs        docs/estado.json → docs/painel.html
+docs/PROCESSO-OPORTUNIDADE.md · docs/RESGATE-POI.md · docs/processo.html
+skills/                 5 skills empacotadas
+```
+
+> Saiu daqui: o processo de quadras, a régua de numeração e o identificador de
+> telhados foram para o **radarTelhados** em 11/08/2026. As seções 14-19 abaixo
+> ficam como história — o código não mora mais neste repositório.
 
 ## 13. Bases externas (módulos separados de extração) — `base_*.py`
 
@@ -2082,3 +2206,444 @@ roda, menor o custo por POI.
 > o campo é NULL, e a exclusão das faixas seguintes usa `NOT (...)`. `NOT NULL` é
 > NULL e a linha some — a soma das faixas batia 8.447 num total de 21.700.
 > `coalesce` em todo campo de texto.
+
+## 26. Resgate do resíduo: o que o pipeline não resolveu (23/08/2026)
+
+**Documento próprio: [`docs/RESGATE-POI.md`](docs/RESGATE-POI.md).**
+
+A mineração em massa acerta a maioria e deixa um resíduo — `nao_encontrado`,
+`encontrado_divergente`, sem CNPJ, sem telefone, sem horário. Esse resíduo é
+tratado **no fim do processo geral**, um a um ou em lote de até 20, pelo agente
+com ferramentas (`agente_local.py`, interface em `chat.html`).
+
+Por que não escala em regra fixa: cada caso do resíduo precisa de **julgamento**.
+O nome da placa não é o do registro ("Espetão Vancosty" x "Vancosty Comércio e
+Distribuição"), o Maps guarda outro nome ("BussBier Chopp Para Festas" para
+"Bussbier Cerveja Artesanal"), o endereço da Receita é do loteamento e o do Maps
+é da via de acesso ("Quadra EE Dois, 01" x "Av. Dezessete de Abril").
+
+Três decisões ficam com a IA, cada uma em **chamada isolada** — o mesmo padrão
+do veredito visual do estágio 04:
+
+1. **É o mesmo estabelecimento?** A régua de texto virou gatilho, não veredito.
+2. **O CNPJ é deste ponto?** `consultar_receita` acha candidatos; `confirmar_cnpj`
+   diz se o candidato é o ponto. Negativa é resultado, não falha.
+3. **Mesma região basta.** Bairro igual ou CEP vizinho + ramo compatível
+   confirma, mesmo com rua diferente.
+
+O que fica com o CÓDIGO é comparar texto: ensinar a regra do bairro ao modelo
+fez ele aprovar CNPJs de outros bairros dizendo "mesmo bairro". Ele não errou o
+raciocínio; errou a leitura. Hoje a conferência é calculada e entregue como fato.
+
+**O limiar de 0,90 do `nome_match` no pipeline não mudou.** Lá são milhares de
+POIs sem revisão humana e uma chamada de IA por linha não paga. A segunda
+opinião é do resgate, onde a conversa a custeia.
+
+**Capacidade medida** (`prova_carga_chat.py N`): 5 em paralelo é o teto útil no
+notebook — 413 s, ganho de 3,1× sobre a fila, 80-100% por campo. A 10 nada trava
+e nenhum erro aparece no log, mas o Maps passa a não encontrar o
+estabelecimento e o horário desaba de 80% para 10%. Quebra em silêncio.
+
+## 27. Cadastur/MTur: a fonte que diz o que o Estado registrou (24/08/2026)
+
+`cadastur.py` + skill `extracao-cadastur-mtur`. Documento de módulo em
+[`docs/MODULOS.md`](docs/MODULOS.md).
+
+**O que ele acrescenta que nenhuma outra fonte tem.** As demais dizem que existe
+um comércio ali. O Cadastur diz *o que o Estado registrou que ali funciona* — e,
+para meio de hospedagem, **quantos leitos**. Leito é consumo de água por
+pessoa/dia; nenhuma outra fonte do sistema traz capacidade declarada. Medido em
+Canoas: Intercity 162 UH / 206 leitos, Atrio 132/264, Canoas Parque 130/260.
+
+### Quatro passos, e o quarto exige o terceiro
+
+```
+baixar  →  carregar o município  →  CRUZAR como qualquer base  →  gerar POI do que sobrou
+```
+
+O gerador **recusa** rodar sem o cruzamento. Se ele decidisse sozinho o que já
+existe, seriam duas implementações da mesma pergunta — e a hora em que
+divergissem seria a hora da duplicata.
+
+Ele escreve por `realtime_ingest.ingerir_registro`, nunca por `INSERT` próprio: é
+o ingestor que conhece a deduplicação por nome+coordenada, o merge não-destrutivo
+e o resgate de fachada e foto já pagas.
+
+### A coordenada, que o Cadastur não tem
+
+A skill não geocodifica — endereço moderno é texto livre. A âncora entra nesta
+ordem, e sem nenhuma delas a linha **não vira POI** e registra o porquê em
+`sem_poi_motivo`:
+
+1. **CNPJ** contra `cnpj_tratado` — documento igual, sem gradação.
+2. **Cruzamento por endereço** com `cadastro_cliente`: para saneamento é a melhor
+   coordenada que existe, a do imóvel que a companhia fatura.
+3. **CNEFE** (acrescentada em 2209086) — as duas anteriores falham fora de
+   município já trabalhado, que é justamente onde o Cadastur mais serve. Medido em
+   Esteio, sem nenhuma cobertura de `cnpj_tratado`: **16 dos 17 pontos vieram só do
+   CNEFE**, todos com precisão de porta. A origem fica em `fonte_dado`.
+4. **Geocodificador** (seção 28), quando sobra só o texto.
+
+Centroide de município mandaria alguém a campo no lugar errado — por isso não é
+opção.
+
+### `nv_geo_coord`: o piso é 2, e a razão é medida
+
+O CNEFE declara a qualidade da própria coordenada. A tabela correta, do
+`Dicionario_CNEFE_Censo_2022.xls` (a doc anterior descrevia 3 e 4 errado):
+
+| | |
+|---|---|
+| 1 `ENDERECO_ORIGINAL` | colhida naquele endereço no Censo |
+| 2 `ENDERECO_MODIFICADO` | apartamentos no mesmo número |
+| 3 `ENDERECO_ESTIMADO` | não havia original, ou era inválida |
+| 4 `FACE_QUADRA` | a face da quadra, não a porta |
+| 5 `LOCALIDADE` | a localidade |
+| 6 `SETOR_CENSITARIO` | centroide do setor |
+
+O piso continua em 2, mas **por motivo medido**: nas três cidades carregadas os
+níveis 1 e 2 cobrem de 97% a 99% dos endereços; 3 e 4 somados ficam abaixo de 1%,
+o 5 não aparece e o 6 aparece duas vezes em 176 mil. Aceitar 3 e 4 resgataria
+**zero** prestador — quem falha, falha por endereço sem número, rua abreviada ou
+número indexado dentro de condomínio, não por nível. O piso não custa cobertura.
+
+### Atualização incremental — o botão ↻
+
+A skill já tinha metodologia: cache por `recurso_id` revalidado por SHA-256 e
+`eventos_entidade.csv.gz` classificando cada entidade em ENTROU / ALTEROU /
+PERMANECEU / SAIU. Faltava o nosso lado usar — a carga regravava as 388 mil linhas
+a cada execução. Hoje o botão encadeia:
+
+1. baixa só o trimestre que mudou;
+2. grava só ENTROU e ALTEROU;
+3. quem SAIU ganha `saiu_em` e **não é apagado** — sumir do arquivo do MTur
+   significa ter perdido regularidade, e isso pode ser fechamento, troca de dono ou
+   renovação atrasada. Apagar destruiria o sinal na hora em que ele aparece;
+4. cruza, gera POI do que sobrou, **cruza de novo** (agora com os pontos novos — é
+   essa segunda passada que os liga ao cadastro de imóveis do cliente) e enriquece
+   só eles.
+
+O `--poi-ids` do enriquecedor é o que torna o passo 4 viável: sem ele, alcançar 22
+POIs novos significaria varrer os 31 mil do banco.
+
+### Duas armadilhas que a medição pegou
+
+1. **Nem todo conjunto é atualizado.** Doze estão em 2026T2, mas `parque-tematico`
+   e `parques-aquaticos` pararam em 2024T4. Um `--desde 2026` fixo os perderia em
+   silêncio — e parque aquático é o maior consumidor de água da lista. O download
+   busca o mais recente **de cada um**.
+2. **O endereço do Cadastur não tem separador nenhum.** Lido pelo parser do Maps,
+   virava tudo "nome da rua", e a base entrava no cruzamento com zero chave de
+   endereço. Com o município como âncora, 5 de 6 passaram a formar chave.
+
+### LGPD: pessoa física é contada, não guardada
+
+Guia de turismo é cadastro de pessoa física — CPF, nascimento, nome social, tipo
+sanguíneo. **Nenhuma linha entra**; a tabela não tem coluna para CPF. Mas o TOTAL
+entra em `cadastur_total_pf` e vira card informativo: contar não identifica
+ninguém, e ignorar o conjunto inteiro jogava fora informação de mercado junto com o
+dado pessoal.
+
+A lista de conjuntos é **positiva** — as 14 de pessoa jurídica, nomeadas. Com lista
+negativa, um cadastro de pessoa física criado amanhã entraria sozinho.
+
+### Comandos
+
+```bash
+.venv/Scripts/python cadastur.py --listar
+.venv/Scripts/python cadastur.py --uf RS --municipio Canoas --so-carregar
+.venv/Scripts/python cadastur.py --uf RS --municipio Canoas --gerar
+.venv/Scripts/python cadastur.py --uf RS --municipio Canoas --encadear   # o ciclo fechado
+```
+
+Medido: Cachoeirinha, 25 prestadores → 17 POIs novos, 8 sem coordenada declarados.
+Rodar de novo gera zero.
+
+> **De quebra:** o `*.sql` do `.gitignore` nasceu para dumps e levava junto as 26
+> migrações. Nenhuma estava versionada — a história do schema vivia só no disco.
+> Entraram no repositório em `f3024c0`.
+
+## 28. A coordenada passou a ter procedência declarada (24/08/2026)
+
+`geocodificar.py` · `conferir_coordenadas.py` · migração 0028 ·
+`tests/test_precisao_coordenada.py`.
+
+### O problema
+
+Os POIs tinham coordenadas de origens muito diferentes e **nada dizia qual era
+qual**. Conferido no código de ingestão de cada fonte:
+
+- 13.216 tinham o pin do próprio Google — `porta`, ~15 m;
+- 300 da extração estadual tinham `maps_lat` preenchido, mas com o **centroide do
+  Overture**. Parece pin e não é — foi essa descoberta que motivou tudo;
+- 177 do `ia_fachada` carregavam a coordenada do POI **vizinho**;
+- 13.324 vieram da planilha do cliente e ninguém conferiu.
+
+### O vocabulário
+
+Cada POI declara `coord_precisao` e o raio que essa classe promete:
+
+| classe | raio | quem ganha |
+|---|---:|---|
+| `porta` | 15 m | quem foi encontrado como **estabelecimento** (pin do Google) |
+| `porta_aprox` | 40 m | casamento de texto que achou o prédio |
+| `via` | 150 m | achou o logradouro |
+| `bairro` / `municipio` | 800 m / 5 km | **recusados** — ver abaixo |
+| `desconhecida` | — | veio da planilha e ninguém conferiu |
+
+**`desconhecida` não significa ruim**, e a tela diz isso com todas as letras.
+Confundir as duas coisas faria descartar milhares de pontos que podem ser ótimos.
+
+**Casar texto nunca vale `porta`.** Mesmo quando o Photon responde `type: house`, o
+resultado é `porta_aprox`: ele achou *uma* casa naquele logradouro, não
+necessariamente o número pedido — e a diferença entre as duas coisas é exatamente o
+que manda alguém tocar a campainha errada.
+
+A precisão aparece na ficha de todo POI (pelo `campo_catalogo`, sem tocar em HTML),
+no payload do mapa e numa fileira própria de filtro. É a pergunta de quem monta rota
+de campo: não "o que se sabe do negócio", mas **"o quanto se pode confiar no lugar"**.
+
+### A cascata, na ordem de CUSTO
+
+```
+1. PHOTON      OSM no i9, tolerante a endereço sujo. 0,1 s.
+2. NOMINATIM   OSM no i9, mais estrito. Segunda chance.
+3. MAPS        abre navegador com proxy, ~30 s. ÚNICA fonte que dá PORTA,
+               porque procura o ESTABELECIMENTO em vez de interpretar texto.
+```
+
+O Maps é o melhor e vem por último, e isso não é contradição: numa varredura de doze
+mil endereços a diferença entre ele e o OSM é a diferença entre minutos e dias. O
+barato tenta primeiro; o caro entra no resíduo, onde vale cada segundo. **Só depois
+dos três é que existe "não encontrado".** Nos cinco casos que o OSM não resolvia, o
+Maps achou os cinco.
+
+### `via_confere` — o geocodificador confere a via que devolveu
+
+Ao conferir os 12 mil POIs de planilha nunca verificados, os primeiros divergentes
+pareciam dado ruim. Conferidos caso a caso, **em 4 de 5 quem errava era o
+geocodificador**:
+
+```
+pedido "Rua Hipolito Jose da Costa"  →  devolveu "Rua Daniel Cruz da Costa"
+pedido "Avenida Esperanca"           →  devolveu "Avenida Getulio Vargas"
+pedido "Avenida Guilherme Schell"    →  devolveu "Agencia de Correios"
+```
+
+O Photon é difuso: casa por semelhança e devolve **outra rua com cara de acerto**.
+Sem conferência, o ponto saía rotulado `via` — que promete "a rua certa".
+
+A regra levou três calibrações contra dado real:
+
+| versão | reprovação | por quê |
+|---|---:|---|
+| exata | 29,7% | "Aristides Stumph" × "Stumpf" é a mesma rua; grafia varia demais |
+| + grafia | 24,9% | número de porta vazava para dentro do nome ("Santana 402 1a"); "Sete de Setembro" × "7 de Setembro" |
+| + número fora do núcleo, numeral↔extenso, cobertura **nos dois sentidos** | 10,2% | o lado pedido chega sujo, o devolvido vem limpo |
+
+14/14 nos casos conhecidos, os bons e os ruins. Os 204 POIs do Cadastur cuja via não
+se confirma foram removidos e o prestador voltou à fila com o motivo.
+
+### Distância NÃO prova erro. Município prova.
+
+A primeira versão da varredura moveria tudo que estivesse a mais de 2 km do endereço
+geocodificado. **Teria sido destrutivo**: a coordenada da planilha vem do cadastro do
+próprio cliente e costuma ser boa. Hoje ela só move o que cai **fora do município que
+declara** — e na varredura inteira isso foi **um caso em 11.961**.
+
+A conferência de município é **geométrica**, contra o polígono do IBGE, com 2 km de
+folga para divisa. Conferir por nome não bastava: três pontos passaram e caíram a
+171, 270 e 499 km — o último era Sarandi do **Paraná**.
+
+### O campo `cidade` não é autoridade
+
+Essa lição custou dado. Foram apagadas 8 fotos e 3 análises de IA de três POIs,
+comparando a coordenada contra o polígono do município que o campo `cidade` declara.
+**As fotos estavam certas; o rótulo é que errava:**
+
+```
+Centro Distribuicao CORSAN   cidade=Esteio        CEP 92420 = Canoas
+Camping Porto Batista        cidade=Triunfo       CEP 92330 = Canoas
+MBK pousada                  cidade=Luis Correia  CEP 64200 = Parnaiba
+```
+
+Nos três, o pin do Google e o CEP concordavam entre si e discordavam do rótulo. **O
+CEP é terceira fonte independente** — vem do CNEFE — e vale mais que um campo de
+texto que qualquer etapa do enriquecimento pode ter escrito.
+
+A trava passou a só acusar quando a coordenada discorda do rótulo **E** do CEP. E foi
+provada: um POI foi estragado de propósito, ela reprovou; desfeito, ela passou. Ver
+[[cidade-nao-e-autoridade]].
+
+### Dois piso e três defeitos que a medição pegou
+
+1. **Sem piso, o geocodificador virava centroide de cidade** — 117 pontos assim; em
+   Encantado, quatro estabelecimentos na mesma coordenada. Piso em `via` (150 m): o
+   pior ponto que ainda leva alguém ao lugar. Abaixo disso o prestador fica na tabela
+   com o motivo e nenhum ponto entra no mapa.
+2. **245 POIs foram rotulados `bairro`/`municipio`** porque o geocodificador só
+   resolveu até a cidade. Estar "dentro da incerteza" de 5 km não prova nada, e o
+   rótulo dizia que o ponto **é** um centroide — o que ele não é. Desfeitos, e a
+   ferramenta passou a recusar confirmação que não seja de nível de endereço.
+3. **O vínculo era gravado só no fim de `gerar`.** Uma execução estadual interrompida
+   deixou 4.442 POIs sem nenhum prestador apontando para eles. Agora grava em lote de 100.
+
+E dois na leitura de endereço, que valem também para o CNEFE: o complemento roubava o
+número ("… 2586 LOJA 3 SALA 1" lia 1), e a notação de faixa da Receita ("de 3501 a
+5101 - lado impar") virava número.
+
+### Resultado
+
+**5.608 POIs** tiveram a precisão elevada de `desconhecida` para a classe provada.
+`desconhecida` caiu de 13.324 para 7.715. Ver a distribuição atual na seção 10.
+
+```bash
+.venv/Scripts/python conferir_coordenadas.py --cidade Canoas --amostra 200
+.venv/Scripts/python conferir_coordenadas.py --corrigir --workers 8
+```
+
+## 29. Trabalho pago capturado no lugar errado (24/08/2026)
+
+`identificar_divergente.py` · `tests/test_trabalho_no_lugar_certo.py`.
+
+**O que estava acontecendo.** Uma foto de fachada é tirada **na coordenada** do POI.
+Coordenada errada, foto de outro prédio — e a análise de IA que a lê julga um
+estabelecimento que não é aquele. O veredito sai com cara de veredito e não vale nada.
+
+A varredura achou **13 POIs assim**. Três eram pousadas do Piauí com **seis fotos e
+uma análise de IA cada**, capturadas a até 20 km do próprio endereço. Ninguém tinha
+como notar: a tela mostra a foto ao lado do nome, e nada dizia que as duas coisas não
+se encontram.
+
+### Três destinos, porque são três problemas diferentes
+
+| | o caso | o que foi feito |
+|---|---|---|
+| **MOVIDOS** (6) | o endereço geocodifica **dentro** do município e o ponto cai fora → a coordenada é que erra | ponto corrigido, 21 fotos e 3 análises removidas, POI de volta à fila de captura |
+| **ROTULADOS** (2) | o ponto está na cidade que o próprio **endereço** diz; quem erra é o campo `cidade` | ponto e fotos **preservados** — trocar aqui seria jogar fora captura boa |
+| **MARCADOS** (5) | o OSM não tem aquelas ruas, então não dá para provar onde o ponto deveria estar | as 20 fotos e 3 análises saíram; a coordenada ficou onde estava, marcada `revisar_manual` |
+
+O terceiro caso é o mais sutil: não está provado onde o ponto deveria estar, mas
+**está provado que ele está fora do município declarado** — logo a foto é de outro
+município e não pode ser a fachada daquele negócio. Mover para lugar nenhum é pior
+que marcar.
+
+**41 objetos órfãos apagados do Storage.** Nada de lixo pago para trás.
+
+### O geocodificador aprendeu a ler os dois formatos
+
+Dez dos treze não geocodificavam — não por falta de dado, mas porque `_consultas` só
+conhecia o formato do MTur (sem separador) e aqueles endereços vêm no do Maps
+(vírgula e traço). O leitor errado devolvia o endereço inteiro como nome de rua.
+Agora tenta os dois.
+
+### A trava
+
+`test_trabalho_no_lugar_certo.py` reprova qualquer foto ou análise de IA numa
+coordenada fora do município declarado. Contenção no polígono, com **2 km de folga**
+para divisa — o mesmo número que `geocodificar` e `test_coerencia_local` usam, de
+propósito.
+
+**Estado final dos 14 POIs tocados:** 11 em `porta` (15 m), 3 em `via`. Todos com
+fachada recapturada na coordenada corrigida — **47 fotos refeitas**.
+
+---
+
+## 30. O i9 depois do reboot: o que quebra em silêncio (24/08/2026)
+
+`verificar_servicos.py` · `scripts/i9/` · `tests/test_coerencia_local.py`.
+
+### O que aconteceu
+
+As duas máquinas foram reiniciadas. No i9 os containers subiram todos `healthy` —
+Supabase completo, `cr-referencia`, SearXNG — e Nominatim, Photon, OSRM e SearXNG
+voltaram sozinhos. **Mas os dois bancos ficaram inalcançáveis de fora, e nada
+acusou:** o `docker ps` dizia saudável.
+
+A causa: no Windows, as regras `netsh portproxy` para o WSL existem e apontam para o
+IP certo, mas ficam presas em **127.0.0.1** depois do boot. Quem escuta é o
+`wslrelay.exe`, que só faz loopback. **Reiniciar o `iphlpsvc` não resolve — a regra
+precisa ser REINSERIDA.** Ver [[reinicio-quebra-portproxy]].
+
+### A tarefa agendada que reaplica sozinha
+
+Roda como **SYSTEM**, porque `netsh portproxy` exige elevação e o boot acontece sem
+ninguém logado. E SYSTEM **não enxerga a distro**: `wsl -d Ubuntu` pendura, e foi
+exatamente onde a primeira versão ficou presa.
+
+Os candidatos a IP do WSL saem da **tabela de vizinhos** do adaptador, e cada um é
+**testado** numa porta que só o WSL serve (5443). Há entradas obsoletas de boots
+anteriores ali — no teste havia `192.168.235.246` ao lado do `192.168.226.17` vivo,
+**ambas marcadas `Stale`**. Escolher pelo estado seria chute, e chutar aqui manda o
+tráfego para lugar nenhum sem erro nenhum.
+
+Ela também **espera o Tailscale aparecer**: regra que escuta num IP específico só
+amarra se aquele endereço já existir, e no boot o Tailscale sobe depois da rede.
+
+E **confere no fim.** Regra escrita não é regra amarrada — essa distinção custou meia
+hora de investigação. Se alguma não amarrar, sai com código 2 e diz quais. Provado
+rodando: achou o WSL vivo, reaplicou as 14 regras, todas amarraram, código 0.
+
+### `verificar_servicos.py` verifica FUNÇÃO, não porta
+
+Porta aberta com serviço devolvendo lixo é o pior caso — tudo parece bem e o dado sai
+errado. Então: o Nominatim **geocodifica** um endereço conhecido, o OSRM **traça** uma
+rota, o Ollama **gera** uma palavra, o banco **conta** linhas. Quando falha, diz qual é
+o caminho.
+
+```
+-- alcance --  i9 8/8 portas · DGX 1/2
+-- bancos --   produto 31.255 POIs · referência CNEFE 111.102.875, malha 3.560 municípios
+-- geo --      nominatim · photon · osrm carro · osrm a pé · searxng
+-- llm --      3 modelos · gerar qwen2.5vl:7b · 100% na GPU
+               7/7 verificações passaram.
+```
+
+### O teste de coerência, calibrado em duas classes
+
+Ele media distância do **centroide** do município, com teto de 50 km. Isso errava nos
+dois sentidos: reprovava ponto legítimo em município grande (Santa Vitória do Palmar
+tem 5.244 km²) e deixava passar deslocamento de 40 km. Agora é contenção no
+**polígono**, separando o que são coisas diferentes:
+
+- **DESLOCAMENTO** (>25 km) — o ponto está noutro lugar. **Derruba a suíte.**
+- **RÓTULO DE CIDADE** (até 25 km) — a coordenada está certa e o campo `cidade`
+  errado. Canoas, Esteio e Sapucaia fazem divisa e o Maps atribui à vizinha; o
+  "Zoológico Sapucaia do Sul" está gravado como Canoas. São 18, quase todos
+  anteriores. Fica **pinado no número**, para não crescer em silêncio.
+
+E ele **pula** quando o banco de referência está fora do ar, em vez de acusar defeito
+de dado que não existe.
+
+---
+
+## 31. O sistema inteiro passou a falar a língua do painel (24/08/2026)
+
+`frontend/tokens.css` · `tests/test_linguagem_visual.py`.
+
+O front tinha **duas famílias de cinza** convivendo — a do Google (`#5f6368`,
+`#e8eaed`, `#dadce0`) e a do Tailwind (`#0f172a`, `#94a3b8`, `#cbd5e1`) —, **dois
+azuis** (`#1a73e8` e `#2563eb`) e uma cauda de **92 tons únicos**, cada regra com o
+seu. Ninguém fez isso de propósito: foi uma tela de cada vez.
+
+**`tokens.css` é o vocabulário**, lido do `:root` do painel que o usuário aprovou —
+cor, tipografia, uma escala de raio, sombra tingida de navy. Mais o que o painel não
+tinha e a medição cobrou: variante `-texto` de cada acento (o laranja dá 2,45:1 sobre
+branco, metade do mínimo), tom `-vivo` para superfície escura, e tinta de estado
+**sólida**.
+
+O que mudou nas telas: cabeçalho **navy** com tudo dentro invertido junto; acesso em
+tela cheia dividido ao meio, com arte em CSS puro; perfil em duas colunas (o que a
+pessoa edita × o que só o root muda); **aviso virou cartão no alto à direita** —
+embaixo ao centro ele caía sobre o que a pessoa acabara de clicar; tabela e lista de
+usuários com só linhas horizontais; e o chat, única tela com acento verde, entrou na
+mesma família.
+
+**Medido, não estimado.** Auditoria de contraste em **796 elementos** com todos os
+modais abertos: de 15 reprovações para **zero**. O `#B96A12` que o próprio painel usa
+no chip de alerta reprovava (4,09:1) — por isso o arquivo **mede** em vez de copiar.
+
+**A trava:** `test_linguagem_visual.py` deriva o vocabulário do próprio `tokens.css`,
+então matiz novo no CSS da moldura quebra o teste. Cor que codifica **dado** (ramo,
+fonte, face de quadra) segue no `app.js`, com a regra de que toda cor de chip leia com
+branco por cima.

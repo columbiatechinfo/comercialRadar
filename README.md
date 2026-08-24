@@ -9,7 +9,7 @@ _Descobre, valida e enriquece estabelecimentos com dados do Google Maps, minera�
 
 ![Python](https://img.shields.io/badge/Python-3.10-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-WebSocket-009688?logo=fastapi&logoColor=white)
-![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Prisma%206-4169E1?logo=postgresql&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Supabase%20self--hosted-4169E1?logo=postgresql&logoColor=white)
 ![Playwright](https://img.shields.io/badge/Playwright-stealth-2EAD33?logo=playwright&logoColor=white)
 ![Leaflet](https://img.shields.io/badge/Leaflet-OpenStreetMap-199900?logo=leaflet&logoColor=white)
 
@@ -62,7 +62,7 @@ Foi construído para levantamentos comerciais de campo (ex.: base de clientes po
         │                           │                           │
         └──────────────┬────────────┴───────────────────────────┘
                        ▼
-              PostgreSQL (Prisma 6)  ·  pois + images_urls + comentarios
+        PostgreSQL no i9 (Supabase self-hosted)  ·  pois + images_urls + comentarios
               + horario_funcionamento + streetview_imgs
 ```
 
@@ -90,7 +90,11 @@ Passo final: baixa os bytes de todas as fotos (com a **data EXIF**) e dos Street
 - **Backend:** Python 3.10 · FastAPI + WebSocket · Playwright (+ stealth) · aiohttp · psycopg2 · Pillow
 - **IA:** OpenAI `gpt-4o-mini` (decisor/estruturador) · Google `gemini-2.5-pro`/`flash` (localizador)
 - **Dados abertos:** BrasilAPI / minhareceita.org (Receita Federal) · malhas IBGE · Google Street View metadata
-- **Banco:** PostgreSQL gerenciado por **Prisma 6** (⚠️ Prisma 7 quebra — usar 6)
+- **Banco:** PostgreSQL do **Supabase self-hosted no i9**, schema `comercialradar`,
+  alcançado por Tailscale. Acesso por `psycopg2`; migrações em `*.sql` versionados.
+  Bytes de imagem ficam no **Storage**, não no banco.
+  ⚠️ O `prisma/schema.prisma` continua no repositório como **legado** — ele não
+  manda mais no schema (ADR [0002](docs/adr/0002-prisma-legado.md))
 - **Frontend:** HTML/CSS/JS puro · Leaflet + OpenStreetMap + markercluster
 - **Proxies:** Webshare (100 IPs estáticos, cooldown automático)
 
@@ -99,7 +103,8 @@ Passo final: baixa os bytes de todas as fotos (com a **data EXIF**) e dos Street
 ## 🚀 Setup
 
 ### Pré-requisitos
-- Python 3.10, Node.js (para Prisma/ts-node), PostgreSQL local
+- Python 3.10, Node.js (para `ts-node`, usado pela captura), acesso ao Postgres do i9
+  (ou um Postgres local, se `I9_POSTGRES_HOST` ficar vazio)
 - Contas: Webshare (proxies), OpenAI, Google AI Studio (Gemini)
 
 ### Instalação
@@ -110,9 +115,8 @@ python -m venv .venv
     scikit-learn openpyxl aiohttp python-dotenv psycopg2-binary openai Pillow fastapi uvicorn
 .venv\Scripts\playwright install chromium
 
-# 2. Node / Prisma
+# 2. Node (captura de tiles via src/capture.ts)
 npm install
-npx prisma generate          # NUNCA use `prisma migrate dev` (ver Avisos)
 
 # 3. Configurar segredos
 copy .env.example .env        # preencha as chaves
@@ -121,12 +125,24 @@ copy .env.example .env        # preencha as chaves
 ### `.env`
 ```ini
 WEBSHARE_API_KEY=...
+
+# Banco do PRODUTO — no i9. Esvaziar I9_POSTGRES_HOST volta ao Postgres local.
+I9_POSTGRES_HOST=...
+I9_POSTGRES_PORT=...
+I9_POSTGRES_DB=...
+SUPABASE_SERVICE_ROLE_KEY=...  # Storage: bytes de imagem fora do banco
+
+# Banco de REFERÊNCIA — CNEFE, malha IBGE, CNPJ. Container à parte, sem JOIN.
+REF_POSTGRES_HOST=...
+REF_POSTGRES_PORT=...
+REF_POSTGRES_DB=...
+
+# Postgres local — legado/fallback
 POSTGRES_HOST=localhost
 POSTGRES_PORT=5432
 POSTGRES_USER=postgres
 POSTGRES_PASSWORD=...          # se tiver '@', no DATABASE_URL vira %40
 POSTGRES_DB=comercialradar
-DATABASE_URL="postgresql://postgres:<senha>@localhost:5432/comercialradar?schema=public"
 OPENAI_API_KEY=...             # opcional (fallback p/ Gemini flash)
 OPENAI_MODEL=gpt-4o-mini
 GEMINI_API_KEY=...
@@ -201,36 +217,74 @@ Tabela principal **`pois`** (1 linha por ponto) + derivadas 1:N:
 | Tabela | Conteúdo |
 |---|---|
 | `pois` | dados escalares: nome, endereço (+ `endereco_fonte`), telefone, categoria, avaliação, **cnpj, razao_social, cnae, socios, situacao_cadastral**, instagram, streetview_path… |
-| `images_urls` | fotos do Maps (url + **bytes** + **data EXIF**) |
+| `images_urls` | fotos do Maps (url + **data EXIF**); os bytes ficam no Storage |
 | `comentarios` | avaliações escritas |
 | `horario_funcionamento` | horários por dia |
-| `streetview_imgs` | fachada (bytes) + **data do panorama** + pano_id |
+| `streetview_imgs` | fachada + **data do panorama** + pano_id + `angulo` (giro 360°) |
+| `analise_ia` | veredito visual por POI (1:1) |
+| `cadastro_cliente` | carteira de imóveis do cliente · `cruzamento` liga aos POIs |
+| `cnpj_tratado` · `cadastur_prestador` · `cnefe_coletiva` | as bases externas já tratadas |
+| `usuarios` · `tenants` · `auditoria` | acesso, empresa e rastro |
 
-> ⚠️ Banco **exclusivo** deste projeto (os outros projetos têm bancos próprios).
-> **Nunca rode `prisma migrate dev`** — ele faz `reset` e apaga os dados. Para mudar schema: `ALTER TABLE … ADD COLUMN IF NOT EXISTS` via SQL + refletir no `schema.prisma` + `npx prisma generate`.
+**Onde ele mora:** schema `comercialradar` no Supabase self-hosted do **i9**,
+alcançado por Tailscale. Um segundo container (`cr-referencia`) guarda CNEFE,
+malha do IBGE e CNPJ — **nunca há JOIN entre os dois**: é base pública,
+rebaixável da fonte, e por isso fica fora do backup.
 
-**Migrar para outro PC** (leva as imagens junto): use `pg_dump -Fc` das tabelas do projeto, não DBF (DBF não guarda imagens).
+**Multi-tenant:** 27 tabelas têm `tenant_id`, com RLS e índice com `tenant_id`
+na primeira coluna. Quatro tabelas novas ainda estão sem política — ver
+[`docs/CHECKLIST.md`](docs/CHECKLIST.md).
+
+> ⚠️ **Nunca rode `prisma migrate dev`.** O Prisma é legado aqui (ADR
+> [0002](docs/adr/0002-prisma-legado.md)): nenhum código importa `PrismaClient`.
+> Mudança de schema é uma migração `*.sql` versionada em `prisma/migrations/`.
+
+**Backup:** dump diário do banco do produto (31 MB) + espelho do Storage com
+`link-dest`, 14 dias de retenção, cron das 03:10, **restauração validada** em
+máquina limpa.
 
 ---
 
 ## 🧩 Estrutura de arquivos
 
 ```
-server.py                FastAPI + WebSocket + orquestração de jobs
-frontend/                mapa (index.html, app.js, style.css)
-search_from_sheet.py     fluxo A: planilha → Maps (+ 4 camadas de recuperação)
-minerar_area.py          fluxo B: polígono → Maps
-enriquecer_tudo.py       cascata Maps→Web→StreetView (por POI carente)
-enriquecer_maps.py       reabre maps_url p/ dados oficiais do painel
-minerar_web.py           resíduo → Yahoo + pré-filtro + IA barata + Receita
-streetview_capture.py    print da fachada por POI
-baixar_imagens.py        imagens (bytes) + datas → banco
-realtime_ingest.py       ingestão psycopg2 (merge não-destrutivo, gate de área)
-gemini_localizador.py    Gemini + grounding   ·   ai_decisor.py  OpenAI
-human_browser.py         sessão Playwright stealth + proxy + route blocking
-proxy_pool.py            pool Webshare (cooldown/cache)   ·   area_utils.py  gate polígono
-prisma/schema.prisma     schema   ·   src/ingest.ts  ingestão em lote (Prisma)
+server.py                FastAPI + WebSocket + orquestração de jobs + APIs do painel
+frontend/                mapa e painel (index.html, app.js, style.css, tokens.css)
+realtime_ingest.py       ESCRITOR ÚNICO de POI (dedup, merge não-destrutivo, área)
+auth.py                  usuários, níveis e o tenant da requisição
+
+— de onde vem o POI —
+search_from_sheet.py     planilha → Maps (+ 4 camadas de recuperação)
+minerar_captura.py       captura → recortes → OCR → busca (o motor do painel)
+minerar_area.py          polígono → Places Nearby (pago)
+cadastur.py              Cadastur/MTur: baixar → carregar → cruzar → gerar POI
+extracao_estadual.py     POI em escala estadual (Overture + OSM + Foursquare)
+coletivas_radar.py       unidades coletivas do CNEFE
+
+— como ele engorda —
+enriquecer_tudo.py       cascata Maps → web → Street View (aceita --poi-ids)
+cnpj_local.py            CNPJ pela Receita já no banco   ·   tratamento_cnpj.py
+cadastro_cliente.py      carteira de imóveis   ·   cruzar_bases.py  o cruzamento
+streetview_capture.py    fachada + giro 360°   ·   baixar_imagens.py  bytes → Storage
+
+— onde ele fica no lugar certo —
+geocodificar.py          Photon → Nominatim → painel do Maps; precisão declarada
+conferir_coordenadas.py  varredura   ·   identificar_divergente.py  trabalho errado
+
+— como ele é julgado —
+descrever_imagens.py     veredito visual   ·   avaliar_fachada.py  leitura de fachada
+
+— o chat com ferramentas (resgate do resíduo) —
+agente_local.py · chat_api.py · ferramenta_*.py · dossie.py
+
+— infraestrutura —
+verificar_servicos.py    7 verificações de FUNÇÃO, não de porta
+scripts/i9/              banco, Storage e backup   ·   human_browser.py  ·  proxy_pool.py
+
+— provas e documentos —
+tests/ (229 testes) · prova_ponta_a_ponta.py · prova_carga_chat.py
 DOCUMENTACAO.md          documentação técnica completa (fonte única de verdade)
+docs/                    PRD · ARQUITETURA · MODULOS · RBAC · INFRA · CHECKLIST · ADRs
 ```
 
 ---
