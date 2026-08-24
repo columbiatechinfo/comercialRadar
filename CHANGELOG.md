@@ -115,6 +115,13 @@ versionamento [SemVer](https://semver.org/lang/pt-BR/).
   deixou de ser a mesma do navegador. gitleaks no pre-commit e no CI.
 - Backup diário com **restauração validada** em máquina limpa.
 - `cache_ibge/` (135 MB) fora do repositório.
-- **Pendente:** 4 tabelas criadas depois do passe de RLS ficaram sem política —
-  `atribuicao_divergente`, `fachada_triagem`, `foto_maps_triagem`, `ifood_merchant`.
-- **Pendente:** 25.432 linhas de código nunca commitadas existem só em disco.
+- **RLS completa:** as 4 tabelas criadas depois do passe de 12/08 ganharam
+  política, gatilho e índice (migração `0029`), e o teste passou a cobrar a regra
+  geral — tabela nova sem política reprova a suíte.
+- **Pendente:** 100 credenciais de proxy Webshare no histórico do git desde o
+  commit inicial. O arquivo saiu do rastreamento em 24/08; **rotacionar na
+  Webshare é a única correção real** — reescrever commit não apaga o que já foi
+  publicado.
+- **Pendente:** 66 registros de `auditoria` com `tenant_id` nulo, invisíveis para
+  todos. Não retro-atribuídos: trilha editada depois do fato vale menos que
+  trilha incompleta.
