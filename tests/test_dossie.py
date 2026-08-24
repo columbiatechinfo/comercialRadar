@@ -12,6 +12,7 @@ import pytest
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, RAIZ)
 import config  # noqa: F401,E402
+from conftest import ler_credenciais  # noqa: E402
 import base_comum as bc  # noqa: E402
 
 API = "http://127.0.0.1:8765"
@@ -33,8 +34,7 @@ def http(u, t=None):
 def ctx():
     if not os.path.exists(ARQ):
         pytest.skip("csv ausente")
-    with open(ARQ, encoding="utf-8") as f:
-        cred = {l["email"]: l for l in csv.DictReader(f)}
+    cred = ler_credenciais(ARQ)
 
     def entrar(email):
         u = cred[email]

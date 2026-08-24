@@ -162,40 +162,20 @@ SEARXNG_URL=http://100.115.117.49:8888,http://localhost:8888
 ## 🖥️ Uso
 
 ### Interface web (recomendado)
-
-O painel roda **no i9** desde 24/08/2026 — é lá que moram o banco, o Storage e
-os serviços geo, e o pipeline deixou de atravessar a rede a cada consulta
-(o banco respondia em 1,5 s do notebook; responde em 0,2 s de lá).
-
-**Abra https://desktop-s8l7nat.tail7e301b.ts.net:8443** — precisa estar no
-tailnet. Certificado da Tailscale, então o navegador não reclama.
-
-Publicar código novo e operar:
-```bash
-scripts/i9/publicar.sh                      # do notebook
-ssh orbisgrid@100.115.117.49 "wsl -d Ubuntu -- bash -lc '/home/orbisgrid/comercialradar/scripts/i9/painel.sh estado'"
-```
-
-Para rodar localmente (depuração), ainda funciona:
 ```bash
 .venv\Scripts\python server.py
 ```
-Abre em **http://localhost:8765**. ⚠️ Não deixe os dois no ar contra o mesmo
-banco: cada um tem o seu trava-job de um por vez, e juntos disparam dois. No cabeçalho, escolha o modo:
-- **📄 Importar planilha** — baixe o modelo, importe seu `.xlsx`, **desenhe a área** (passo 1) e inicie.
-  Aqui também entra o **cadastro do cliente** (a carteira de imóveis), com prévia
-  em modal antes de gravar e cruzamento com os POIs no fim.
-- **⛏️ Mineração de área** — desenhe o polígono e minere. Motor padrão: captura+OCR (grátis).
-- **💎 Enriquecimento** — cascata Maps → CNPJ local → Web → Street View. A fase 4
-  vem marcada como **só nos pobres** (sem foto, telefone ou avaliação).
-- **🧱 Quadras + endereços** — o processo de 5 passos sobre a malha de vias.
-- **📊 Dashboard** — leitura, não operação: cobertura, CNPJ por confiança, custo e retorno.
+Abra **http://localhost:8765**.
 
-A **área de trabalho é a fonte única de cidade/UF** — ela vem do polígono
-desenhado, do clique num município ou do select de UF+município, e vale para
-todas as abas.
-
-Os markers e cards atualizam em tempo real conforme o processamento avança.
+> **O painel roda no NOTEBOOK, e isso é decisão medida.** Em 24/08/2026 ele foi
+> movido para o i9 e voltou no mesmo dia: as chaves do Google são restritas por
+> **referrer**, e o mapa do painel manda a própria origem — servido do i9, o
+> Google recusa e o mapa não desenha. Ver a seção 35 da
+> [`DOCUMENTACAO.md`](DOCUMENTACAO.md).
+>
+> O que atravessa para o i9 é o trabalho **sem navegador**: a extração estadual
+> (`scripts/i9/dataset_estadual.sh`), ao lado do OSRM, do Photon e do Nominatim,
+> que já vivem lá pelo mesmo motivo.
 
 ### Linha de comando (processos longos)
 > Runs longos sobrevivem melhor no terminal do que em background. Sempre prefixe `PYTHONUTF8=1` no Git Bash.

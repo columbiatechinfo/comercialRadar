@@ -2820,12 +2820,17 @@ ponto que a **captura + OCR** traz de graça.
 
 ---
 
-## 35. O painel inteiro mudou de máquina (24/08/2026)
+## 35. O painel foi para o i9 e VOLTOU no mesmo dia (24/08/2026)
+
+> **Desfecho primeiro, para quem lê com pressa:** o painel roda no
+> **notebook**. A mudança para o i9 foi feita, medida e revertida — o
+> Google recusa a chave quando o referrer muda. O que ficou no i9 é o
+> trabalho **sem navegador**. O relato abaixo é do porquê.
 
 `scripts/i9/publicar.sh` · `scripts/i9/painel.sh` · `.gitattributes` ·
 `server.py` (bloco `__main__`).
 
-**Endereço novo:** `https://desktop-s8l7nat.tail7e301b.ts.net:8443`
+Endereço de trabalho: **http://localhost:8765** (o de sempre).
 
 ### A decisão, e por que ela é MENOR que a alternativa
 
@@ -2927,6 +2932,61 @@ ssh orbisgrid@100.115.117.49 "wsl -d Ubuntu -- bash -lc \
   '/home/orbisgrid/comercialradar/scripts/i9/painel.sh subir|parar|estado|log'"
 ```
 
-> ⚠️ **Não rode dois painéis contra o mesmo banco.** O do notebook e o do i9
-> escrevem nas mesmas tabelas e cada um tem o seu trava-job de um por vez — os
-> dois juntos disparam dois jobs simultâneos sem que nenhum saiba do outro.
+### O desfecho: o painel VOLTOU para o notebook, no mesmo dia
+
+**O referrer.** As chaves do Google são restritas por referrer, e o mapa do
+painel manda a **própria origem** do navegador. Servido do i9, o referrer virou
+`https://desktop-s8l7nat.tail7e301b.ts.net:8443` — fora da lista autorizada. O
+Google recusa, e o mapa simplesmente não desenha.
+
+Eu tinha considerado esse risco e o descartei **pelo motivo errado**: raciocinei
+sobre a *captura*, que serve o `_map.html` em `127.0.0.1:8766` e por isso mantém
+o referrer de sempre. Isso é verdade para a captura e irrelevante para o painel,
+que é outra página, com outra origem. Duas coisas usam a mesma chave por
+caminhos diferentes; conferir uma não conferia a outra.
+
+Some-se o que o próprio uso mostrou: para **desenvolvimento**, publicar a cada
+alteração é atrito puro. Editar e recarregar vale mais que 7,5× no tempo de
+consulta ao banco.
+
+### O que ficou, e é o desenho certo
+
+O painel e a captura moram no notebook. **O trabalho sem navegador atravessa para
+o i9** — que é exatamente onde o OSRM, o Photon, o Nominatim, o SearXNG e o
+Ollama já vivem, pelo mesmo motivo.
+
+O primeiro caso é a **extração estadual**, e é o mais pesado do processo: DuckDB
+sobre o Overture no S3 mais o PBF do OSM, para uma UF inteira — 383 mil POIs no
+RS, horas de CPU e dezenas de GB. Num notebook ela disputaria tudo com os dez
+Chromiums da captura.
+
+```bash
+bash scripts/i9/dataset_estadual.sh --remoto RS   # produz no i9 e traz
+bash scripts/i9/dataset_estadual.sh --baixar RS   # só traz, se já existe lá
+```
+
+E `minerar_tudo.py` **não produz o dataset nesta máquina por padrão**. Se ele
+não existe, para e diz o comando — em vez de começar sozinho uma tarefa de horas
+que ninguém pediu. `--produzir-bases` força, para quando não há i9 à mão.
+
+### O que sobrou de útil da tentativa
+
+Nada do trabalho foi perdido, porque a infraestrutura é a mesma que o trabalho
+pesado usa:
+
+- **O código publicado no i9** (`scripts/i9/publicar.sh`), com venv de 105
+  pacotes e Chromium que abre — é o que faz a extração estadual rodar lá.
+- **`.gitattributes`** com `eol=lf`: o `\r` do Windows quebrava *qualquer* script
+  publicado, não só o do painel.
+- **O bit de execução no índice do git** — mesmo caso.
+- **`tests/test_scripts_i9.py`**, que cobra CRLF, bit de exec e crase em heredoc.
+- **O `.env` no i9**, necessário para qualquer trabalho que toque o banco de lá.
+
+Desfeito: o painel e o Caddy foram parados, a regra `netsh` da 8443 removida, e
+a linha correspondente saiu do `reamarrar-wsl.ps1`. O certificado da Tailscale
+ficou em `C:\ferramentas` — inofensivo, e já pago.
+
+> **A lição, e ela é sobre método, não sobre máquina:** eu tinha a informação de
+> que as chaves eram restritas por referrer, levantei o risco, e o descartei sem
+> **medir** — testei o raciocínio contra o caminho errado. Uma chamada ao mapa do
+> painel a partir do i9 teria custado trinta segundos e evitado a mudança inteira.

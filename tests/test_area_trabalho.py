@@ -35,6 +35,7 @@ import pytest
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, RAIZ)
 import config  # noqa: F401,E402
+from conftest import ler_credenciais  # noqa: E402
 
 API = os.environ.get("CR_API_URL", "http://127.0.0.1:8765")
 GW = f"http://{os.environ.get('I9_POSTGRES_HOST', '100.115.117.49')}:8000"
@@ -71,8 +72,7 @@ def _http(url, metodo="GET", corpo=None, token=None, apikey=None):
 def token_root():
     if not os.path.exists(CSV):
         pytest.skip("USUARIOS-INICIAIS.csv nao existe")
-    with open(CSV, encoding="utf-8") as f:
-        cred = {l["email"]: l for l in csv.DictReader(f)}
+    cred = ler_credenciais()
     u = next((v for v in cred.values() if v["nivel"] == "root"), None)
     if not u or u["senha"].startswith("("):
         pytest.skip("sem senha utilizavel para o root")

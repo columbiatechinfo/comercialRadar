@@ -20,11 +20,12 @@ import pytest
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, RAIZ)
 import config  # noqa: F401,E402
+from conftest import ler_credenciais  # noqa: E402
 
-# O painel mudou de máquina em 24/08/2026: ele roda no i9, atrás do Caddy.
-# O padrão continua o local para quem depura aqui; `CR_API_URL` aponta para
-# onde ele de fato está — sem isso a suíte testaria um servidor que não é o
-# que serve o usuário, e passaria dizendo nada.
+# O painel roda no NOTEBOOK — a mudança para o i9 foi revertida em 24/08/2026
+# (o Google recusa a chave quando o referrer muda; ver a seção 35). `CR_API_URL`
+# fica porque a suíte precisa poder apontar para onde o painel de fato está:
+# testar um servidor que não é o que serve o usuário passa dizendo nada.
 API = os.environ.get("CR_API_URL", "http://127.0.0.1:8765").rstrip("/")
 GW = f"http://{os.environ.get('I9_POSTGRES_HOST', '100.115.117.49')}:8000"
 CHAVE = (os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or "").strip()
@@ -55,8 +56,7 @@ def _http(url, metodo="GET", corpo=None, token=None, apikey=None):
 def credenciais():
     if not os.path.exists(CSV):
         pytest.skip("USUARIOS-INICIAIS.csv nao existe")
-    with open(CSV, encoding="utf-8") as f:
-        return {l["email"]: l for l in csv.DictReader(f)}
+    return ler_credenciais()
 
 
 def _entrar(cred, email):

@@ -111,17 +111,44 @@ def _fontes_disponiveis() -> tuple[str, list]:
     return ",".join(fontes), faltando
 
 
-def garantir_dataset(uf: str) -> Path:
-    """Devolve a pasta do dataset da UF, produzindo-a se ainda não existir.
+def garantir_dataset(uf: str, produzir_aqui: bool = False) -> Path:
+    """Devolve a pasta do dataset da UF. NÃO a produz nesta máquina por padrão.
 
-    A skill é retomável: se uma execução anterior parou no meio, esta continua
-    de onde parou em vez de recomeçar.
+    POR QUE NÃO PRODUZ AQUI
+
+    Produzir a UF é o trabalho pesado do processo: DuckDB sobre o Overture no S3
+    mais o PBF do OpenStreetMap, para um estado inteiro — 383 mil POIs no RS.
+    Num notebook isso disputa CPU e disco com os dez Chromiums da captura, e
+    leva horas antes de a captura sequer começar.
+
+    Esse é o tipo de trabalho que mora no i9, ao lado do OSRM e do Photon. A
+    máquina tem 16 CPUs, 94 GB de RAM e 682 GB livres, e o código já está
+    publicado lá (`scripts/i9/publicar.sh`).
+
+    Então aqui a regra é: se o dataset existe, usa; se não existe, **para e diz
+    o comando que o produz** — em vez de começar sozinho uma tarefa de horas que
+    ninguém pediu. `--produzir-bases` força a produção local, para quando não há
+    i9 à mão.
     """
     destino = DATASETS / uf.upper()
     if (destino / MARCADOR).exists():
         _log(f"📚 Bases públicas: dataset de {uf.upper()} já existe — reaproveitando")
         _log(f"   {destino}")
         return destino
+
+    if not produzir_aqui:
+        raise SystemExit(
+            f"\n❌ Não há dataset de {uf.upper()} em {destino}.\n\n"
+            f"   Produzir é trabalho de HORAS (a UF inteira: Overture + OSM +\n"
+            f"   Foursquare) e não roda aqui de propósito — é tarefa do i9.\n\n"
+            f"   No i9, uma vez por UF:\n\n"
+            f"     ssh orbisgrid@100.115.117.49 \"wsl -d Ubuntu -- bash -lc \\\n"
+            f"       'cd /home/orbisgrid/comercialradar && \\\n"
+            f"        ./scripts/i9/dataset_estadual.sh {uf.upper()}'\"\n\n"
+            f"   Depois traga a pasta com:\n\n"
+            f"     bash scripts/i9/dataset_estadual.sh --baixar {uf.upper()}\n\n"
+            f"   Para minerar SÓ com a captura enquanto isso: --pular-bases.\n"
+            f"   Para produzir aqui mesmo, sabendo do custo: --produzir-bases.")
 
     destino.mkdir(parents=True, exist_ok=True)
     fontes, faltando = _fontes_disponiveis()
@@ -169,6 +196,9 @@ def main(argv=None) -> int:
     p.add_argument("--pular-bases", dest="pular_bases", action="store_true",
                    help="só a captura. Existe para depurar a captura, não para "
                         "uso normal: as duas fontes são o processo.")
+    p.add_argument("--produzir-bases", dest="produzir_bases", action="store_true",
+                   help="produz o dataset da UF NESTA máquina. São horas e ela "
+                        "disputa CPU com a captura — o lugar disso é o i9.")
     a = p.parse_args(argv)
 
     poly = area_utils.carregar_area(a.area)
@@ -185,7 +215,7 @@ def main(argv=None) -> int:
         _log("⚠️  Não identifiquei a UF da área — as bases públicas trabalham por")
         _log("   UF e por município, então esta etapa fica de fora desta rodada.")
     else:
-        destino = garantir_dataset(uf)
+        destino = garantir_dataset(uf, produzir_aqui=a.produzir_bases)
         cod = _cod_municipio(cidade, uf)
         if not cod:
             _log(f"⚠️  Não achei o código IBGE de {cidade}/{uf} na malha — a")
