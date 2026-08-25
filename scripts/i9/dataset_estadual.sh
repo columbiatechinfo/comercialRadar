@@ -118,17 +118,56 @@ produzir() {
   echo "  source-mode: $MODO_FONTE"
 
   cd "$DIR_I9/skills/extracao-poi-estadual"
+  set +e
   "$DIR_I9/.venv/bin/python" poi_estadual.py run \
     --uf "$UF" --fontes "$FONTES" --formatos csv,geoparquet \
     --source-mode "$MODO_FONTE" \
     --base-dir "$DESTINO_I9"
+  RC=$?
+  set -e
 
-  # O marcador só nasce quando a skill termina INTEIRA. A existência da pasta
-  # não é prova: uma execução interrompida na etapa 6 de 8 tem pasta, tem
-  # arquivos e não serve para importar.
-  printf 'extracao-poi-estadual · uf=%s · fontes=%s\n' "$UF" "$FONTES" \
-    > "$DESTINO_I9/$MARCADOR"
-  echo "✅ pronto em $DESTINO_I9"
+  # PRODUZIDO e APROVADO SÃO COISAS DIFERENTES — e confundi-las tornava toda
+  # base inutilizável.
+  #
+  # O marcador nascia só com código 0. Mas a skill REPROVA no `validate` por
+  # taxa de fusão suspeita (RS 11,47%, PI 8,96%, limite 2%) mesmo tendo
+  # produzido o entregável inteiro: 945.716 POIs no RS, 6,6 GB de saída. Sem
+  # marcador, o `minerar_tudo` recusa o dataset — então nenhuma UF ficaria
+  # utilizável por mais que se produzisse.
+  #
+  # A distinção agora é explícita: o marcador registra o VEREDITO. Base
+  # reprovada é usável e a ressalva viaja com ela, em vez de o dado ser
+  # descartado por causa de um número que quem usa deveria poder ver e julgar.
+  #
+  # O que continua NÃO gerando marcador é a execução que não chegou ao fim —
+  # pasta pela metade não é base, e é para isso que o marcador existe.
+  PADRAO=$(ls "$DESTINO_I9/saida"/poi_padronizado_*.parquet 2>/dev/null | head -1)
+  if [ -z "$PADRAO" ]; then
+    echo "❌ $UF: a skill parou antes de gerar o entregável (código $RC)."
+    echo "   Sem marcador — rodar de novo CONTINUA de onde parou."
+    exit "${RC:-1}"
+  fi
+
+  if [ "$RC" -eq 0 ]; then
+    VEREDITO="aprovado"
+  else
+    VEREDITO="produzido_com_ressalva"
+  fi
+  {
+    printf 'extracao-poi-estadual · uf=%s · fontes=%s\n' "$UF" "$FONTES"
+    printf 'veredito=%s · codigo=%s\n' "$VEREDITO" "$RC"
+    printf 'entregavel=%s\n' "$(basename "$PADRAO")"
+    [ "$RC" -ne 0 ] && printf 'ressalva=ver relatorio_qualidade_*.json na saida\n'
+  } > "$DESTINO_I9/$MARCADOR"
+
+  if [ "$RC" -eq 0 ]; then
+    echo "✅ $UF pronto e APROVADO em $DESTINO_I9"
+  else
+    echo "⚠️  $UF produzido, mas REPROVADO no controle de qualidade da skill."
+    echo "   O entregável existe e é utilizável; a ressalva está no marcador e no"
+    echo "   relatorio_qualidade_*.json. Veja antes de confiar nos números."
+    grep -E "FALHA:" "$DIR_I9/logs/estadual_$UF.log" 2>/dev/null | tail -4 | sed 's/^/     /'
+  fi
   echo "   Traga com:  bash scripts/i9/dataset_estadual.sh --baixar $UF"
 }
 
