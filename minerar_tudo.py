@@ -239,6 +239,23 @@ def dataset_pronto(uf: str) -> tuple:
     return False, "nem aqui nem no i9"
 
 
+CADASTUR = Path(os.environ.get("CADASTUR_SAIDA")
+                or (BASE / "dados_externos" / "cadastur"))
+
+
+def cadastur_baixado() -> bool:
+    """O snapshot nacional do MTur ja esta em disco?
+
+    A base e uma so para o pais inteiro e nao muda de dia para dia — por isso
+    ela se baixa UMA VEZ e vale para toda mineracao seguinte, como o dataset
+    estadual. Aqui so se PERGUNTA; quem baixa e um comando explicito.
+    """
+    try:
+        return any(CADASTUR.glob("*.parquet")) or any(CADASTUR.rglob("*.parquet"))
+    except OSError:
+        return False
+
+
 def _diagnostico(uf: str, cod: str, cidade: str, empresa: str,
                  pular: dict) -> dict:
     """O QUE VAI RODAR NESTA AREA, dito ANTES de gastar a primeira hora.
@@ -275,8 +292,11 @@ def _diagnostico(uf: str, cod: str, cidade: str, empresa: str,
           else f"sem dataset de {uf} — procurei em: {onde_dataset}")),
         (2, "importar o municipio", tem_dataset and bool(cod) and not pular["bases"],
          "" if cod else "municipio fora da malha IBGE carregada"),
-        (3, "Cadastur/MTur", bool(cidade and uf) and not pular["cadastur"],
-         "" if cidade and uf else "precisa do nome do municipio e da UF"),
+        (3, "Cadastur/MTur",
+         bool(cidade and uf) and cadastur_baixado() and not pular["cadastur"],
+         "" if not (cidade and uf) else
+         ("" if cadastur_baixado() else
+          "snapshot do MTur ainda nao baixado (uma vez so, ver o log)")),
         (4, "captura + OCR do Maps", True, ""),
         (5, "iFood", tem_cnefe and not pular["ifood"],
          "" if tem_cnefe else "sem CNEFE do municipio: nao ha endereco-semente"),
@@ -483,19 +503,36 @@ def main(argv=None) -> int:
 
     # ── 3 · Cadastur/MTur ─────────────────────────────────────────────────
     _etapa(3, "Cadastur/MTur — o que o Estado registrou")
-    if cidade and uf and not a.pular_cadastur:
-        # `--municipio` do Cadastur recebe NOME, nao codigo IBGE — e nao existe
-        # `--empresa` nele: o tenant vem da sessao. A primeira versao desta
-        # etapa passava o codigo e uma flag inventada, e a rodada de
-        # Cachoeirinha respondeu `unrecognized arguments: --empresa`.
+    if not (cidade and uf):
+        _log("  pulado — sem município/UF da área")
+    elif a.pular_cadastur:
+        _log("  pulado por --pular-cadastur")
+    elif not cadastur_baixado():
+        # A BASE NAO SE BAIXA AQUI. Mesma regra da base estadual: produz uma
+        # vez, consulta sempre, atualiza quando alguem MANDA.
         #
-        # `--gerar` e o que faz a fonte virar POI: sem ele o Cadastur so carrega
-        # e cruza, e a etapa "roda" sem acrescentar ponto nenhum — o pior tipo
-        # de sucesso.
-        _tolerante([PYTHON, "cadastur.py", "--uf", uf, "--municipio", cidade,
-                    "--gerar"], "Cadastur")
+        # A primeira versao desta etapa chamava o Cadastur sem `--so-carregar`,
+        # e ele baixava os 26 recursos NACIONAIS a cada mineracao de area —
+        # minerar tres bairros da mesma cidade no mesmo dia baixaria a base
+        # federal tres vezes. O recorte por municipio acontece DEPOIS do
+        # download, entao o custo nao diminui com a area.
+        _log(f"  ⏭  o snapshot do Cadastur nao esta em {CADASTUR}.")
+        _log("     Ele e baixado UMA VEZ e reaproveitado por toda mineracao:")
+        _log("")
+        _log("       python cadastur.py --uf %s --gerar" % uf)
+        _log("")
+        _log("     Depois disso, so quando voce mandar atualizar.")
     else:
-        _log("  pulado" + ("" if cidade and uf else " — sem município/UF da área"))
+        # `--municipio` recebe NOME, nao codigo IBGE — e nao existe `--empresa`
+        # nele: o tenant vem da sessao. A primeira versao passava o codigo e uma
+        # flag inventada, e a rodada de Cachoeirinha respondeu
+        # `unrecognized arguments: --empresa`.
+        #
+        # `--so-carregar` NAO baixa: le o snapshot que ja esta em disco.
+        # `--gerar` e o que faz a fonte virar POI — sem ele a etapa "roda" sem
+        # acrescentar ponto nenhum, que e o pior tipo de sucesso.
+        _tolerante([PYTHON, "cadastur.py", "--uf", uf, "--municipio", cidade,
+                    "--so-carregar", "--gerar"], "Cadastur")
 
     # ── 4 · captura + OCR ─────────────────────────────────────────────────
     _etapa(4, "captura + OCR do Maps — a única que traz painel e foto")

@@ -252,3 +252,38 @@ def test_o_servidor_exige_municipio_e_uf():
     trecho = trecho[:trecho.index("else:")]
     assert "if not municipio or len(uf) != 2" in trecho
     assert "cadastur.py" in trecho
+
+
+def test_a_base_nacional_nao_e_baixada_a_cada_mineracao():
+    """Regra do dono do produto, 25/08/2026: baixa UMA VEZ, depois só quando
+    ele mandar — igual às demais bases públicas grandes.
+
+    A primeira versão da etapa 3 chamava o Cadastur sem `--so-carregar`, e ele
+    baixava os 26 recursos FEDERAIS a cada área minerada. O recorte por
+    município acontece DEPOIS do download, então o custo não diminuía com a
+    área: minerar três bairros da mesma cidade no mesmo dia baixaria a base do
+    país três vezes.
+
+    A mineração passa a só CONSULTAR o que está em disco; o download mora num
+    botão do painel, deliberado.
+    """
+    orq = io.open(RAIZ / "minerar_tudo.py", encoding="utf-8").read()
+    # A ancora e a CHAMADA da etapa, nao o rotulo "3/7" — esse e montado em
+    # tempo de execucao por `_etapa` e nao existe no fonte.
+    i = orq.index("_etapa(3,")
+    trecho = orq[i:i + 2600]
+    assert '"--so-carregar"' in trecho, \
+        "a mineração voltou a BAIXAR o Cadastur em vez de consultar o snapshot"
+    assert '"--gerar"' in trecho, \
+        "sem --gerar o Cadastur carrega e cruza, e não vira POI: sucesso vazio"
+    assert "cadastur_baixado()" in trecho, \
+        "a etapa não confere se o snapshot existe antes de tentar usá-lo"
+
+    # E o caminho para baixar tem de existir, senão a regra vira um beco: quem
+    # nunca baixou fica sem saída.
+    html = io.open(RAIZ / "frontend" / "index.html", encoding="utf-8").read()
+    assert 'id="btn-base-cadastur"' in html, "sumiu o botão de baixar/atualizar"
+    srv = io.open(RAIZ / "server.py", encoding="utf-8").read()
+    assert 'modo == "base_cadastur"' in srv, "a rota do download não existe"
+    assert '"--refresh"' in srv[srv.index('modo == "base_cadastur"'):][:2000], \
+        "não há como pedir dado NOVO: atualizar viraria sinônimo de reaproveitar"

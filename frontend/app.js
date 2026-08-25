@@ -1206,7 +1206,8 @@ function aplicarNivel() {
   // Links que NAVEGAM (aba nova, download) tambem nao mandam cabecalho.
   const modelo = $("link-modelo-cadastro");
   if (modelo && window.comToken) modelo.href = window.comToken("/api/modelos/cadastro");
-  for (const id of ["btn-cnpj-skill", "btn-baixar-imgs", "btn-base-estadual"]) {
+  for (const id of ["btn-cnpj-skill", "btn-baixar-imgs", "btn-base-estadual",
+                    "btn-base-cadastur"]) {
     if ($(id)) $(id).classList.toggle("hidden", !podeExecutar());
   }
 }
@@ -1796,6 +1797,7 @@ const MODO_LABEL = { planilha: "planilha", mineracao: "mineração", minerar_web
                      enriquecer_tudo: "enriquecimento (cascata)", baixar_imagens: "download de imagens",
                      cnpj_receita: "CNPJ x CNEFE (skill)", extracao_estadual: "extração estadual",
                      base_estadual: "base estadual (no i9)",
+                     base_cadastur: "base do Cadastur/MTur",
                      avaliar: "avaliação de fachada" };
 /* QUAL PAINEL DA DIREITA APARECE.
  *
@@ -2187,6 +2189,26 @@ if ($("btn-cnpj-skill")) $("btn-cnpj-skill").onclick = async () => {
  * Botão próprio e não caixa da mineração: é a MATÉRIA-PRIMA dela, roda noutra
  * máquina e leva horas. Encaixá-lo na cascata obrigaria toda mineração a
  * esperar por ele. */
+if ($("btn-base-cadastur")) $("btn-base-cadastur").onclick = async () => {
+  if (jobRodando) { toast("Já há um processo rodando.", "err"); return; }
+  const uf = ($("bc-uf")?.value || "").trim().toUpperCase();
+  if (uf.length !== 2) { toast("Informe a UF com duas letras.", "err"); return; }
+  const atualizar = !!$("bc-atualizar")?.checked;
+  // O download é NACIONAL — a UF só recorta o que vira POI depois. Dizer isso
+  // antes evita a surpresa de ver 26 recursos do país inteiro entrando quando
+  // se pediu "RS".
+  if (!confirm(`Baixar a base do Cadastur/MTur${atualizar ? " (dado NOVO)" : ""}?
+
+`
+             + `O download é do BRASIL inteiro — a UF ${uf} recorta só o que vira POI.
+`
+             + `Depois disso, toda mineração apenas consulta o que ficou em disco.`)) return;
+  const r = await pedirJob({ modo: "base_cadastur", opcoes: { uf, atualizar } });
+  if (!r) return;
+  aplicarJob(r);
+  toast(`🏛️ ${atualizar ? "Atualizando" : "Baixando"} o Cadastur — acompanhe pelo log.`, "ok");
+};
+
 if ($("btn-base-estadual")) $("btn-base-estadual").onclick = async () => {
   if (jobRodando) { toast("Já há um processo rodando.", "err"); return; }
   const uf = ($("be-uf")?.value || "").trim().toUpperCase();

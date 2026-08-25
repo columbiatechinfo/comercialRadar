@@ -279,6 +279,24 @@
           deliberado)</small></label>
         <button class="btn-outline" id="btn-base-estadual">▶ Produzir / atualizar no i9</button>
       </details>
+      <!-- O CADASTUR SEGUE A MESMA REGRA DA BASE ESTADUAL, e por isso fica ao
+           lado dela: a base é nacional, baixa UMA VEZ e é reaproveitada por
+           toda mineração. Antes, o passo 3 baixava os 26 recursos federais a
+           cada área minerada — três bairros da mesma cidade no mesmo dia
+           baixariam a base do país três vezes. -->
+      <details class="bloco-extra">
+        <summary>🏛️ Base do Cadastur/MTur — baixar ou atualizar</summary>
+        <div class="hint">A base é <b>nacional</b> e se baixa <b>uma vez</b>: a
+          mineração de qualquer área depois apenas consulta o que está em disco.
+          Use aqui quando quiser o dado mais novo do MTur.</div>
+        <label class="opt inline">UF do recorte
+          <input type="text" id="bc-uf" maxlength="2" placeholder="RS" style="width:70px">
+        </label>
+        <label class="opt"><input type="checkbox" id="bc-atualizar">
+          Atualizar (ignorar o que já está em disco)
+          <small>(sem isto, um snapshot já baixado é reaproveitado)</small></label>
+        <button class="btn-outline" id="btn-base-cadastur">▶ Baixar / atualizar o Cadastur</button>
+      </details>
       <label class="opt inline" id="op-zoom-wrap">Zoom da captura
         <select id="op-zoom">
           <option value="19" selected>19 — rua com POIs (padrão)</option>

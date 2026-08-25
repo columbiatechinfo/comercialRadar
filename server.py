@@ -1933,7 +1933,7 @@ def iniciar_job(body: dict):
         # motivo: ela trabalha por UF, que é a unidade em que as bases públicas
         # são publicadas. Exigir um retângulo desenhado para produzir a base do
         # Rio Grande do Sul seria pedir um dado que a tarefa não usa.
-        if not poly and modo not in ("cadastur", "base_estadual"):
+        if not poly and modo not in ("cadastur", "base_estadual", "base_cadastur"):
             return JSONResponse({"erro": "Desenhe o polígono da área antes de iniciar."}, status_code=400)
 
         if modo == "planilha":
@@ -2098,6 +2098,36 @@ def iniciar_job(body: dict):
             if op.get("limite"):
                 cmd += ["--limite", str(int(op["limite"]))]
             _novo_job("extracao_estadual", out_json, {"municipio": cod})
+
+        elif modo == "base_cadastur":
+            # BAIXAR (ou ATUALIZAR) o snapshot nacional do MTur.
+            #
+            # Mesma regra da base estadual, e ela nasceu de um desperdicio
+            # medido: o passo 3 da mineracao chamava o Cadastur SEM
+            # `--so-carregar`, e ele baixava os 26 recursos FEDERAIS a cada area
+            # minerada. O recorte por municipio acontece depois do download,
+            # entao o custo nao diminuia com a area — tres bairros da mesma
+            # cidade no mesmo dia baixariam a base do pais tres vezes.
+            #
+            # Agora a mineracao so CONSULTA o que esta em disco, e o download
+            # mora aqui: um clique, deliberado.
+            #
+            # Roda no NOTEBOOK, e nao no i9 como a base estadual: sao centenas
+            # de MB, nao dezenas de GB, e o `cadastur.py` grava direto no banco
+            # (que ja aponta para o i9 pelo .env).
+            uf = (str(op.get("uf") or "").strip().upper()
+                  or (area_utils.municipio_da_area(poly)[1] if poly else ""))
+            if len(uf) != 2:
+                return JSONResponse(
+                    {"erro": "Informe a UF (duas letras) ou desenhe uma área dentro dela."},
+                    status_code=400)
+            out_json = MINERACAO / "_base_cadastur_noop.json"
+            cmd = [PYTHON, "cadastur.py", "--uf", uf, "--gerar"]
+            if op.get("atualizar"):
+                # `--refresh` ignora o cache da skill. Deliberado, nunca padrão:
+                # sem ele um snapshot já baixado é reaproveitado, que é o ponto.
+                cmd.append("--refresh")
+            _novo_job("base_cadastur", out_json, {"uf": uf})
 
         elif modo == "base_estadual":
             # PRODUZIR (ou ATUALIZAR) a base das bases públicas — no i9.
