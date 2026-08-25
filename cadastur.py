@@ -191,7 +191,7 @@ COLS = ("cnpj", "razao_social", "nome_fantasia", "cnae", "natureza_juridica",
 GRAVAR = f"""
 insert into comercialradar.cadastur_prestador ({', '.join(COLS)})
 values %s
-on conflict (tenant_id, recurso_id, linha_origem) do update set
+on conflict (recurso_id, linha_origem) do update set
 """ + ",\n  ".join(
     f"{c} = coalesce(excluded.{c}, cadastur_prestador.{c})"
     for c in COLS if c not in ("recurso_id", "linha_origem")
@@ -450,7 +450,7 @@ TOTAL_PF = """
 insert into comercialradar.cadastur_total_pf
        (dataset, atividade, uf, municipio, ref_periodo, quantidade)
 values %s
-on conflict (tenant_id, dataset, uf, municipio, ref_periodo) do update set
+on conflict (dataset, uf, municipio, ref_periodo) do update set
   quantidade    = excluded.quantidade,
   atividade     = coalesce(excluded.atividade, cadastur_total_pf.atividade),
   atualizado_em = now()
