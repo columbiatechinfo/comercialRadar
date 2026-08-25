@@ -62,7 +62,24 @@ echo " inicio : $(date '+%d/%m/%Y %H:%M')"
 echo " disco  : $(_livre_gb) GB livres · piso de seguranca: ${PISO_GB} GB"
 echo "==============================================================="
 
-feitas=0; puladas=0; falhas=0; t_inicio=$(date +%s)
+feitas=0; puladas=0; falhas=0; seguidas=0; t_inicio=$(date +%s)
+
+# QUANTAS FALHAS SEGUIDAS ANTES DE DESISTIR, e por que isso precisa existir.
+#
+# Em 25/08/2026 dezenove UFs falharam em ZERO minuto, uma atrás da outra, todas
+# com `HTTP Error 503` na etapa `init` — que e a que consulta a malha municipal
+# na API do IBGE. A causa provavel fomos nos: dezenove consultas em sequencia
+# dentro de um minuto e pressao suficiente para levar backpressure da fonte.
+#
+# UF que falha sozinha e problema da UF. Tres seguidas e problema da FONTE, e
+# continuar varrendo a lista contra um servico que esta recusando so queima o
+# resto do alfabeto e enche o log de falha que nao diz nada.
+MAX_SEGUIDAS="${CR_MAX_FALHAS_SEGUIDAS:-3}"
+
+# Respiro entre UFs. Nao e superstiicao: o `init` de cada uma bate na API do
+# IBGE, e a producao inteira do Brasil sao 27 rajadas em poucos minutos quando
+# as UFs ja estao prontas e o laco so pula.
+PAUSA_S="${CR_PAUSA_ENTRE_UFS:-15}"
 
 for uf in $UFS; do
   if [ -f "$DATASETS/$uf/$MARCADOR" ]; then
@@ -89,6 +106,7 @@ for uf in $UFS; do
   if "$RAIZ/scripts/i9/dataset_estadual.sh" "$uf" >> "$RAIZ/logs/estadual_$uf.log" 2>&1; then
     echo "[ok] $uf em $((($(date +%s) - t0) / 60)) min · $(du -sh "$DATASETS/$uf" 2>/dev/null | cut -f1)"
     feitas=$((feitas + 1))
+    seguidas=0
   else
     # NAO derruba o laco. Uma UF pode falhar por indisponibilidade da fonte, e
     # perder as outras 26 por causa dela seria trocar um problema por 26.
@@ -96,7 +114,17 @@ for uf in $UFS; do
     tail -6 "$RAIZ/logs/estadual_$uf.log" | sed 's/^/     /'
     echo "  (as demais continuam; rode de novo depois e so esta sera refeita)"
     falhas=$((falhas + 1))
+    seguidas=$((seguidas + 1))
+    if [ "$seguidas" -ge "$MAX_SEGUIDAS" ]; then
+      echo
+      echo "PARANDO: $seguidas UFs seguidas falharam."
+      echo "  Isso quase nunca e problema das UFs — e da FONTE. Veja o motivo em"
+      echo "  $RAIZ/logs/estadual_$uf.log e rode de novo quando ela voltar:"
+      echo "  as prontas sao puladas e so as que faltam sao refeitas."
+      break
+    fi
   fi
+  sleep "$PAUSA_S"
 done
 
 echo
