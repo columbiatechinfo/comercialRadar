@@ -79,9 +79,13 @@ if [ "$MANDAR_ENV" = 1 ]; then
   if [ "$ok" = "s" ] || [ "$ok" = "S" ]; then
     # `chmod 600` no mesmo comando: um .env que existe por um instante com
     # permissão de leitura para todos é um .env vazado, e o WSL é multiusuário.
-    ssh -o BatchMode=yes "$I9" \
-      "wsl -d Ubuntu -- bash -lc 'cat > $DESTINO/.env && chmod 600 $DESTINO/.env'" \
-      < "$RAIZ/.env"
+    # `tr -d` no CR: o .env é editado no Windows e chega com CRLF. O Python
+    # tolera (o dotenv limpa), mas `set -a; . ./.env` no shell do Linux não —
+    # ele lê o CR como comando e, pior, a variável nasce com um CR NO VALOR.
+    # Chave de API terminada em CR é recusada pelo servidor, e o erro fala de
+    # chave inválida, nunca de fim de linha.
+    tr -d '\r' < "$RAIZ/.env" | ssh -o BatchMode=yes "$I9" \
+      "wsl -d Ubuntu -- bash -lc 'cat > $DESTINO/.env && chmod 600 $DESTINO/.env'"
     echo "  OK  .env enviado (chmod 600)"
   else
     echo "  pulado"

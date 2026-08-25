@@ -2042,6 +2042,54 @@ def _openai():
     return _CLIENTE
 
 
+# ── O MODELO LOCAL PASSA A FALAR O MESMO PROTOCOLO (24/08/2026) ──────────────
+#
+# Até aqui havia DOIS caminhos de chamada: o da OpenAI (`/v1/chat/completions`,
+# protocolo padrão) e o do Ollama (`/api/chat`, com `think`, `images` em base64
+# puro e `options.num_ctx`). Dois caminhos para a mesma pergunta significam dois
+# lugares onde o prompt pode divergir — e a comparação entre modelos deixa de
+# ser honesta no dia em que um dos dois receber um ajuste que o outro não teve.
+#
+# O destino da IA é o vLLM da Spark (`Qwen3-VL-30B-A3B` servido como
+# `qwen3vl-moe`), e ele fala o protocolo da OpenAI. O Ollama TAMBÉM o fala, em
+# `/v1`. Então o caminho do Ollama nativo deixa de ser necessário: um protocolo
+# só, e a máquina vira endereço.
+#
+# `LOCAL_URL` aponta para a Spark por padrão. Enquanto ela estiver fora do ar,
+# apontar para `http://100.115.117.49:11434/v1` usa o Ollama do i9 pelo MESMO
+# código — foi assim que este caminho pôde ser testado antes de a Spark subir.
+LOCAL_URL = os.environ.get(
+    "VLLM_URL", os.environ.get("LOCAL_LLM_URL", "http://100.85.164.54:8000/v1")
+).rstrip("/")
+
+_CLIENTE_LOCAL = None
+
+
+def _local():
+    """Cliente do modelo LOCAL — mesmo protocolo da OpenAI, outro endereço.
+
+    A chave é obrigatória pela biblioteca e ignorada pelo servidor; `local` é
+    literal e não é segredo. Sem ela o construtor recusa e o erro fala de
+    autenticação num serviço que não autentica.
+    """
+    global _CLIENTE_LOCAL
+    if _CLIENTE_LOCAL is None:
+        from openai import AsyncOpenAI
+        _CLIENTE_LOCAL = AsyncOpenAI(api_key="local", base_url=LOCAL_URL,
+                                     timeout=TIMEOUT_LOCAL_S, max_retries=0)
+    return _CLIENTE_LOCAL
+
+
+def _e_local(modelo: str) -> bool:
+    """Decide pelo NOME do modelo, que é o que o chamador de fato escolhe.
+
+    `gpt-*` vai para a OpenAI; todo o resto é local. Decidir por uma flag à
+    parte permitiria pedir `gpt-4o` e mandá-lo para o vLLM — que responderia
+    "modelo não encontrado" num lugar longe de onde a escolha foi feita.
+    """
+    return not modelo.lower().startswith("gpt-")
+
+
 # ORÇAMENTO DE TOKENS POR MINUTO — o limite REAL da conta, lido do erro 429:
 #   "on tokens per min (TPM): Limit 200000, Used 200000, Requested 1569"
 #
@@ -2436,7 +2484,8 @@ async def _chamar_openai(alvo: dict, imgs: list, modelo: str) -> dict:
                      "(Street View); as seguintes, se houver, são fotos do "
                      "estabelecimento no Google Maps."})
     conteudo += [_img_openai(b) for b in imgs]
-    resp = await _openai().chat.completions.create(
+    local = _e_local(modelo)
+    resp = await (_local() if local else _openai()).chat.completions.create(
         model=modelo, temperature=0,
         messages=[{"role": "system", "content": _prompt_sistema()},
                   {"role": "user", "content": conteudo}],
@@ -2445,7 +2494,11 @@ async def _chamar_openai(alvo: dict, imgs: list, modelo: str) -> dict:
     )
     _USO["in"] += resp.usage.prompt_tokens
     _USO["out"] += resp.usage.completion_tokens
-    _ajustar_tokens(resp.usage.prompt_tokens + resp.usage.completion_tokens)
+    # O orçamento de tokens por minuto é o limite da CONTA da OpenAI. Contá-lo
+    # para o modelo local seguraria a fila por um limite que não existe: a GPU
+    # já está paga e não tem TPM.
+    if not local:
+        _ajustar_tokens(resp.usage.prompt_tokens + resp.usage.completion_tokens)
     return json.loads(resp.choices[0].message.content)
 
 
