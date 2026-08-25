@@ -3074,6 +3074,53 @@ por **arquivo** (`bash -s` pela entrada padrão), cuja linha de comando é só
 `bash -s`: nada para as três camadas de aspas comerem, nada para uma busca por
 processo casar por engano.
 
+### A fusão suspeita a 11,47%: medida, e é perda real (25/08/2026)
+
+Foi a única reprovação do `validate` que sobreviveu à rodada limpa — idêntica
+antes e depois, 11.676 fusões suspeitas contra um limite de 2%. Não é artefato.
+
+**73% delas são por telefone** (8.483 de 11.676). E a distância não separa nada:
+
+| Distância | Compartilham token | Núcleos disjuntos | % disjunto |
+|---|---:|---:|---:|
+| 0–10 m | 697 | 1.879 | **73%** |
+| 10–30 m | 966 | 1.685 | 64% |
+| 30–60 m | 534 | 870 | 62% |
+| 60–120 m | 427 | 628 | 60% |
+| 120–200 m | 327 | 470 | 59% |
+
+Mesmo colados a menos de 10 m, três em cada quatro pares fundidos por telefone
+têm nomes **sem um único token em comum**:
+
+```
+idiomas wizard           +  c montenegro you        14 m
+loterica schneider       +  bazar mega             147 m
+geracao moto nova sport  +  agropecuaria gaucha    198 m
+bah burger               +  figurati napolitana pizza  7 m
+```
+
+As legítimas, que precisam continuar fundindo, **sempre compartilham token**:
+`farelos racoes stein` + `agrocomercial stein`.
+
+**Total: 5.532 fusões por telefone com núcleos disjuntos só no RS** — provável
+perda de estabelecimento real, que é exatamente o defeito que a v3.0.0 da skill
+nasceu para impedir.
+
+**A causa** é `tel_max_locais=3` (`vendor/dedup_v3.py`): um telefone só vira
+"hub" e perde valor de prova se aparecer em **mais de 3** posições. Dois ou três
+comércios do mesmo dono dividindo o número — o caso mais comum do varejo
+brasileiro — passa como prova soberana, com `raio_forte_m=200`, e vence o nome
+divergente.
+
+**Recomendação, ainda não aplicada:** telefone deveria corroborar, não decidir
+sozinho — não autorizar fusão quando os núcleos discriminantes são disjuntos, em
+qualquer distância. Preserva `Padaria X` × `Panificadora X`; mata
+`bah burger` × `figurati pizza`. O custo é o oposto do atual: alguma duplicata em
+vez de estabelecimento apagado — e duplicata é visível e corrigível.
+
+É mudança no motor de dedup de uma **skill vendorada**, e vale para as 27 UFs:
+decisão do dono do produto, não do implementador.
+
 ### As travas
 
 `flock` em dois níveis (commit `c55a023`), porque são dois riscos diferentes:
