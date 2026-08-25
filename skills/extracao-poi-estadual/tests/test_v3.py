@@ -101,13 +101,59 @@ def test_mesmo_estabelecimento_entre_fontes_ainda_funde():
 
 
 # --------------------------------------------------------- §1 telefone e rede
-def test_telefone_igual_funde_a_120_m():
+def test_telefone_sozinho_e_longe_NAO_funde_mais():
+    """PATCH LOCAL comercialRadar, 25/08/2026 — politica trocada, com medicao.
+
+    Este teste cobrava o oposto: `Padaria Sao Jose` + `Panificadora Central` a
+    120 m com o mesmo telefone FUNDIAM. Media-se no RS o que essa regra custava:
+    das 11.676 fusoes suspeitas, 8.483 eram por telefone, e a IA julgou 400 pares
+    sorteados dizendo que 74,4% das unioes por telefone sao estabelecimentos
+    DISTINTOS — cerca de 7.800 lojas apagadas numa UF.
+
+    No varejo brasileiro o mesmo numero atende dois negocios do mesmo dono, ou e
+    o numero da galeria. Duas padarias do mesmo dono a 120 m sao o caso tipico,
+    nao a excecao — e o nome, aqui, diz justamente que sao duas.
+
+    O par nao se perde: sai marcado como candidato para o julgamento da camada
+    de cima, que decide com dados completos e devolve confianca de 1 a 10.
+    """
     linhas = [poi("ov1", "Padaria Sao Jose", 0, tel="(51) 3476-1122"),
               poi("node/2", "Panificadora Central", 120, tel="+55 51 34761122",
                   conf=None, fonte="osm")]
     ded, vin = dedup(linhas)
-    assert len(ded) == 1
-    assert "telefone" in ded["dedup_motivos"].iloc[0]
+    assert len(ded) == 2, "telefone voltou a decidir sozinho"
+    assert (vin["motivo"] == "candidato_contato_sem_apoio").any(),         "o par foi descartado em silencio em vez de virar candidato"
+
+
+def test_telefone_perto_e_com_apoio_de_nome_funde():
+    """A evidencia de telefone continua valendo — SOMADA a outra.
+
+    E o caso que ela existe para resolver: a mesma loja vista por duas fontes,
+    escrita de dois jeitos, a metros de distancia. `Padaria Sao Jose` e
+    `Panificadora Sao Jose` compartilham o nucleo `sao jose`, e isso e o apoio.
+    """
+    linhas = [poi("ov1", "Padaria Sao Jose", 0, tel="(51) 3476-1122"),
+              poi("node/2", "Panificadora Sao Jose", 8, tel="+55 51 34761122",
+                  conf=None, fonte="osm")]
+    ded, _ = dedup(linhas)
+    assert len(ded) == 1, "a fusao legitima por telefone+nome deixou de acontecer"
+
+
+def test_site_pesa_mais_que_telefone():
+    """Dominio e mais discriminativo que numero de telefone.
+
+    Era o inverso: telefone valia 100 e site 95. Um dominio com caminho aponta
+    para UM estabelecimento; um telefone aponta para quem atende, que pode ser o
+    dono de tres lojas.
+    """
+    import poi_estadual.vendor.dedup_v3 as dv
+    linhas = [poi("ov1", "Loja Alfa", 0, site="https://x.com/alfa"),
+              poi("node/2", "Comercio Beta", 9, site="https://x.com/alfa",
+                  conf=None, fonte="osm")]
+    ded, _ = dedup(linhas)
+    assert len(ded) == 1, "site igual e perto deixou de fundir"
+    assert dv.PARAMS["raio_contato_m"] == 20.0
+    assert dv.PARAMS["tel_exige_apoio"] is True
 
 
 def test_telefone_divergente_veta_nome_identico():

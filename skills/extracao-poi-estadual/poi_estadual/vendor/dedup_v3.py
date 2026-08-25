@@ -80,6 +80,11 @@ PARAMS = dict(
     ctx_raio_m=200.0,         # vizinhanca onde se mede se o token distingue
     ctx_min=3,                # token em >= N POIs da vizinhanca => contexto
     tel_max_locais=3,         # telefone em > N posicoes => hub, nao e evidencia
+    # --- PATCH LOCAL comercialRadar, 25/08/2026 (decisao do dono do produto) ---
+    # Ver o bloco PATCH em `arestas_do_bloco`. Ao atualizar a skill, ESTES DOIS
+    # parametros e aquele bloco somem juntos e a fusao volta a apagar loja.
+    raio_contato_m=20.0,      # telefone/site so valem a esta distancia
+    tel_exige_apoio=True,     # telefone sozinho nao funde; precisa de outra evidencia
     precisao_max_m=60.0,      # pior precisao aceita p/ fusao por proximidade pura
     nucleo_curto_chars=5,     # nucleo com menos que isso exige mesmo segmento
     semnome_modo="absorver",  # 'absorver' | 'marcar'
@@ -380,10 +385,50 @@ def arestas_do_bloco(ctx, sel, p):
 
         peso = motivo = None
         tol = p["diam_max_m"]
-        if ti and tj and ti == tj:
-            peso, motivo, tol = 100.0, "telefone", p["diam_forte_m"]
-        elif si and sj and si == sj and "/" in si:        # host+path; host puro nao basta
-            peso, motivo, tol = 95.0, "site", p["diam_forte_m"]
+
+        # ================= PATCH LOCAL comercialRadar, 25/08/2026 =================
+        # MEDIDO NO RS: das 11.676 fusoes suspeitas, 8.483 eram por telefone. A IA
+        # julgou 400 pares sorteados e disse que 74,4% das unioes por telefone sao
+        # ESTABELECIMENTOS DISTINTOS — cerca de 7.800 lojas apagadas so nesta UF.
+        #
+        # A causa era esta cadeia: telefone valia 100 (mais que site), decidia
+        # sozinho, e valia ate `raio_forte_m` = 200 m. No varejo brasileiro o mesmo
+        # numero atende dois negocios do mesmo dono, ou e o numero da galeria — e
+        # `tel_max_locais=3` so trata como hub quem aparece em MAIS de tres lugares,
+        # deixando passar exatamente o caso comum.
+        #
+        # As tres mudancas, na ordem em que o dono do produto as definiu:
+        #
+        #   1. telefone NAO decide sozinho — precisa somar outra evidencia;
+        #   2. site pesa MAIS que telefone, por ser dominio (era o inverso);
+        #   3. os dois so valem dentro de `raio_contato_m` (20 m).
+        #
+        # O que deixa de fundir aqui nao se perde: vira candidato para o julgamento
+        # da IA na camada de cima, que decide com dados completos e devolve
+        # confianca de 1 a 10. Preferir duplicata a estabelecimento apagado e a
+        # mesma escolha que a auditoria da v3.0.0 desta skill ja fez uma vez.
+        perto = d <= p.get("raio_contato_m", 20.0)
+        mesmo_tel = bool(ti and tj and ti == tj)
+        mesmo_site = bool(si and sj and si == sj and "/" in si)
+        # "Apoio" = qualquer outra evidencia independente do telefone. Nome com
+        # nucleo compartilhado e o caso comum (a mesma loja escrita de dois
+        # jeitos); site igual e o mais forte.
+        apoio = mesmo_site or bool(nucleos[i] and nucleos[j]
+                                   and (set(nucleos[i]) & set(nucleos[j])))
+
+        if mesmo_site and perto:
+            peso, motivo, tol = 100.0, "site", p["diam_forte_m"]
+        elif mesmo_tel and perto and (apoio or not p.get("tel_exige_apoio", True)):
+            peso, motivo, tol = 95.0, "telefone+apoio", p["diam_forte_m"]
+        elif mesmo_tel or mesmo_site:
+            # Havia contato igual, mas longe demais ou sem apoio. NAO funde — e
+            # registra o par para que a camada de cima possa julgar em vez de
+            # perde-lo em silencio.
+            vinc.append((i, j, "candidato_contato_sem_apoio", d, 0.0, False))
+        # ============================ FIM DO PATCH ================================
+
+        if peso is not None:
+            pass
         elif toks[i] and toks[j]:
             if d <= p["raio_nome_m"]:
                 peso, motivo = _aresta_nome(i, j, d, nucleos[i], nucleos[j],
