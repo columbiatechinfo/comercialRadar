@@ -49,7 +49,11 @@ import config  # noqa: F401
 
 from segmentar_endereco import SPARK, MODELO, _conferir_endpoint, _extrair_json
 
-LOTE = 10          # pares por chamada; o julgamento pede mais atenção por item
+# Pares por chamada. Menor que na segmentação de propósito: aqui cada item pede
+# um parecer escrito, e com 10 por lote 15% das respostas vinham truncadas —
+# JSON pela metade, lote inteiro perdido. Lote menor com teto de token maior
+# troca algumas chamadas a mais por medição que não tem buraco de 15%.
+LOTE = 6
 THREADS = int(os.environ.get("SPARK_THREADS", "16"))
 
 PROMPT = """Você decide se dois registros são o MESMO estabelecimento comercial ou DOIS estabelecimentos diferentes.
@@ -73,7 +77,7 @@ INCERTO: quando não dá para decidir com o que está escrito. É resposta legí
 
 Responda APENAS um array JSON, um objeto por par, na MESMA ORDEM, com as chaves:
   "veredito": "MESMO" | "DIFERENTE" | "INCERTO"
-  "motivo": uma frase curta dizendo o que decidiu
+  "motivo": no maximo 12 palavras
 
 PARES:
 """
@@ -126,7 +130,7 @@ def _chamar(pares: list, mapa: dict) -> list:
     corpo = {"model": MODELO,
              "messages": [{"role": "user", "content": PROMPT + corpo_texto}],
              "temperature": 0,
-             "max_tokens": 130 * len(pares) + 200}
+             "max_tokens": 260 * len(pares) + 400}
     req = urllib.request.Request(
         f"{SPARK}/chat/completions", method="POST",
         data=json.dumps(corpo).encode("utf-8"),
