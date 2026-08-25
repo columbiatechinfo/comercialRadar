@@ -3495,6 +3495,156 @@ app.mount("/static", _FrontSemCache(directory=str(FRONT)), name="static")
 # duplicando o que já estava no banco.
 
 
+# ══════════════════ as fontes de um POI, e como desfazer a fusão ═════════════
+#
+# A fusão é feita por máquina com evidência incompleta e vai errar — medido no
+# RS, 66,2% das fusões suspeitas uniram estabelecimentos distintos. Estas rotas
+# são a saída: ver de que fontes o ponto é feito, e tirar a que não pertence.
+
+
+class DesvincularEntrada(BaseModel):
+    fonte: str
+    id_fonte: str
+
+
+@app.get("/api/poi/{poi_id}/fontes")
+def poi_fontes(poi_id: int, u: _auth.Usuario = Depends(_auth.usuario_atual)):
+    """As abas da ficha: uma por fonte, com o que cada uma afirma.
+
+    Vem também o que já foi desvinculado, porque a ficha precisa poder mostrar
+    "isto já foi separado daqui" — sem isso, quem abrir amanhã não entende por
+    que o ponto tem uma fonte a menos que o relatório da extração diz.
+    """
+    import vinculo
+    con = _auth.conectar_como(u)
+    try:
+        abas = vinculo.fontes_do_poi(con, poi_id, incluir_desvinculados=True)
+    finally:
+        con.close()
+    for a in abas:
+        for k in ("desvinculado_em",):
+            if a.get(k):
+                a[k] = a[k].isoformat()
+    return {"poi_id": poi_id,
+            "fontes": [a for a in abas if a["estado"] == "vinculado"],
+            "desvinculadas": [a for a in abas if a["estado"] == "desvinculado"]}
+
+
+@app.post("/api/poi/{poi_id}/desvincular")
+def poi_desvincular(poi_id: int, e: DesvincularEntrada,
+                    u: _auth.Usuario = Depends(_auth.exige("supervisor"))):
+    """Tira uma fonte do POI. O que sai vira POI novo; o que fica continua junto.
+
+    Exige `supervisor` porque é decisão sobre a IDENTIDADE de um ponto — a
+    mesma alçada de quem aprova ou reprova um achado. Um operador que só
+    consulta não deveria poder partir um POI em dois.
+    """
+    import vinculo
+    con = _auth.conectar_como(u)
+    try:
+        r = vinculo.desvincular(con, poi_id, e.fonte, e.id_fonte,
+                                por=(u.email or u.nome or "?"))
+        con.commit()
+    except vinculo.NaoPodeDesvincular as erro:
+        con.rollback()
+        # 409 e não 400: o pedido está bem formado, o ESTADO é que não permite.
+        raise HTTPException(409, str(erro))
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
+    return r
+
+
+# ══════════════════ a fila de logradouro que precisa de gente ════════════════
+
+
+class RevisaoLogradouro(BaseModel):
+    logradouro_corrigido: str = ""
+    status: str = "corrigido"
+    nota: str = ""
+
+
+@app.get("/api/logradouro/pendencias")
+def logradouro_pendencias(scope_id: str = "", limite: int = 200,
+                          u: _auth.Usuario = Depends(_auth.usuario_atual)):
+    """O que a normalização não resolveu e passou para uma pessoa.
+
+    `REVISAR` significa que houve PERDA DE TEXTO — um segmento entre parênteses,
+    um bairro depois do hífen, uma poda. `HUMANO`, que sobrou pouco ou nada de
+    via. Os dois são fila de gente por desenho, não por falha.
+    """
+    con = _auth.conectar_como(u)
+    try:
+        with con.cursor() as cur:
+            cur.execute("""
+                select fonte, record_id, scope_id, logradouro_original,
+                       logradouro_marcado, tier, risco, numero_canonico,
+                       complemento_organizado, revisao_status,
+                       logradouro_corrigido, revisado_por, revisado_em
+                  from logradouro_ajustado
+                 where tier in ('REVISAR', 'HUMANO')
+                   and (%s = '' or scope_id = %s)
+                 order by (revisao_status = 'pendente') desc,
+                          case tier when 'HUMANO' then 0 else 1 end,
+                          record_id
+                 limit %s""", (scope_id, scope_id, min(int(limite), 1000)))
+            cols = [d[0] for d in cur.description]
+            itens = [dict(zip(cols, r)) for r in cur.fetchall()]
+            cur.execute("""
+                select revisao_status, count(*) from logradouro_ajustado
+                 where tier in ('REVISAR', 'HUMANO')
+                   and (%s = '' or scope_id = %s)
+                 group by 1""", (scope_id, scope_id))
+            resumo = dict(cur.fetchall())
+    finally:
+        con.close()
+    for i in itens:
+        if i.get("revisado_em"):
+            i["revisado_em"] = i["revisado_em"].isoformat()
+    return {"itens": itens, "resumo": resumo}
+
+
+@app.post("/api/logradouro/{fonte}/{record_id}/revisar")
+def logradouro_revisar(fonte: str, record_id: str, e: RevisaoLogradouro,
+                       u: _auth.Usuario = Depends(_auth.usuario_atual)):
+    """A pessoa decide: corrige, confirma o que a máquina marcou, ou descarta.
+
+    `revisado_por` não é enfeite. Sem ele, a correção humana fica
+    indistinguível da automática três meses depois — e a pergunta "quem decidiu
+    que esta rua se chama assim" fica sem resposta justamente nos casos em que
+    ela importa, que são os que a máquina não soube resolver.
+    """
+    if e.status not in ("corrigido", "confirmado", "descartado"):
+        raise HTTPException(422, "status deve ser corrigido, confirmado ou descartado")
+    if e.status == "corrigido" and not e.logradouro_corrigido.strip():
+        # Marcar "corrigido" sem escrever a correção deixaria a fila limpa e o
+        # dado igual — o pior desfecho possível para uma revisão.
+        raise HTTPException(422, "para marcar como corrigido, escreva o logradouro")
+
+    con = _auth.conectar_como(u)
+    try:
+        with con.cursor() as cur:
+            cur.execute("""
+                update logradouro_ajustado
+                   set revisao_status = %s,
+                       logradouro_corrigido = nullif(%s, ''),
+                       revisao_nota = nullif(%s, ''),
+                       revisado_por = %s, revisado_em = now()
+                 where fonte = %s and record_id = %s
+                 returning tier, logradouro_original, logradouro_corrigido""",
+                        (e.status, e.logradouro_corrigido.strip(), e.nota.strip(),
+                         (u.email or u.nome or "?"), fonte, record_id))
+            r = cur.fetchone()
+            if not r:
+                raise HTTPException(404, f"{fonte}:{record_id} não está na fila")
+        con.commit()
+    finally:
+        con.close()
+    return {"ok": True, "tier": r[0], "original": r[1], "corrigido": r[2]}
+
+
 if __name__ == "__main__":
     import uvicorn
     # `127.0.0.1` continua sendo o PADRÃO, e isso é escolha e não descuido: o
