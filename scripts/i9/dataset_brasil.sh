@@ -20,6 +20,28 @@ set -uo pipefail          # SEM `-e`: uma UF que falha não pode derrubar as 26.
 
 RAIZ="${CR_DIR:-/home/orbisgrid/comercialradar}"
 DATASETS="$RAIZ/dados_externos/estadual"
+
+# UMA RODADA POR VEZ, e a trava e do sistema — nao do costume de quem dispara.
+#
+# Em 25/08/2026 duas copias deste laco rodaram juntas por quatro horas (10:18 e
+# 10:20). O comentario "uma por vez" nao impede nada: o segundo disparo nao le
+# comentario. O estrago foi silencioso e caro:
+#
+#   - dois `poi_estadual.py` na MESMA UF e no MESMO base-dir (PE);
+#   - `.parquet.tmp -> .parquet` sumindo debaixo do outro processo (BA, SP);
+#   - SP morto pelo OOM, com os dois `dedup` disputando 94 GB de RAM;
+#   - o funil do RS acumulando tres passadas — e o `validate` reprovando por
+#     comparar esse acumulado com a tabela de rejeitados de UMA passada.
+#
+# O descritor 9 fica aberto enquanto o script vive; o kernel solta a trava
+# sozinho se o processo morrer, entao queda nao deixa cadeado orfao.
+exec 9>"$RAIZ/logs/.dataset_brasil.lock"
+if ! flock -n 9; then
+  echo "JA HA uma producao do Brasil rodando nesta maquina."
+  echo "  Ela e retomavel: quando terminar, rodar de novo pula o que ficou pronto."
+  echo "  Para ver onde esta:  tail -f $RAIZ/logs/estadual_BRASIL.log"
+  exit 1
+fi
 MARCADOR="_pronto.txt"
 
 # PISO DE DISCO — e ele não é conservadorismo, é o Postgres de produção.

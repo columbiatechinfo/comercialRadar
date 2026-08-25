@@ -59,6 +59,22 @@ produzir() {
   echo "  Horas de trabalho. É retomável: parar e rodar de novo CONTINUA."
   mkdir -p "$DESTINO_I9"
 
+  # TRAVA POR UF — a que protege o workspace de verdade.
+  #
+  # A do `dataset_brasil.sh` impede dois lacos; esta impede dois pipelines na
+  # mesma UF, venham de onde vierem (laco, disparo manual, painel). Em
+  # 25/08/2026 dois `poi_estadual.py run --uf PE` gravaram no mesmo diretorio ao
+  # mesmo tempo: o cache da skill e enderecado por hash de escopo, entao os dois
+  # concordavam sobre o caminho de cada arquivo — e escreviam por cima um do
+  # outro sem nenhum erro ate o `os.replace` achar o `.tmp` que o outro ja tinha
+  # promovido.
+  exec 8>"$DESTINO_I9/.lock"
+  if ! flock -n 8; then
+    echo "JA HA uma producao de $UF rodando nesta maquina — nada a fazer aqui."
+    echo "  Duas no mesmo diretorio corrompem o cache da skill em silencio."
+    exit 1
+  fi
+
   # As fontes são montadas pelo que a máquina de fato alcança. Declarar
   # `overture,osm,fsq` e deixar duas falharem produziria um dataset OSM-only com
   # nome de "bases públicas" — cobertura menor, e ninguém saberia.

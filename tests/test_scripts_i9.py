@@ -150,3 +150,30 @@ def test_a_conferencia_do_chromium_nao_tem_aspas():
     assert not any("python -c" in l for l in codigo), \
         "o `python -c` inline voltou ao publicar.sh"
     assert os.path.exists(os.path.join(RAIZ, "scripts", "i9", "checar_chromium.py"))
+
+
+def test_a_producao_estadual_tem_trava_de_instancia_unica():
+    """Duas copias do mesmo laco rodaram juntas por quatro horas em 25/08/2026.
+
+    O `dataset_brasil.sh` sempre disse, em comentario, que roda uma UF por vez.
+    Comentario nao impede o segundo disparo — e o segundo nao produziu erro
+    nenhum ate ser tarde: o cache da skill e endereçado por hash de escopo,
+    entao os dois processos CONCORDAVAM sobre o caminho de cada arquivo e
+    escreviam por cima um do outro. O que apareceu foi consequencia, longe da
+    causa: `.parquet.tmp` sumindo no `os.replace` (BA e SP), SP morto pelo OOM
+    com dois `dedup` disputando a RAM, e o `validate` do RS reprovando por
+    comparar um funil de tres passadas com a tabela de rejeitados de uma.
+
+    A trava e por PROCESSO, nao por convencao, e nos dois niveis: o laco inteiro
+    (uma producao do Brasil por maquina) e cada UF (um pipeline por diretorio,
+    venha do laco, de disparo manual ou do painel).
+    """
+    for nome in ("dataset_brasil.sh", "dataset_estadual.sh"):
+        txt = _bytes(nome).decode("utf-8", "replace")
+        codigo = [l for l in txt.splitlines() if not l.lstrip().startswith("#")]
+        assert any("flock -n" in l for l in codigo), (
+            f"{nome} perdeu a trava de instancia unica. Sem ela, dois disparos "
+            "gravam no mesmo diretorio e o estrago so aparece horas depois.")
+        assert any(l.lstrip().startswith("exec ") and ">" in l for l in codigo), (
+            f"{nome} tem flock sem descritor aberto por `exec N>` — a trava "
+            "morreria no fim do comando em vez de durar a execucao inteira.")
