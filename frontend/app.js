@@ -12,8 +12,20 @@ const map = L.map("map", { zoomControl: false, attributionControl: false })
 /* Panes com z-index explícito — a malha (divisas municipais) é uma camada
    clicável que cobre o mapa inteiro e roubava o clique das faces e quadras,
    levando ao centro do município. Cada coisa no seu andar:
-   malha (baixo) < quadras < faces/vias < marcadores (topo, sempre clicáveis). */
+   malha (baixo) < área desenhada < quadras < faces/vias < marcadores (topo,
+   sempre clicáveis). */
 map.createPane("paneMalha").style.zIndex = 410;
+// A ÁREA DESENHADA FICA ACIMA DA MALHA, e isto é conserto de defeito.
+//
+// Ela morava no `overlayPane` padrão, z-index 400 — abaixo dos 410 da malha.
+// O contorno do município era desenhado POR CIMA do polígono que o operador
+// acabou de traçar, e comia o clique: clicar no próprio desenho selecionava o
+// município e trocava o recorte do mapa inteiro. O tooltip pegajoso da malha
+// também aparecia por cima.
+//
+// 415 e não mais: quadras (620), marcadores (630) e vias (645) continuam
+// ganhando dela. Clicar num POI dentro da área tem de abrir o POI, não a área.
+map.createPane("paneArea").style.zIndex = 415;
 map.createPane("paneQuadras").style.zIndex = 620;
 map.createPane("paneMarcadores").style.zIndex = 630;
 map.createPane("paneFaces").style.zIndex = 645;   // vias no topo: clicar nelas sempre vence
@@ -941,7 +953,7 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape") { fecharMo
 let areaLayer = null;
 let drawer = null;
 let modoDesenho = "area";        // só a área é desenhada pelo usuário
-const AREA_STYLE = { color: "#1a73e8", weight: 2.5, dashArray: "6 6", fillColor: "#1a73e8", fillOpacity: 0.06, className: "area-poly" };
+const AREA_STYLE = { color: "#1a73e8", weight: 2.5, dashArray: "6 6", fillColor: "#1a73e8", fillOpacity: 0.06, className: "area-poly", pane: "paneArea" };
 // acima disto a ligação até a coordenada original vira alerta no mapa: o teto
 // da régua é 10 m, então 25 m é o dobro e meio do que se considera aceitável
 const DESLOC_DESTAQUE_M = 25;

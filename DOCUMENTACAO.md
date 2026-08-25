@@ -418,6 +418,12 @@ exatamente isso que escondeu que os 42 vinham do Overture/OSM/Foursquare.
 Apagar a área **não apaga POI nenhum**, e a confirmação diz isso: a área é foco
 de tela, não filtro de banco.
 
+**A área desenhada mora na `paneArea` (z-index 415), acima da malha (410).**
+Ela ficava no `overlayPane` padrão, 400, e o contorno do município era desenhado
+*por cima* do polígono recém-traçado: clicar no próprio desenho selecionava o
+município e trocava o recorte do mapa inteiro. Quadras (620), marcadores (630) e
+vias (645) continuam ganhando dela — clicar num POI dentro da área abre o POI.
+
 **Armadilha do Leaflet, para quem for mexer:** o botão de apagar é pego por
 delegação no documento. Ligar `b.onclick` logo depois de `openPopup()` falha em
 silêncio — como o `bindPopup` recebe `options`, o Leaflet constrói uma `Popup`

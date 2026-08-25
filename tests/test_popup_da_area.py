@@ -106,3 +106,39 @@ def test_o_popup_tem_largura_minima():
     i = css.index(".area-pop {")
     assert "min-width" in css[i:i + 200], \
         "sem largura mínima a tabela volta a quebrar em duas linhas"
+
+
+def test_a_area_desenhada_fica_acima_da_malha():
+    """O defeito: clicar no próprio desenho selecionava o MUNICÍPIO.
+
+    A área morava no `overlayPane` padrão (z-index 400) e a malha do IBGE está
+    em 410 — o contorno do município era desenhado por cima do polígono que o
+    operador acabou de traçar, comia o clique e trocava o recorte do mapa
+    inteiro. O tooltip pegajoso da malha também vinha por cima.
+
+    Verificado no navegador com `elementFromPoint`: na borda do desenho o topo é
+    `area-poly` na `paneArea`; fora dele a malha volta ao topo e continua
+    recebendo clique, que é como se escolhe município.
+    """
+    js = _app()
+    assert 'createPane("paneArea")' in js, "a área perdeu a pane própria"
+    i = js.index('createPane("paneArea")')
+    z_area = int(re.search(r"zIndex = (\d+)", js[i:i + 120]).group(1))
+    j = js.index('createPane("paneMalha")')
+    z_malha = int(re.search(r"zIndex = (\d+)", js[j:j + 120]).group(1))
+    assert z_area > z_malha, f"a malha ({z_malha}) voltou a cobrir a área ({z_area})"
+    assert 'pane: "paneArea"' in js[js.index("const AREA_STYLE"):][:260], \
+        "o polígono desenhado deixou de usar a pane própria"
+
+
+def test_marcador_e_via_continuam_ganhando_da_area():
+    """Clicar num POI dentro da área tem de abrir o POI, não o resumo da área.
+    A correção acima não pode ter passado a área na frente de todo mundo."""
+    js = _app()
+    z = {}
+    for nome in ("paneArea", "paneQuadras", "paneMarcadores", "paneFaces"):
+        i = js.index(f'createPane("{nome}")')
+        z[nome] = int(re.search(r"zIndex = (\d+)", js[i:i + 120]).group(1))
+    for acima in ("paneQuadras", "paneMarcadores", "paneFaces"):
+        assert z[acima] > z["paneArea"], \
+            f"{acima} ({z[acima]}) caiu abaixo da área ({z['paneArea']})"
