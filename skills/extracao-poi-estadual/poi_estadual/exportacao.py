@@ -76,6 +76,15 @@ def _bruto_fsq(cfg, man, keep):
     return d[d["id_fonte"].astype(str).isin(keep)] if len(d) else d
 
 
+def _bruto_ifood(cfg, man, keep):
+    p = os.path.join(cfg.dir_colecao("ifood", *(man.colecao("ifood") or ("x", "y"))),
+                     "ifood.parquet")
+    if not os.path.exists(p):
+        return pd.DataFrame()
+    d = pd.read_parquet(p)
+    return d[d["id_fonte"].astype(str).isin(keep)] if len(d) else d
+
+
 def brutos(cfg, man):
     keep = _keep_ids(cfg)
     saidas = {}
@@ -87,6 +96,8 @@ def brutos(cfg, man):
         mapa["osm"] = d[d["id_fonte"].astype(str).isin(keep)] if len(d) else d
     if "fsq" in cfg.fontes:
         mapa["fsq"] = _bruto_fsq(cfg, man, keep)
+    if "ifood" in cfg.fontes:
+        mapa["ifood"] = _bruto_ifood(cfg, man, keep)
     for fonte, d in mapa.items():
         base = "poi_bruto_%s_%s" % (fonte, cfg.rotulo.lower())
         p = cfg.arq_saida(base + ".parquet")
@@ -121,7 +132,9 @@ def _procedencia(cfg, man):
     `is_latest_at_collection` responde "no momento da coleta, era a mais nova que a
     fonte oferecia?" — e nao muda com o tempo, ao contrario de um `is_latest`."""
     lic = {"overture": "CDLA-Permissive-2.0", "osm": "ODbL — (c) OpenStreetMap contributors",
-           "fsq": "Apache-2.0 (manter NOTICE)", "ibge": "uso publico"}
+           "fsq": "Apache-2.0 (manter NOTICE)", "ibge": "uso publico",
+           "ifood": "dado publico do marketplace (sem login); uso conforme os "
+                    "termos do iFood"}
     linhas = []
     proc = man.procedencia() or {}
     versoes = man.d.get("fontes_versao") or {}

@@ -52,6 +52,9 @@ def _fontes_partes(cfg, man):
               for n in ("nodes.parquet", "ways.parquet", "relations.parquet")]
     if "fsq" in cfg.fontes:
         p += [os.path.join(cfg.dir_colecao("fsq", *(man.colecao("fsq") or ("x", "y"))), "fsq.parquet")]
+    if "ifood" in cfg.fontes:
+        p += [os.path.join(cfg.dir_colecao("ifood", *(man.colecao("ifood") or ("x", "y"))),
+                           "ifood.parquet")]
     return [x for x in p if os.path.exists(x)]
 
 

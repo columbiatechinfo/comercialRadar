@@ -16,7 +16,7 @@ import os
 
 UFS = ("AC", "AL", "AM", "AP", "BA", "CE", "DF", "ES", "GO", "MA", "MG", "MS", "MT",
        "PA", "PB", "PE", "PI", "PR", "RJ", "RN", "RO", "RR", "RS", "SC", "SE", "SP", "TO")
-FONTES_VALIDAS = ("overture", "osm", "fsq")
+FONTES_VALIDAS = ("overture", "osm", "fsq", "ifood")
 FORMATOS_VALIDOS = ("csv", "geoparquet")
 DEDUP_VALIDOS = ("evidencia", "legado", "exato", "none")
 OSM_PREDICADOS = ("ampliado", "classico")
@@ -30,7 +30,7 @@ ETAPAS = ("init", "fetch", "raw", "territory", "normalize", "dedup", "export", "
 # de coleta para o logico e o fisico nao divergirem — a v3.3.0 dizia
 # "FETCH: reaproveitado" apontando para um diretorio de fonte novo e vazio.
 _COLETA = ("uf", "fontes", "osm_predicado", "osm_sem_nome",
-           "ov_tile_graus", "fsq_strips")
+           "ov_tile_graus", "fsq_strips", "ifood_ids")
 _TERR = _COLETA + ("excluir", "malha_qualidade", "simplificar_graus")
 _NORM = _TERR + ("min_conf",)
 _DEDUP = _NORM + ("dedup_modo", "dedup_raio_m", "dedup_sim_min", "dedup_sim_cross",
@@ -104,6 +104,12 @@ class Config:
     # plano de execucao da coleta (muda o diretorio materializado, nao o dado)
     ov_tile_graus: float = 1.0
     fsq_strips: int = 7
+    # iFood: o caminho do arquivo de sementes (merchant ids) e o dos
+    # proxies. Entram no hash de coleta porque outro conjunto de ids e
+    # outra coleta — reaproveitar o parquet anterior serviria o escopo
+    # errado com cara de cache valido.
+    ifood_ids: str = ""
+    ifood_proxies: str = ""
 
     # gate semantico: fracao maxima de clusters com fusao suspeita antes de reprovar
     max_fusao_suspeita: float = 0.02
@@ -164,6 +170,13 @@ class Config:
                                  % (self.dedup_diam_max_m, self.dedup_raio_m))
         if "fsq" in self.fontes and not os.environ.get("HF_TOKEN"):
             raise ConfigInvalida("fonte fsq exige HF_TOKEN no ambiente")
+        # Falhar AQUI, e nao depois dos ~421 MB do OSM: a fonte ifood sem
+        # sementes nao tem o que buscar, e descobrir isso na etapa `fetch`
+        # custa a coleta inteira das outras fontes.
+        if "ifood" in self.fontes and not str(self.ifood_ids).strip():
+            raise ConfigInvalida(
+                "fonte ifood exige --ifood-ids: os merchant ids vem da "
+                "enumeracao (navegador), nao da skill")
         object.__setattr__(self, "base_dir", os.path.abspath(self.base_dir))
 
     # ------------------------------------------------------------------- hashes

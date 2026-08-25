@@ -55,7 +55,8 @@ PROCESSOR_VERSAO = {
     "map": "map:v2", "validate": "validate:v3",
 }
 ADAPTER_VERSAO_FONTE = {"osm": "osm_adapter:v5", "overture": "overture_adapter:v4",
-                        "fsq": "fsq_adapter:v3", "ibge": "ibge_adapter:v2"}
+                        "fsq": "fsq_adapter:v3", "ibge": "ibge_adapter:v2",
+                        "ifood": "ifood_adapter:v1"}
 UA = "a2l-extracao-poi-estadual/%s" % ADAPTER_VERSAO
 
 
@@ -158,6 +159,13 @@ def ids_da_fonte(fonte, snap, cfg, bbox):
     if fonte == "fsq":
         col = collection_id(snap, "fsq", cfg.uf, bb)
         return col, work_id(col, cfg.fsq_strips, ADAPTER_VERSAO_FONTE["fsq"])
+    if fonte == "ifood":
+        # O escopo do iFood NAO e o bbox da UF: e a lista de sementes. Duas
+        # cidades diferentes na mesma UF tem o mesmo bbox e sao coletas
+        # distintas — por isso a colecao carrega o digest das sementes, que ja
+        # vem no `source_version` do snapshot.
+        col = collection_id(snap, "ifood", cfg.uf)
+        return col, work_id(col, ADAPTER_VERSAO_FONTE["ifood"])
     col = collection_id(snap, "ibge", cfg.uf, cfg.malha_qualidade)
     return col, work_id(col, ADAPTER_VERSAO_FONTE["ibge"])
 
@@ -435,6 +443,39 @@ def resolver_fsq(cfg, man, consultar, listar_releases=None):
                     shards=len(arquivos or ()), **extra)
 
 
+def resolver_ifood(cfg, man, consultar):
+    """A versao da fonte iFood e a LISTA DE SEMENTES, nao uma release.
+
+    O iFood nao publica release nem dump: o que existe e o estado do endpoint
+    naquele instante. Fingir uma versao de servidor seria inventar identidade.
+    O que de fato determina a coleta e o conjunto de merchant ids pedidos —
+    entao e ele que assina o snapshot, pelo sha256 da lista ordenada.
+
+    Consequencia deliberada: acrescentar uma cidade a enumeracao muda o
+    snapshot e cria outra colecao. E o comportamento certo — o dado anterior
+    continua valido para o escopo anterior, e nada e sobrescrito em silencio.
+    """
+    caminho = str(getattr(cfg, "ifood_ids", "") or "")
+    extra = {"source_url": "https://marketplace.ifood.com.br/v1/merchants/{id}/extra",
+             "sementes_arquivo": caminho or None}
+    if not caminho or not os.path.exists(caminho):
+        return snapshot("ifood", None, **extra)
+    try:
+        from .ifood import sementes_de_arquivo
+        ids = sorted(set(str(x).strip() for x in sementes_de_arquivo(caminho)() if str(x).strip()))
+    except Exception as e:                                     # noqa: BLE001
+        extra["erro_consulta"] = str(e)[:200]
+        return snapshot("ifood", None, **extra)
+    if not ids:
+        extra["erro_consulta"] = "arquivo de sementes vazio"
+        return snapshot("ifood", None, **extra)
+    dig = hashlib.sha256(chr(10).join(ids).encode("utf-8")).hexdigest()
+    # `source_version` legivel por humano: quantas lojas, e o comeco do digest.
+    return snapshot("ifood", "sementes:%d:%s" % (len(ids), dig[:12]),
+                    digest=dig[:32], algoritmo="sha256", escopo="lista_de_ids",
+                    status="verified_latest", sementes=len(ids), **extra)
+
+
 def resolver_todas(cfg, man, bbox, listar_fsq=None):
     """Resolve snapshot + collection + work de cada fonte e persiste no manifesto."""
     out = {}
@@ -448,6 +489,8 @@ def resolver_todas(cfg, man, bbox, listar_fsq=None):
             snap = resolver_osm(cfg, man, consultar)
         elif fonte == "overture":
             snap = resolver_overture(cfg, man, consultar)
+        elif fonte == "ifood":
+            snap = resolver_ifood(cfg, man, consultar)
         else:
             snap = resolver_fsq(cfg, man, consultar, listar_fsq)
         # `cache`/`pinned` NAO recalculam identidade com outro algoritmo: o snapshot

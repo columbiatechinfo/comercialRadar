@@ -17,7 +17,7 @@ import traceback
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from poi_estadual import foursquare, ibge, mapa, normalizacao, osm, overture  # noqa: E402
+from poi_estadual import foursquare, ibge, ifood, mapa, normalizacao, osm, overture  # noqa: E402
 from poi_estadual import territorio, validacao, exportacao  # noqa: E402
 from poi_estadual.config import ETAPAS, Config, ConfigInvalida  # noqa: E402
 from poi_estadual.manifest import EtapaBloqueada, Manifesto  # noqa: E402
@@ -43,6 +43,7 @@ def _config(a):
         budget_s=a.budget, ov_cap=a.ov_cap, ov_tile_graus=a.ov_tile_graus,
         treat_batch=a.treat_batch, clip_chunk=a.clip_chunk, fsq_strips=a.fsq_strips,
         duckdb_memory=a.duckdb_memory, threads=a.threads,
+        ifood_ids=a.ifood_ids or "", ifood_proxies=a.ifood_proxies or "",
         source_mode=a.source_mode, refresh_fontes=_lista(a.refresh_source or ""),
         malha_parquet=a.malha_parquet or "").preparar()
 
@@ -59,6 +60,14 @@ def _fetch(cfg, man, bbox):
         estado["osm"] = osm.executar(cfg, man)
     if "fsq" in cfg.fontes:
         estado["fsq"] = foursquare.executar(cfg, man, bbox)
+    if "ifood" in cfg.fontes:
+        # A fonte iFood NAO enumera: ela detalha os ids que a enumeracao (que
+        # precisa de navegador) ja produziu. O arquivo de sementes e o contrato
+        # entre as duas metades, e a config ja recusou a fonte sem ele.
+        estado["ifood"] = ifood.executar(
+            cfg, man,
+            sementes=ifood.sementes_de_arquivo(cfg.ifood_ids),
+            pool=(cfg.ifood_proxies or None))
     completo = all(e.get("completo") for e in estado.values())
     contagens = {"%s_%s" % (f, k): v for f, e in estado.items()
                  for k, v in e.items() if isinstance(v, int)}
@@ -228,6 +237,12 @@ def main(argv=None):
         p.add_argument("--treat-batch", dest="treat_batch", type=int, default=40000)
         p.add_argument("--clip-chunk", dest="clip_chunk", type=int, default=120000)
         p.add_argument("--fsq-strips", dest="fsq_strips", type=int, default=7)
+        p.add_argument("--ifood-ids", dest="ifood_ids", default="",
+                       help="arquivo com os merchant ids do iFood "
+                            "(txt/csv/parquet). Obrigatorio com --fontes ifood")
+        p.add_argument("--ifood-proxies", dest="ifood_proxies", default="",
+                       help="arquivo com uma URL de proxy por linha; "
+                            "sem ele as chamadas saem pelo IP direto")
         p.add_argument("--duckdb-memory", dest="duckdb_memory", default="2.6GB")
         p.add_argument("--threads", type=int, default=8)
         return p
