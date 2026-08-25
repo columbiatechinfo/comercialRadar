@@ -401,6 +401,30 @@ grátis generosa com billing).
                    fora do polígono → status 'fora_da_area' (não ingere)
 ```
 
+### Clique no polígono: o que tem aqui dentro (25/08/2026)
+
+Clicar na área desenhada abre um popup com o **total de POIs do banco dentro
+dela**, a quebra por fonte, a área em hectares, o número de vértices, quantos
+são multiorigem — e um botão para apagar a área.
+
+Ele existe por causa de uma confusão real: o cabeçalho dizia "42 POIs" e o
+cartão da mineração dizia "165", números da mesma área e nenhum dos dois errado
+(veja a seção seguinte). Faltava um lugar onde a pergunta tivesse resposta.
+
+A quebra é por **`fonte`**, não pelos chips de origem. Os chips agrupam por como
+o POI foi *confirmado*, e a base estadual inteira cai no balde "Outros" — foi
+exatamente isso que escondeu que os 42 vinham do Overture/OSM/Foursquare.
+
+Apagar a área **não apaga POI nenhum**, e a confirmação diz isso: a área é foco
+de tela, não filtro de banco.
+
+**Armadilha do Leaflet, para quem for mexer:** o botão de apagar é pego por
+delegação no documento. Ligar `b.onclick` logo depois de `openPopup()` falha em
+silêncio — como o `bindPopup` recebe `options`, o Leaflet constrói uma `Popup`
+nova a cada clique, e da segunda abertura em diante o container ainda não existe
+quando `openPopup` retorna. O popup abre com os números certos e o botão não faz
+nada. `tests/test_popup_da_area.py` tranca isso.
+
 ### A busca só roda dentro da área desenhada (25/08/2026)
 
 O tile é fotografado inteiro — o retângulo tem tamanho fixo e não encolhe com o
