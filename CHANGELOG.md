@@ -6,6 +6,23 @@ versionamento [SemVer](https://semver.org/lang/pt-BR/).
 ## [Não lançado]
 
 ### Adicionado
+- **Endereço grudado lido pela IA da Spark** (`segmentar_endereco.py`): a
+  `pois` guarda um campo `endereco` só, com formatos diferentes dentro da mesma
+  coluna, e a skill `ajuste-logradouro` declara que não segmenta campo único.
+  A IA lê; todo campo devolvido precisa **existir no texto original** ou é
+  descartado com o motivo. Uma chamada por valor distinto, gravação a cada 25
+  lotes e retomada pelo que já está em `endereco_segmentado`.
+- **`ajuste_logradouro.py`** — a skill `ajuste-logradouro` v3.3.5 virando dado
+  no banco. Quatro fontes no mesmo scope municipal (`cnefe` como
+  `autoridade_nivel 100`, `cadastro_cliente`, `pois`, `ifood_merchant`), com a
+  forma canônica marcada e o **tier** dizendo quanto confiar. Medido em Canoas:
+  108.835 registros em 17,3 s, `CONFIRMA=105.928 · ALTA=1.672 · REVISAR=1.235`.
+- **`scripts/i9/lancar.sh`** — trabalho longo no i9 vira unidade do systemd do
+  Ubuntu. `setsid`/`nohup` e o `Start-Process` do PowerShell **não sobrevivem**
+  ao fim da conexão SSH, e falham em silêncio: foi por isso que uma produção
+  "disparada" morreu calada e alguém disparou de novo.
+- **Trava de instância única na produção estadual** (`flock` em dois níveis):
+  uma produção do Brasil por máquina, um pipeline por UF.
 - **Cadastur/MTur como passo do processo e gerador de POI** (`cadastur.py` + skill
   `extracao-cadastur-mtur`): baixar → carregar → cruzar → gerar, com o gerador
   recusando rodar sem o cruzamento. Única fonte do sistema com **capacidade

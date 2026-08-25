@@ -173,16 +173,28 @@ def ingerir(saida: str, cod_municipio: str, limite: int = 0, aplicar: bool = Fal
         print("\n  SIMULAÇÃO — nada gravado. Use --aplicar.")
         return
 
-    psycopg2.extras.execute_values(
+    # `fetch=True` + `returning`, e NÃO `cur.rowcount`.
+    #
+    # `execute_values` com `page_size` executa VÁRIOS statements, e `rowcount`
+    # descreve só o ÚLTIMO. Na importação de Canoas isso apareceu como
+    # "GRAVADO: 127 POIs novos" depois de dizer "prontas para inserir: 27.627" —
+    # o número era o resto da divisão (55 páginas de 500 + 127). O dado estava
+    # certo e o relatório mentia, que é a pior combinação: ninguém vai conferir
+    # 27 mil linhas por causa de um número pequeno, vai concluir que a extração
+    # não trouxe quase nada.
+    #
+    # `len(linhas)` também não serviria: com `on conflict do nothing`, parte das
+    # linhas pode legitimamente não entrar. Só o banco sabe quantas entraram.
+    inseridos = len(psycopg2.extras.execute_values(
         cur,
         """insert into pois
              (nome, fonte, lat_origem, lng_origem, maps_lat, maps_lng, place_id,
               categoria, endereco, telefone, website, instagram, email,
               cidade, uf, status, match_valido)
            values %s
-           on conflict do nothing""",
-        linhas, page_size=500)
-    inseridos = cur.rowcount
+           on conflict do nothing
+           returning id""",
+        linhas, page_size=500, fetch=True))
 
     # Procedência: qual extração, qual município, quantas linhas. Sem isto,
     # daqui a três meses ninguém sabe de onde vieram estes POIs nem se a
