@@ -1,0 +1,57 @@
+projeto: EXEMPLO_AJUSTE_LOGRADOURO
+scope_id: "EXEMPLO_MUNICIPIO"             # OBRIGATÓRIO v3.3.3: município/território do léxico
+
+# SRID métrico. Omita para autodetectar a zona UTM SIRGAS 2000 pela longitude
+# mediana. Se a base cruzar mais de uma zona/hemisfério, a validação ABORTA: rode por partição.
+srid_metrico: 31982                      # SIRGAS 2000 / UTM 22S (RS/SC/PR)
+
+hardening: true                          # título/patente, numeral extenso e romano, lixo
+aprendizado: true                        # OBRIGATÓRIO e explícito: true/false
+lexico_path: lexico_exemplo.json         # estado mutável; caminho EXCLUSIVO (não reutilize como vocab/input)
+                                            # revision=gravações; state_version=versão do conhecimento
+vocab_path: vocabulario_aprendido.json   # truncamento de tipo de via (só 1º token)
+
+parametros:
+  raio_aprendizado_m: 30                 # trava espacial da prova; subir só com GPS ruim
+  min_support_equiv: 2                   # imóveis DISTINTOS para promover a 'ativo'
+  teto_bloco: 200                        # bloco (número, célula) maior que isso é podado
+  apenas_entre_fontes: false             # true = só aprende com par de fontes diferentes
+  modo_numero: estrito                   # estrito: 279-A != 279-B != 279 (prova pura)
+                                         # compativel: aceita modificador ausente de um lado
+  abortar_em_alerta: false               # PRODUÇÃO: use true — ALERTA de schema vira parada
+                                         # (é o que barra Web Mercator e fonte sem autoridade)
+  ratio_dominancia: 5                    # sem autoridade, quantas vezes a forma certa domina
+  min_freq_dominancia: 3                 # piso de ocorrências para a dominância valer
+  raio_independencia_m: 100              # abaixo disso é a MESMA evidência física
+  max_linhas_xlsx: 50000
+
+  # v3.2.5 — operação/recovery/retenção + filesystem confinado
+  reconciliacao_stale_s: 3600            # recolhe staging órfão local; remoto só após 24h
+  retencao_runs: 0                       # 0=nunca apaga; N=mantém N runs concluídos mais recentes
+  xlsx: true                             # false em processamento massivo/headless
+  parquet: true                          # tenta gravar se pyarrow estiver instalado
+  marcacao_por_fonte: true               # false reduz amplificação de disco
+  reparar_mojibake: false                  # true exige ftfy; sem auto-variação entre ambientes
+
+fontes:
+  - source_id: cadastro
+    arquivo: exemplos/cadastro.csv
+    colunas:                             # de-para -> campo canônico
+      record_id: matricula
+      logradouro: endereco
+      numero: nro
+      complemento: compl
+      lat: latitude
+      lon: longitude
+      # scope_id: codigo_municipio_ibge       # OBRIGATÓRIO no aprendizado quando scope_id tiver 7 dígitos
+
+  - source_id: cnefe
+    arquivo: exemplos/cnefe.csv
+    autoridade_nivel: 100               # v3.3: prioridade da fonte oficial; empate no mesmo nível = conflito
+    colunas:
+      record_id: cod
+      logradouro: logradouro
+      numero: numero
+      complemento: complemento
+      lat: lat
+      lon: lon

@@ -1,0 +1,14 @@
+# Baseline testado na release v3.2.4 (2026-08-19).
+# Fixe estas versões no ambiente de produção para máxima reprodutibilidade.
+pandas==2.2.3
+numpy==2.3.5
+PyYAML==6.0.3
+rapidfuzz==3.14.3
+pyproj==3.7.2
+XlsxWriter==3.2.9
+
+# `pyproj` é obrigatório quando aprendizado=true.
+# Opcionais por desenho:
+# - pyarrow: habilita ajuste_logradouro.parquet; ausente => CSV continua completo.
+# - ftfy: a presença/versão é registrada no manifest; fixe explicitamente no seu ambiente
+#   se optar por instalá-lo, pois pode reparar mojibake e portanto alterar a normalização.

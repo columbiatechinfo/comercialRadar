@@ -1,0 +1,168 @@
+{
+  "_origem": "derivado por LEITURA de RS (CORSAN) + SC (Aegea)",
+  "_metodo": "APRENDE so truncamento de TIPO DE VIA (1o token, >=5 chars) unico em LOGR_TIPOS canonico. NAO aprende nome/complemento (palavras reais/ambiguas). Token nao-resolvivel (HLE, ATI, VT, ANT, CORRE) vai para 'ignorados' SEM significado inventado e NUNCA e aplicado. Aplicacao so no 1o token.",
+  "tipo_via": {
+    "PASSE": {
+      "expansao": "PASSEIO",
+      "conf": "alta",
+      "evidencia": "truncamento (>=5) unico de PASSEIO em LOGR_TIPOS"
+    },
+    "ACESS": {
+      "expansao": "ACESSO",
+      "conf": "alta",
+      "evidencia": "truncamento (>=5) unico de ACESSO em LOGR_TIPOS"
+    },
+    "ACAMP": {
+      "expansao": "ACAMPAMENTO",
+      "conf": "alta",
+      "evidencia": "truncamento (>=5) unico de ACAMPAMENTO em LOGR_TIPOS"
+    },
+    "NUCLE": {
+      "expansao": "NUCLEO",
+      "conf": "alta",
+      "evidencia": "truncamento (>=5) unico de NUCLEO em LOGR_TIPOS"
+    },
+    "DESVI": {
+      "expansao": "DESVIO",
+      "conf": "alta",
+      "evidencia": "truncamento (>=5) unico de DESVIO em LOGR_TIPOS"
+    },
+    "ALAME": {
+      "expansao": "ALAMEDA",
+      "conf": "alta",
+      "evidencia": "truncamento (>=5) unico de ALAMEDA em LOGR_TIPOS"
+    },
+    "LOTEA": {
+      "expansao": "LOTEAMENTO",
+      "conf": "alta",
+      "evidencia": "truncamento (>=5) unico de LOTEAMENTO em LOGR_TIPOS"
+    },
+    "PROLO": {
+      "expansao": "PROLONGAMENTO",
+      "conf": "alta",
+      "evidencia": "truncamento (>=5) unico de PROLONGAMENTO em LOGR_TIPOS"
+    },
+    "RECAN": {
+      "expansao": "RECANTO",
+      "conf": "alta",
+      "evidencia": "truncamento (>=5) unico de RECANTO em LOGR_TIPOS"
+    },
+    "CONTO": {
+      "expansao": "CONTORNO",
+      "conf": "alta",
+      "evidencia": "truncamento (>=5) unico de CONTORNO em LOGR_TIPOS"
+    },
+    "JARDI": {
+      "expansao": "JARDIM",
+      "conf": "alta",
+      "evidencia": "truncamento (>=5) unico de JARDIM em LOGR_TIPOS"
+    },
+    "SERVI": {
+      "expansao": "SERVIDAO",
+      "conf": "alta",
+      "evidencia": "truncamento (>=5) unico de SERVIDAO em LOGR_TIPOS"
+    }
+  },
+  "nome": {},
+  "complemento": {},
+  "ignorados": {
+    "tipo_via": {
+      "BLOCO": 18,
+      "JOA": 16,
+      "CORRE": 11,
+      "SER": 10,
+      "AREA": 5,
+      "IARA": 4,
+      "LOTE": 3,
+      "GERAL": 3,
+      "PASSA": 2,
+      "RENE": 1,
+      "CANAL": 1,
+      "PRAC": 1
+    },
+    "nome": {
+      "JOAO": 6504,
+      "JOSE": 5931,
+      "DOS": 2888,
+      "RIO": 2694,
+      "DAS": 1452,
+      "LUIZ": 1361,
+      "ROSA": 819,
+      "DIAS": 688,
+      "CRUZ": 526,
+      "NOVA": 519,
+      "BOM": 468,
+      "ANT": 423,
+      "LIMA": 416,
+      "MAIO": 401,
+      "SUL": 388,
+      "FLOR": 388,
+      "DONA": 365,
+      "ARNO": 365,
+      "SETE": 314,
+      "LUZ": 289,
+      "LEAO": 259,
+      "ANA": 257,
+      "FREI": 245,
+      "AZUL": 230,
+      "PAPA": 223,
+      "REIS": 222,
+      "TRES": 215,
+      "IPE": 210,
+      "IVO": 202,
+      "NOVO": 199,
+      "MATO": 192,
+      "NILO": 191,
+      "RAUL": 185,
+      "BRUM": 176,
+      "NETO": 174,
+      "RUI": 166,
+      "ADAO": 160,
+      "DOIS": 139,
+      "IJUI": 132,
+      "BOA": 126
+    },
+    "complemento": {
+      "CASA": 10265,
+      "QD": 4356,
+      "LOT": 3690,
+      "LT": 3458,
+      "ATI": 3001,
+      "ESQ": 1367,
+      "LOTE": 1082,
+      "NO": 1050,
+      "APTO": 1028,
+      "LADO": 910,
+      "HLE": 823,
+      "DE": 805,
+      "HLD": 756,
+      "VALE": 741,
+      "DO": 689,
+      "AP": 670,
+      "RES": 655,
+      "CS": 610,
+      "LD": 601,
+      "II": 589,
+      "DIR": 580,
+      "RUA": 530,
+      "DA": 490,
+      "III": 478,
+      "DAS": 476,
+      "AO": 444,
+      "LUZ": 440,
+      "CX": 436,
+      "HD": 403,
+      "JD": 399,
+      "NOVA": 384,
+      "SALA": 291,
+      "FT": 276,
+      "EM": 268,
+      "VILA": 244,
+      "MEIO": 231,
+      "SPE": 226,
+      "APT": 202,
+      "BECO": 199,
+      "LOJA": 171
+    }
+  }
+}
