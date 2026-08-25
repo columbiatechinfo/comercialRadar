@@ -62,6 +62,21 @@ produzir() {
   # As fontes são montadas pelo que a máquina de fato alcança. Declarar
   # `overture,osm,fsq` e deixar duas falharem produziria um dataset OSM-only com
   # nome de "bases públicas" — cobertura menor, e ninguém saberia.
+  # O `.env` É CARREGADO AQUI, e a falta disso já custou uma rodada.
+  #
+  # O `HF_TOKEN` do Foursquare mora nele. Sem carregar, a checagem de `fsq`
+  # olhava uma variável que nunca existiria e escrevia
+  # "sem foursquare: HF_TOKEN ausente no .env" — com o token presente no
+  # arquivo. A mensagem apontava para o lugar certo e a conclusão era falsa,
+  # que é o pior tipo de aviso.
+  #
+  # `set -a` exporta tudo que for atribuído; a skill lê `HF_TOKEN` do ambiente.
+  # O `tr -d` no CR do `publicar.sh` é o que permite `.` funcionar aqui — .env
+  # com CRLF quebra o `source` com um erro que fala do shell, não do arquivo.
+  if [ -f "$DIR_I9/.env" ]; then
+    set -a; . "$DIR_I9/.env"; set +a
+  fi
+
   # O `bin` do venv ENTRA no PATH antes de procurar o `overturemaps`.
   #
   # Ele é instalado como dependência do projeto, então mora em
