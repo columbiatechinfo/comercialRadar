@@ -351,6 +351,40 @@ def resolver_overture(cfg, man, consultar):
             con.close()
         except Exception as e:                                 # noqa: BLE001
             extra["erro_consulta"] = str(e)[:200]
+
+        # PATCH LOCAL — 25/08/2026, comercialRadar. NAO E DA SKILL DE ORIGEM.
+        #
+        # O `glob` acima devolve ZERO LINHAS, sem levantar exceção: o DuckDB
+        # ASSINA a requisição, e o bucket do Overture é público e responde à
+        # listagem anônima. Sem erro para registrar e sem release para declarar,
+        # o snapshot ficava `indeterminate` — e a etapa `dedup` recusava a
+        # entrega, corretamente:
+        #
+        #     ERRO na etapa 'dedup': observacao sob snapshot indeterminado nas
+        #     fontes overture. Resolva a versao da fonte (--source-mode latest)
+        #     antes de gerar a entrega.
+        #
+        # Custou 38 minutos de RS e 3 de PI, os dois DEPOIS de processar tudo:
+        # 1.065.018 pontos em 497 municípios, barrados no último passo por falta
+        # de um nome de versão.
+        #
+        # A listagem HTTP do MESMO bucket funciona sem credencial. Não é outra
+        # fonte — é o mesmo prefixo por outra porta, então a identidade
+        # declarada continua sendo a real.
+        if not rel:
+            try:
+                import urllib.request
+                import re as _re
+                url = ("https://overturemaps-us-west-2.s3.amazonaws.com/"
+                       "?list-type=2&prefix=release/&delimiter=/")
+                with urllib.request.urlopen(url, timeout=40) as r_:
+                    xml = r_.read().decode("utf-8", "replace")
+                vs = _re.findall(r"<Prefix>release/([^<]+?)/</Prefix>", xml)
+                rel = sorted(vs)[-1] if vs else None
+                if rel:
+                    extra["origem_listagem"] = "http_s3_publico"
+            except Exception as e:                             # noqa: BLE001
+                extra["erro_listagem_http"] = str(e)[:200]
     return snapshot("overture", rel,
                     status="verified_latest" if (rel and consultar) else
                     ("pinned" if rel else "indeterminate"), **extra)

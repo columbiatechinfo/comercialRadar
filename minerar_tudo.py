@@ -215,7 +215,6 @@ def main(argv=None) -> int:
         _log("⚠️  Não identifiquei a UF da área — as bases públicas trabalham por")
         _log("   UF e por município, então esta etapa fica de fora desta rodada.")
     else:
-        destino = garantir_dataset(uf, produzir_aqui=a.produzir_bases)
         cod = _cod_municipio(cidade, uf)
         if not cod:
             _log(f"⚠️  Não achei o código IBGE de {cidade}/{uf} na malha — a")
@@ -224,11 +223,8 @@ def main(argv=None) -> int:
             _log("─" * 62)
             _log(f"▶ 2/3 bases públicas — importando {cidade}/{uf} ({cod})")
             _log("─" * 62)
-            cmd = [PYTHON, "extracao_estadual.py", "--saida", str(destino),
-                   "--municipio", cod, "--aplicar"]
-            if a.empresa:
-                cmd += ["--empresa", a.empresa]
-            rc = _rodar(cmd)
+            rc = _importar_municipio(uf, cod, a.empresa,
+                                     produzir_aqui=a.produzir_bases)
             if rc != 0:
                 # NÃO derruba a rodada: o dataset está no disco e a importação
                 # pode ser repetida sozinha depois. Perder as horas de captura
