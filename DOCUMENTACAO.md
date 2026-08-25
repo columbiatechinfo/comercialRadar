@@ -2990,3 +2990,146 @@ ficou em `C:\ferramentas` — inofensivo, e já pago.
 > que as chaves eram restritas por referrer, levantei o risco, e o descartei sem
 > **medir** — testei o raciocínio contra o caminho errado. Uma chamada ao mapa do
 > painel a partir do i9 teria custado trinta segundos e evitado a mudança inteira.
+
+---
+
+## 36. A base estadual do Brasil, e o dia em que ela rodou duas vezes (25/08/2026)
+
+A fase 1 do processo — **extração** — produz a base de POIs de uma UF inteira a
+partir das fontes públicas (Overture + OSM + Foursquare) pela skill
+`extracao-poi-estadual`, e depois importa **por município** para o banco
+(`extracao_estadual.py`). O trabalho é do i9: são horas de CPU e dezenas de GB
+por estado.
+
+### O que aconteceu
+
+`dataset_brasil.sh` foi disparado **duas vezes**, às 10:18 e às 10:20, e as duas
+cópias rodaram juntas por quatro horas sobre os mesmos diretórios. Em PE chegou
+a haver dois `poi_estadual.py` no mesmo `--base-dir`.
+
+**Nenhum dos dois processos errou.** O cache da skill é endereçado por hash de
+escopo, então os dois concordavam sobre o caminho de cada arquivo e escreviam um
+por cima do outro em silêncio. O que apareceu foi consequência, sempre longe da
+causa:
+
+| Onde | Sintoma |
+|---|---|
+| BA, SP | `.parquet.tmp -> .parquet: No such file or directory` na etapa `dedup` |
+| SP | morto pelo OOM após 125 min — dois `dedup` disputando 94 GB, swap em 14/16 |
+| RS | `validate` REPROVADO por auditoria, com o funil acumulando três passadas |
+
+### O funil que acusava o que não era
+
+A reprovação do RS por "todo descarte tem linha em rejeitados" era **do método de
+contagem, não do dado**:
+
+```
+155.423×3 + (76.255 + 124.083 + 124.083) + 15×3 + 1 = 790.736   ← funil, 3 passadas
+155.423   +  124.083                     + 15       = 279.521   ← rejeitados, 1 passada
+```
+
+São os dois números do relatório, na vírgula. O funil é append-only e somou as
+reexecuções que a rodada dupla provocou; a tabela de rejeitados é da última
+passada. **Fica em aberto** se a `fusão suspeita a 11%` (limite 2%) tem a mesma
+origem ou é defeito real de dedup — as UFs produzidas com a trava respondem isso.
+
+### A causa de terem sido duas: o disparo morria calado
+
+Nenhum trabalho longo sobrevivia ao fim da conexão SSH, e nenhum avisava disso.
+O OpenSSH do Windows derruba a sessão inteira quando a conexão fecha, e o WSL
+leva junto os processos daquela invocação — `setsid`, `nohup`, `disown` e o
+`Start-Process` do PowerShell **não mudam nada**. Medido com um `sleep 300`:
+some no instante em que o ssh volta, sem escrever uma linha.
+
+As rodadas que sobreviviam sobreviviam **por acidente**: há uma sessão
+`orbisgrid` desconectada desde 24/08 segurando 14 `wsl.exe` de pé, e o trabalho
+pegava carona nela.
+
+Então o primeiro disparo morria em silêncio, quem disparou não tinha como saber,
+disparava de novo — e as duas acabavam vivas.
+
+**A solução (`scripts/i9/lancar.sh`):** o WSL do i9 roda systemd como PID 1, e
+`systemd-run --user` cria uma unidade transitória cujo pai é o gerenciador do
+usuário, fora da árvore do ssh. Conferido de sessão nova: continua `active` com
+o log crescendo depois que a conexão que o disparou já fechou.
+
+```bash
+bash scripts/i9/lancar.sh brasil ./scripts/i9/dataset_brasil.sh
+bash scripts/i9/lancar.sh --ver brasil      # últimas linhas do log
+bash scripts/i9/lancar.sh --estado brasil   # rodando ou não
+bash scripts/i9/lancar.sh --parar brasil
+```
+
+### A conferência que mentia — e enganou por mais tempo que o defeito
+
+```
+wsl -- bash -lc 'echo brasil=$(pgrep -c -f dataset_brasil.sh)'   →  1
+```
+
+O padrão casa com a **própria linha de comando da conferência**. O `1` era ele
+mesmo. Uma produção foi dada como viva quando estava morta havia meia hora, e o
+log lido como "progresso" estava parado. Agora quem responde é o systemd
+(`is-active`), que não tem como se auto-encontrar — e toda conversa com o i9 vai
+por **arquivo** (`bash -s` pela entrada padrão), cuja linha de comando é só
+`bash -s`: nada para as três camadas de aspas comerem, nada para uma busca por
+processo casar por engano.
+
+### As travas
+
+`flock` em dois níveis (commit `c55a023`), porque são dois riscos diferentes:
+
+| Arquivo | Garante |
+|---|---|
+| `dataset_brasil.sh` | uma produção do Brasil por máquina |
+| `dataset_estadual.sh` | um pipeline por UF — venha do laço, de disparo manual ou do painel |
+
+O descritor fica aberto por `exec N>`; o kernel solta sozinho se o processo
+morrer, então queda não deixa cadeado órfão. `tests/test_scripts_i9.py` cobra as
+duas coisas em código executável, mais a ausência de `nohup`/`setsid`/`pgrep` no
+lançador.
+
+### As bases contaminadas ficaram, como exemplo
+
+`dados_externos/_contaminado_20260825/` guarda **RS, SP, PE e SC** produzidos
+naquela janela, com um `LEIA.txt` explicando o que cada defeito foi. São
+**exemplo do que duas execuções simultâneas produzem** — não lixo a limpar.
+
+Continuam em `dados_externos/estadual/` seis UFs marcadas
+`veredito=produzido_com_ressalva`: **PI, PR, RJ, MG, ES e BA**. Foram produzidas
+na mesma janela e **todas reprovam no `validate`**. Ficam onde estão, com a
+ressalva no próprio marcador — quem for usá-las lê o `relatorio_qualidade_*.json`
+antes de confiar nos números. O **RS foi refeito limpo** por ser a UF em que a
+fase 1 vai ser testada de ponta a ponta.
+
+### Produzido ≠ aprovado
+
+O marcador `_pronto.txt` registra o **veredito**, não só a conclusão:
+
+```
+extracao-poi-estadual · uf=RS · fontes=overture,osm,fsq
+veredito=produzido_com_ressalva · codigo=1
+entregavel=poi_padronizado_poi_rs.parquet
+ressalva=ver relatorio_qualidade_*.json na saida
+```
+
+Sem essa distinção, uma base inteira ficava inutilizável por causa de um número
+que quem usa deveria poder ver e julgar. O que continua **não** gerando marcador
+é a execução que não chegou ao fim: pasta pela metade não é base.
+
+### Fechar a fase 1 de uma UF
+
+```bash
+# 1 · produzir (horas, uma vez por UF, no i9)
+bash scripts/i9/lancar.sh brasil ./scripts/i9/dataset_brasil.sh
+
+# 2 · ver o que a extração tem
+python extracao_estadual.py --saida dados_externos/estadual/RS/saida --listar
+
+# 3 · importar o município (simula primeiro; --aplicar grava)
+python extracao_estadual.py --saida dados_externos/estadual/RS/saida \
+  --municipio 4304606 --empresa "Aegea - Corsan" --aplicar
+```
+
+O passo 3 roda **no i9**, porque o banco está lá — trazer dezenas de GB para o
+notebook só para devolver o recorte de um município seria atravessar a rede duas
+vezes à toa.
