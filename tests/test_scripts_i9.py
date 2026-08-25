@@ -124,24 +124,29 @@ def test_bash_aceita(nome):
     assert r.returncode == 0, f"{nome} não passa em bash -n:\n{r.stderr}"
 
 
-def test_o_teste_do_chromium_cabe_numa_linha():
-    """`remoto()` embrulha em `bash -lc '...'`; quebra de linha sai do embrulho.
+def test_a_conferencia_do_chromium_nao_tem_aspas():
+    """Entre este notebook e o Python do i9 ha TRES camadas de aspas.
 
-    A versao anterior mandava um python de QUATRO LINHAS por ali. O bash do i9
-    tentava executar `from` como comando (`from: command not found`), o
-    `grep -q abre` falhava, e o script anunciava "o Chromium NAO abre" com o
-    Chromium abrindo — mandando o dono da maquina rodar um `sudo` a toa.
-    Diagnostico errado custa mais que diagnostico nenhum.
+    ssh -> PowerShell -> `wsl -- bash -lc` -> python. Duas versoes ja morreram
+    ali: um python de quatro linhas (`from: command not found`, a quebra saiu do
+    `-lc`) e um `python -c "..."` (`syntax error near (`, o PowerShell colapsou
+    as aspas internas). Nas duas o script anunciava "o Chromium NAO abre" com o
+    Chromium abrindo, e mandava o dono da maquina rodar um sudo a toa.
+
+    A forma que atravessa e um ARQUIVO, sem aspas nenhuma no comando.
     """
     txt = _bytes("publicar.sh").decode("utf-8", "replace")
-    for ln in txt.splitlines():
-        if "sync_playwright" in ln:
-            assert "'" not in ln.split("python -c")[-1], (
-                "aspas simples dentro do -c fecham o embrulho do bash -lc: %s" % ln[:90])
-            assert ln.count("playwright") >= 1
-            break
-    else:
-        raise AssertionError("a conferencia do Chromium sumiu do publicar.sh")
-    # E o corpo do python nao pode estar espalhado por linhas soltas do script.
-    assert "from playwright.sync_api import sync_playwright" + chr(10) not in txt, \
-        "o python multilinha voltou ao publicar.sh"
+    linha = next((l for l in txt.splitlines() if "checar_chromium.py" in l), None)
+    assert linha, "a conferencia do Chromium sumiu do publicar.sh"
+    depois = linha.split("checar_chromium.py")[0]
+    for aspa in ('\\"', "'"):
+        assert aspa not in depois.split("remoto")[-1], (
+            "aspas no comando remoto voltam a ser comidas pelas tres camadas: %s"
+            % linha[:100])
+    # Só linhas EXECUTÁVEIS. O comentário logo acima da conferência cita
+    # `python -c "..."` para explicar por que ele não serve aqui — proibir a
+    # palavra no arquivo inteiro proibiria documentar o próprio defeito.
+    codigo = [l for l in txt.splitlines() if not l.lstrip().startswith("#")]
+    assert not any("python -c" in l for l in codigo), \
+        "o `python -c` inline voltou ao publicar.sh"
+    assert os.path.exists(os.path.join(RAIZ, "scripts", "i9", "checar_chromium.py"))
