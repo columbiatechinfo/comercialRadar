@@ -122,3 +122,26 @@ def test_bash_aceita(nome):
     r = subprocess.run([bash, "-n", os.path.join(DIR, nome)],
                        capture_output=True, text=True)
     assert r.returncode == 0, f"{nome} não passa em bash -n:\n{r.stderr}"
+
+
+def test_o_teste_do_chromium_cabe_numa_linha():
+    """`remoto()` embrulha em `bash -lc '...'`; quebra de linha sai do embrulho.
+
+    A versao anterior mandava um python de QUATRO LINHAS por ali. O bash do i9
+    tentava executar `from` como comando (`from: command not found`), o
+    `grep -q abre` falhava, e o script anunciava "o Chromium NAO abre" com o
+    Chromium abrindo — mandando o dono da maquina rodar um `sudo` a toa.
+    Diagnostico errado custa mais que diagnostico nenhum.
+    """
+    txt = _bytes("publicar.sh").decode("utf-8", "replace")
+    for ln in txt.splitlines():
+        if "sync_playwright" in ln:
+            assert "'" not in ln.split("python -c")[-1], (
+                "aspas simples dentro do -c fecham o embrulho do bash -lc: %s" % ln[:90])
+            assert ln.count("playwright") >= 1
+            break
+    else:
+        raise AssertionError("a conferencia do Chromium sumiu do publicar.sh")
+    # E o corpo do python nao pode estar espalhado por linhas soltas do script.
+    assert "from playwright.sync_api import sync_playwright" + chr(10) not in txt, \
+        "o python multilinha voltou ao publicar.sh"

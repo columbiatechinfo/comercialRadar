@@ -131,11 +131,17 @@ echo "▶ 4/4 Chromium do Playwright"
 remoto "cd $DESTINO && ./.venv/bin/python -m playwright install chromium 2>&1 | tail -3"
 
 echo "▶ conferindo se o Chromium ABRE (bibliotecas do sistema)"
-if remoto "cd $DESTINO && ./.venv/bin/python -c \"
-from playwright.sync_api import sync_playwright
-with sync_playwright() as p:
-    b = p.chromium.launch(headless=True); b.close()
-print('abre')\" 2>/dev/null | grep -q abre"; then
+# UMA LINHA, E SEM NENHUMA ASPAS DENTRO — por que isso importa aqui.
+#
+# `remoto` embrulha o comando em `wsl -d Ubuntu -- bash -lc '...'`. Qualquer
+# quebra de linha ou aspas simples no meio sai do embrulho: a versão anterior
+# deste teste era um python de quatro linhas e o bash do i9 tentava executar
+# `from` como comando, respondia `from: command not found`, e o `grep -q abre`
+# falhava. O script então anunciava "o Chromium NÃO abre" com o Chromium
+# abrindo perfeitamente, e mandava o dono da máquina rodar um sudo à toa.
+#
+# Um diagnóstico errado custa mais que diagnóstico nenhum.
+if remoto "cd $DESTINO && ./.venv/bin/python -c \"import playwright.sync_api as a;p=a.sync_playwright().start();b=p.chromium.launch(headless=True);b.close();p.stop()\" 2>/dev/null && echo abre" | grep -q abre; then
   echo "  OK  o Chromium abre"
 else
   echo "  ⚠️  O Chromium NÃO abre — faltam as bibliotecas de sistema."
