@@ -14,17 +14,33 @@ localização como uma pessoa mudaria, e **escuta** a resposta que o site já ia
 buscar de qualquer jeito. É a diferença entre ler o que chegou e arrombar o que
 não chegou.
 
-O QUE ESTE MÓDULO NÃO FAZ:
+O QUE ESTE MÓDULO NÃO FAZ, E QUEM FAZ:
 
-Não colhe CNPJ nem endereço da loja. Esses vivem no `merchant-info/graphql`,
-que responde 403 do PerimeterX depois de poucas chamadas automatizadas. Cada
-loja fica gravada com `estado_detalhe='PENDENTE'` — que quer dizer "não colhi",
-nunca "não existe". Confundir os dois envenena todo cruzamento posterior.
+Não colhe CNPJ nem endereço da loja — e isso deixou de ser um limite para virar
+uma divisão de trabalho. Cada loja sai daqui com `estado_detalhe='PENDENTE'`,
+que quer dizer "não colhi", nunca "não existe".
+
+Quem detalha é `poi_estadual/ifood.py` (a fonte `ifood` da skill estadual), pelo
+endpoint público `/v1/merchants/{id}/extra`: JSON com CNPJ, endereço com número,
+CEP, MCC e telefone, sem login e sem navegador. Medido em 25/08/2026 sobre as
+1.598 lojas descobertas por este módulo — **1.598 respostas, zero falhas, 53 s,
+CNPJ em 99,7%**.
+
+O caminho antigo raspava o CNPJ do texto renderizado da página e rendia 1%. Não
+era proteção intransponível: era a porta errada. O `merchant-info/graphql`
+continua 403 e continua irrelevante.
+
+Aqui fica só a metade CARA — a que precisa de navegador, porque o feed exige um
+`search_token` que só a aplicação produz.
 
 Uso:
-    python extrair_ifood.py --cidade canoas                # todos os bairros
-    python extrair_ifood.py --cidade canoas --bairros 2    # amostra
-    python extrair_ifood.py --cidade canoas --simular      # não grava
+    python extrair_ifood.py --cidade Canoas --uf RS        # o município inteiro
+    python extrair_ifood.py --area                         # a área desenhada
+    python extrair_ifood.py --cidade Canoas --uf RS --limite 3 --simular
+
+Os pontos de busca saem do CNEFE (`pontos_de_busca.py`) — endereços reais com
+número, numa grade, do trecho mais denso para o menos. Funciona para qualquer
+município do país e para qualquer área desenhada, inclusive atravessando divisa.
 """
 from __future__ import annotations
 
@@ -42,6 +58,7 @@ from collections import defaultdict
 
 from psycopg2.extras import execute_values
 
+import area_utils as au
 import base_comum as bc
 # Só o que este módulo usa. `trocar_bairro` saiu de propósito: uma sessão por
 # bairro nasce no lugar certo e nunca troca de localização — era esse o passo
@@ -59,36 +76,17 @@ CARD_LOJAS = "MERCHANT_LIST_V2"
 NL = chr(10)
 ESPERA_FEED = 12.0
 
-# Um endereço REAL, com número, por bairro — não o centroide.
+# OS PONTOS DE BUSCA VÊM DO CNEFE, e não mais de uma lista escrita à mão.
 #
 # O iFood exige número da casa para salvar o endereço e não oferece "sem
 # número": o piloto registrou `address_number_required` em 2 de 9 pontos por
-# usar coordenada de centroide. Estes saíram do `cadastro_cliente`, escolhendo
-# em cada bairro o imóvel mais próximo da MEDIANA das coordenadas do bairro.
+# usar coordenada de centroide. A resposta, até 25/08/2026, foram dezesseis
+# endereços de Canoas dentro deste arquivo — que funcionavam para Canoas e para
+# mais nenhum lugar do Brasil.
 #
-# Mediana, e não média: 135 imóveis gravados em (0,0) deslocavam todo centroide
-# calculado por média para o mesmo canto da cidade.
-PONTOS = {
-    "canoas": [
-        ("Centro", "Victor Barreto, 2301, Canoas"),
-        ("Mathias Velho", "Rio Grande do Sul, 2770, Canoas"),
-        ("Niteroi", "Farroupilha, 654, Canoas"),
-        ("Harmonia", "Da Associacao, 98, Canoas"),
-        ("Guajuviras", "Da Vitoria (guajuviras), 528, Canoas"),
-        ("Estancia Velha", "Imbe, 556, Canoas"),
-        ("Rio Branco", "Jose de Alencar, 369, Canoas"),
-        ("Igara", "Luis Mauricio Scolari, 249, Canoas"),
-        ("Olaria", "Santa Raquel, 189, Canoas"),
-        ("Nossa Senhora das Gracas", "Santa Terezinha, 518, Canoas"),
-        ("Sao Jose", "Celso Pedro Luft, 60, Canoas"),
-        ("Fatima", "Buttenbender, 865, Canoas"),
-        ("Mato Grande", "Atlanta, 222, Canoas"),
-        ("Marechal Rondon", "Dona Rafaela, 653, Canoas"),
-        ("Sao Luis", "Senador Salgado Filho, 556, Canoas"),
-        ("Brigadeira", "Le Mans, 175, Canoas"),
-    ],
-}
-
+# `pontos_de_busca` resolve isso para qualquer cidade OU área desenhada, tirando
+# endereços reais dos 111 milhões do CNEFE e espalhando-os numa grade, do mais
+# denso para o menos. Ver o cabeçalho de lá para o caminho que escala.
 
 
 # Fração de lojas inéditas abaixo da qual o bairro não compensa. Dois
@@ -211,7 +209,7 @@ def gravar(con, lojas: list[dict]) -> int:
     return len(linhas)
 
 
-async def um_bairro(pw, nome: str, endereco: str, args) -> tuple:
+async def um_bairro(pw, nome: str, endereco: str, args, proxy: dict = None) -> tuple:
     """Abre uma sessão só para este bairro, lê o feed e fecha.
 
     Devolve (lojas, motivo). `motivo` é None quando deu certo — e quando não
@@ -234,7 +232,13 @@ async def um_bairro(pw, nome: str, endereco: str, args) -> tuple:
                           "cr_ifood_" + _n(nome).replace(" ", "_"))
     shutil.rmtree(perfil, ignore_errors=True)
     try:
-        br, ctx, page = await abrir_navegador(pw, args.visivel, perfil_path=perfil)
+        # UM PROXY POR SESSÃO. A sessão já nasce descartável (perfil próprio,
+        # apagado no fim); com o proxy junto, o ponto seguinte não herda nem o
+        # perfil nem o IP do anterior. Uma varredura estadual são centenas de
+        # sessões contra o mesmo domínio que já devolve 403 do Akamai para IP
+        # repetido.
+        br, ctx, page = await abrir_navegador(pw, args.visivel, proxy=proxy,
+                                              perfil_path=perfil)
         page.on("response", ouvinte)
 
         await page.goto(f"{BASE}/", wait_until="domcontentloaded", timeout=60000)
@@ -267,23 +271,55 @@ async def um_bairro(pw, nome: str, endereco: str, args) -> tuple:
 
 async def rodar(args) -> int:
     from playwright.async_api import async_playwright
-    pontos = PONTOS.get(args.cidade.lower())
-    if not pontos:
-        print(f"! não tenho os pontos de '{args.cidade}'.", flush=True)
+    from pontos_de_busca import pontos as pontos_de_busca
+
+    escopo = (f"área desenhada {args.area!r}" if args.area
+              else f"{args.cidade}{'/' + args.uf if args.uf else ''}")
+    try:
+        pontos = pontos_de_busca(cidade=args.cidade, uf=args.uf, area_ref=args.area,
+                                 passo_km=args.passo_km, limite=args.limite)
+    except SystemExit as e:
+        print(f"! {e}", flush=True)
         return 1
-    pontos = pontos[:args.bairros or len(pontos)]
+    if not pontos:
+        print(f"! nenhum endereço do CNEFE em {escopo}.", flush=True)
+        return 1
+
+    # O POOL É OPCIONAL, E A FALTA DELE É DITA EM VOZ ALTA.
+    #
+    # Sem proxy a varredura ainda roda — de um IP só. Descobrir isso no meio de
+    # uma cidade grande custa a cidade; descobrir aqui custa uma linha de log.
+    pool = None
+    if not args.sem_proxy:
+        try:
+            from proxy_pool import ProxyPool
+            pool = ProxyPool().start()
+        except Exception as e:                                 # noqa: BLE001
+            print(f"  ⚠️  pool de proxy indisponível ({type(e).__name__}) — "
+                  f"as sessões sairão pelo IP direto", flush=True)
 
     print("⟦fase⟧ ifood-descoberta", flush=True)
-    print(f"{len(pontos)} bairros · UMA SESSÃO POR BAIRRO · navegador "
+    print(f"{escopo} · {len(pontos)} pontos do CNEFE · passo {args.passo_km} km · "
+          f"UMA SESSÃO POR PONTO · navegador "
           f"{'visível' if args.visivel else 'oculto'}", flush=True)
 
     todas: dict[str, dict] = {}
     secos = 0
     t0 = time.time()
     async with async_playwright() as pw:
-        for nome, endereco in pontos:
+        for pt in pontos:
+            nome, endereco = pt["rotulo"], pt["endereco"]
             antes = len(todas)
-            lojas, motivo = await um_bairro(pw, nome, endereco, args)
+            proxy = await pool.acquire() if pool else None
+            lojas, motivo = await um_bairro(pw, nome, endereco, args, proxy)
+            if pool and proxy:
+                # Proxy que tomou desafio vai para o DESCANSO, não para o fim da
+                # fila. Devolvê-lo à rotação queima o IP de vez: o próximo ponto
+                # o pega ainda marcado e toma o mesmo desafio.
+                if motivo and "desafio" in motivo:
+                    await pool.mark_cooldown(proxy)
+                else:
+                    await pool.release(proxy)
             for lj in lojas:
                 todas.setdefault(lj["merchant_id"], lj)
             novas = len(todas) - antes
@@ -334,15 +370,31 @@ async def rodar(args) -> int:
 
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--cidade", default="canoas")
-    p.add_argument("--bairros", type=int, default=0)
+    p.add_argument("--cidade", help="nome do município (ex.: Canoas)")
+    p.add_argument("--uf", help="sigla da UF; desempata município homônimo")
+    p.add_argument("--area", nargs="?", const=au.AREA_PADRAO, default=None,
+                   metavar="NOME",
+                   help="usa a área desenhada no painel em vez de um município")
+    p.add_argument("--passo-km", dest="passo_km", type=float, default=2.5,
+                   help="lado da célula da grade de pontos (padrão 2,5 km)")
+    p.add_argument("--limite", type=int, default=0,
+                   help="no máximo N pontos, os mais densos primeiro (0 = todos)")
+    p.add_argument("--sem-proxy", dest="sem_proxy", action="store_true",
+                   help="não usa o pool; as sessões saem pelo IP direto")
     p.add_argument("--simular", action="store_true")
     # Visível por padrão: é assim que se vê o que o iFood mostrou quando algo
     # falha. `--oculto` serve para rodada longa, desacompanhada.
     p.add_argument("--oculto", dest="visivel", action="store_false",
                    help="roda sem janela")
     p.set_defaults(visivel=True)
-    return asyncio.run(rodar(p.parse_args()))
+    a = p.parse_args()
+    # Escopo OBRIGATORIO e EXPLICITO. Antes o padrao era `--cidade canoas`: quem
+    # esquecia o argumento varria Canoas achando que varria a propria cidade.
+    if not a.cidade and not a.area:
+        p.error("informe --cidade NOME (com --uf) ou --area")
+    if a.cidade and a.area:
+        p.error("--cidade e --area sao escopos diferentes; escolha um")
+    return asyncio.run(rodar(a))
 
 
 if __name__ == "__main__":
