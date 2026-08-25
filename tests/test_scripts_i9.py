@@ -177,3 +177,39 @@ def test_a_producao_estadual_tem_trava_de_instancia_unica():
         assert any(l.lstrip().startswith("exec ") and ">" in l for l in codigo), (
             f"{nome} tem flock sem descritor aberto por `exec N>` — a trava "
             "morreria no fim do comando em vez de durar a execucao inteira.")
+
+
+def test_o_lancador_nao_confia_em_nohup_nem_em_pgrep():
+    """Duas crencas erradas custaram uma tarde em 25/08/2026.
+
+    A PRIMEIRA: que `setsid`/`nohup`/`disown` — ou o `Start-Process` do
+    PowerShell — bastam para o trabalho sobreviver ao fim da conexao. Nao
+    bastam: o OpenSSH do Windows derruba a sessao inteira e o WSL leva junto os
+    processos daquela invocacao. Um `sleep 300` some no instante em que o ssh
+    volta, sem escrever uma linha. As rodadas que sobreviviam sobreviviam por
+    acidente — havia uma sessao desconectada segurando o WSL de pe.
+
+    A SEGUNDA, pior: que `pgrep -f <padrao>` responde se o trabalho esta vivo.
+    Dentro de `bash -lc '... pgrep -f dataset_brasil.sh ...'` o padrao casa com a
+    PROPRIA linha de comando da conferencia. O `1` lido era ele mesmo, e uma
+    producao dada como viva estava morta havia meia hora.
+
+    O lancador usa `systemd-run --user` (o WSL do i9 roda systemd como PID 1, e
+    a unidade transitoria fica fora da arvore do ssh) e pergunta o estado ao
+    systemd, que nao tem como se auto-encontrar.
+    """
+    txt = _bytes("lancar.sh").decode("utf-8", "replace")
+    codigo = [l for l in txt.splitlines() if not l.lstrip().startswith("#")]
+    junto = "\n".join(codigo)
+
+    assert "systemd-run --user" in junto, \
+        "lancar.sh deixou de usar systemd-run — o trabalho volta a morrer com a sessao"
+    assert "is-active" in junto, \
+        "a conferencia saiu do systemd; sem ela o lancador volta a mentir sobre estar vivo"
+    for morto in ("nohup", "setsid", "Start-Process"):
+        assert morto not in junto, (
+            f"`{morto}` voltou ao lancar.sh em codigo executavel. Foi medido que "
+            "nao sobrevive ao fim da conexao — e falha em silencio.")
+    assert "pgrep" not in junto, (
+        "`pgrep` voltou a ser usado para conferir se o trabalho vive. O padrao "
+        "casa com a propria conferencia e o resultado e falso positivo.")
