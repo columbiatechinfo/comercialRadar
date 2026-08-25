@@ -135,7 +135,14 @@ with base as (
          longitude::numeric as lon
     from ibge_cnefe
    where cod_municipio = any(%(muns)s)
-     and coalesce(num_endereco, '') <> ''
+     -- NUMERO DE VERDADE, comecando por digito diferente de zero.
+     --
+     -- `coalesce(num_endereco,'') <> ''` nao basta: o CNEFE grava `0` para o
+     -- imovel sem numero, e `Rua Moacir Inchado, 0` e exatamente o caso que faz
+     -- o iFood responder `address_number_required` e nao salvar o endereco —
+     -- o ponto vira uma sessao de navegador gasta a toa. O padrao aceita
+     -- `1626` e `123A` e recusa `0`, `00` e `S/N`.
+     and num_endereco ~ '^[1-9][0-9]*'
      and coalesce(nom_seglogr, '') <> ''
      and coalesce(latitude, '')  <> ''
      and coalesce(longitude, '') <> ''
