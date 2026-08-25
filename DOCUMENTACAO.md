@@ -3102,9 +3102,41 @@ bah burger               +  figurati napolitana pizza  7 m
 As legítimas, que precisam continuar fundindo, **sempre compartilham token**:
 `farelos racoes stein` + `agrocomercial stein`.
 
-**Total: 5.532 fusões por telefone com núcleos disjuntos só no RS** — provável
-perda de estabelecimento real, que é exatamente o defeito que a v3.0.0 da skill
-nasceu para impedir.
+### A IA mediu, e é pior que a heurística dizia
+
+"Núcleos disjuntos" é heurística tão frágil quanto o telefone que ela critica.
+Decidir se `loterica schneider` e `bazar mega` são o mesmo negócio é **julgamento
+semântico sobre nome de comércio** — não há prova mecânica, e é exatamente onde a
+IA é o instrumento certo (`julgar_fusao.py`, Spark).
+
+400 pares sorteados com semente fixa, zero falhas:
+
+| Veredito | | |
+|---|---:|---:|
+| **DIFERENTE** | 265 | **66,2%** |
+| MESMO | 117 | 29,2% |
+| INCERTO | 18 | 4,5% |
+
+E o corte por evidência é o que aponta o parâmetro a mexer:
+
+```
+telefone   281 pares · DIFERENTE 74,4%
+site        72 pares · DIFERENTE 61,1%
+nome        47 pares · DIFERENTE 25,5%
+```
+
+**A regra de nome está boa; telefone e site é que decidem sozinhos demais.**
+Extrapolando: 8.483×74,4% + 1.896×61,1% + 1.297×25,5% ≈ **7.800 estabelecimentos
+perdidos só no RS** — mais que os 5.532 da heurística, que era conservadora.
+
+**Ressalva sobre a medida:** o modelo se contradisse em casos gêmeos —
+`4163 ad azul voo` × `4454 ad azul voo` saiu DIFERENTE e
+`4134 ad azul voo` × `4996 ad azul voo` saiu MESMO, com o mesmo raciocínio. A
+ordem de grandeza está estabelecida; a segunda casa decimal, não.
+
+`julgar_fusao.py` **mede e não conserta**: não desfaz fusão, não reescreve
+entrega, não mexe em parâmetro. O veredito de cada par fica em
+`julgamento_fusao.csv`, com o motivo escrito.
 
 **A causa** é `tel_max_locais=3` (`vendor/dedup_v3.py`): um telefone só vira
 "hub" e perde valor de prova se aparecer em **mais de 3** posições. Dois ou três
