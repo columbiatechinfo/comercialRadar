@@ -108,8 +108,10 @@ def _cmd(cfg, release, bbox, saida):
            "-f", "geoparquet", "--type=place", "-o", saida]
     if release:
         cmd += ["--release", release]
-    elif getattr(cfg, "_ov_queda_sem_release", False):
-        pass          # queda deliberada do patch local: ver `_tile`
+    elif _SEM_RELEASE["ativo"]:
+        # Queda deliberada do patch local (ver `_tile`): o CLI recusou a release
+        # e estamos baixando pelo caminho padrao de proposito.
+        pass
     elif cfg.source_mode == "pinned":
         raise RuntimeError(
             "--source-mode pinned: release do Overture indeterminada. Sem amarrar o "
@@ -143,7 +145,9 @@ def _cmd(cfg, release, bbox, saida):
 # `releases latest` diz que o download padrao busca. Declarar isso e honesto;
 # o que seria desonesto e declarar uma release que nao foi consultada.
 _RECUSA = ("no longer available", "not found", "is not available")
-_SEM_RELEASE = {"avisado": False}
+# `cfg` e um dataclass CONGELADO — nao aceita atributo novo
+# (`FrozenInstanceError`). Por isso o sinal vive no modulo, e nao nele.
+_SEM_RELEASE = {"avisado": False, "ativo": False}
 
 
 def _cli_recusou(err: bytes) -> bool:
@@ -162,10 +166,10 @@ def _tile(cfg, sig, bbox, idx, release=None):
                       flush=True)
                 _SEM_RELEASE["avisado"] = True
             try:
-                cfg._ov_queda_sem_release = True
+                _SEM_RELEASE["ativo"] = True
                 r = subprocess.run(_cmd(cfg, None, bbox, tmp), capture_output=True)
             finally:
-                cfg._ov_queda_sem_release = False
+                _SEM_RELEASE["ativo"] = False
         if r.returncode != 0:
             raise subprocess.CalledProcessError(r.returncode, "overturemaps download",
                                                 r.stdout, r.stderr)
