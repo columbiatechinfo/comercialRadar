@@ -3133,3 +3133,133 @@ python extracao_estadual.py --saida dados_externos/estadual/RS/saida \
 O passo 3 roda **no i9**, porque o banco está lá — trazer dezenas de GB para o
 notebook só para devolver o recorte de um município seria atravessar a rede duas
 vezes à toa.
+
+---
+
+## 37. O endereço grudado: a IA lê, a skill prova (25/08/2026)
+
+O logradouro é a **chave de junção das bases cruzadas**. `pois`,
+`cadastro_cliente`, `ifood_merchant` e o CNEFE escrevem a mesma rua de jeitos
+diferentes, e o cruzamento erra para os dois lados: perde par que existe e casa
+par que não existe.
+
+A skill `ajuste-logradouro` (v3.3.5, em `skills/`) resolve isso — mas declara,
+no próprio contrato, que **não segmenta campo único grudado**. E a nossa `pois`
+só tem um campo `endereco`, com formatos diferentes **dentro da mesma coluna**:
+
+```
+R. Mal. Rondon, 1199 - Niterói, Canoas - RS, 92120-210, Brasil
+RUA A J RENNER Número: 813 Bairro: ESTANCIA VELHA Município: CANOAS UF: RS
+Av. Getúlio Vargas, 2575, Niterói, Canoas, RS
+Rua Epitácio Pessoa - Canoas, Canoas - RS, 92130-340
+```
+
+Regra de vírgula não resolve: o segundo formato nem separador tem — tem rótulo.
+
+### A divisão é por natureza do problema, não por fase
+
+| Tarefa | Tem prova disponível? | Quem faz |
+|---|---|---|
+| **Segmentar** formato heterogêneo | não — só interpretação | **IA** (`segmentar_endereco.py`) |
+| **Canonizar** o logradouro | sim — mesmo número, 30 m, support de 2 imóveis distintos, CNEFE | **skill** |
+
+Passar a canonização também para a IA foi considerado e **medido**. Não passa:
+
+- ela já tentou inventar: **7 de 320** endereços com campo descartado por não
+  estar no texto (`R.` virando `Rua`, CEP completado);
+- já leu o formato errado: trocou bairro e cidade até a ordem entrar no prompt;
+- **e não é determinística**: mesmas 320 entradas, `temperature 0`, duas
+  execuções — 7 descartes numa, 1 na outra. O vLLM agrupa requisições e a
+  aritmética muda com a composição do lote.
+
+Um léxico municipal construído sobre saída que varia entre execuções não é
+auditável, e a skill inteira existe para ser auditável.
+
+### A IA roda só na Spark
+
+Regra do dono do produto. `_conferir_endpoint()` **recusa o i9 pelo nome**, com
+o motivo: o i9 é a máquina do trabalho pesado de dados (DuckDB sobre o Overture,
+PBF do OSM, Postgres de produção), e modelo ali disputa a mesma RAM de uma
+extração estadual. O i9 chama a Spark por HTTP; nunca carrega modelo.
+
+### Nada é inventado
+
+Todo campo devolvido precisa **existir no texto original**, conferido sobre a
+forma sem acento e sem pontuação — a pergunta é se o modelo trocou **palavra**,
+não se mexeu no ponto da abreviação. O que não ancora é descartado, e o motivo
+viaja junto com o valor que ele tentou pôr:
+
+| `metodo` | Significa |
+|---|---|
+| `ia` | todos os campos existem no texto |
+| `parcial` | algum foi descartado — o `motivo` diz qual e o quê |
+| `revisar` | nem o logradouro sobreviveu |
+| `falhou` | a Spark não respondeu, ou respondeu o que não dá para ler |
+
+Lote que falha não derruba a rodada **e não some**: cada endereço dele sai
+marcado. Buraco silencioso na base é pior que erro declarado.
+
+### O que veio da skill para o prompt
+
+A **taxonomia de complemento**, importada de `complemento_organizador.ORDEM` em
+vez de copiada. Se os dois falarem vocabulários diferentes, o complemento que
+entregamos vira `aj_compl_identificador` — "valor sem rótulo", que a skill
+mantém e sinaliza mas não usa. Cópia manual envelheceria em silêncio: a v3.3.5
+acabou de acrescentar `ENTRADA`, `COMODO`, `COBERTURA`, `PORTARIA` e `PALAFITA`
+do padrão CNEFE.
+
+Este é o ponto exato onde faz sentido dar contexto da skill ao modelo: melhora a
+**leitura**, sem mover o **julgamento**.
+
+### Duas tabelas, as duas sem `tenant_id` — e a exceção está escrita
+
+| Tabela | Chave | Conteúdo |
+|---|---|---|
+| `endereco_segmentado` | o **texto** do endereço | os campos lidos pela IA, com `metodo`, `motivo` e `modelo` |
+| `logradouro_ajustado` | `(fonte, record_id)` | a forma canônica marcada, com `tier` e `run_id` |
+
+A regra da migração 0029 é condicional: tabela **que tem** `tenant_id` precisa de
+RLS, policy, gatilho e índice. Estas não têm, e é decisão. `R. Mal. Rondon` é o
+mesmo endereço para qualquer cliente, e "RUA CORONEL MARCOS é a forma canônica
+de R. Cel. Marcos em Canoas" é fato sobre via pública. Carimbar tenant faria
+cada concessionária pagar de novo o mesmo aprendizado e daria **duas verdades à
+mesma rua** — o problema que isto existe para acabar. O vínculo com o cliente
+está no `record_id`, que aponta para tabelas que têm `tenant_id` e RLS.
+
+### Medido em Canoas
+
+```
+segmentação   234 ms/endereço com 16 lotes simultâneos (845 ms em série)
+              17.095 distintos de 20.934 POIs -> ~67 min, uma vez, em cache
+
+cadeia        108.835 registros marcados em 17,3 s
+              CONFIRMA=105.928  ALTA=1.672  REVISAR=1.235
+              47.307 pares na trava de 30 m · scope=4304606
+```
+
+`CONFIRMA` é aplicável em massa; `REVISAR` é fila humana, porque houve **perda de
+texto**. Sem essa graduação, quem consome faz uma coisa só com os dois.
+
+### Um defeito nosso que a skill achou
+
+`cod_unico_endereco` do CNEFE **não é único na nossa carga** — 52 repetidos em
+6.000. Registro repetido faz o mesmo endereço votar duas vezes no support, e
+support é a moeda da prova: duas linhas com o mesmo código não são dois imóveis.
+Corrigido com `distinct on` de ordem determinística na exportação.
+
+### Rodar
+
+```bash
+# 1 · a IA lê o que ainda não foi lido (uma vez por município, fica em cache)
+bash scripts/i9/lancar.sh segmentar_canoas \
+  "env SPARK_THREADS=16 .venv/bin/python segmentar_endereco.py --municipio 4304606 --aplicar"
+
+# 2 · as quatro fontes, a skill e a volta para o banco
+python ajuste_logradouro.py --municipio 4304606 --listar     # só conta
+python ajuste_logradouro.py --municipio 4304606              # simula
+python ajuste_logradouro.py --municipio 4304606 --aplicar
+```
+
+Sempre **por município**: a skill aborta se a base cruzar mais de uma zona UTM, e
+o léxico é por `scope_id` municipal de propósito — sobrenome raro numa cidade não
+é sobrenome errado na outra.

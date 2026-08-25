@@ -281,7 +281,8 @@ def _julgar(lote: list, lidos: list) -> dict:
     return saida
 
 
-def segmentar(enderecos, verboso: bool = False, threads: int = THREADS) -> dict:
+def segmentar(enderecos, verboso: bool = False, threads: int = THREADS,
+              ao_lote=None) -> dict:
     """`{endereco_original: {campos..., metodo, motivo}}`.
 
     Uma chamada por valor DISTINTO. O chamador pode passar a coluna inteira sem
@@ -312,11 +313,20 @@ def segmentar(enderecos, verboso: bool = False, threads: int = THREADS) -> dict:
                 "metodo": "falhou", "motivo": f"{type(erro).__name__}: {erro}"}
                 for e in lote}
 
-    feitos = 0
+    feitos, pendente = 0, {}
     with ThreadPoolExecutor(max_workers=max(1, threads)) as pool:
         for lote, reg in pool.map(_um, lotes):
             saida.update(reg)
+            pendente.update(reg)
             feitos += 1
+            # GRAVA NO CAMINHO, e não só no fim. Canoas são 855 lotes e mais de
+            # uma hora de leitura paga à Spark: uma queda no minuto 60 apagaria
+            # a hora inteira, e a rodada seguinte a compraria de novo. É a mesma
+            # lição do save que derrubava a rodada (seção 21) — o trabalho já
+            # feito precisa sobreviver ao trabalho que ainda falta.
+            if ao_lote and (feitos % 25 == 0 or feitos == len(lotes)):
+                ao_lote(pendente)
+                pendente = {}
             if verboso and (feitos % 10 == 0 or feitos == len(lotes)):
                 falhos = sum(1 for r in saida.values() if r["metodo"] == "falhou")
                 print(f"  lote {feitos}/{len(lotes)} · {len(saida):,} endereços"
@@ -348,7 +358,8 @@ def nome_do_municipio(cod: str) -> tuple:
     return r[0], r[1]
 
 
-def do_municipio(cod: str, limite: int = 0, aplicar: bool = False) -> None:
+def do_municipio(cod: str, limite: int = 0, aplicar: bool = False,
+                 refazer: bool = False) -> None:
     import base_comum as bc
 
     nome, uf = nome_do_municipio(cod)
@@ -369,35 +380,62 @@ def do_municipio(cod: str, limite: int = 0, aplicar: bool = False) -> None:
            and (p.uf = %s or p.uf is null)
          limit %s""", (nome, uf, limite or 200000))
     enderecos = [r[0] for r in cur.fetchall()]
-    print(f"  {len(enderecos):,} endereços · {len(set(enderecos)):,} distintos")
+    distintos = sorted(set(enderecos))
+    print(f"  {len(enderecos):,} endereços · {len(distintos):,} distintos")
 
-    reg = segmentar(enderecos, verboso=True)
-    _resumir(reg)
+    # RETOMÁVEL: o que já foi lido não é lido de novo.
+    #
+    # Sem isto, uma rodada interrompida no minuto 60 recomeçava do zero e
+    # comprava de novo o que já estava pago. E não é caso raro: a leitura de um
+    # município grande passa de uma hora, e é justamente aí que alguém reinicia
+    # a máquina, o Wi-Fi cai ou a Spark é reiniciada.
+    if not refazer:
+        cur.execute("select endereco from endereco_segmentado where endereco = any(%s)",
+                    (distintos,))
+        ja = {r[0] for r in cur.fetchall()}
+        if ja:
+            print(f"  {len(ja):,} já lidos antes — ficam como estão (--refazer força)")
+        distintos = [e for e in distintos if e not in ja]
+    if not distintos:
+        print("  nada novo a ler")
+        con.close()
+        return
 
     if not aplicar:
+        reg = segmentar(distintos, verboso=True)
+        _resumir(reg)
         print("\n  SIMULAÇÃO — nada gravado. Use --aplicar.")
         con.close()
         return
 
     import psycopg2.extras
-    linhas = [(e, r["logradouro"], r["numero"], r["complemento"], r["bairro"],
-               r["cep"], r["cidade"], r["uf"], r["metodo"], r["motivo"], MODELO)
-              for e, r in reg.items()]
-    psycopg2.extras.execute_values(cur, """
-        insert into endereco_segmentado
-          (endereco, logradouro, numero, complemento, bairro, cep, cidade, uf,
-           metodo, motivo, modelo)
-        values %s
-        on conflict (endereco) do update set
-          logradouro = excluded.logradouro, numero = excluded.numero,
-          complemento = excluded.complemento, bairro = excluded.bairro,
-          cep = excluded.cep, cidade = excluded.cidade, uf = excluded.uf,
-          metodo = excluded.metodo, motivo = excluded.motivo,
-          modelo = excluded.modelo, segmentado_em = now()
-        """, linhas, page_size=500)
-    con.commit()
+    gravados = [0]
+
+    def _gravar(parcial: dict) -> None:
+        linhas = [(e, r["logradouro"], r["numero"], r["complemento"], r["bairro"],
+                   r["cep"], r["cidade"], r["uf"], r["metodo"], r["motivo"], MODELO)
+                  for e, r in parcial.items()]
+        if not linhas:
+            return
+        psycopg2.extras.execute_values(cur, """
+            insert into endereco_segmentado
+              (endereco, logradouro, numero, complemento, bairro, cep, cidade, uf,
+               metodo, motivo, modelo)
+            values %s
+            on conflict (endereco) do update set
+              logradouro = excluded.logradouro, numero = excluded.numero,
+              complemento = excluded.complemento, bairro = excluded.bairro,
+              cep = excluded.cep, cidade = excluded.cidade, uf = excluded.uf,
+              metodo = excluded.metodo, motivo = excluded.motivo,
+              modelo = excluded.modelo, segmentado_em = now()
+            """, linhas, page_size=500)
+        con.commit()
+        gravados[0] += len(linhas)
+
+    reg = segmentar(distintos, verboso=True, ao_lote=_gravar)
+    _resumir(reg)
     con.close()
-    print(f"\n  GRAVADO: {len(linhas):,} endereços distintos em endereco_segmentado")
+    print(f"\n  GRAVADO: {gravados[0]:,} endereços distintos em endereco_segmentado")
 
 
 def _resumir(reg: dict) -> None:
@@ -419,6 +457,8 @@ def main() -> int:
                    help="lê N endereços do banco, mostra e NÃO grava")
     p.add_argument("--municipio", default="", help="código IBGE")
     p.add_argument("--aplicar", action="store_true")
+    p.add_argument("--refazer", action="store_true",
+                   help="rele quem ja esta em endereco_segmentado")
     a = p.parse_args()
 
     if a.texto:
@@ -443,7 +483,7 @@ def main() -> int:
         _resumir(reg)
         return 0
     if a.municipio:
-        do_municipio(a.municipio, aplicar=a.aplicar)
+        do_municipio(a.municipio, aplicar=a.aplicar, refazer=a.refazer)
         return 0
     p.print_help()
     return 2
