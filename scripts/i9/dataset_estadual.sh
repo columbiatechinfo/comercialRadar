@@ -62,9 +62,18 @@ produzir() {
   # As fontes são montadas pelo que a máquina de fato alcança. Declarar
   # `overture,osm,fsq` e deixar duas falharem produziria um dataset OSM-only com
   # nome de "bases públicas" — cobertura menor, e ninguém saberia.
+  # O `bin` do venv ENTRA no PATH antes de procurar o `overturemaps`.
+  #
+  # Ele é instalado como dependência do projeto, então mora em
+  # `.venv/bin/overturemaps` — não no PATH do shell. Sem esta linha,
+  # `command -v` não o acha, a lista de fontes cai para `osm` sozinha, e sai um
+  # dataset OSM-only com nome de "bases públicas": cobertura menor, marcado
+  # como pronto, e ninguém sabe. Aconteceu na primeira execução do RS.
+  export PATH="$DIR_I9/.venv/bin:$PATH"
+
   FONTES="osm"
   command -v overturemaps >/dev/null && FONTES="overture,$FONTES" \
-    || echo "  ⚠️  sem overture: CLI ausente (pip install overturemaps)"
+    || echo "  ⚠️  sem overture: CLI ausente mesmo com o venv no PATH"
   [ -n "${HF_TOKEN:-}" ] && FONTES="$FONTES,fsq" \
     || echo "  ⚠️  sem foursquare: HF_TOKEN ausente no .env"
   echo "  fontes: $FONTES"
