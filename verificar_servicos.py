@@ -212,74 +212,83 @@ def searxng() -> bool:
 # ── LLM ──────────────────────────────────────────────────────────────────────
 
 def llm(rapido: bool = False) -> bool:
-    base = (os.environ.get("OLLAMA_URL") or "").rstrip("/")
-    if not base:
-        _linha(AVISO, "llm local", "sem OLLAMA_URL no .env")
-        return True
+    """A IA do sistema — no vLLM da Spark, desde 24/08/2026.
+
+    ONDE ELA MORA, E POR QUE MUDOU
+
+    Até aqui esta verificação conferia o Ollama do i9. Mas a IA do produto passou
+    a viver na Spark (`Qwen3-VL-30B-A3B-Instruct-FP8`, servido como
+    `qwen3vl-moe` pelo container `nvcr.io/nvidia/vllm`), que é a máquina com a
+    GPU dedicada. Conferir o i9 daria **7/7 apontando para o lugar errado** — o
+    pior resultado possível para uma verificação, porque ela existe justamente
+    para impedir isso.
+
+    O vLLM fala o protocolo da OpenAI, o mesmo que `avaliar_fachada`,
+    `descrever_imagens` e `leitura_fachada` usam. Então esta função exercita
+    exatamente o caminho da produção, e não um atalho.
+    """
+    base = (os.environ.get("VLLM_URL")
+            or os.environ.get("LOCAL_LLM_URL")
+            or "http://100.85.164.54:8000/v1").rstrip("/")
     try:
-        d, s = _http(base + "/api/tags", timeout=20)
+        d, s = _http(base + "/models", timeout=20)
     except Exception as e:
-        _linha(RUIM, "llm local", f"{base} · {type(e).__name__}")
-        print("       Confira se o OLLAMA_URL aponta para a máquina certa: em "
-              "24/08/2026 ele\n"
-              "       apontava para a DGX, que não tem Ollama instalado.")
+        _linha(RUIM, "llm (vLLM)", f"{base} · {type(e).__name__}")
+        print("       O container está parado? Na Spark:\n"
+              "         docker start vllm-tools\n"
+              "       O modelo leva ~150 s para carregar antes de responder.")
         return False
 
-    modelos = [m.get("name") for m in (d.get("models") or [])]
+    modelos = [m.get("id") for m in (d.get("data") or [])]
     if not modelos:
-        _linha(RUIM, "llm local", "nenhum modelo instalado")
+        _linha(RUIM, "llm (vLLM)", "servidor no ar e nenhum modelo servido")
         return False
-    _linha(OK, "llm local", f"{len(modelos)} modelos · {', '.join(modelos[:3])}")
+    _linha(OK, "llm (vLLM)", f"{len(modelos)} modelo(s) · {', '.join(modelos[:3])}")
     if rapido:
         return True
 
-    # GERAÇÃO DE VERDADE. `/api/tags` responde mesmo com a GPU fora do ar, e um
-    # modelo que carrega mas não gera é indistinguível de um saudável até a
-    # primeira rodada de produção.
-    # O MODELO DE PRODUÇÃO primeiro. `qwen2.5vl:3b` também casa com o prefixo e
-    # é bem mais rápido — testar o rápido e concluir que está tudo bem é
-    # exatamente o erro que uma verificação não pode cometer.
-    from_avaliar = ("qwen2.5vl:7b", "qwen2.5vl:3b")
-    alvo = next((m for m in from_avaliar if m in modelos), modelos[0])
+    # GERAÇÃO DE VERDADE, e COM IMAGEM. `/models` responde mesmo com a GPU fora
+    # do ar, e um modelo que carrega mas não gera é indistinguível de um saudável
+    # até a primeira rodada de produção.
+    #
+    # A imagem não é capricho: todo uso real deste modelo aqui é VISÃO. Um teste
+    # só de texto passaria com o caminho multimodal quebrado — que é o caminho
+    # que o sistema de fato usa.
+    alvo = next((m for m in modelos if "vl" in (m or "").lower()), modelos[0])
+    import base64
+    # PNG 1x1 vermelho, embutido: verificação não deve depender de arquivo em
+    # disco nem de rede para montar o próprio caso de teste.
+    px = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmM"
+        "IQAAAABJRU5ErkJggg==")
     corpo = json.dumps({
-        "model": alvo,
-        "messages": [{"role": "user",
-                      "content": "Responda apenas com a palavra: FUNCIONANDO"}],
-        "stream": False,
-        # SEM ISTO o modelo "thinking" devolve `response` vazio, e o placar de
-        # qualquer teste vira ficção.
-        "think": False,
-        "options": {"num_predict": 12, "temperature": 0},
+        "model": alvo, "temperature": 0, "max_tokens": 12,
+        "messages": [{"role": "user", "content": [
+            {"type": "text", "text": "Responda apenas com a palavra: FUNCIONANDO"},
+            {"type": "image_url", "image_url": {
+                "url": "data:image/png;base64," + base64.b64encode(px).decode()}},
+        ]}],
     }).encode("utf-8")
-    req = urllib.request.Request(base + "/api/chat", data=corpo,
-                                 headers={"Content-Type": "application/json"})
+    req = urllib.request.Request(base + "/chat/completions", data=corpo,
+                                 headers={"Content-Type": "application/json",
+                                          "Authorization": "Bearer local"})
     t0 = time.time()
     try:
         with urllib.request.urlopen(req, timeout=240) as r:
             resp = json.loads(r.read().decode("utf-8"))
-        texto = (resp.get("message") or {}).get("content", "").strip()
+        msg = ((resp.get("choices") or [{}])[0].get("message") or {})
+        texto = (msg.get("content") or "").strip()
         seg = time.time() - t0
         if not texto:
             _linha(RUIM, f"  gerar {alvo}", "resposta VAZIA")
             return False
         _linha(OK, f"  gerar {alvo}", f"{seg:.1f}s · {texto[:24]!r}")
+        uso = resp.get("usage") or {}
+        if uso:
+            _linha(OK, "  visão", f"aceitou imagem · {uso.get('prompt_tokens')} tokens de entrada")
     except Exception as e:
-        _linha(RUIM, f"  gerar {alvo}", f"{type(e).__name__}")
+        _linha(RUIM, f"  gerar {alvo}", f"{type(e).__name__}: {str(e)[:60]}")
         return False
-
-    # ONDE ELE RODA. Modelo maior que a VRAM cai para a CPU e fica várias vezes
-    # mais lento — sem quebrar nada, o que é justamente o que torna difícil de
-    # notar.
-    try:
-        d, _ = _http(base + "/api/ps", timeout=20)
-        for m in d.get("models") or []:
-            tot, vram = m.get("size", 0), m.get("size_vram", 0)
-            pct = 100 * vram / tot if tot else 0
-            estado = OK if pct >= 95 else AVISO
-            _linha(estado, "  na GPU", f"{m.get('name')} · {pct:.0f}%"
-                   + ("" if pct >= 95 else "  << o resto vai para a CPU"))
-    except Exception:
-        pass
     return True
 
 
@@ -290,8 +299,11 @@ def alcance() -> None:
     for rot, host, portas in (
             ("i9", I9, [("pg produto", 5444), ("pg referência", 5443),
                         ("pooler", 5442), ("nominatim", 8080), ("photon", 2322),
-                        ("osrm", 5000), ("searxng", 8888), ("ollama", 11434)]),
-            ("DGX", DGX, [("llm", 11434), ("ssh", 22)])):
+                        ("osrm", 5000), ("searxng", 8888)]),
+            # A porta 8000 e o vLLM — a IA do produto mora aqui desde 24/08/2026.
+            # A 11434 (Ollama) saiu: nao ha Ollama na Spark, e conferi-la
+            # produzia um "fechada" permanente que ensinava a ignorar o aviso.
+            ("Spark", DGX, [("vllm", 8000), ("ssh", 22)])):
         vivos = [n for n, p in portas if _porta(host, p, 3)]
         mortos = [n for n, p in portas if n not in vivos]
         estado = OK if not mortos else (RUIM if len(mortos) > 2 else AVISO)

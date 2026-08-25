@@ -50,9 +50,66 @@ EXTRAS_DIR = SV_DIR / "extras"          # espelho em disco dos shots 360/desloca
 
 RECENCIA_MESES = 12                     # janela p/ "recomendar visita" (coment/foto/SV)
 
-OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://100.115.117.49:11434")
-API = OLLAMA_HOST.rstrip("/") + "/api/generate"
-MODELO_PADRAO = "qwen2.5vl:7b"
+# ── A IA MORA NA SPARK, E FALA O PROTOCOLO DA OPENAI (24/08/2026) ───────────
+#
+# Este módulo falava o protocolo NATIVO do Ollama (`/api/generate`, com
+# `images` em base64 puro e `options.num_ctx`). O destino é o vLLM da Spark —
+# `Qwen3-VL-30B-A3B` servido como `qwen3vl-moe` — que fala o protocolo da
+# OpenAI, o mesmo do `avaliar_fachada.py` e do `leitura_fachada.py`.
+#
+# Um protocolo só, e a máquina vira endereço. `LOCAL_URL` aponta para a Spark;
+# apontar para `http://100.115.117.49:11434/v1` usa o Ollama do i9 pelo MESMO
+# código, porque ele também expõe `/v1` — foi assim que este caminho pôde ser
+# exercitado antes de a Spark subir.
+LOCAL_URL = os.environ.get(
+    "VLLM_URL", os.environ.get("LOCAL_LLM_URL", "http://100.85.164.54:8000/v1")
+).rstrip("/")
+MODELO_PADRAO = os.environ.get("MODELO_VISAO", "qwen3vl-moe")
+
+# `num_ctx` SUMIU, e some-se o que isso significa.
+#
+# Os 4.096 fixos não eram escolha de qualidade: eram o teto do i9, onde pedir
+# janela diferente forçava reload do modelo e derrubava para CPU (bug de
+# 06/07/2026 — ctx 1024 pendurava 370 s TODO o pipeline). O vLLM serve com
+# `--max-model-len 131072` e não recarrega por requisição; a janela deixou de
+# ser algo que o cliente negocia.
+#
+# ATENÇÃO ao herdar disso uma mudança de lógica: a "segunda olhada" é foto a
+# foto PORQUE só duas fotos cabiam em 4.096. Com a janela grande isso deixa de
+# ser necessário — mas juntar as fotos MUDA O VEREDITO, e mudar veredito sem
+# medir é trocar um viés conhecido por um desconhecido. A mudança de transporte
+# vem primeiro; a de lógica, depois de comparar lado a lado.
+
+
+def _chat_local(modelo: str, prompt: str, imgs_b64: list | None = None,
+                max_tokens: int = 480, timeout: int = 180) -> dict:
+    """Uma chamada de visão pelo protocolo da OpenAI. Devolve o JSON já parseado.
+
+    `urllib` e não a biblioteca `openai`: este módulo é síncrono e roda dentro de
+    um pool de threads; trazer um cliente assíncrono aqui obrigaria a reescrever
+    o laço inteiro para ganhar nada.
+    """
+    import urllib.request
+
+    conteudo = [{"type": "text", "text": prompt}]
+    for b64 in (imgs_b64 or []):
+        conteudo.append({"type": "image_url",
+                         "image_url": {"url": "data:image/jpeg;base64," + b64}})
+    corpo = json.dumps({
+        "model": modelo, "temperature": 0, "max_tokens": max_tokens,
+        "messages": [{"role": "user", "content": conteudo}],
+        # `json_object` e não `json_schema`: o esquema de cada chamada aqui é
+        # descrito no PRÓPRIO prompt, e pedir schema estrito exigiria declará-lo
+        # duas vezes — em dois lugares que podem divergir.
+        "response_format": {"type": "json_object"},
+    }).encode()
+    req = urllib.request.Request(f"{LOCAL_URL}/chat/completions", data=corpo,
+                                 headers={"Content-Type": "application/json",
+                                          "Authorization": "Bearer local"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        d = json.load(r)
+    txt = ((d.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+    return json.loads(txt or "{}")
 IMG_LARGURA = 1024
 MAPS_FOTO_LARGURA = 768     # fotos de apoio menores (economia de tokens de visão)
 MAX_FOTOS_MAPS = 3
@@ -189,20 +246,14 @@ def _mesmo_ramo(modelo: str, visto: str, categoria: str) -> bool:
     tv, tc = set(_norm_tokens(visto, _STOP_RAMO)), set(_norm_tokens(categoria, _STOP_RAMO))
     if tv and tc and len(tv & tc) / min(len(tv), len(tc)) >= 0.5:
         return True
-    payload = json.dumps({
-        "model": modelo, "prompt": PROMPT_RAMO.format(visto=visto, categoria=categoria),
-        "stream": False, "format": "json", "keep_alive": "15m",
-        # num_ctx IGUAL ao da percepção (4096): pedir ctx diferente força reload do
-        # modelo e o Ollama trava com a VRAM no limite (bug caçado em 06/07/2026 —
-        # ctx 1024 pendurava 370s TODO o pipeline; ctx 4096 responde em 0.8s)
-        "options": {"num_ctx": 4096, "num_predict": 30, "temperature": 0},
-    }).encode()
+    prompt = PROMPT_RAMO.format(visto=visto, categoria=categoria)
     for retry in (False, True):
         try:
-            req = urllib.request.Request(API, data=payload,
-                                         headers={"Content-Type": "application/json"})
-            resp = json.loads(urllib.request.urlopen(req, timeout=180).read())
-            return _tf(json.loads(resp.get("response", "{}")).get("mesmo_ramo"))
+            # 30 tokens: a resposta é `{"mesmo_ramo": true}`. Teto baixo aqui não
+            # é economia, é freio — sem ele um modelo em laço escreve até o
+            # contexto acabar e devolve JSON cortado no meio.
+            return _tf(_chat_local(modelo, prompt, max_tokens=30, timeout=180)
+                       .get("mesmo_ramo"))
         except Exception:
             if retry:
                 raise
@@ -344,17 +395,16 @@ def _fotos_maps_bytes(poi_id: int, conn, limit: int = MAX_FOTOS_MAPS) -> list:
 
 
 def _observar(modelo: str, imgs_b64: list) -> dict:
-    # ctx 4096 FIXO: é o que carrega 100% GPU (5.4GB); pedir mais força reload e
-    # derruba pra CPU. 1 SV 1024px (~1.1k tok) + 3 fotos 768px (~0.6k cada) ~ 3.3k ✓.
-    # Se um POI estourar (aspecto raro), o caller reduz as fotos e retenta.
-    payload = json.dumps({
-        "model": modelo, "prompt": PROMPT_SISTEMA, "images": imgs_b64,
-        "stream": False, "format": "json", "keep_alive": "15m",
-        "options": {"num_ctx": 4096, "num_predict": 480, "temperature": 0},
-    }).encode()
-    req = urllib.request.Request(API, data=payload, headers={"Content-Type": "application/json"})
-    resp = json.loads(urllib.request.urlopen(req, timeout=TIMEOUT).read())
-    return json.loads(resp.get("response", "{}"))
+    """A percepção cega: só as imagens, nenhum dado do cadastro.
+
+    O teto de contexto que existia aqui era do i9 (4.096, o que carregava 100%
+    em GPU com 8 GB de VRAM). No vLLM da Spark a janela é do SERVIDOR
+    (`--max-model-len 131072`) e não se negocia por requisição — o degradar
+    progressivo do `_observar_seguro` continua valendo para o caso raro, mas
+    deixou de ser a regra.
+    """
+    return _chat_local(modelo, PROMPT_SISTEMA, imgs_b64,
+                       max_tokens=480, timeout=TIMEOUT)
 
 
 def _observar_seguro(modelo: str, imgs: list, largura: int) -> dict:
