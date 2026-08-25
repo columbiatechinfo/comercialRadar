@@ -203,11 +203,30 @@ def test_a_ancora_prefere_o_documento_ao_endereco(cad):
 
 # ── A tela ───────────────────────────────────────────────────────────────────
 
-def test_o_passo_aparece_no_menu_de_etapas():
+def test_o_cadastur_virou_ETAPA_da_mineracao_e_nao_entrada_de_menu():
+    """A mineração passou a ser um processo só — decisão do dono do produto em
+    25/08/2026.
+
+    Este teste cobrava o oposto: que "Bases públicas" fosse uma entrada própria
+    no menu. Duas entradas sugeriam caminhos ALTERNATIVOS, e não são: a base
+    pública não sabe do comércio que abriu mês passado, a captura não vê o que
+    não tem marcador no mapa, e o Cadastur é a única fonte com capacidade
+    declarada. Cada uma enxerga o que as outras não veem.
+
+    O que se cobra agora é que o passo não tenha sumido junto com o botão: ele
+    é a etapa 3 de `minerar_tudo.py`, e continua alcançável sozinho pelo CLI.
+    """
+    orq = io.open(RAIZ / "minerar_tudo.py", encoding="utf-8").read()
+    assert "cadastur.py" in orq, "o Cadastur sumiu da mineração em vez de virar etapa"
+    assert "--pular-cadastur" in orq, "sem saída para pular o passo numa rodada"
+
     html = io.open(RAIZ / "frontend" / "index.html", encoding="utf-8").read()
-    assert 'data-mode="cadastur"' in html
-    assert 'id="sec-cadastur"' in html
-    assert 'id="cad-municipio"' in html and 'id="cad-uf"' in html
+    assert 'data-mode="cadastur"' not in html,         "a entrada separada voltou ao menu; o processo e um so"
+    # E a mineração precisa DIZER que faz tudo — senão o operador procura o
+    # botão que não existe mais.
+    import re as _re
+    bloco = _re.search(r'data-mode="mineracao".*?</button>', html, _re.S)
+    assert bloco and "Cadastur" in bloco.group(0),         "o menu nao diz que a mineracao inclui o Cadastur"
 
 
 def test_a_base_publica_nao_exige_poligono():

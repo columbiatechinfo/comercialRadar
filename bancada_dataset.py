@@ -254,6 +254,38 @@ def _um_poi(con, poi_id: int, item: dict, e_root: bool) -> dict:
     }
 
 
+# As colunas da ANCORA — o ponto contra o qual todas as fontes sao comparadas.
+#
+# `col` tem de bater com as chaves que `_um_poi` monta em "ancora": o modelo
+# indexa por `c.col` e usa `rotulo` no cabecalho. Chave a mais aqui e inofensiva;
+# chave a menos deixa a coluna sem rotulo na tela.
+ANCORA_CAMPOS = [
+    {"col": "poi_id", "rotulo": "Nº do ponto", "grupo": "identificação",
+     "tipo": "texto", "cmp": True,
+     "nota": "id no banco; é por ele que a evidência, a fila e o dossiê se ligam"},
+    {"col": "nome", "rotulo": "Nome", "grupo": "identificação",
+     "tipo": "texto", "cmp": True,
+     "nota": "como o estabelecimento se apresenta na fonte âncora"},
+    {"col": "razao_social", "rotulo": "Razão social", "grupo": "identificação",
+     "tipo": "texto", "cmp": True, "nota": "da Receita, quando o CNPJ foi confirmado"},
+    {"col": "cnpj", "rotulo": "CNPJ", "grupo": "identificação",
+     "tipo": "texto", "cmp": True,
+     "nota": "a estrutura do número é o critério de aceite; a base nacional é o nível de confiança"},
+    {"col": "categoria", "rotulo": "Categoria", "grupo": "atividade",
+     "tipo": "texto", "cmp": True},
+    {"col": "logradouro", "rotulo": "Endereço", "grupo": "endereço",
+     "tipo": "texto", "cmp": True,
+     "nota": "forma como a âncora escreveu; a canônica está em logradouro_ajustado"},
+    {"col": "bairro", "rotulo": "Bairro", "grupo": "endereço", "tipo": "texto", "cmp": True},
+    {"col": "municipio", "rotulo": "Município", "grupo": "endereço",
+     "tipo": "texto", "cmp": True,
+     "nota": "o campo cidade NÃO é autoridade: coordenada e CEP o desempatam"},
+    {"col": "uf", "rotulo": "UF", "grupo": "endereço", "tipo": "texto", "cmp": True},
+    {"col": "lat", "rotulo": "Latitude", "grupo": "posição", "tipo": "numero", "cmp": False},
+    {"col": "lng", "rotulo": "Longitude", "grupo": "posição", "tipo": "numero", "cmp": False},
+]
+
+
 def montar(con, itens: list, e_root: bool, base: str = "") -> dict:
     """O payload inteiro: vocabulário, catálogo de fontes e a fila."""
     ligacoes = []
@@ -281,5 +313,22 @@ def montar(con, itens: list, e_root: bool, base: str = "") -> dict:
         },
         "vocabulario": _vocabulario(),
         "fontes": _fontes_catalogo(con, e_root),
+        # ISTO NAO E DECORACAO — sem ele a bancada NAO CARREGA.
+        #
+        # O `boot()` do modelo faz `D.ancora_campos.forEach(c => ANC[c.col] = c)`
+        # logo no comeco. Com a chave ausente, `undefined.forEach` estoura e a
+        # tela mostra "falha ao carregar: Cannot read properties of undefined
+        # (reading 'forEach')" — e o operador continua vendo o dataset de
+        # DEMONSTRACAO que vem embutido no zip, com nomes e faturas que nao sao
+        # dele. O sintoma engana: parece que carregou.
+        #
+        # O modelo usa a lista so como dicionario de rotulo e nota por coluna.
+        # Entao ela descreve o que a NOSSA ancora emite, e nao as 45 colunas do
+        # cadastro de energia que o demo traz.
+        "ancora_campos": ANCORA_CAMPOS,
+        # As outras tres chaves do demo (`fatura_campos`, `imagem_campos`,
+        # `servico_campos`) NAO sao lidas por nenhum ponto do modelo — conferido
+        # no arquivo gerado. Ficam de fora de proposito: mandar lista vazia
+        # sugeriria que a tela as usa e que nos nao temos o dado.
         "ligacoes": ligacoes,
     }

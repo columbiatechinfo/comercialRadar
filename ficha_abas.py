@@ -84,6 +84,26 @@ ABAS = [
 ]
 
 
+# DE QUE ABA CADA BASE DE ORIGEM FALA.
+#
+# As abas sao CATEGORIAS DE EVIDENCIA — "POI", "Informacoes Google", "Delivery".
+# `vinculo_poi.fonte` guarda a BASE que produziu o registro — `estadual`,
+# `planilha`, `ifood`, `pipeline`. Sao vocabularios diferentes, e supor que
+# fossem o mesmo foi o que fez o `x` nao aparecer em aba nenhuma: a busca por
+# `vinculos["poi"]` nunca achava `vinculos["estadual"]`.
+#
+# O mapa mora aqui, e nao no JavaScript, porque quem sabe de que aba uma base
+# fala e o servidor: a tela so desenha o que recebe.
+ABA_DA_FONTE = {
+    "estadual": "poi", "overture": "poi", "osm": "poi", "fsq": "poi",
+    "descoberto": "poi", "captura": "poi", "chat": "poi", "?": "poi",
+    "pipeline": "google", "planilha": "google", "maps": "google",
+    "ifood": "delivery",
+    "cadastur": "receita", "receita": "receita", "cnpj": "receita",
+    "ia_fachada": "imagens",
+}
+
+
 def _completar(con, poi_id: int, dados: dict) -> dict:
     """Junta ao dossie o que a bancada precisa e o PDF nao usa.
 
@@ -248,9 +268,14 @@ def montar(con, dados: dict, e_root: bool) -> list:
                  where poi_id = %s and estado = 'vinculado'
                  order by confianca desc, id""", (poi_id,))
             for f, idf, vid, conf, origem, motivo in cur.fetchall():
-                vinculos.setdefault(f, {
-                    "vinculo_id": vid, "id_fonte": idf, "confianca": conf,
-                    "confianca_origem": origem, "motivo": motivo,
+                # A chave e a ABA, nao a base: e por ela que a tela procura.
+                # `setdefault` mantem a de MAIOR confianca quando duas bases
+                # falam da mesma aba (a consulta ja vem ordenada) — mostrar a
+                # mais fraca faria a aba parecer pior do que e.
+                vinculos.setdefault(ABA_DA_FONTE.get((f or "").lower(), "poi"), {
+                    "vinculo_id": vid, "id_fonte": idf, "fonte": f,
+                    "confianca": conf, "confianca_origem": origem,
+                    "motivo": motivo,
                 })
         # Uma fonte so pode sair se sobrar outra. A tela precisa saber ANTES de
         # oferecer o `x` — recusar depois do clique e pior que nao oferecer.

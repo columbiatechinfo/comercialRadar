@@ -240,6 +240,16 @@ const ATRIBUTOS = [
   { key: "foto", label: "📷 Com foto", teste: (p) => p.tem_foto },
   { key: "sv", label: "📸 Street View", teste: (p) => p.tem_sv },
   { key: "semtel", label: "⚠️ Sem telefone", teste: (p) => !p.tem_tel },
+  /* MULTIORIGEM — o ponto sustentado por mais de uma base.
+   *
+   * É onde a fusão pode ter errado, e por isso é o primeiro recorte que o
+   * operador precisa: medido no RS, 66,2% das fusões suspeitas uniram
+   * estabelecimentos DISTINTOS. Ponto de fonte única não tem o que revisar —
+   * o registro É o ponto, e filtrá-lo junto só esconderia os que importam.
+   *
+   * Abre a ficha na aba da fonte que entrou com menor confiança, que é onde a
+   * dúvida mora. */
+  { key: "multi", label: "🔗 Multiorigem", teste: (p) => p.multiorigem },
 ];
 const atributosAtivos = new Set(); // vazio = não filtra por atributo
 

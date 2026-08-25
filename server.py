@@ -939,6 +939,15 @@ def listar_pois():
                        (p.telefone IS NOT NULL) AS tem_tel,
                        (p.streetview_path IS NOT NULL AND p.streetview_path <> 'NA') AS tem_sv,
                        EXISTS (SELECT 1 FROM images_urls i WHERE i.poi_id = p.id) AS tem_foto,
+                       -- MULTIORIGEM: o ponto e sustentado por MAIS DE UMA base.
+                       --
+                       -- E o que o operador precisa avaliar primeiro, porque e
+                       -- onde a fusao pode ter errado: medido no RS, 66,2% das
+                       -- fusoes suspeitas uniram estabelecimentos distintos.
+                       -- Ponto de fonte unica nao tem o que revisar — o registro
+                       -- E o ponto.
+                       (SELECT count(*) > 1 FROM vinculo_poi v
+                         WHERE v.poi_id = p.id AND v.estado = 'vinculado') AS multiorigem,
                        a.veredito, a.motivo, a.recomendar_visita, a.tipo_construcao,
                        COALESCE(p.revisar_manual, false) AS revisar_manual, p.cidade,
                        p.place_id
@@ -949,6 +958,7 @@ def listar_pois():
             cols = ["id", "nome", "categoria", "endereco", "telefone", "avaliacao",
                     "total_avaliacoes", "fonte", "fonte_dado", "status", "lat", "lng",
                     "tem_cnpj", "situacao_cadastral", "endereco_fonte", "tem_tel", "tem_sv", "tem_foto",
+                    "multiorigem",
                     "veredito", "motivo", "recomendar_visita", "tipo_construcao", "revisar_manual",
                     "cidade", "place_id"]
             return {"pois": [dict(zip(cols, row)) for row in cur.fetchall()]}

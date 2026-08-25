@@ -153,7 +153,7 @@ def garantir_dataset(uf: str, produzir_aqui: bool = False) -> Path:
     destino.mkdir(parents=True, exist_ok=True)
     fontes, faltando = _fontes_disponiveis()
     _log("─" * 62)
-    _log(f"▶ 1/3 bases públicas — produzindo o dataset de {uf.upper()}")
+    _log(f"▶ 1/7 bases públicas — produzindo o dataset de {uf.upper()}")
     _log("─" * 62)
     _log(f"🌐 Fontes: {fontes}")
     for nome, motivo in faltando:
@@ -183,6 +183,31 @@ def garantir_dataset(uf: str, produzir_aqui: bool = False) -> Path:
     return destino
 
 
+def _etapa(n: int, titulo: str) -> None:
+    _log("")
+    _log("─" * 62)
+    _log(f"▶ {n}/7 {titulo}")
+    _log("─" * 62)
+
+
+def _tolerante(cmd: list, nome: str) -> int:
+    """Roda uma etapa que NÃO pode derrubar a rodada.
+
+    A mineração é um processo longo e caro — horas de captura. Uma etapa que
+    falha (o Cadastur fora do ar, o iFood recusando, a Spark reiniciando) não
+    pode custar o que já foi feito nem o que ainda vem: cada uma é independente
+    e retomável sozinha.
+
+    O que ela NÃO faz é silenciar: a falha aparece com nome e código, e a linha
+    seguinte diz que o resto continua.
+    """
+    rc = _rodar(cmd)
+    if rc != 0:
+        _log(f"⚠️  {nome} falhou (código {rc}). As demais etapas continuam;")
+        _log(f"   esta pode ser repetida sozinha depois.")
+    return rc
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -196,6 +221,10 @@ def main(argv=None) -> int:
     p.add_argument("--pular-bases", dest="pular_bases", action="store_true",
                    help="só a captura. Existe para depurar a captura, não para "
                         "uso normal: as duas fontes são o processo.")
+    p.add_argument("--pular-cadastur", dest="pular_cadastur", action="store_true",
+                   help="pula o Cadastur/MTur desta rodada")
+    p.add_argument("--pular-ifood", dest="pular_ifood", action="store_true",
+                   help="pula a descoberta do iFood desta rodada")
     p.add_argument("--produzir-bases", dest="produzir_bases", action="store_true",
                    help="produz o dataset da UF NESTA máquina. São horas e ela "
                         "disputa CPU com a captura — o lugar disso é o i9.")
@@ -210,7 +239,7 @@ def main(argv=None) -> int:
 
     # ── 1 e 2 · bases públicas ────────────────────────────────────────────
     if a.pular_bases:
-        _log("⏭  Bases públicas PULADAS por --pular-bases (modo de depuração)")
+        _etapa(1, "bases públicas — PULADAS por --pular-bases (depuração)")
     elif not uf:
         _log("⚠️  Não identifiquei a UF da área — as bases públicas trabalham por")
         _log("   UF e por município, então esta etapa fica de fora desta rodada.")
@@ -220,9 +249,7 @@ def main(argv=None) -> int:
             _log(f"⚠️  Não achei o código IBGE de {cidade}/{uf} na malha — a")
             _log("   importação por município fica de fora desta rodada.")
         else:
-            _log("─" * 62)
-            _log(f"▶ 2/3 bases públicas — importando {cidade}/{uf} ({cod})")
-            _log("─" * 62)
+            _etapa(2, f"bases públicas — importando {cidade}/{uf} ({cod})")
             rc = _importar_municipio(uf, cod, a.empresa,
                                      produzir_aqui=a.produzir_bases)
             if rc != 0:
@@ -232,16 +259,72 @@ def main(argv=None) -> int:
                 _log(f"⚠️  A importação do município falhou (código {rc}). O dataset")
                 _log("   ficou no disco; dá para repetir só esta etapa depois.")
 
-    # ── 3 · captura + OCR ─────────────────────────────────────────────────
-    _log("─" * 62)
-    _log("▶ 3/3 captura + OCR")
-    _log("─" * 62)
+    # ── 3 · Cadastur/MTur ─────────────────────────────────────────────────
+    _etapa(3, "Cadastur/MTur — o que o Estado registrou")
+    if cod and not a.pular_cadastur:
+        _tolerante([PYTHON, "cadastur.py", "--municipio", cod,
+                    "--empresa", a.empresa] if a.empresa else
+                   [PYTHON, "cadastur.py", "--municipio", cod],
+                   "Cadastur")
+    else:
+        _log("  pulado" + ("" if cod else " — sem código IBGE do município"))
+
+    # ── 4 · captura + OCR ─────────────────────────────────────────────────
+    _etapa(4, "captura + OCR do Maps — a única que traz painel e foto")
     cmd = [PYTHON, "minerar_captura.py", "--area", a.area, "--sessao", a.sessao,
            "--zoom", str(a.zoom), "--workers", str(a.workers),
            "--capture-workers", str(a.capture_workers)]
     if a.no_proxy:
         cmd.append("--no-proxy")
-    return _rodar(cmd)
+    rc_captura = _rodar(cmd)
+    if rc_captura != 0:
+        _log(f"⚠️  A captura terminou com código {rc_captura}. As etapas de")
+        _log("   endereço e cruzamento seguem sobre o que já entrou.")
+
+    # ── 5 · iFood ─────────────────────────────────────────────────────────
+    #
+    # Sob demanda, como a captura: o iFood não tem base pública por UF, e a
+    # metade cara (enumerar os ids) precisa de navegador na praça daquela área.
+    _etapa(5, "iFood — a descoberta que traz CNPJ em 99,7% das lojas")
+    if a.pular_ifood:
+        _log("  pulado por --pular-ifood")
+    else:
+        _tolerante([PYTHON, "extrair_ifood.py", "--area", a.area], "iFood")
+
+    # ── 6 · endereços ─────────────────────────────────────────────────────
+    #
+    # A NORMALIZAÇÃO VEM DEPOIS DE TUDO QUE GRAVA POI, e não antes.
+    #
+    # Ela lê a coluna `endereco` de quem já está no banco. Rodá-la no meio faria
+    # a captura e o iFood entrarem depois e ficarem de fora — e o cruzamento do
+    # passo 7, que depende do logradouro canônico, cruzaria menos sem que
+    # ninguém entendesse por quê.
+    _etapa(6, "endereços — a IA lê o que está grudado, a skill prova a forma")
+    if cod:
+        _tolerante([PYTHON, "segmentar_endereco.py", "--municipio", cod,
+                    "--aplicar"], "segmentação de endereço")
+        _tolerante([PYTHON, "ajuste_logradouro.py", "--municipio", cod,
+                    "--aplicar"], "ajuste de logradouro")
+    else:
+        _log("  pulado — sem código IBGE do município")
+
+    # ── 7 · cruzamento ────────────────────────────────────────────────────
+    _etapa(7, "cruzamento — quem é o mesmo ponto vira UM, com várias abas")
+    if a.empresa:
+        _tolerante([PYTHON, "povoar_vinculo.py", "--proprios",
+                    "--empresa", a.empresa, "--aplicar"], "vínculo próprio")
+        if cidade:
+            _tolerante([PYTHON, "povoar_vinculo.py", "--juntar",
+                        "--cidade", cidade, "--empresa", a.empresa,
+                        "--aplicar"], "junção por nome e coordenada")
+    else:
+        _log("  pulado — o cruzamento carimba a empresa dona, e ela vem no")
+        _log("  comando (--empresa), nunca do .env")
+
+    _log("─" * 62)
+    _log("✅ Mineração completa. Filtre por 🔗 Multiorigem no mapa para revisar")
+    _log("   os pontos que passaram a ser sustentados por mais de uma base.")
+    return rc_captura
 
 
 def _cod_municipio(cidade: str, uf: str) -> str:
