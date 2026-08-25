@@ -1902,7 +1902,11 @@ def iniciar_job(body: dict):
         # desenhado para baixar o Cadastur de Canoas seria pedir um dado que a
         # tarefa não usa, e o operador ficaria travado sem entender por quê.
         poly = area_utils.carregar_area()
-        if not poly and modo not in ("cadastur",):
+        # `base_estadual` entra na mesma exceção do Cadastur, e pelo mesmo
+        # motivo: ela trabalha por UF, que é a unidade em que as bases públicas
+        # são publicadas. Exigir um retângulo desenhado para produzir a base do
+        # Rio Grande do Sul seria pedir um dado que a tarefa não usa.
+        if not poly and modo not in ("cadastur", "base_estadual"):
             return JSONResponse({"erro": "Desenhe o polígono da área antes de iniciar."}, status_code=400)
 
         if modo == "planilha":
@@ -2069,6 +2073,38 @@ def iniciar_job(body: dict):
             if op.get("limite"):
                 cmd += ["--limite", str(int(op["limite"]))]
             _novo_job("extracao_estadual", out_json, {"municipio": cod})
+
+        elif modo == "base_estadual":
+            # PRODUZIR (ou ATUALIZAR) a base das bases públicas — no i9.
+            #
+            # Não é mineração: é a matéria-prima dela. A skill trabalha por UF
+            # INTEIRA (383 mil POIs no RS), com DuckDB sobre o Overture no S3
+            # mais o PBF do OpenStreetMap. São horas, e por isso roda no i9 —
+            # ao lado do OSRM e do Photon, que já vivem lá pelo mesmo motivo.
+            #
+            # E fica lá. O banco também está no i9: trazer dezenas de GB para o
+            # notebook só para reenviar o recorte de um município de volta seria
+            # atravessar a rede duas vezes à toa.
+            #
+            # A UF vem do POLÍGONO quando há um, e do corpo quando o operador
+            # quer produzir um estado onde ainda não desenhou nada — que é o
+            # caso normal ao montar a base do Brasil.
+            uf = (str(op.get("uf") or "").strip().upper()
+                  or (area_utils.municipio_da_area(poly)[1] if poly else ""))
+            if len(uf) != 2:
+                return JSONResponse(
+                    {"erro": "Informe a UF (duas letras) ou desenhe uma área dentro dela."},
+                    status_code=400)
+            out_json = MINERACAO / "_base_estadual_noop.json"   # watcher ocioso
+            cmd = ["bash", str(BASE / "scripts" / "i9" / "dataset_estadual.sh"), "--remoto"]
+            # ATUALIZAR é deliberado, nunca padrão: ele repina a identidade da
+            # fonte (`--source-mode latest`) e troca o mundo debaixo do
+            # resultado. Sem a flag, uma base já pronta é reaproveitada.
+            if op.get("atualizar"):
+                cmd.append("--atualizar")
+            cmd.append(uf)
+            _novo_job("base_estadual", out_json, {"uf": uf,
+                                                  "atualizar": bool(op.get("atualizar"))})
 
         elif modo == "minerar_web":
             # resíduo → Yahoo + pré-filtro + LLM barato + Receita Federal

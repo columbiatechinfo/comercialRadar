@@ -254,6 +254,26 @@
         <small>(use quando o dataset da UF ainda não existe. Perde o alcance do
         Overture/OSM/Foursquare nesta rodada; a captura vê só o que tem marcador
         no mapa)</small></label>
+
+      <!-- A BASE das bases públicas: produzida UMA VEZ por UF, consultada por
+           toda mineração depois. Fica aqui, junto da etapa que a usa, e não
+           numa aba própria — quem descobre que falta o dataset descobre na
+           mineração, e é aqui que precisa achar como resolver. -->
+      <details class="opts" style="margin-top:10px">
+        <summary>📚 Base estadual — produzir ou atualizar</summary>
+        <div class="hint">Roda <b>no i9</b> (são horas: a UF inteira, Overture +
+          OSM + Foursquare) e o resultado <b>fica lá</b>, junto do banco. Uma vez
+          por estado; toda mineração seguinte apenas consulta.</div>
+        <label class="opt inline">UF
+          <input type="text" id="be-uf" maxlength="2" placeholder="RS" style="width:70px">
+        </label>
+        <label class="opt"><input type="checkbox" id="be-atualizar">
+          Atualizar (buscar dado novo)
+          <small>(sem isto, uma base já pronta é reaproveitada. Marcar repina a
+          identidade da fonte — é como se pede dado mais recente, e é
+          deliberado)</small></label>
+        <button class="btn-outline" id="btn-base-estadual">▶ Produzir / atualizar no i9</button>
+      </details>
       <label class="opt inline" id="op-zoom-wrap">Zoom da captura
         <select id="op-zoom">
           <option value="19" selected>19 — rua com POIs (padrão)</option>

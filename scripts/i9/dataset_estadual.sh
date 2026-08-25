@@ -139,9 +139,16 @@ case "$MODO" in
   produzir) produzir ;;
   baixar)   baixar ;;
   remoto)
-    echo "▶ disparando a produção de $UF NO i9 (isto vai demorar)"
+    # PRODUZ NO i9 E FICA LÁ. Não baixa, e isso é o desenho.
+    #
+    # O banco também está no i9. Trazer dezenas de GB para o notebook só para
+    # reenviar o recorte de um município de volta seria atravessar a rede duas
+    # vezes à toa. Quem importa o município é o próprio i9, contra o próprio
+    # banco. `--baixar` continua existindo para quem quiser uma cópia local.
+    echo "▶ produzindo $UF NO i9 (fica lá — o banco também está lá)"
+    ARGS="$UF"
+    [ "$ATUALIZAR" = 1 ] && ARGS="--atualizar $UF"
     ssh -n -o BatchMode=yes "$I9" \
-      "wsl -d Ubuntu -- bash -lc 'cd $DIR_I9 && ./scripts/i9/dataset_estadual.sh $UF'"
-    baixar
+      "wsl -d Ubuntu -- bash -lc 'cd $DIR_I9 && ./scripts/i9/dataset_estadual.sh $ARGS'"
     ;;
 esac

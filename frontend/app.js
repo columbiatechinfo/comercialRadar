@@ -1192,7 +1192,7 @@ function aplicarNivel() {
   // Links que NAVEGAM (aba nova, download) tambem nao mandam cabecalho.
   const modelo = $("link-modelo-cadastro");
   if (modelo && window.comToken) modelo.href = window.comToken("/api/modelos/cadastro");
-  for (const id of ["btn-cnpj-skill", "btn-baixar-imgs"]) {
+  for (const id of ["btn-cnpj-skill", "btn-baixar-imgs", "btn-base-estadual"]) {
     if ($(id)) $(id).classList.toggle("hidden", !podeExecutar());
   }
 }
@@ -1684,6 +1684,7 @@ const MODO_LABEL = { planilha: "planilha", mineracao: "mineração", minerar_web
                      enriquecer_maps: "enriquecimento Maps", streetview: "Street View",
                      enriquecer_tudo: "enriquecimento (cascata)", baixar_imagens: "download de imagens",
                      cnpj_receita: "CNPJ x CNEFE (skill)", extracao_estadual: "extração estadual",
+                     base_estadual: "base estadual (no i9)",
                      avaliar: "avaliação de fachada" };
 /* QUAL PAINEL DA DIREITA APARECE.
  *
@@ -2068,6 +2069,28 @@ if ($("btn-cnpj-skill")) $("btn-cnpj-skill").onclick = async () => {
   if (!r) return;
   aplicarJob(r);
   toast("Cruzando Receita × CNEFE no município da área…");
+};
+
+/* Base estadual — produzir/atualizar no i9.
+ *
+ * Botão próprio e não caixa da mineração: é a MATÉRIA-PRIMA dela, roda noutra
+ * máquina e leva horas. Encaixá-lo na cascata obrigaria toda mineração a
+ * esperar por ele. */
+if ($("btn-base-estadual")) $("btn-base-estadual").onclick = async () => {
+  if (jobRodando) { toast("Já há um processo rodando.", "err"); return; }
+  const uf = ($("be-uf")?.value || "").trim().toUpperCase();
+  // Confere ANTES do ida-e-volta: esperar o servidor para descobrir que faltava
+  // a UF é o tipo de espera que não ensina nada.
+  if (uf.length !== 2) { toast("Informe a UF com duas letras.", "err"); return; }
+  const atualizar = !!$("be-atualizar")?.checked;
+  if (atualizar &&
+      !confirm(`Atualizar a base de ${uf} busca dado NOVO e leva horas no i9.\n\n`
+               + `Sem isto, uma base já pronta é reaproveitada. Continuar?`)) return;
+  const r = await pedirJob({ modo: "base_estadual", opcoes: { uf, atualizar } });
+  if (!r) return;
+  aplicarJob(r);
+  toast(`📚 ${atualizar ? "Atualizando" : "Produzindo"} a base de ${uf} no i9 — `
+        + `acompanhe pelo log.`, "ok");
 };
 
 /* Botão "Baixar imagens" (passo pós, à parte da cascata) */

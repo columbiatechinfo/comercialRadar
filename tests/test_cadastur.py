@@ -214,7 +214,15 @@ def test_a_base_publica_nao_exige_poligono():
     """Ela vem por município, que é como o governo publica. Exigir um retângulo
     desenhado travaria o operador sem dizer por quê."""
     srv = io.open(RAIZ / "server.py", encoding="utf-8").read()
-    assert 'if not poly and modo not in ("cadastur",)' in srv
+    # A REGRA, não a lista. A primeira versão casava o literal
+    # `modo not in ("cadastur",)` e reprovou no dia em que `base_estadual`
+    # entrou na mesma isenção — pelo mesmo motivo, e corretamente. Teste que
+    # exige a tupla inteira impede acrescentar um caso legítimo.
+    import re as _re
+    m = _re.search(r"if not poly and modo not in \(([^)]*)\)", srv)
+    assert m, "a guarda de polígono sumiu do server.py"
+    isentos = [x.strip().strip("\"'") for x in m.group(1).split(",") if x.strip()]
+    assert "cadastur" in isentos, f"o Cadastur voltou a exigir polígono: {isentos}"
     js = io.open(RAIZ / "frontend" / "app.js", encoding="utf-8").read()
     assert 'const precisaArea = modo !== "cadastur"' in js
 
