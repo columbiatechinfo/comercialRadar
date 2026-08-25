@@ -76,15 +76,21 @@ def _sem_acento(s: str) -> str:
 
 
 def _municipios_da_cidade(cur, cidade: str, uf: str | None):
-    """(cod, nome, uf) pelo nome. Sem acento e sem depender de maiúscula."""
+    """(cod, nome, uf) pelo nome, ignorando acento e caixa.
+
+    A comparação sem acento acontece EM PYTHON, e não no SQL: a extensão
+    `unaccent` não está instalada no banco de referência, e instalá-la exigiria
+    alterar um banco compartilhado para resolver um `where`. A `ibge_malha` tem
+    3.560 linhas — trazer os nomes de uma UF e comparar aqui não é o gargalo de
+    nada, e o filtro por UF ainda vai no banco.
+    """
     if uf:
         cur.execute("""select cod_municipio, nome, uf from ibge_malha
-                        where unaccent(lower(nome)) = %s and upper(uf) = %s""",
-                    (_sem_acento(cidade), uf.upper()))
+                        where upper(uf) = %s""", (uf.upper(),))
     else:
-        cur.execute("""select cod_municipio, nome, uf from ibge_malha
-                        where unaccent(lower(nome)) = %s""", (_sem_acento(cidade),))
-    achados = cur.fetchall()
+        cur.execute("select cod_municipio, nome, uf from ibge_malha")
+    alvo = _sem_acento(cidade)
+    achados = [r for r in cur.fetchall() if _sem_acento(r[1]) == alvo]
     if not achados:
         raise SystemExit(
             "municipio '%s'%s nao esta na ibge_malha.\n"
