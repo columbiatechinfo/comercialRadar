@@ -202,6 +202,33 @@ def _ancorado(valor: str, original: str) -> bool:
     return bool(v) and v in _cru(original)
 
 
+def _ancorado_logradouro(valor: str, original: str) -> tuple:
+    """`(ancorado, tipo_expandido)` — o NOME da via é que não pode ser inventado.
+
+    O modelo insiste em expandir o tipo: devolve `Avenida Boqueirão` onde o texto
+    diz `Av. Boqueirão`. A recusa está certa — ele não pode reescrever o texto —
+    mas rejeitar o registro INTEIRO por isso é caro demais: numa amostra de
+    Canoas, endereços perfeitamente legíveis caíam em `revisar` e sumiam da
+    fonte, quando o único desvio era a palavra que a skill ia canonizar de
+    qualquer jeito na fase seguinte.
+
+    A relaxação é estreita de propósito e vale SÓ para o primeiro token: se o
+    resto do logradouro ancora, o nome está preservado e a divergência está
+    confinada ao tipo de via. `Av.` -> `Avenida` passa (marcado como parcial);
+    `Boqueirão` -> `Boa Vista` continua sendo invenção e continua barrado.
+    """
+    if _ancorado(valor, original):
+        return True, False
+    partes = (valor or "").split()
+    if len(partes) >= 2:
+        resto = " ".join(partes[1:])
+        # O resto precisa ancorar E ser substancial: um resto de duas letras
+        # ancoraria em quase qualquer texto e transformaria a exceção em regra.
+        if len(_cru(resto)) >= 4 and _ancorado(resto, original):
+            return True, True
+    return False, False
+
+
 _PROMPT_PRONTO = None
 
 
@@ -262,14 +289,22 @@ def _julgar(lote: list, lidos: list) -> dict:
             v = str(d.get(c) or "").strip()
             if not v:
                 reg[c] = ""
+                continue
+            if c == "logradouro":
+                ok, tipo_expandido = _ancorado_logradouro(v, e)
+                if ok:
+                    reg[c] = v
+                    if tipo_expandido:
+                        descartados.append(f"tipo de via expandido pelo modelo: {v!r}")
+                    continue
             elif _ancorado(v, e):
                 reg[c] = v
-            else:
-                # O modelo devolveu texto que não está no endereço. Pode ser
-                # expansão de abreviação, pode ser cidade deduzida do CEP —
-                # e as duas corrompem a evidência do mesmo jeito.
-                reg[c] = ""
-                descartados.append(f"{c}={v!r}")
+                continue
+            # O modelo devolveu texto que não está no endereço. Pode ser
+            # expansão de abreviação, pode ser cidade deduzida do CEP, pode ser
+            # NÚMERO DE IMÓVEL TROCADO — e todas corrompem a evidência.
+            reg[c] = ""
+            descartados.append(f"{c}={v!r}")
         if not reg["logradouro"]:
             reg["metodo"], reg["motivo"] = "revisar", "logradouro nao ancorado"
         elif descartados:
@@ -359,7 +394,7 @@ def nome_do_municipio(cod: str) -> tuple:
 
 
 def do_municipio(cod: str, limite: int = 0, aplicar: bool = False,
-                 refazer: bool = False) -> None:
+                 refazer: bool = False, refazer_metodo: str = "") -> None:
     import base_comum as bc
 
     nome, uf = nome_do_municipio(cod)
@@ -390,8 +425,17 @@ def do_municipio(cod: str, limite: int = 0, aplicar: bool = False,
     # município grande passa de uma hora, e é justamente aí que alguém reinicia
     # a máquina, o Wi-Fi cai ou a Spark é reiniciada.
     if not refazer:
-        cur.execute("select endereco from endereco_segmentado where endereco = any(%s)",
-                    (distintos,))
+        # `refazer_metodo` reprocessa SÓ uma classe de leitura. Serve para o caso
+        # que já aconteceu: uma regra de conferência melhorou, e o que caiu em
+        # `revisar` pela regra antiga merece uma segunda leitura — sem pagar de
+        # novo pelos 16 mil que estavam certos desde a primeira.
+        if refazer_metodo:
+            cur.execute("select endereco from endereco_segmentado "
+                        "where endereco = any(%s) and metodo <> %s",
+                        (distintos, refazer_metodo))
+        else:
+            cur.execute("select endereco from endereco_segmentado where endereco = any(%s)",
+                        (distintos,))
         ja = {r[0] for r in cur.fetchall()}
         if ja:
             print(f"  {len(ja):,} já lidos antes — ficam como estão (--refazer força)")
@@ -459,6 +503,8 @@ def main() -> int:
     p.add_argument("--aplicar", action="store_true")
     p.add_argument("--refazer", action="store_true",
                    help="rele quem ja esta em endereco_segmentado")
+    p.add_argument("--refazer-metodo", dest="refazer_metodo", default="",
+                   help="rele so uma classe: revisar, parcial ou falhou")
     a = p.parse_args()
 
     if a.texto:
@@ -483,7 +529,8 @@ def main() -> int:
         _resumir(reg)
         return 0
     if a.municipio:
-        do_municipio(a.municipio, aplicar=a.aplicar, refazer=a.refazer)
+        do_municipio(a.municipio, aplicar=a.aplicar, refazer=a.refazer,
+                     refazer_metodo=a.refazer_metodo)
         return 0
     p.print_help()
     return 2

@@ -192,3 +192,59 @@ def test_numero_nao_e_normalizado_aqui(monkeypatch):
     r = S.segmentar([texto], threads=1)[texto]
     assert r["numero"] == "S/N", "o número foi normalizado antes da skill"
     assert r["metodo"] == "ia"
+
+
+# ─── o tipo de via, e só ele ─────────────────────────────────────────────────
+
+def test_tipo_de_via_expandido_e_aceito_o_nome_trocado_nao():
+    """A recusa estava certa e a consequência era cara demais.
+
+    O modelo insiste em devolver `Avenida Boqueirão` onde o texto diz
+    `Av. Boqueirão`. O grounding barrava — e o registro INTEIRO caía em
+    `revisar`, sumindo da fonte. Numa amostra de Canoas isso derrubou endereços
+    perfeitamente legíveis, e pelo único desvio que não importa: o tipo de via é
+    exatamente o que a `ajuste-logradouro` canoniza na fase seguinte.
+
+    A relaxação vale SÓ para o primeiro token. O nome continua intocável — é ele
+    que identifica a via, e inventá-lo é o erro que nenhuma fase posterior pega.
+    """
+    aceita = [
+        ("Avenida Boqueirao", "Av. Boqueirão, 1270 - Igara, Canoas - RS"),
+        ("Rua Bolivia", "R. Bolívia, 91 - São José, Canoas - RS"),
+    ]
+    for valor, texto in aceita:
+        ok, expandido = S._ancorado_logradouro(valor, texto)
+        assert ok and expandido, f"{valor!r} devia passar marcado como expandido"
+
+    barra = [
+        ("Avenida Boa Vista", "Av. Boqueirão, 1270 - Igara"),      # nome trocado
+        ("Rua Marechal Rondon", "R. Mal. Rondon, 1199 - Niterói"),  # nome expandido
+        ("Avenida A", "Av. B, 10"),                                  # resto curto demais
+    ]
+    for valor, texto in barra:
+        ok, _ = S._ancorado_logradouro(valor, texto)
+        assert not ok, f"{valor!r} passou, e não devia"
+
+    # E o caminho limpo continua limpo, sem marca de parcial.
+    ok, expandido = S._ancorado_logradouro("Av. Boqueirão", "Av. Boqueirão, 1270")
+    assert ok and not expandido
+
+
+def test_numero_de_imovel_trocado_e_barrado(monkeypatch):
+    """O erro mais perigoso que o modelo cometeu de verdade.
+
+    Medido em Canoas: texto `Avenida Santos Ferreira, 2505` e o modelo devolveu
+    `2515`. Duas vezes, em endereços diferentes. Número trocado não parece erro
+    em lugar nenhum a jusante — vira chave de junção errada e, pior, vira
+    evidência falsa no support do léxico, que é a moeda da prova.
+    """
+    texto = "Avenida Santos Ferreira, 2505 - Canoas, Canoas - RS, 92027-033"
+    _dublar(monkeypatch, [[{
+        "logradouro": "Avenida Santos Ferreira", "numero": "2515",
+        "complemento": "", "bairro": "Canoas", "cep": "92027-033",
+        "cidade": "Canoas", "uf": "RS",
+    }]])
+    r = S.segmentar([texto], threads=1)[texto]
+    assert r["numero"] == "", "número trocado passou"
+    assert "2515" in r["motivo"], "o valor inventado precisa ficar no rastro"
+    assert r["metodo"] == "parcial"
