@@ -39,6 +39,30 @@ def test_ha_scripts_para_conferir():
 
 
 @pytest.mark.parametrize("nome", SCRIPTS)
+def test_nao_esta_vazio(nome):
+    """Arquivo vazio passa em TODOS os outros testes deste arquivo.
+
+    `bash -n` num arquivo vazio: válido. CRLF: nenhum. Crase em heredoc:
+    nenhuma. Bit de execução: intacto. Quatro testes verdes sobre nada.
+
+    Aconteceu em 25/08/2026 com o `dataset_brasil.sh`, e a causa foi uma linha
+    de normalização de fim de linha escrita ao contrário:
+
+        io.open(p, 'wb').write(io.open(p, 'rb').read().replace(...))
+
+    O `open(p,'wb')` é avaliado PRIMEIRO e trunca o arquivo; só então o `read()`
+    acontece — lendo zero bytes. O commit e a publicação levaram o vazio adiante,
+    e o sintoma foi um script que "rodava" sem fazer nada nem reclamar.
+
+    O piso é baixo de propósito: qualquer script útil tem shebang e mais de uma
+    linha. Não se está medindo qualidade, e sim que existe conteúdo.
+    """
+    dados = _bytes(nome)
+    assert len(dados) > 200, f"{nome} tem {len(dados)} bytes — foi truncado?"
+    assert dados.startswith(b"#!"), f"{nome} nao comeca com shebang"
+
+
+@pytest.mark.parametrize("nome", SCRIPTS)
 def test_sem_crlf(nome):
     """LF no disco, garantido pelo `.gitattributes` (`*.sh text eol=lf`)."""
     assert b"\r\n" not in _bytes(nome), (
