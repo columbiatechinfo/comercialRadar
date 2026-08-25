@@ -13,6 +13,19 @@ Duas regras que a v1 documentava mas o `rs_driver` violava:
 
 Correcao v2 de memoria: `build` grava uma parte por faixa e concatena com
 `union_by_name` em DuckDB, em vez do `pd.concat` de todas as faixas em pandas.
+
+────────────────────────────────────────────────────────────────────────────
+PATCH LOCAL — 25/08/2026, comercialRadar. NAO E DA SKILL DE ORIGEM.
+
+`categoria_orig` estourava com "boolean value of NA is ambiguous" e derrubava
+a etapa `fetch` inteira. Ver o comentario em `_primeira_categoria`, logo
+acima de `_build`.
+
+Isto e uma skill VENDORADA: uma atualizacao dela sobrescreve este arquivo.
+Ao atualizar, conferir se a correcao continua necessaria — e, se sim,
+reaplica-la ou reportar a montante. `tests/test_fsq_categoria.py` reprova se
+o defeito voltar, entao a suite avisa antes de uma producao de horas morrer.
+────────────────────────────────────────────────────────────────────────────
 """
 import glob
 import json
@@ -173,6 +186,34 @@ def _achatar(v):
     return v
 
 
+# PATCH LOCAL DA SKILL — 25/08/2026. Ver o comentário no topo do arquivo.
+#
+#     ERRO na etapa 'fetch': boolean value of NA is ambiguous
+#
+# O ramo `else (a or None)` fazia `bool(a)` quando `a` não era lista. Com um
+# `pd.NA` na coluna — que não é `None`, não é lista e não é string — o pandas
+# RECUSA avaliá-lo como booleano, e a etapa inteira morre.
+#
+# Aconteceu no RS e no PI, no mesmo ponto e depois de o download ter dado
+# certo: `FSQ dist: 3 shards densos | 550.514 pontos no bbox | 25s` e então o
+# estouro. O defeito só apareceu agora porque antes o `fsq` morria no 403 do
+# Hugging Face, longe daqui.
+#
+# `pd.isna` ANTES de qualquer teste de verdade, e só depois o resto. A ordem
+# é o conserto: qualquer coisa que force um booleano sobre NA repete o erro.
+def _primeira_categoria(a):
+    if isinstance(a, (list, np.ndarray)):
+        return str(a[0]).strip() if len(a) else None
+    if a is None:
+        return None
+    try:
+        if pd.isna(a):          # pd.NA, NaN, NaT
+            return None
+    except (TypeError, ValueError):
+        pass                    # tipo sobre o qual isna não decide: segue
+    return a or None
+
+
 def _build(cfg, man):
     dest = os.path.join(_dir(cfg, man), "fsq.parquet")
     if os.path.exists(dest):
@@ -190,10 +231,8 @@ def _build(cfg, man):
     for destino, origem in MAPA.items():
         out[destino] = raw[origem] if origem in raw.columns else None
     lbl = raw["fsq_category_labels"] if "fsq_category_labels" in raw.columns else None
-    out["categoria_orig"] = (
-        lbl.map(lambda a: (str(a[0]).strip() if (a is not None and len(a)) else None)
-                if isinstance(a, (list, np.ndarray)) else (a or None))
-        if lbl is not None else None)
+
+    out["categoria_orig"] = lbl.map(_primeira_categoria) if lbl is not None else None
     out["marca"] = None
     out["confianca"] = None
     dc = raw["date_closed"] if "date_closed" in raw.columns else None
