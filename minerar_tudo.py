@@ -275,8 +275,8 @@ def _diagnostico(uf: str, cod: str, cidade: str, empresa: str,
           else f"sem dataset de {uf} — procurei em: {onde_dataset}")),
         (2, "importar o municipio", tem_dataset and bool(cod) and not pular["bases"],
          "" if cod else "municipio fora da malha IBGE carregada"),
-        (3, "Cadastur/MTur", bool(cod) and not pular["cadastur"],
-         "" if cod else "precisa do codigo IBGE do municipio"),
+        (3, "Cadastur/MTur", bool(cidade and uf) and not pular["cadastur"],
+         "" if cidade and uf else "precisa do nome do municipio e da UF"),
         (4, "captura + OCR do Maps", True, ""),
         (5, "iFood", tem_cnefe and not pular["ifood"],
          "" if tem_cnefe else "sem CNEFE do municipio: nao ha endereco-semente"),
@@ -483,13 +483,19 @@ def main(argv=None) -> int:
 
     # ── 3 · Cadastur/MTur ─────────────────────────────────────────────────
     _etapa(3, "Cadastur/MTur — o que o Estado registrou")
-    if cod and not a.pular_cadastur:
-        _tolerante([PYTHON, "cadastur.py", "--municipio", cod,
-                    "--empresa", a.empresa] if a.empresa else
-                   [PYTHON, "cadastur.py", "--municipio", cod],
-                   "Cadastur")
+    if cidade and uf and not a.pular_cadastur:
+        # `--municipio` do Cadastur recebe NOME, nao codigo IBGE — e nao existe
+        # `--empresa` nele: o tenant vem da sessao. A primeira versao desta
+        # etapa passava o codigo e uma flag inventada, e a rodada de
+        # Cachoeirinha respondeu `unrecognized arguments: --empresa`.
+        #
+        # `--gerar` e o que faz a fonte virar POI: sem ele o Cadastur so carrega
+        # e cruza, e a etapa "roda" sem acrescentar ponto nenhum — o pior tipo
+        # de sucesso.
+        _tolerante([PYTHON, "cadastur.py", "--uf", uf, "--municipio", cidade,
+                    "--gerar"], "Cadastur")
     else:
-        _log("  pulado" + ("" if cod else " — sem código IBGE do município"))
+        _log("  pulado" + ("" if cidade and uf else " — sem município/UF da área"))
 
     # ── 4 · captura + OCR ─────────────────────────────────────────────────
     _etapa(4, "captura + OCR do Maps — a única que traz painel e foto")
