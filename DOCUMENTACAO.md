@@ -3199,6 +3199,40 @@ viaja junto com o valor que ele tentou pôr:
 Lote que falha não derruba a rodada **e não some**: cada endereço dele sai
 marcado. Buraco silencioso na base é pior que erro declarado.
 
+### O que a conferência pegou, medido em Canoas
+
+Não é precaução teórica. Numa amostra real:
+
+```
+texto: Avenida Santos Ferreira, 2505 ...   modelo devolveu numero='2515'
+texto: Avenida Santos Ferreira, 2455 ...   modelo devolveu numero='2457'
+texto: 011, Av. Getúlio Vargas, 6531 ...   modelo devolveu complemento='sala 302'
+```
+
+**Número de imóvel trocado, duas vezes.** Número errado não parece erro em lugar
+nenhum a jusante: vira chave de junção errada e **evidência falsa no support do
+léxico**, que é a moeda da prova. E o `sala 302` é vazamento do próprio exemplo
+do prompt — o modelo copiou o few-shot para dentro de um endereço real.
+
+### E o que ela errava: o tipo de via
+
+Endereços legíveis caíam em `revisar` porque o modelo devolvia
+`Avenida Boqueirão` onde o texto diz `Av. Boqueirão`. A recusa estava certa —
+ele não pode reescrever o texto — mas rejeitar o registro inteiro custa a fonte,
+e pelo único desvio que não importa: o tipo de via é exatamente o que a skill
+canoniza na fase seguinte.
+
+A relaxação vale **só para o primeiro token**:
+
+| Caso | Resultado |
+|---|---|
+| `Av.` → `Avenida` | passa, marcado como `parcial` |
+| `Boqueirão` → `Boa Vista` | barrado — nome trocado |
+| `R. Mal. Rondon` → `Rua Marechal Rondon` | barrado — o **nome** também expandiu |
+| resto com menos de 4 caracteres | barrado — ancoraria em qualquer texto |
+
+`--refazer-metodo revisar` relê só uma classe, para quando a regra melhora.
+
 ### O que veio da skill para o prompt
 
 A **taxonomia de complemento**, importada de `complemento_organizador.ORDEM` em
