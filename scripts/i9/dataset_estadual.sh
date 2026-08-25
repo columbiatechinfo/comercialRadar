@@ -34,11 +34,13 @@ DIR_I9="${I9_DIR:-/home/orbisgrid/comercialradar}"
 RAIZ="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 MODO="produzir"
+ATUALIZAR=0
 UF=""
 for a in "$@"; do
   case "$a" in
-    --baixar) MODO="baixar" ;;
-    --remoto) MODO="remoto" ;;
+    --baixar)    MODO="baixar" ;;
+    --remoto)    MODO="remoto" ;;
+    --atualizar) ATUALIZAR=1 ;;
     -*) echo "opção desconhecida: $a"; exit 2 ;;
     *) UF="$(echo "$a" | tr '[:lower:]' '[:upper:]')" ;;
   esac
@@ -67,9 +69,34 @@ produzir() {
     || echo "  ⚠️  sem foursquare: HF_TOKEN ausente no .env"
   echo "  fontes: $FONTES"
 
+  # `--source-mode`, e ele É a diferença entre produzir e consultar.
+  #
+  # A skill se recusa a rodar em `cache` sem um snapshot já pinado:
+  #
+  #   "--source-mode cache exige snapshot ja resolvido para `osm`, e nao ha
+  #    nenhum em disco. Consultar a fonte aqui seria materializar bytes do
+  #    mundo atual sob uma identidade que nao foi verificada."
+  #
+  # É uma boa recusa: sem o pin, dois runs "iguais" podem ler mundos
+  # diferentes e ninguém saberia qual. Então:
+  #
+  #   latest  RESOLVE e pina a identidade da fonte. É o que a primeira
+  #           produção faz, e é o que `--atualizar` refaz quando você quer
+  #           dado novo — deliberadamente, nunca por acidente.
+  #   cache   usa o snapshot pinado. É o modo de reexecutar sem trocar de
+  #           mundo debaixo do resultado.
+  if [ "$ATUALIZAR" = 1 ] || [ ! -f "$DESTINO_I9/$MARCADOR" ]; then
+    MODO_FONTE="latest"
+    [ "$ATUALIZAR" = 1 ] && echo "  ATUALIZANDO: repina a identidade da fonte (dado novo)"
+  else
+    MODO_FONTE="cache"
+  fi
+  echo "  source-mode: $MODO_FONTE"
+
   cd "$DIR_I9/skills/extracao-poi-estadual"
   "$DIR_I9/.venv/bin/python" poi_estadual.py run \
     --uf "$UF" --fontes "$FONTES" --formatos csv,geoparquet \
+    --source-mode "$MODO_FONTE" \
     --base-dir "$DESTINO_I9"
 
   # O marcador só nasce quando a skill termina INTEIRA. A existência da pasta
