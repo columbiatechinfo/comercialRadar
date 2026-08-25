@@ -323,6 +323,23 @@ def _importar_municipio(uf: str, cod: str, empresa: str,
     e o cruzamento, que funcionam sem dataset nenhum. Hoje ele DIZ o que falta e
     devolve código; quem decide o que fazer com isso é o orquestrador.
     """
+    pronto, onde = dataset_pronto(uf)
+
+    # O DATASET SO EXISTE NO i9? ENTAO A IMPORTACAO RODA LA.
+    #
+    # Defeito que eu mesmo criei hoje: fiz a CONFERENCIA perguntar ao i9 e deixei
+    # o CAMINHO local. `dataset_pronto` dizia "pronto (i9)", `garantir_dataset`
+    # devolvia `dados_externos/estadual/RS` — que no notebook nao existe — e o
+    # `extracao_estadual` morria com "nao achei poi_padronizado_*". Calado,
+    # porque a etapa e tolerante: a base estadual simplesmente nao entrava.
+    #
+    # Rodar la e o desenho certo por dois motivos, e nao so por conveniencia: o
+    # arquivo tem 10 GB e o BANCO tambem esta no i9. Trazer o dataset para o
+    # notebook so para reenviar o recorte de um municipio de volta seria
+    # atravessar a rede duas vezes a toa.
+    if pronto and onde == "i9" and not no_i9():
+        return _importar_no_i9(uf, cod, empresa)
+
     try:
         destino = garantir_dataset(uf, produzir_aqui)
     except SystemExit as aviso:
@@ -334,6 +351,53 @@ def _importar_municipio(uf: str, cod: str, empresa: str,
                    "--municipio", str(cod),
                    "--empresa", empresa or "",
                    "--aplicar"])
+
+
+def _importar_no_i9(uf: str, cod: str, empresa: str) -> int:
+    """A importacao do municipio, executada na maquina onde o dado esta.
+
+    O COMANDO VAI POR ARQUIVO, pela entrada padrao. Entre este notebook e o bash
+    do i9 ha tres camadas — ssh, PowerShell e `wsl -- bash` — e cada uma
+    reinterpreta aspas. `--empresa "Aegea - Corsan"` tem espaco E hifen: montado
+    na linha de comando, chega do outro lado partido em tres argumentos. Com
+    `bash -s` lendo da entrada, a linha de comando remota e so "bash -s" e nao ha
+    o que as camadas comam.
+    """
+    import shlex
+
+    # `chr(10)` no lugar de uma barra-n: este arquivo ja foi corrompido duas
+    # vezes hoje por escape comido na edicao, e o sintoma e sempre um erro de
+    # sintaxe longe da causa. Onde da para nao ter barra, nao tem.
+    py = I9_DIR + "/.venv/bin/python"
+    roteiro = chr(10).join([
+        "cd " + shlex.quote(I9_DIR) + " || exit 1",
+        "export PYTHONUTF8=1 PYTHONIOENCODING=utf-8",
+        " ".join([shlex.quote(py), "extracao_estadual.py",
+                  "--saida",
+                  shlex.quote("dados_externos/estadual/" + uf.upper() + "/saida"),
+                  "--municipio", shlex.quote(str(cod)),
+                  "--empresa", shlex.quote(empresa or ""),
+                  "--aplicar"]),
+    ])
+    _log(f"  o dataset esta no i9 — importando {cod} la, junto do banco")
+    # BYTES, e nao `text=True`. No Windows o wrapper de texto traduz cada
+    # quebra de linha para CRLF, e o bash do outro lado recebe o ultimo
+    # argumento com um carriage return colado: `--aplicar` virou
+    # `--aplicar<CR>` e o argparse respondeu 'unrecognized arguments:
+    # --aplicar' — com a flag listada no proprio usage, que e o tipo de erro
+    # que faz perder meia hora procurando no lugar errado.
+    #
+    # E a mesma cicatriz que o projeto ja tinha: o CR do Windows quebrando
+    # script publicado no Linux (commit 7130d50).
+    p = subprocess.Popen(
+        ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=20", I9_SSH,
+         "wsl -d Ubuntu -- bash -s"],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT)
+    saida, _ = p.communicate(roteiro.encode("utf-8") + bytes((10,)))
+    for linha in saida.decode("utf-8", "replace").splitlines():
+        print("    " + linha.rstrip(), flush=True)
+    return p.returncode
 
 
 def _etapa(n: int, titulo: str) -> None:
