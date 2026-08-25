@@ -401,6 +401,47 @@ grátis generosa com billing).
                    fora do polígono → status 'fora_da_area' (não ingere)
 ```
 
+### A busca só roda dentro da área desenhada (25/08/2026)
+
+O tile é fotografado inteiro — o retângulo tem tamanho fixo e não encolhe com o
+polígono. Isso é aceito: ler o tile é uma passada de visão computacional, barata,
+e paga uma vez.
+
+A **busca no Maps** não. Cada nome lido vira uma sessão de navegador com proxy,
+e é a etapa mais cara do processo. Desde 25/08 ela recebe só os recortes cujo
+ícone caiu dentro do polígono.
+
+**Medido em Cachoeirinha:** 165 ícones detectados num tile, **8** dentro do
+polígono de 3,5 ha. As outras 157 buscas eram 95% do custo, gastas fora do que o
+operador pediu.
+
+O polígono vem de `capturas/<sessao>/_area.json` — a área **como ela era quando a
+captura rodou** —, não do banco. O operador minera um bairro e já desenha o
+próximo; ler a área *atual* filtraria os recortes de uma área pelos limites de
+outra, em silêncio. Sessão antiga sem esse arquivo busca tudo, e o processo diz
+isso no log em vez de devolver zero.
+
+#### Não confundir com o cartão "Fora da área (gravados)"
+
+São dois "fora" diferentes, e o painel mostra os dois:
+
+| | o que é | gravado? |
+|---|---|---|
+| recortes não buscados | o **ícone** caiu fora do polígono | não — nunca chegou a existir |
+| `inserido_fora` | o ícone estava dentro, foi buscado, e o **endereço verdadeiro** que o Maps devolveu fica fora | **sim** |
+
+A regra de 04/08 — "o polígono é foco, não filtro de gravação" — continua valendo
+para o segundo caso, que é o que o cartão conta. O que mudou é que não se **paga**
+mais para procurar fora da área. Quem quer o entorno desenha o entorno.
+
+#### Os POIs que você vê no mapa não são os recortes
+
+Na mesma área de 3,5 ha o banco tinha **51 POIs** (42 `estadual` + 9 `pipeline`) e
+a captura detectou 8 ícones. Não é contradição: os 51 vieram das **bases públicas**
+(Overture/OSM/Foursquare), que enxergam muito mais do que o Google desenha como
+marcador no zoom 19. Os dois caminhos são independentes, e o filtro do polígono
+não toca no primeiro.
+
 ### Status possíveis (campo `status`)
 `ok` · `encontrado_divergente` · `nao_encontrado` · `fora_da_uf` · `fora_da_area` ·
 `recuperado_proximo` · `recuperado_ia` · `recuperado_gemini` · `descoberto` · `minerado` · `erro`.

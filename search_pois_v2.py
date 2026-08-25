@@ -548,6 +548,23 @@ async def run(session_path: Path, n_workers: int, max_dist: float, full=False, i
     todos = json.loads(crops_json.read_text(encoding="utf-8"))
     out_json = session_path.parent / "crops" / "search_resultado.json"
 
+    # O POLIGONO VEM DA SESSAO, nao do banco.
+    #
+    # `_area.json` e a area COMO ELA ERA quando a captura rodou. Ler do banco
+    # traria a area atual — e se o operador desenhou outra no meio (o que
+    # acontece: ele minera um bairro e ja marca o proximo), a busca filtraria
+    # os recortes de uma area pelos limites de outra, silenciosamente.
+    poligono = None
+    area_json = session_path.parent / "_area.json"
+    if area_json.exists():
+        try:
+            import area_utils
+            poligono = json.loads(area_json.read_text(encoding="utf-8")) or None
+        except Exception as erro:  # noqa: BLE001
+            print(f"   (nao li a area da sessao: {type(erro).__name__}) — busco tudo")
+    if poligono is None:
+        print("   (sessao sem `_area.json`) — a busca roda em todos os recortes")
+
     # Retomada — a chave é a POSIÇÃO do recorte, não o `idx`.
     #
     # `idx` é um contador corrido que o detector atribui varrendo tile a tile:
@@ -572,8 +589,41 @@ async def run(session_path: Path, n_workers: int, max_dist: float, full=False, i
             pass
 
     fila_completa = [r for r in todos if len(r.get("ocr_texto", "").strip()) >= config.MIN_OCR_LEN]
+
+    # A BUSCA SO RODA NO QUE ESTA DENTRO DA AREA DESENHADA.
+    #
+    # O OCR precisa do TILE INTEIRO — o retangulo fotografado tem tamanho fixo e
+    # nao encolhe com o poligono. Isso e aceito: ler o tile todo custa uma
+    # passada de visao computacional, barata.
+    #
+    # A BUSCA nao. Cada nome vira uma sessao de navegador com proxy, e e a etapa
+    # mais cara do processo. MEDIDO em Cachoeirinha, 25/08/2026: dos 165 icones
+    # detectados num tile, 8 estavam dentro do poligono de 3,5 ha. 157 buscas —
+    # 95% do custo — rodariam fora do que o operador pediu.
+    #
+    # O RECORTE JA SABE ONDE ESTA: o detector converte a posicao do icone no
+    # tile para lat/lng. Filtrar aqui e comparar dois numeros.
+    #
+    # O QUE SE PERDE, e e uma troca declarada: a regra de 04/08 dizia que o
+    # poligono e FOCO e nao filtro de gravacao — POI achado fora era gravado e
+    # ficava pronto para o dia em que a cidade vizinha fosse minerada. Continua
+    # valendo para o que a busca encontrar; o que muda e que nao se PAGA mais
+    # para procurar fora da area. Quem quer o entorno desenha o entorno.
+    fora = 0
+    if poligono:
+        dentro = []
+        for r in fila_completa:
+            la, lo = r.get("lat"), r.get("lng")
+            if la is None or lo is None:
+                dentro.append(r)          # sem coordenada nao da para julgar
+            elif area_utils.ponto_no_poligono(la, lo, poligono):
+                dentro.append(r)
+            else:
+                fora += 1
+        fila_completa = dentro
+
     pendentes = [r for r in fila_completa if _chave(r) not in processados]
-    ignorados = len(todos) - len(fila_completa)
+    ignorados = len(todos) - len(fila_completa) - fora
 
     ocr_curtos = [
         {**r, "nivel": None, "status": "ocr_curto", "match_valido": False,
@@ -588,7 +638,23 @@ async def run(session_path: Path, n_workers: int, max_dist: float, full=False, i
 
     print(f"\n🔍 ComercialRadar — Search POIs v2 (otimizado)")
     print(f"   Sessão    : {session_path.parent.name}")
-    print(f"   Total OCR : {len(todos)} | Pendentes: {len(pendentes)} | Ignorados: {ignorados}")
+    print(f"   Total OCR : {len(todos)} | Pendentes: {len(pendentes)} | "
+          f"Ignorados: {ignorados}")
+    if fora:
+        # DOIS "fora" DIFERENTES CONVIVEM AGORA, e o painel tem um cartao para
+        # o outro. Nao sao a mesma coisa:
+        #
+        #   este aqui         o ICONE caiu fora do poligono. Nao e buscado, e
+        #                     portanto nao existe em lugar nenhum. Nao gravado.
+        #   `inserido_fora`   o icone estava DENTRO, foi buscado, e o endereco
+        #                     verdadeiro que o Maps devolveu fica fora. Esse E
+        #                     gravado — e o cartao "Fora da area (gravados)"
+        #                     continua vivo por causa dele.
+        #
+        # Escrever so "fora da area" faria o operador ler o numero grande aqui
+        # e o zero no cartao como contradicao.
+        print(f"   {fora} recortes do tile caem FORA do poligono — nao buscados "
+              f"(o tile e maior que a area; isto nao e o cartao 'gravados')")
     print(f"   Clusters  : {resumo_clusters(lotes)}")
     print(f"   Workers   : {n_workers} | Dist máx: {max_dist}m\n")
 
