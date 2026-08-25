@@ -206,3 +206,28 @@ def test_o_dataset_da_uf_e_reaproveitado():
     corpo = fonte[i:i + 1400]
     assert "MARCADOR).exists()" in corpo,         "garantir_dataset nao confere o marcador antes de reproduzir a UF"
     assert minerar_tudo.DATASETS.name == "estadual", minerar_tudo.DATASETS
+
+
+def test_ha_saida_quando_o_dataset_da_uf_nao_existe():
+    """A etapa 1 exige o dataset da UF, e produzi-lo leva horas no i9.
+
+    Sem uma saída, quem ainda não o tem fica sem poder minerar — foi o que
+    aconteceu em 24/08/2026, no mesmo dia em que as duas fontes deixaram de ser
+    alternativas. A caixa nasce DESMARCADA: ela destrava um teste, não é o jeito
+    normal de rodar.
+    """
+    html = open(os.path.join(RAIZ, "frontend", "index.html"), encoding="utf-8").read()
+    i = html.index('id="op-pular-bases"')
+    assert "checked" not in html[i:i + 120],         "a caixa de pular as bases públicas nasce MARCADA — vira o padrão sem ninguém decidir"
+
+    js = open(os.path.join(RAIZ, "frontend", "app.js"), encoding="utf-8").read()
+    assert "pular_bases:" in js, "o painel não envia a opção ao servidor"
+
+    srv = open(os.path.join(RAIZ, "server.py"), encoding="utf-8").read()
+    # Do início do bloco até o próximo modo — e não uma contagem de caracteres:
+    # a primeira versão deste teste olhava 2.600 chars e reprovava porque a
+    # linha estava logo depois. Teste que depende de quanto comentário existe
+    # acima falha quando alguém documenta melhor.
+    i = srv.index('elif modo == "mineracao":')
+    bloco = srv[i:srv.index('elif modo ==', i + 10)]
+    assert 'op.get("pular_bases")' in bloco,         "o servidor não lê a opção que o painel manda"

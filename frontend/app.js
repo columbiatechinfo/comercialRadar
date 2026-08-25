@@ -1632,7 +1632,11 @@ $("btn-iniciar").onclick = async () => {
     // de novo aqui seria uma chance a mais de errar, e errar aqui é rodar a
     // cidade errada inteira.
     opcoes = { sessao: $("op-sessao").value.trim() || "mineracao",
-               zoom: parseInt($("op-zoom").value) || 19 };
+               zoom: parseInt($("op-zoom").value) || 19,
+               // Sem o dataset da UF a etapa 1 PARA e diz o comando que o
+               // produz. Esta caixa é a saída para quem quer rodar só a captura
+               // enquanto o dataset não existe.
+               pular_bases: !!$("op-pular-bases")?.checked };
   } else if (modo === "enriquecimento") {  // cascata única Maps→Web→StreetView
     modoJob = "enriquecer_tudo";
     opcoes = {

@@ -1965,9 +1965,17 @@ def iniciar_job(body: dict):
                    "--empresa", _empresa_do_pedido()]
             if op.get("no_proxy"):
                 cmd.append("--no-proxy")
-            # Só para depurar a captura isolada. Não há caixa no painel: as duas
-            # fontes SÃO o processo, e uma opção na tela viraria "desligar a
-            # metade barata" no dia em que a rodada estivesse demorando.
+            # A CAIXA EXISTE NO PAINEL, e a razão mudou de ideia no mesmo dia.
+            #
+            # Ela não estava lá de propósito: as duas fontes SÃO o processo, e
+            # uma opção na tela viraria "desligar a metade barata" no dia em que
+            # a rodada estivesse demorando.
+            #
+            # Só que a etapa das bases públicas EXIGE o dataset da UF, e
+            # produzi-lo é trabalho de horas no i9. Sem saída, quem ainda não o
+            # tem fica sem poder minerar — que é pior que o risco de alguém
+            # desligar a metade barata. A caixa nasce desmarcada e o rótulo diz
+            # o que se perde.
             if op.get("pular_bases"):
                 cmd.append("--pular-bases")
             _novo_job("mineracao", out_json, {"sessao": sessao, "motor": "duas-fontes"})
