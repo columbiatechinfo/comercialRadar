@@ -1901,6 +1901,23 @@ def iniciar_job(body: dict):
         # que é a unidade em que o governo publica. Exigir um retângulo
         # desenhado para baixar o Cadastur de Canoas seria pedir um dado que a
         # tarefa não usa, e o operador ficaria travado sem entender por quê.
+        # O MOTOR REMOVIDO E RECUSADO ANTES DA AREA.
+        #
+        # A recusa vivia dentro do `elif modo == "mineracao"`, DEPOIS da
+        # exigencia de poligono. Uma aba antiga aberta no navegador, que ainda
+        # manda `motor=places`, ouvia "desenhe o poligono", desenhava, tentava
+        # de novo — e so entao descobria que o motor nao existe mais. Duas
+        # voltas para uma resposta que o servidor ja tinha na primeira.
+        #
+        # Pedido que a ferramenta nao atende mais nao depende do estado da
+        # area: e invalido em qualquer estado.
+        if str(op.get("motor") or "").strip() == "places":
+            return JSONResponse(
+                {"erro": "O motor 'places' (Google Places API, pago) foi removido "
+                         "da ferramenta. A mineração usa a captura + OCR, que não "
+                         "custa por chamada. Recarregue a página."},
+                status_code=410)
+
         poly = area_utils.carregar_area()
         # `base_estadual` entra na mesma exceção do Cadastur, e pelo mesmo
         # motivo: ela trabalha por UF, que é a unidade em que as bases públicas
@@ -1939,12 +1956,10 @@ def iniciar_job(body: dict):
             # repositório como histórico, mas o painel não o alcança mais e a
             # rota RECUSA o modo — em vez de ignorar em silêncio um pedido que
             # ainda venha de uma aba antiga aberta no navegador.
-            if str(op.get("motor") or "").strip() == "places":
-                return JSONResponse(
-                    {"erro": "O motor 'places' (Google Places API, pago) foi removido "
-                             "da ferramenta. A mineração usa a captura + OCR, que não "
-                             "custa por chamada. Recarregue a página."},
-                    status_code=410)
+            # A recusa do motor `places` subiu para antes da exigencia de
+            # area (ver o comentario la em cima). Aqui nao ha mais o que
+            # checar: duas recusas do mesmo pedido, em lugares diferentes,
+            # divergem na primeira vez que alguem edita uma delas.
             # AS DUAS FONTES, NUM JOB SÓ (24/08/2026). `minerar_tudo.py` roda as
             # bases públicas e depois a captura + OCR. Elas deixaram de ser
             # alternativas porque enxergam coisas diferentes: a base pública não

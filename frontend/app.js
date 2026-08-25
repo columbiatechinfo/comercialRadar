@@ -1109,6 +1109,10 @@ document.querySelectorAll(".fly-item").forEach((b) => {
     $("sec-enriquecimento").classList.toggle("hidden", modo !== "enriquecimento");
     $("sec-cadastur")?.classList.toggle("hidden", modo !== "cadastur");
     if (modo === "cadastur") carregarResumoCadastur();
+    // A fila de logradouro nao tem painel proprio no cabecalho: ela e uma
+    // LISTA de trabalho, e abre direto. Deixar uma secao vazia atras dela
+    // sugeriria que ha configuracao a fazer antes, e nao ha.
+    if (modo === "logradouros") abrirFilaLogradouro();
     // A base pública vem por MUNICÍPIO. A área desenhada não participa, e
     // deixar o painel dela visível sugeriria que participa — o operador
     // desenharia um polígono e esperaria que o recorte o respeitasse.
@@ -1461,6 +1465,103 @@ async function carregarCardsFachada() {
 }
 
 let faItens = [];
+/* ── A FILA DE LOGRADOURO QUE PRECISA DE GENTE ──────────────────────────────
+ *
+ * A skill `ajuste-logradouro` marca a forma canonica com um TIER que diz quanto
+ * confiar. `CONFIRMA` e aplicavel em massa; `REVISAR` significa que houve PERDA
+ * DE TEXTO — um segmento entre parenteses, um bairro depois do hifen, uma poda;
+ * `HUMANO`, que sobrou pouco ou nada de via.
+ *
+ * Os dois ultimos sao fila de gente POR DESENHO, nao por falha. Medido em
+ * Canoas: 1.271 linhas de 283.423, ou 0,45%.
+ *
+ * A tela mostra o ORIGINAL e a forma marcada lado a lado. Sem o original, a
+ * pessoa nao tem como julgar o corte — e o corte e justamente o motivo de a
+ * linha estar aqui.
+ */
+let filaLogr = [];
+
+async function abrirFilaLogradouro() {
+  window.abrirModal(`<div class="m-head"><div class="m-nome">Revisar logradouros</div>
+    <button class="m-close" onclick="fecharModal()">✕</button></div>
+    <div class="m-meta"><span class="chip">carregando…</span></div>`);
+  let d;
+  try {
+    d = await (await fetch("/api/logradouro/pendencias?limite=300")).json();
+  } catch (e) {
+    return window.abrirModal(`<div class="m-head"><div class="m-nome">Revisar logradouros</div>
+      <button class="m-close" onclick="fecharModal()">✕</button></div>
+      <div class="m-meta"><span class="chip">nao consegui carregar: ${esc(e.message)}</span></div>`);
+  }
+  filaLogr = d.itens || [];
+  const r = d.resumo || {};
+  const pend = filaLogr.filter((i) => i.revisao_status === "pendente").length;
+
+  const linha = (i, k) => `
+    <div class="logr-item" data-k="${k}">
+      <div class="logr-orig" title="como a fonte escreveu">${esc(i.logradouro_original || "(vazio)")}</div>
+      <div class="logr-seta">→</div>
+      <div class="logr-marc">${esc(i.logradouro_corrigido || i.logradouro_marcado || "—")}</div>
+      <span class="chip ${i.tier === "HUMANO" ? "st-erro" : ""}">${esc(i.tier)}</span>
+      ${i.risco ? `<span class="chip" title="por que caiu aqui">${esc(i.risco)}</span>` : ""}
+      <span class="chip">${esc(i.fonte)}</span>
+      ${i.revisao_status !== "pendente"
+        ? `<span class="chip st-ok" title="${esc(i.revisado_por || "")}">${esc(i.revisao_status)}</span>`
+        : `<button class="logr-btn" data-k="${k}">revisar</button>`}
+    </div>`;
+
+  window.abrirModal(`
+    <div class="m-head"><div class="m-nome">Revisar logradouros</div>
+      <button class="m-close" onclick="fecharModal()">✕</button></div>
+    <div class="m-meta">
+      <span class="chip">${pend} pendente(s)</span>
+      ${Object.entries(r).map(([k, v]) => `<span class="chip">${esc(k)}: ${v}</span>`).join("")}
+    </div>
+    <div class="logr-ajuda">Estas linhas cairam aqui porque a normalizacao
+      <b>perdeu texto</b> ao cortar. Compare o original com a forma marcada:
+      corrija se o corte estragou, confirme se ficou certo, descarte se nao e
+      logradouro utilizavel.</div>
+    <div class="logr-lista">${filaLogr.length ? filaLogr.map(linha).join("")
+      : `<div class="fa-vazio">nada na fila — a normalizacao resolveu tudo</div>`}</div>`);
+
+  document.querySelectorAll(".logr-btn").forEach((b) => {
+    b.onclick = () => revisarLogradouro(parseInt(b.dataset.k, 10));
+  });
+}
+
+async function revisarLogradouro(k) {
+  const i = filaLogr[k];
+  if (!i) return;
+  /* O `prompt` ja vem preenchido com a forma marcada: na maioria dos casos o
+     corte esta certo e a pessoa so confirma. Comecar vazio faria redigitar o
+     que a maquina ja acertou, que e o jeito de fazer a fila nao ser usada. */
+  const sugerido = i.logradouro_marcado || i.logradouro_original || "";
+  const txt = prompt(
+    "Original: " + (i.logradouro_original || "(vazio)") +
+    String.fromCharCode(10) +
+    "Deixe como esta para CONFIRMAR, edite para CORRIGIR, ou apague para DESCARTAR.",
+    sugerido);
+  if (txt === null) return;                       // cancelou
+
+  const limpo = txt.trim();
+  const status = !limpo ? "descartado"
+    : (limpo === sugerido ? "confirmado" : "corrigido");
+  try {
+    const r = await fetch(`/api/logradouro/${encodeURIComponent(i.fonte)}/`
+      + `${encodeURIComponent(i.record_id)}/revisar`, {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({status: status,
+                            logradouro_corrigido: status === "corrigido" ? limpo : "",
+                            nota: ""}),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
+    abrirFilaLogradouro();                        // recarrega com o novo estado
+  } catch (e) {
+    alert("Nao consegui gravar: " + e.message);
+  }
+}
+
 async function abrirListaFachada(recorte) {
   $("fa-lista").classList.remove("hidden");
   document.body.classList.add("lista-aberta");

@@ -1876,3 +1876,24 @@ body.ocultar-fontes .fonte-dado:hover::after{content:"visível apenas para root"
   border:1px solid rgba(255,255,255,.18);white-space:nowrap}
 .btn-bancada:hover{background:rgba(255,255,255,.26)}
 .btn-bancada svg{opacity:.85}
+
+/* ── Fila de revisão de logradouro ─────────────────────────────────────────
+   O ORIGINAL e a forma marcada lado a lado, com a seta entre eles. Sem o
+   original a pessoa não tem como julgar o corte — e o corte é justamente o
+   motivo de a linha estar na fila. */
+.logr-ajuda{padding:10px 16px;color:var(--txt-2);font-size:13px;line-height:1.5;
+  border-bottom:1px solid var(--linha-1)}
+.logr-lista{max-height:56vh;overflow:auto;padding:6px 10px 12px}
+.logr-item{display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  padding:9px 6px;border-bottom:1px solid var(--linha-1)}
+.logr-item:last-child{border-bottom:0}
+.logr-orig{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;
+  color:var(--txt-2);flex:1 1 220px;min-width:0;word-break:break-word}
+.logr-seta{color:var(--txt-3);flex:none}
+.logr-marc{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;
+  font-weight:600;color:var(--txt-1);flex:1 1 220px;min-width:0;word-break:break-word}
+.logr-btn{flex:none;border:1px solid var(--linha-2);background:var(--fundo-1);
+  color:var(--txt-1);border-radius:6px;padding:4px 11px;font-size:12px;
+  font-weight:600;cursor:pointer}
+.logr-btn:hover{background:var(--acento-fraco);border-color:var(--acento)}
+.logr-btn:focus-visible{outline:2px solid var(--acento);outline-offset:1px}

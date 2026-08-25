@@ -182,6 +182,16 @@ def _um_poi(con, poi_id: int, item: dict, e_root: bool) -> dict:
             "contrarias": aba["contrarias"],
             "campos": {ln["chave"]: ln["valor"]
                        for g in aba["grupos"] for ln in g["linhas"]},
+            # POR QUE ESTA FONTE ESTA NESTE POI, e com que confianca ela entrou.
+            #
+            # `probabilidade` responde outra pergunta: o quanto esta fonte
+            # sustenta que ali HA COMERCIO. O vinculo responde se este registro
+            # e mesmo DESTE ponto — um telefone igual a 150 m e um nome
+            # identico a 3 m produzem a mesma aba e nao merecem a mesma fe.
+            #
+            # E e o que habilita o `x` da aba: sem `vinculo_id`, a fusao errada
+            # volta a ser irreversivel.
+            "vinculo": aba.get("vinculo"),
         }
 
     with con.cursor() as cur:

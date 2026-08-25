@@ -151,7 +151,146 @@ ENXERTO = """
     });
   }
 
-  function comecar() { carregar(); botaoVoltar(); }
+  /* ── O `x` DA ABA: desfazer uma fusao errada ─────────────────────────────
+   *
+   * A fusao e feita por maquina com evidencia incompleta e VAI errar. Medido no
+   * RS em 25/08/2026: a IA julgou 400 fusoes suspeitas sorteadas e 66,2% delas
+   * uniram estabelecimentos DISTINTOS. Este e o caminho de volta.
+   *
+   * POR QUE ISTO E ENXERTO E NAO EDICAO DO HTML
+   *
+   * `frontend/bancada.html` e GERADO deste script a partir do zip do modelo, e
+   * esta no .gitignore. Editar o HTML direto funciona ate alguem rodar
+   * `instalar_bancada.py` — e ai a mudanca some sem deixar rastro. O enxerto e
+   * versionado e sobrevive a regeneracao.
+   *
+   * O modelo desenha as abas em `pintaAbas()`, com template literal. Em vez de
+   * reescrever a funcao dele — que muda a cada versao do zip —, embrulhamos:
+   * ele desenha, nos acrescentamos. Se o modelo mudar o HTML da aba, o pior que
+   * acontece e o `x` nao aparecer; nada quebra.
+   */
+  function selo(v) {
+    const e = document.createElement("span");
+    e.className = "cr-conf";
+    e.textContent = v.confianca;
+    e.title = "Confianca " + v.confianca + "/10 (" + v.confianca_origem + ")"
+            + (v.motivo ? " — " + v.motivo : "");
+    e.style.cssText = "font-size:11px;margin-left:5px;padding:1px 5px;border-radius:4px"
+      + ";background:#EEF2F7;color:#5A6B7C;font-weight:700;font-variant-numeric:tabular-nums";
+    return e;
+  }
+
+  function botaoX(fonte, v) {
+    const x = document.createElement("span");
+    x.className = "cr-desv";
+    x.textContent = "\u00d7";
+    x.setAttribute("role", "button");
+    x.tabIndex = 0;
+    x.title = "Desvincular esta fonte deste ponto";
+    /* Discreto ate o ponteiro chegar: e um botao que desfaz juncao, e destaque
+       permanente convida ao clique distraido. */
+    x.style.cssText = "margin-left:6px;padding:0 4px;border-radius:4px;color:#9AA7B4"
+      + ";font-size:12px;line-height:1;opacity:.4;cursor:pointer";
+    x.onmouseenter = () => { x.style.opacity = "1"; x.style.background = "#FDE7E9";
+                             x.style.color = "#B3261E"; };
+    x.onmouseleave = () => { x.style.opacity = ".4"; x.style.background = "";
+                             x.style.color = "#9AA7B4"; };
+    const agir = (ev) => { ev.stopPropagation(); ev.preventDefault();
+                           desvincular(fonte, v); };
+    x.onclick = agir;
+    x.onkeydown = (ev) => { if (ev.key === "Enter" || ev.key === " ") agir(ev); };
+    return x;
+  }
+
+  async function desvincular(fonte, v) {
+    /* `atual` e `let` no topo do script do modelo. Isso o poe no escopo
+       lexical global — visivel daqui — mas NAO em `window`, e `window.atual`
+       dava undefined em silencio. */
+    const a = (typeof atual !== "undefined") ? atual : null;
+    const poi = (a && a.num_ligacao) || null;
+    if (!poi) return;
+    /* A confirmacao diz as DUAS consequencias, porque as duas surpreendem quem
+       nao leu a documentacao: o registro vira um ponto NOVO (nada e apagado), e
+       esse ponto passa NA HORA pelo Maps e pelo Street View proprios — o que
+       leva dezenas de segundos. Avisar depois seria deixar o operador achando
+       que travou. */
+    /* SEM UMA BARRA SEQUER nesta string, e isso e cicatriz.
+       O texto e escrito dentro de um heredoc no `instalar_bancada.py`, e a
+       primeira versao usava aspas escapadas: o heredoc comeu o escape, o
+       JS gerado ficou com `"" + fonte + ""` e a BANCADA INTEIRA parou de
+       carregar por erro de sintaxe. Template literal com quebras de linha
+       reais nao tem esse problema.
+
+       E o texto diz as DUAS consequencias, porque as duas surpreendem quem
+       nao leu a documentacao: o registro vira um ponto NOVO (nada e
+       apagado), e esse ponto passa NA HORA pelo Maps e pelo Street View. */
+    if (!confirm(
+`Desvincular a fonte "${fonte}" deste ponto?
+
+• O registro dela vira um PONTO NOVO, separado. Nada e apagado.
+• O ponto novo passa agora pelo Google Maps e pelo Street View,
+  o que leva alguns segundos.
+
+A evidencia ja capturada continua neste ponto.`)) return;
+
+    try {
+      const r = await fetch("/api/poi/" + encodeURIComponent(poi) + "/desvincular", {
+        method: "POST",
+        /* SEM cabecalho de autorizacao aqui: o `sessao.js` ja trocou o
+           `window.fetch` e poe o token em toda requisicao, com renovacao. Por
+           um de proposito seria ter duas verdades sobre a sessao. */
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({fonte: fonte, id_fonte: v.id_fonte}),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.detail || ("HTTP " + r.status));
+      const cap = d.captura || {};
+      const fez = [];
+      if (cap.maps && !cap.maps.erro) fez.push("painel do Maps");
+      if (cap.fachada && !cap.fachada.erro) fez.push("fachada");
+      /* Montado por lista e unido com `String.fromCharCode(10)`.
+         O `ENXERTO` e uma string comum do Python — nao raw — entao um "
+"
+         escrito aqui vira QUEBRA DE LINHA REAL no JS gerado, e a string
+         literal fica aberta. Foi assim que a bancada quebrou duas vezes. */
+      const linhas = ["Separado. Novo ponto #" + d.poi_novo + "."];
+      linhas.push(fez.length
+        ? "Capturado: " + fez.join(" e ") + "."
+        : "A captura nao completou; e refeita no proximo enriquecimento.");
+      if (d.virou_ancora) linhas.push("Este ponto foi reancorado na fonte que ficou.");
+      alert(linhas.join(String.fromCharCode(10)));
+      location.reload();
+    } catch (e) {
+      alert("Nao consegui desvincular: " + e.message);
+    }
+  }
+
+  function enfeitarAbas() {
+    const a = (typeof atual !== "undefined") ? atual : null;
+    const f = (a && a.fontes) || {};
+    document.querySelectorAll("#abas .aba[data-a]").forEach((b) => {
+      if (b.querySelector(".cr-conf, .cr-desv")) return;   // ja enfeitada
+      const v = (f[b.dataset.a] || {}).vinculo;
+      if (!v) return;                                       // aba de sintese
+      b.appendChild(selo(v));
+      /* So oferece o `x` quando o SERVIDOR disse que pode: a ultima fonte nao
+         pode sair, e recusar depois do clique e pior que nao oferecer. */
+      if (v.pode_desvincular) b.appendChild(botaoX(b.dataset.a, v));
+    });
+  }
+
+  function embrulharAbas() {
+    if (typeof window.pintaAbas !== "function") return;
+    const original = window.pintaAbas;
+    window.pintaAbas = function () {
+      const r = original.apply(this, arguments);
+      try { enfeitarAbas(); } catch (e) { console.warn("cr: abas", e); }
+      return r;
+    };
+    enfeitarAbas();
+  }
+
+  function comecar() { carregar(); botaoVoltar(); setTimeout(embrulharAbas, 0); }
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", comecar);
   } else { comecar(); }
