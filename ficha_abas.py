@@ -229,6 +229,35 @@ def montar(con, dados: dict, e_root: bool) -> list:
             linha["procedencia"] = procedencia
         por_fonte.setdefault(fonte, []).append(linha)
 
+    # DE QUE REGISTROS ESTE POI E FEITO, e com que confianca cada um entrou.
+    #
+    # A aba mostra o que a fonte AFIRMA; o vinculo diz por que ela esta aqui.
+    # Sao coisas diferentes e as duas importam para quem decide: um telefone
+    # igual a 150 m e um nome identico a 3 m produzem a mesma aba e nao merecem
+    # a mesma fe.
+    #
+    # E e o que habilita o `x`: sem `vinculo_id`, a tela nao tem o que
+    # desvincular, e a fusao errada volta a ser irreversivel.
+    vinculos: dict = {}
+    poi_id = dados.get("poi_id")
+    if poi_id is not None:
+        with con.cursor() as cur:
+            cur.execute("""
+                select fonte, id_fonte, id, confianca, confianca_origem, motivo
+                  from comercialradar.vinculo_poi
+                 where poi_id = %s and estado = 'vinculado'
+                 order by confianca desc, id""", (poi_id,))
+            for f, idf, vid, conf, origem, motivo in cur.fetchall():
+                vinculos.setdefault(f, {
+                    "vinculo_id": vid, "id_fonte": idf, "confianca": conf,
+                    "confianca_origem": origem, "motivo": motivo,
+                })
+        # Uma fonte so pode sair se sobrar outra. A tela precisa saber ANTES de
+        # oferecer o `x` — recusar depois do clique e pior que nao oferecer.
+        pode_sair = len(vinculos) > 1
+        for v in vinculos.values():
+            v["pode_desvincular"] = pode_sair
+
     saida = []
     for fonte, rotulo_aba in ABAS:
         linhas = por_fonte.get(fonte) or []
@@ -244,5 +273,8 @@ def montar(con, dados: dict, e_root: bool) -> list:
             # precisa ver que há objeção antes de abrir, não depois de aprovar.
             "contrarias": contrarias,
             "grupos": [{"grupo": g, "linhas": ls} for g, ls in grupos.items()],
+            # Ausente quando a fonte nao tem vinculo registrado: a aba aparece
+            # (o dado existe), mas sem `x` — nao ha o que desfazer.
+            "vinculo": vinculos.get(fonte),
         })
     return saida
