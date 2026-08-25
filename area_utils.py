@@ -278,3 +278,93 @@ def gate_registro(reg: dict, poligono) -> bool:
         return True
     reg["fora_da_area"] = True
     return False
+
+
+def garantir_malha(uf: str, log=print) -> int:
+    """A malha municipal daquela UF no banco de referência, baixando se faltar.
+
+    POR QUE ISTO SAIU DE DENTRO DO ENDPOINT
+
+    `ibge_malha` é o que traduz "Canoas/RS" em `4304606`, e o código é o que
+    liga o município ao Cadastur, ao CNEFE, à importação da base estadual e à
+    normalização de endereço. Sem ele, quatro das sete etapas da mineração caem
+    juntas — e a mensagem que o operador via era "município fora da malha IBGE
+    carregada", que descreve o sintoma e esconde a saída.
+
+    A malha nunca foi carregada em lote: ela entra SOB DEMANDA, quando alguém
+    navega o mapa por aquela UF (`/api/malha`). Por isso o banco tem 20 das 27 —
+    são as que já foram visitadas. Uma área em Goiás simplesmente não tinha sido.
+
+    Agora a mineração pede a sua antes de desistir. Devolve quantos municípios a
+    UF tem no banco depois da tentativa; `0` significa que nem o IBGE respondeu.
+    """
+    import json
+    import urllib.request
+
+    import base_comum as bc   # import local, como no resto do modulo
+
+    uf = (uf or "").strip().upper()
+    if len(uf) != 2:
+        return 0
+
+    ref = bc.conectar_referencia()
+    try:
+        with ref.cursor() as cur:
+            cur.execute("select count(*) from ibge_malha where uf = %s", (uf,))
+            n = cur.fetchone()[0]
+            if n:
+                return n
+
+        log(f"  malha de {uf} ainda não está no banco — baixando do IBGE")
+        base = "https://servicodados.ibge.gov.br/api/v3/malhas/estados"
+        url = (f"{base}/{uf}?formato=application/vnd.geo+json"
+               f"&qualidade=intermediaria&intrarregiao=municipio")
+        # `intermediaria` e não `minima`: na mínima as divisas são generalizadas
+        # e Itambé-PE, a 2 km da fronteira, caía na Paraíba.
+        def _json(u, timeout):
+            """O IBGE responde GZIP mesmo sem `Accept-Encoding`.
+
+            Sem descomprimir, o `json.loads` estoura com
+            `UnicodeDecodeError: byte 0x8b in position 1` — que e a assinatura
+            do gzip, e nao um problema de acentuacao como o nome do erro
+            sugere. O painel ja tratava isso no `/api/malha`; esta funcao
+            nasceu sem, e o sintoma apontava para o lugar errado.
+            """
+            import gzip
+            req = urllib.request.Request(u, headers={"User-Agent": "comercialRadar"})
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                bruto = r.read()
+            if bruto[:2] == bytes((0x1F, 0x8B)):   # assinatura do gzip
+                bruto = gzip.decompress(bruto)
+            return json.loads(bruto)
+
+        gj = _json(url, 120)
+        nomes = {str(m["id"]): m["nome"] for m in _json(
+            f"https://servicodados.ibge.gov.br/api/v1/localidades/"
+            f"estados/{uf}/municipios", 60)}
+
+        gravados = 0
+        with ref.cursor() as cur:
+            for f in gj.get("features", []):
+                cod = str((f.get("properties") or {}).get("codarea") or "")
+                if not cod:
+                    continue
+                cur.execute(
+                    """insert into ibge_malha (cod_municipio, nome, uf, geom)
+                       values (%s, %s, %s, ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326))
+                       on conflict (cod_municipio) do update
+                          set nome = coalesce(excluded.nome, ibge_malha.nome),
+                              uf = excluded.uf, geom = excluded.geom""",
+                    (cod, nomes.get(cod), uf, json.dumps(f.get("geometry"))))
+                gravados += 1
+        ref.commit()
+        log(f"  malha de {uf}: {gravados} municípios gravados")
+        return gravados
+    except Exception as erro:  # noqa: BLE001
+        # NÃO derruba a rodada: sem a malha algumas etapas ficam de fora, e o
+        # diagnóstico já diz quais. Trocar a mineração inteira por uma falha de
+        # rede do IBGE seria o pior negócio possível.
+        log(f"  ⚠️  não consegui a malha de {uf}: {type(erro).__name__}: {erro}")
+        return 0
+    finally:
+        ref.close()

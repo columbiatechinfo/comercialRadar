@@ -131,8 +131,14 @@ def garantir_dataset(uf: str, produzir_aqui: bool = False) -> Path:
     i9 à mão.
     """
     destino = DATASETS / uf.upper()
-    if (destino / MARCADOR).exists():
-        _log(f"📚 Bases públicas: dataset de {uf.upper()} já existe — reaproveitando")
+    # A MESMA verdade do diagnóstico, e não uma segunda conferência.
+    #
+    # Antes esta função olhava só o disco local. No notebook isso dava "não há
+    # dataset de RS" com o RS pronto no i9 — e a saída sugeria PRODUZIR de novo
+    # o que já existia: horas de CPU para refazer 10 GB.
+    pronto, onde = dataset_pronto(uf)
+    if pronto:
+        _log(f"📚 Bases públicas: dataset de {uf.upper()} já existe ({onde})")
         _log(f"   {destino}")
         return destino
 
@@ -181,6 +187,153 @@ def garantir_dataset(uf: str, produzir_aqui: bool = False) -> Path:
         encoding="utf-8")
     _log(f"✅ Dataset de {uf.upper()} pronto em {int((time.time()-inicio)/60)} min")
     return destino
+
+
+# ONDE O DADO MORA, e por que perguntar no lugar errado dava resposta errada.
+#
+# O banco ja aponta para o i9 pelo `.env` (`I9_POSTGRES_HOST`). Os datasets
+# estaduais, nao: sao ARQUIVOS, e vivem no disco de la — 10 GB so o RS. Rodando
+# no notebook, `dados_externos/estadual/RS` nao existe, e a conferencia dizia
+# "sem dataset de RS" com o RS pronto no i9 ha uma hora.
+#
+# Erro bobo e caro: leva a produzir de novo o que ja existe, ou a concluir que a
+# etapa foi pulada por falta de dado quando o dado esta la.
+#
+# A regra passa a ser uma so: quem pergunta pelo dataset pergunta ONDE ELE MORA.
+I9_SSH = os.environ.get("I9_SSH", "orbisgrid@100.115.117.49")
+I9_DIR = os.environ.get("I9_DIR", "/home/orbisgrid/comercialradar")
+
+
+def no_i9() -> bool:
+    """Estamos rodando NA maquina onde o dado mora?"""
+    return str(BASE).replace("\\", "/").startswith(I9_DIR)
+
+
+def dataset_pronto(uf: str) -> tuple:
+    """`(pronto, onde)` — confere no disco local e, se nao achar, NO i9.
+
+    Devolve tambem ONDE a resposta foi obtida, porque "nao existe aqui" e "nao
+    existe em lugar nenhum" sao conclusoes diferentes e so uma delas justifica
+    produzir a UF de novo.
+    """
+    uf = (uf or "").upper()
+    if not uf:
+        return False, "sem UF"
+    if (DATASETS / uf / MARCADOR).exists():
+        return True, "disco local"
+    if no_i9():
+        return False, "disco do i9 (rodando nele)"
+
+    # Uma pergunta so, curta, e que NAO derruba nada se o i9 estiver fora: sem
+    # resposta, seguimos com o que sabemos do disco local.
+    try:
+        r = subprocess.run(
+            ["ssh", "-n", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", I9_SSH,
+             f"wsl -d Ubuntu -- bash -lc 'test -f {I9_DIR}/dados_externos/"
+             f"estadual/{uf}/{MARCADOR} && echo PRONTO'"],
+            capture_output=True, text=True, timeout=25)
+        if "PRONTO" in (r.stdout or ""):
+            return True, "i9"
+    except Exception as erro:  # noqa: BLE001
+        return False, f"nao consegui perguntar ao i9 ({type(erro).__name__})"
+    return False, "nem aqui nem no i9"
+
+
+def _diagnostico(uf: str, cod: str, cidade: str, empresa: str,
+                 pular: dict) -> dict:
+    """O QUE VAI RODAR NESTA AREA, dito ANTES de gastar a primeira hora.
+
+    A mineracao leva horas e cada etapa depende de um dado que pode nao existir
+    para aquela UF. Descobrir no meio — ou pior, no fim — que o Cadastur foi
+    pulado porque o municipio nao esta na malha e trabalho perdido duas vezes:
+    a rodada e a confianca de quem olhou o resultado achando que era completo.
+
+    Aqui nao se conserta nada: so se mede e se diz. Quem decide se roda assim ou
+    prepara o que falta e a pessoa.
+    """
+    import base_comum as bc
+
+    tem_dataset, onde_dataset = dataset_pronto(uf)
+
+    tem_cnefe = False
+    if cod:
+        try:
+            ref = bc.conectar_referencia()
+            try:
+                with ref.cursor() as cur:
+                    cur.execute("select exists (select 1 from ibge_cnefe "
+                                "where cod_municipio = %s limit 1)", (str(cod),))
+                    tem_cnefe = bool(cur.fetchone()[0])
+            finally:
+                ref.close()
+        except Exception as erro:  # noqa: BLE001
+            _log(f"  (nao consegui conferir o CNEFE: {type(erro).__name__})")
+
+    etapas = [
+        (1, "bases publicas (Overture/OSM/FSQ)", tem_dataset and not pular["bases"],
+         (f"dataset em: {onde_dataset}" if tem_dataset
+          else f"sem dataset de {uf} — procurei em: {onde_dataset}")),
+        (2, "importar o municipio", tem_dataset and bool(cod) and not pular["bases"],
+         "" if cod else "municipio fora da malha IBGE carregada"),
+        (3, "Cadastur/MTur", bool(cod) and not pular["cadastur"],
+         "" if cod else "precisa do codigo IBGE do municipio"),
+        (4, "captura + OCR do Maps", True, ""),
+        (5, "iFood", tem_cnefe and not pular["ifood"],
+         "" if tem_cnefe else "sem CNEFE do municipio: nao ha endereco-semente"),
+        (6, "enderecos (IA + skill)", bool(cod), 
+         "" if cod else "precisa do codigo IBGE do municipio"),
+        (7, "cruzamento entre as fontes", bool(empresa),
+         "" if empresa else "informe --empresa: o vinculo carimba a dona do dado"),
+    ]
+
+    _log("")
+    _log("=" * 62)
+    _log(f" O QUE RODA EM {cidade or '?'}/{uf or '?'}"
+         + (f" ({cod})" if cod else ""))
+    # NESTA maquina. O dataset da UF mora onde a mineracao roda, e no notebook
+    # ele nao esta — dizer so "nao ha dataset de RS" faria parecer que a UF nao
+    # foi produzida, quando ela pode estar pronta no i9.
+    _log(f" banco: i9 · datasets: {'i9' if not no_i9() else 'esta maquina'}")
+    _log("=" * 62)
+    for n, nome, vai, motivo in etapas:
+        marca = "SIM " if vai else "NAO "
+        _log(f"  {n}  {marca} {nome}" + (f"  — {motivo}" if motivo else ""))
+    fora = [n for n, _, vai, _ in etapas if not vai]
+    if fora:
+        _log("")
+        _log(f"  {len(fora)} etapa(s) de fora. A rodada CONTINUA com as demais —")
+        _log("  cada uma pode ser repetida sozinha quando o que falta existir.")
+    _log("=" * 62)
+    return {n: vai for n, _, vai, _ in etapas}
+
+
+def _importar_municipio(uf: str, cod: str, empresa: str,
+                        produzir_aqui: bool = False) -> int:
+    """O recorte do município, do dataset da UF para o banco.
+
+    A UF INTEIRA NÃO ENTRA. São 945.716 POIs no RS: despejar isso na base de um
+    cliente que trabalha uma cidade não é cobertura, é entulho — a tela fica
+    lenta, a fila de aprovação enche de ponto que ninguém pediu e o custo de
+    enriquecer sobe para todos eles.
+
+    DATASET AUSENTE NÃO DERRUBA A RODADA, e isso mudou em 25/08/2026.
+    `garantir_dataset` levanta `SystemExit` quando a UF não foi produzida — o
+    que fazia sentido quando a mineração era só bases públicas + captura. Agora
+    são sete etapas: abortar aqui levaria junto a captura, o iFood, os endereços
+    e o cruzamento, que funcionam sem dataset nenhum. Hoje ele DIZ o que falta e
+    devolve código; quem decide o que fazer com isso é o orquestrador.
+    """
+    try:
+        destino = garantir_dataset(uf, produzir_aqui)
+    except SystemExit as aviso:
+        _log(str(aviso))
+        return 2
+
+    return _rodar([PYTHON, "extracao_estadual.py",
+                   "--saida", str(destino / "saida"),
+                   "--municipio", str(cod),
+                   "--empresa", empresa or "",
+                   "--aplicar"])
 
 
 def _etapa(n: int, titulo: str) -> None:
@@ -236,6 +389,11 @@ def main(argv=None) -> int:
         return 2
     cidade, uf = area_utils.municipio_da_area(poly)
     _log(f"🗺  Área '{a.area}': {len(poly)} vértices · {cidade or '?'}/{uf or '?'}")
+
+    cod_previa = _cod_municipio(cidade, uf) if uf and cidade else ""
+    _diagnostico(uf, cod_previa, cidade, a.empresa,
+                 {"bases": a.pular_bases, "cadastur": a.pular_cadastur,
+                  "ifood": a.pular_ifood})
 
     # ── 1 e 2 · bases públicas ────────────────────────────────────────────
     if a.pular_bases:
@@ -342,6 +500,10 @@ def _cod_municipio(cidade: str, uf: str) -> str:
                        if unicodedata.category(c) != "Mn").strip()
 
     alvo = n(cidade)
+    # PEDE A MALHA ANTES DE DESISTIR. Ela entra sob demanda (é assim que as 20
+    # UFs do banco chegaram lá: foram visitadas no mapa), e sem o código quatro
+    # das sete etapas caem juntas.
+    area_utils.garantir_malha(uf, log=_log)
     ref = base_comum.conectar_referencia()
     try:
         with ref.cursor() as cur:

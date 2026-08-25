@@ -202,10 +202,23 @@ def test_o_dataset_da_uf_e_reaproveitado():
     import minerar_tudo
     fonte = open(os.path.join(RAIZ, "minerar_tudo.py"), encoding="utf-8").read()
     assert "MARCADOR" in fonte and "_pronto.txt" in fonte
-    i = fonte.index("def garantir_dataset")
-    corpo = fonte[i:i + 1400]
-    assert "MARCADOR).exists()" in corpo,         "garantir_dataset nao confere o marcador antes de reproduzir a UF"
     assert minerar_tudo.DATASETS.name == "estadual", minerar_tudo.DATASETS
+
+    # A REGRA, e não o literal `MARCADOR).exists()` que a versão anterior
+    # cobrava. Aquela forma casava com UMA implementação: quando a conferência
+    # passou a perguntar TAMBÉM ao i9 — porque o dataset mora lá e o notebook
+    # dizia "não há dataset de RS" com o RS pronto —, o teste reprovou uma
+    # melhoria. Teste que descreve o COMO impede consertar o QUÊ.
+    i = fonte.index("def garantir_dataset")
+    corpo = fonte[i:i + 1600]
+    assert "dataset_pronto(uf)" in corpo,         "garantir_dataset nao confere se a UF ja esta pronta antes de reproduzi-la"
+
+    # E quem confere tem de olhar o MARCADOR, não a pasta: execução interrompida
+    # na etapa 6 de 8 tem pasta e tem arquivos, e não serve para importar.
+    j = fonte.index("def dataset_pronto")
+    conf = fonte[j:j + 1600]
+    assert "MARCADOR" in conf, "a conferência deixou de exigir o marcador"
+    assert "I9_DIR" in conf or "i9" in conf.lower(),         "a conferência voltou a olhar só o disco local; o dataset mora no i9"
 
 
 def test_ha_saida_quando_o_dataset_da_uf_nao_existe():
