@@ -206,22 +206,69 @@ def test_nenhuma_tabela_com_tenant_id_fica_sem_politica():
         f"some do painel de todos: {sem_gatilho}")
 
 
-def test_ifood_merchant_nao_tem_linha_sem_empresa():
-    """As 1.598 linhas da raspagem de 19/08 nasceram com `tenant_id` nulo.
+def test_as_bases_que_geram_poi_nao_carimbam_empresa():
+    """Decisão do dono do produto, 25/08/2026: o POI é DE CADA EMPRESA, mas a
+    BASE que o gera é geral.
 
-    Ligar a RLS naquele estado teria tornado as 1.598 invisíveis para o painel —
-    pior que o problema que a RLS resolve. A 0029 atribuiu por município e pôs a
-    coluna em `not null`, que é o que impede o caso de voltar.
+    Este teste cobrava o oposto para o `ifood_merchant`: que `tenant_id` fosse
+    `not null`. Fazia sentido enquanto ele era tratado como dado de cliente —
+    e não é. Duas concessionárias na mesma cidade leem o MESMO cadastro do
+    iFood, o MESMO Cadastur federal, os MESMOS CNPJs da Receita. Carimbar a
+    base faria cada uma baixar, tratar e guardar de novo as mesmas linhas.
+
+    É o raciocínio que já valia para `endereco_segmentado` e
+    `logradouro_ajustado` — "R. Mal. Rondon, 1199" é o mesmo endereço para
+    qualquer cliente — estendido a montante.
+
+    A coluna não foi apagada: virou `importado_por`, fora da regra de
+    isolamento e com a informação preservada. Apagar responderia à regra e
+    perderia a pergunta "quem trouxe estas linhas".
+    """
+    bases = ("cadastur_prestador", "cadastur_total_pf", "cnpj_tratado",
+             "cnefe_coletiva", "ifood_merchant")
+    con = bc.conectar()
+    with con.cursor() as cur:
+        cur.execute("""select c.relname, c.relrowsecurity,
+                              exists (select 1 from pg_attribute a
+                                       where a.attrelid = c.oid
+                                         and a.attname = 'tenant_id'
+                                         and a.attnum > 0 and not a.attisdropped),
+                              exists (select 1 from pg_attribute a
+                                       where a.attrelid = c.oid
+                                         and a.attname = 'importado_por'
+                                         and a.attnum > 0 and not a.attisdropped)
+                         from pg_class c join pg_namespace n on n.oid = c.relnamespace
+                        where n.nspname = 'comercialradar' and c.relname = any(%s)""",
+                    (list(bases),))
+        linhas = cur.fetchall()
+    con.close()
+
+    achadas = {r[0] for r in linhas}
+    assert achadas == set(bases), f"base sumiu do banco: {set(bases) - achadas}"
+    com_tenant = [r[0] for r in linhas if r[2]]
+    assert not com_tenant, f"base pública voltou a carimbar empresa: {com_tenant}"
+    sem_historico = [r[0] for r in linhas if not r[3]]
+    assert not sem_historico,         f"a coluna foi APAGADA em vez de virar importado_por: {sem_historico}"
+    com_rls = [r[0] for r in linhas if r[1]]
+    assert not com_rls, f"RLS ligada numa base geral esconde-a de quem pode usá-la: {com_rls}"
+
+
+def test_o_poi_continua_sendo_de_cada_empresa():
+    """A outra metade da mesma decisão, e ela não pode escorregar junto.
+
+    Cada empresa roda a SUA mineração, e o que ela achou é dela. Se `pois`
+    perdesse o `tenant_id` no mesmo movimento, o achado de um cliente apareceria
+    para outro — que é o oposto do que se está corrigindo.
     """
     con = bc.conectar()
     with con.cursor() as cur:
-        cur.execute("select count(*) from ifood_merchant where tenant_id is null")
-        orfas = cur.fetchone()[0]
-        cur.execute("""select is_nullable from information_schema.columns
-                        where table_schema = 'comercialradar'
-                          and table_name = 'ifood_merchant'
-                          and column_name = 'tenant_id'""")
-        anulavel = cur.fetchone()[0]
+        cur.execute("""select c.relrowsecurity,
+                              exists (select 1 from pg_attribute a
+                                       where a.attrelid = c.oid and a.attname = 'tenant_id'
+                                         and a.attnum > 0 and not a.attisdropped)
+                         from pg_class c join pg_namespace n on n.oid = c.relnamespace
+                        where n.nspname = 'comercialradar' and c.relname = 'pois'""")
+        rls, tem = cur.fetchone()
     con.close()
-    assert orfas == 0, f"{orfas} merchants sem empresa — invisíveis para o painel"
-    assert anulavel == "NO", "tenant_id voltou a aceitar nulo em ifood_merchant"
+    assert tem, "pois perdeu o tenant_id: o achado de um cliente vazaria para outro"
+    assert rls, "pois com tenant_id e sem RLS"

@@ -122,14 +122,20 @@ def test_as_capturas_de_2022_nao_foram_sacrificadas(con):
 
 def test_as_tres_pernas_da_regra_existem(con):
     """POI, imagem e vínculo de fonte. Quem vier procurar "o que impede
-    duplicar" precisa achar as três, e não duas."""
+    duplicar" precisa achar as três, e não duas.
+
+    O índice do POI é POR EMPRESA desde a migração 0034. Global, ele virava
+    parede: com o POI sendo de cada empresa, a segunda concessionária na mesma
+    cidade não conseguiria importar os mesmos pontos públicos. A promessa
+    ("rodar de novo ACRESCENTA, não repete") continua — dentro da empresa, que
+    é o escopo em que ela faz sentido."""
     with con.cursor() as cur:
         cur.execute("""select indexname from pg_indexes
                         where schemaname='comercialradar'
-                          and indexname in ('ux_pois_place_id',
+                          and indexname in ('ux_pois_place_id_por_empresa',
                                             'ux_streetview_poi_angulo',
                                             'ix_vinculo_poi_ativo')""")
         achados = {r[0] for r in cur.fetchall()}
-    faltando = {"ux_pois_place_id", "ux_streetview_poi_angulo",
+    faltando = {"ux_pois_place_id_por_empresa", "ux_streetview_poi_angulo",
                 "ix_vinculo_poi_ativo"} - achados
     assert not faltando, f"perna da regra ausente: {faltando}"
