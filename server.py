@@ -3545,6 +3545,19 @@ def poi_desvincular(poi_id: int, e: DesvincularEntrada,
         r = vinculo.desvincular(con, poi_id, e.fonte, e.id_fonte,
                                 por=(u.email or u.nome or "?"))
         con.commit()
+        # A DESVINCULACAO JA ESTA COMMITADA antes de a captura comecar.
+        #
+        # A ordem importa: a separacao e a decisao da pessoa e esta correta;
+        # a captura e o que se acrescenta. Se ela estivesse dentro da
+        # transacao, um erro de rede desfaria uma decisao humana — e o
+        # operador clicaria de novo achando que nao tinha funcionado.
+        with con.cursor() as cur:
+            cur.execute('select nome, maps_lat, maps_lng, cidade from pois where id = %s', (r["poi_novo"],))
+            novo_poi = cur.fetchone()
+        if novo_poi:
+            r["captura"] = vinculo.capturar_novo(
+                r["poi_novo"], novo_poi[0], novo_poi[1], novo_poi[2],
+                novo_poi[3] or "")
     except vinculo.NaoPodeDesvincular as erro:
         con.rollback()
         # 409 e não 400: o pedido está bem formado, o ESTADO é que não permite.

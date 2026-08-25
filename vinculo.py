@@ -16,17 +16,27 @@ sorteados e disse que 66,2% uniram estabelecimentos distintos — cerca de 7.800
 lojas apagadas numa UF. A fusão é feita por máquina, com evidência incompleta,
 e vai errar. O que não pode é errar sem saída.
 
-O TRABALHO PAGO FICA COM O POI ORIGINAL
+O TRABALHO PAGO NÃO SE MOVE — O POI NOVO GANHA O SEU
 
-Street View capturado, análise de IA, fotos e a fila do supervisor apontam para
-o POI. Ao desvincular, eles **permanecem onde estão** — no POI que mantém o id.
-O POI novo nasce sem evidência.
+Street View, análise de IA e fotos apontam para o POI original e **ficam onde
+estão**: a captura foi feita NAQUELA coordenada, e mover evidência para um ponto
+que ninguém fotografou é inventar procedência. A seção 29 da DOCUMENTACAO existe
+por treze casos de trabalho pago que acabaram no lugar errado.
 
-É a escolha conservadora, e é deliberada: a captura foi feita NAQUELA
-coordenada, e mover evidência para um ponto que ninguém fotografou é inventar
-procedência. A seção 29 da DOCUMENTACAO existe por causa de treze casos de
-trabalho pago que acabaram no lugar errado. Se a evidência devia ir junto, quem
-sabe é a pessoa que desvinculou — não este código.
+Mas o POI novo também não fica cego. Decisão do dono do produto, 25/08/2026:
+**ele passa pelo processo de Google Maps + Street View próprios**, na hora, com
+o operador esperando. Consulta o Maps pelo nome e coordenada dele, e captura a
+fachada da posição dele.
+
+É melhor que as duas alternativas que eu tinha considerado: nada é movido, nada
+nasce vazio, e a evidência do ponto novo é dele — capturada onde ele está, não
+herdada de onde ele não estava.
+
+Se a captura falhar, **a desvinculação continua valendo**. O ponto já está
+gravado e a fachada é recuperável por qualquer rodada de enriquecimento depois;
+trocar uma separação correta por um erro de rede seria o pior negócio possível.
+O resultado da captura volta no retorno, para a tela poder dizer o que
+aconteceu.
 """
 from __future__ import annotations
 
@@ -126,9 +136,38 @@ def desvincular(con, poi_id: int, fonte: str, id_fonte: str, por: str) -> dict:
 
         vid, nome, lat, lng, dados, _conf = alvo
 
-        # O POI NOVO herda o que a fonte desvinculada afirma — e só isso.
-        cur.execute("""select cidade, uf, tenant_id from pois where id = %s""", (poi_id,))
-        cidade, uf, _tenant = cur.fetchone()
+        # ─── REANCORAR VEM ANTES DE CRIAR, e a ordem é o conserto de um bug ───
+        #
+        # O POI novo nasce com `place_id = fonte:id_fonte`. Se a fonte que sai é
+        # a ÂNCORA, esse é exatamente o `place_id` que o POI de origem ainda
+        # carrega — e os dois ficariam com a mesma identidade.
+        #
+        # Antes do índice `ux_pois_place_id` (migração 0033) isso passava calado
+        # e produzia a duplicata que a regra "rodar de novo só acrescenta"
+        # existe para impedir. O índice acusou no primeiro teste.
+        #
+        # Reancorar primeiro libera o `place_id` e, de quebra, é o que impede o
+        # ponto de origem de seguir se apresentando como algo que já não é.
+        cur.execute("""select cidade, uf, place_id from pois where id = %s""", (poi_id,))
+        cidade, uf, place_id = cur.fetchone()
+        place_id = place_id or ""
+        virou_ancora = False
+        if place_id.endswith(f":{id_fonte}") or place_id == id_fonte:
+            cur.execute("""
+                select fonte, id_fonte, nome, lat, lng from vinculo_poi
+                 where poi_id = %s and estado = 'vinculado' and id <> %s
+                 order by confianca desc, id
+                 limit 1""", (poi_id, vid))
+            nova = cur.fetchone()
+            if nova:
+                cur.execute("""
+                    update pois set nome = coalesce(%s, nome),
+                           maps_lat = coalesce(%s, maps_lat),
+                           maps_lng = coalesce(%s, maps_lng),
+                           place_id = %s
+                     where id = %s
+                    """, (nova[2], nova[3], nova[4], f"{nova[0]}:{nova[1]}", poi_id))
+                virou_ancora = True
         d = dados or {}
         cur.execute("""
             insert into pois
@@ -161,30 +200,6 @@ def desvincular(con, poi_id: int, fonte: str, id_fonte: str, por: str) -> dict:
                   json.dumps(d, ensure_ascii=False),
                   f"desvinculado do POI {poi_id} por {por}"))
 
-        # SE A FONTE QUE SAIU ERA A ÂNCORA, o POI de origem ficou com nome e
-        # coordenada de um registro que não o compõe mais. Reancora na fonte de
-        # maior confiança que restou — senão o ponto seguiria se apresentando
-        # como algo que já não é.
-        cur.execute("""select place_id from pois where id = %s""", (poi_id,))
-        place_id = (cur.fetchone() or [""])[0] or ""
-        virou_ancora = False
-        if place_id.endswith(f":{id_fonte}") or place_id == id_fonte:
-            cur.execute("""
-                select fonte, id_fonte, nome, lat, lng from vinculo_poi
-                 where poi_id = %s and estado = 'vinculado'
-                 order by confianca desc, id
-                 limit 1""", (poi_id,))
-            nova = cur.fetchone()
-            if nova:
-                cur.execute("""
-                    update pois set nome = coalesce(%s, nome),
-                           maps_lat = coalesce(%s, maps_lat),
-                           maps_lng = coalesce(%s, maps_lng),
-                           place_id = %s
-                     where id = %s
-                    """, (nova[2], nova[3], nova[4], f"{nova[0]}:{nova[1]}", poi_id))
-                virou_ancora = True
-
         # A trilha vai para a `auditoria` do sistema, com o estado ANTES e
         # DEPOIS. Desvincular é uma decisão humana sobre a identidade de um
         # ponto: sem o antes, ninguém consegue reconstruir o que foi desfeito.
@@ -202,3 +217,62 @@ def desvincular(con, poi_id: int, fonte: str, id_fonte: str, por: str) -> dict:
 
     return {"poi_novo": poi_novo, "poi_origem": poi_id,
             "restantes": total - 1, "virou_ancora": virou_ancora}
+
+
+def capturar_novo(poi_id: int, nome: str, lat, lng, cidade: str = "") -> dict:
+    """O POI recém-separado ganha evidência PRÓPRIA: painel do Maps + fachada.
+
+    Roda com o operador esperando, por decisão do dono do produto — o resultado
+    aparece na tela junto com a confirmação, em vez de chegar num lote depois.
+
+    NADA AQUI PODE DERRUBAR A DESVINCULAÇÃO. Ela já aconteceu e está correta; a
+    captura é o que se acrescenta. Cada metade falha por conta própria e diz o
+    que houve, e o que não veio agora vem em qualquer rodada de enriquecimento
+    depois. É a mesma regra do `guardar_ponto`: trocar um POI bom por um erro de
+    captura seria o pior negócio possível.
+    """
+    resultado = {"maps": None, "fachada": None}
+
+    try:
+        import ferramenta_maps
+        r = ferramenta_maps.consultar_maps(nome, cidade or "")
+        if r and not r.get("erro"):
+            resultado["maps"] = {k: r.get(k) for k in
+                                 ("nome", "endereco", "telefone", "categoria",
+                                  "website", "maps_url", "lat", "lng")
+                                 if r.get(k)}
+            con = bc.conectar()
+            try:
+                with con.cursor() as cur:
+                    # `coalesce` em cada campo: o painel do Maps completa o que
+                    # falta e NUNCA apaga o que a fonte original afirmou. Um
+                    # campo vazio vindo do Maps não pode zerar um campo bom.
+                    cur.execute("""
+                        update pois
+                           set endereco = coalesce(nullif(%s,''), endereco),
+                               telefone = coalesce(nullif(%s,''), telefone),
+                               categoria = coalesce(nullif(%s,''), categoria),
+                               website = coalesce(nullif(%s,''), website),
+                               maps_url = coalesce(nullif(%s,''), maps_url),
+                               endereco_fonte = case when nullif(%s,'') is not null
+                                                     then 'maps' else endereco_fonte end
+                         where id = %s""",
+                                (r.get("endereco") or "", r.get("telefone") or "",
+                                 r.get("categoria") or "", r.get("website") or "",
+                                 r.get("maps_url") or "", r.get("endereco") or "",
+                                 poi_id))
+                con.commit()
+            finally:
+                con.close()
+        else:
+            resultado["maps"] = {"erro": (r or {}).get("erro") or "sem resposta"}
+    except Exception as erro:  # noqa: BLE001
+        resultado["maps"] = {"erro": f"{type(erro).__name__}: {erro}"}
+
+    try:
+        import ferramenta_ponto
+        resultado["fachada"] = ferramenta_ponto._fachada(poi_id, lat, lng)
+    except Exception as erro:  # noqa: BLE001
+        resultado["fachada"] = {"erro": f"{type(erro).__name__}: {erro}"}
+
+    return resultado
