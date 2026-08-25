@@ -372,17 +372,43 @@ def resolver_overture(cfg, man, consultar):
         # fonte — é o mesmo prefixo por outra porta, então a identidade
         # declarada continua sendo a real.
         if not rel:
+            # O CATÁLOGO STAC, e NÃO a listagem do bucket. A diferença custou
+            # uma rodada.
+            #
+            # A primeira versão deste patch lia
+            # `s3.amazonaws.com/?list-type=2&prefix=release/` e pegava o maior
+            # prefixo. Ele devolvia `2026-08-19.0` — que EXISTE no bucket e o
+            # CLI RECUSA:
+            #
+            #     Error: Release '2026-08-19.0' is no longer available.
+            #     Overture keeps only the last two monthly releases (~60 days)
+            #
+            # Prefixo em disco não é release publicada: há pastas em publicação,
+            # e provavelmente restos das que saíram da janela de retenção.
+            # Declarar uma delas como identidade da fonte é pior que não
+            # declarar: o download inteiro falha, 56 tiles de 56, e o erro fala
+            # de retenção quando a causa é a escolha da versão.
+            #
+            # O STAC é o que o próprio CLI consulta (`--stac`, o padrão), então
+            # é a única lista cuja resposta o download vai honrar.
             try:
-                import urllib.request
+                import json as _json
                 import re as _re
-                url = ("https://overturemaps-us-west-2.s3.amazonaws.com/"
-                       "?list-type=2&prefix=release/&delimiter=/")
-                with urllib.request.urlopen(url, timeout=40) as r_:
-                    xml = r_.read().decode("utf-8", "replace")
-                vs = _re.findall(r"<Prefix>release/([^<]+?)/</Prefix>", xml)
+                import urllib.request
+                with urllib.request.urlopen(
+                        "https://stac.overturemaps.org/catalog.json", timeout=40) as r_:
+                    cat = _json.load(r_)
+                vs = []
+                for l in cat.get("links", []):
+                    if l.get("rel") != "child":
+                        continue
+                    m = _re.search(r"(\d{4}-\d{2}-\d{2}\.\d+)",
+                                   "%s %s" % (l.get("title") or "", l.get("href") or ""))
+                    if m:
+                        vs.append(m.group(1))
                 rel = sorted(vs)[-1] if vs else None
                 if rel:
-                    extra["origem_listagem"] = "http_s3_publico"
+                    extra["origem_listagem"] = "stac_catalog"
             except Exception as e:                             # noqa: BLE001
                 extra["erro_listagem_http"] = str(e)[:200]
     return snapshot("overture", rel,

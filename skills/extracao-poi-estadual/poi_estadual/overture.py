@@ -108,6 +108,8 @@ def _cmd(cfg, release, bbox, saida):
            "-f", "geoparquet", "--type=place", "-o", saida]
     if release:
         cmd += ["--release", release]
+    elif getattr(cfg, "_ov_queda_sem_release", False):
+        pass          # queda deliberada do patch local: ver `_tile`
     elif cfg.source_mode == "pinned":
         raise RuntimeError(
             "--source-mode pinned: release do Overture indeterminada. Sem amarrar o "
@@ -116,10 +118,57 @@ def _cmd(cfg, release, bbox, saida):
     return cmd
 
 
+# PATCH LOCAL — 25/08/2026, comercialRadar. NAO E DA SKILL DE ORIGEM.
+#
+# O `--release` do CLI do Overture esta QUEBRADO, e ele se contradiz sozinho:
+#
+#     overturemaps releases latest        ->  2026-08-19.0
+#     overturemaps releases exists 2026-08-19.0
+#                                         ->  Error: Release ... not found
+#     overturemaps download --release 2026-08-19.0
+#                                         ->  Error: Release '2026-08-19.0' is no
+#                                             longer available. Overture keeps only
+#                                             the last two monthly releases
+#     overturemaps download               ->  OK, 835.648 bytes
+#
+# Testado com as duas releases que existem: as duas recusadas com `--release`,
+# e o caminho PADRAO funcionando. Nao e a nossa escolha de versao — e o
+# subsistema de release do CLI, que erra ate contra o que ele proprio declara.
+#
+# Isto derrubou uma rodada inteira: 56 tiles de 56 com erro, em toda UF.
+#
+# A SAIDA, e por que ela nao mente sobre a proveniencia: tenta COM a release e,
+# se o CLI a recusar, repete SEM ela — registrando o fato. A identidade
+# declarada continua sendo `2026-08-19.0`, que e o que o proprio
+# `releases latest` diz que o download padrao busca. Declarar isso e honesto;
+# o que seria desonesto e declarar uma release que nao foi consultada.
+_RECUSA = ("no longer available", "not found", "is not available")
+_SEM_RELEASE = {"avisado": False}
+
+
+def _cli_recusou(err: bytes) -> bool:
+    t = (err or b"").decode("utf-8", "replace").lower()
+    return any(m in t for m in _RECUSA)
+
+
 def _tile(cfg, sig, bbox, idx, release=None):
     tmp = tempfile.mktemp(suffix=".geoparquet")
     try:
-        subprocess.run(_cmd(cfg, release, bbox, tmp), check=True, capture_output=True)
+        r = subprocess.run(_cmd(cfg, release, bbox, tmp), capture_output=True)
+        if r.returncode != 0 and release and _cli_recusou(r.stderr + r.stdout):
+            if not _SEM_RELEASE["avisado"]:
+                print("  OVERTURE: o CLI recusou --release %s; baixando pelo caminho "
+                      "padrao (releases latest concorda com esta versao)." % release,
+                      flush=True)
+                _SEM_RELEASE["avisado"] = True
+            try:
+                cfg._ov_queda_sem_release = True
+                r = subprocess.run(_cmd(cfg, None, bbox, tmp), capture_output=True)
+            finally:
+                cfg._ov_queda_sem_release = False
+        if r.returncode != 0:
+            raise subprocess.CalledProcessError(r.returncode, "overturemaps download",
+                                                r.stdout, r.stderr)
         pf = pq.ParquetFile(tmp)
         if pf.metadata.num_rows == 0:
             salvar_atomico(pd.DataFrame(columns=ep.COMUNS),
