@@ -946,10 +946,140 @@ const AREA_STYLE = { color: "#1a73e8", weight: 2.5, dashArray: "6 6", fillColor:
 // da régua é 10 m, então 25 m é o dobro e meio do que se considera aceitável
 const DESLOC_DESTAQUE_M = 25;
 
+/* ────────────────────────────────────────────────────────────
+   Clique no polígono: quantos POIs estão dentro, e apagar.
+
+   Nasceu de uma confusão real, 25/08/2026. O cabeçalho dizia "42 POIs" e o
+   cartão da mineração dizia "165" — números da MESMA área, e nenhum dos dois
+   errado: os 42 são POIs do banco dentro do desenho, os 165 são ícones lidos
+   por OCR num tile que é 14× maior que o desenho. Faltava um lugar onde a
+   pergunta "o que tem aqui dentro?" tivesse resposta direta.
+
+   A quebra é por FONTE, não pelos chips de origem. Os chips agrupam por como o
+   POI foi CONFIRMADO, e a base estadual inteira cai no balde "Outros" — foi
+   exatamente o que escondeu que os 42 vinham do Overture/OSM/Foursquare.
+──────────────────────────────────────────────────────────── */
+// Rótulo curto e detalhe no `title`: "Bases públicas (Overture/OSM/Foursquare)"
+// por extenso quebrava a célula em duas linhas e desalinhava a coluna de
+// números — e quem precisa saber QUAIS bases passa o mouse.
+const FONTE_ROTULO = {
+  estadual: ["Bases públicas", "Overture + OpenStreetMap + Foursquare"],
+  pipeline: ["Captura + OCR", "Tiles do Maps lidos por visão computacional"],
+  ifood: ["iFood", "Cardápios e lojas do iFood"],
+  cadastur: ["Cadastur/MTur", "Prestadores registrados no Ministério do Turismo"],
+  ia_fachada: ["Lidos na parede", "Nomes que a IA leu na fachada do Street View"],
+  cliente: ["Base do cliente", "O cadastro que a concessionária entregou"],
+};
+
+/* Área do anel em hectares. Projeção plana local: em polígonos de bairro o
+   erro é irrelevante, e trazer uma biblioteca de geodésia para escrever "3,5 ha"
+   num popup seria peso sem retorno. */
+function areaHectares(anel) {
+  if (!anel || anel.length < 3) return 0;
+  const latMed = anel.reduce((s, p) => s + p[0], 0) / anel.length;
+  const mx = 111320 * Math.cos((latMed * Math.PI) / 180), my = 110540;
+  let s2 = 0;
+  for (let i = 0, j = anel.length - 1; i < anel.length; j = i++) {
+    s2 += (anel[j][1] * mx) * (anel[i][0] * my) - (anel[i][1] * mx) * (anel[j][0] * my);
+  }
+  return Math.abs(s2 / 2) / 10000;
+}
+
+function resumoArea() {
+  const anel = anelArea();
+  const dentro = [...allPois.values()].filter(dentroDaArea);
+  const porFonte = new Map();
+  for (const p of dentro) {
+    const f = p.fonte || "sem fonte";
+    porFonte.set(f, (porFonte.get(f) || 0) + 1);
+  }
+  return {
+    anel,
+    total: dentro.length,
+    ha: areaHectares(anel),
+    multi: dentro.filter((p) => p.multiorigem).length,
+    fontes: [...porFonte.entries()].sort((a, b) => b[1] - a[1]),
+  };
+}
+
+function htmlResumoArea() {
+  const r = resumoArea();
+  const nf = (n) => n.toLocaleString("pt-BR");
+  const linhas = r.fontes.map(([f, n]) => {
+    const pct = Math.round((n / r.total) * 100);
+    const [rot, det] = FONTE_ROTULO[f] || [f, ""];
+    return `<tr><td title="${det}">${rot}</td><td class="num">${nf(n)}</td>`
+         + `<td class="pct">${pct}%</td></tr>`;
+  }).join("");
+
+  const corpo = r.total
+    ? `<table class="area-pop-tab"><tbody>${linhas}</tbody></table>`
+      + (r.multi
+          ? `<p class="area-pop-nota">${nf(r.multi)} são <b>multiorigem</b> — sustentados
+             por mais de uma base. É onde a fusão pode ter errado.</p>`
+          : "")
+    : `<p class="area-pop-nota">Nenhum POI do banco aqui dentro. Se acabou de
+       minerar, o mapa só mostra o que já foi gravado.</p>`;
+
+  return `<div class="area-pop">
+    <div class="area-pop-topo">
+      <span class="area-pop-num">${nf(r.total)}</span>
+      <span class="area-pop-cap">POIs do banco<br>dentro do desenho</span>
+    </div>
+    <div class="area-pop-sub">${r.ha < 10
+        ? r.ha.toLocaleString("pt-BR", { maximumFractionDigits: 1 })
+        : nf(Math.round(r.ha))} ha · ${r.anel ? r.anel.length : 0} vértices</div>
+    ${corpo}
+    <button class="btn sm danger area-pop-del" type="button">Apagar esta área</button>
+  </div>`;
+}
+
+/* O popup é recalculado A CADA ABERTURA. Ele conta `allPois`, que muda com a
+   mineração em tempo real — um HTML preso no bind mostraria o número de quando
+   o polígono foi desenhado, que é justamente o erro que este botão existe para
+   não deixar acontecer de novo. */
+/* O popup é montado UMA vez e só troca de conteúdo. E o botão de apagar é
+   pego por DELEGAÇÃO, não por referência ao elemento.
+
+   As duas coisas vêm do mesmo defeito, medido 25/08/2026. Passar `options` no
+   `bindPopup` faz o Leaflet construir uma Popup NOVA a cada clique; a partir da
+   segunda abertura o container ainda não existia quando `openPopup` retornava,
+   o `querySelector` devolvia nulo e o `if (!b) return` engolia a ligação. O
+   popup abria com os números certos e o "Apagar esta área" não fazia nada —
+   o pior tipo de defeito, porque a tela não acusa nada.
+
+   Delegação não tem esse problema: o clique é resolvido quando acontece, e aí
+   o botão existe por definição. */
+function ligarPopupArea(layer) {
+  layer.bindPopup("", { className: "area-pop-wrap", maxWidth: 340 });
+  layer.on("click", (e) => {
+    L.DomEvent.stopPropagation(e);            // não dispara o copiar-coordenada
+    // Recalculado A CADA abertura: `allPois` muda com a mineração em tempo
+    // real, e um HTML preso no bind mostraria o número de quando o polígono
+    // foi desenhado — justamente o engano que este popup existe para desfazer.
+    layer.setPopupContent(htmlResumoArea());
+    layer.openPopup(e.latlng);
+  });
+}
+
+document.addEventListener("click", (ev) => {
+  if (!ev.target.closest || !ev.target.closest(".area-pop-del")) return;
+  if (areaLayer) areaLayer.closePopup();
+  confirmar("Apagar a área desenhada?",
+    "O desenho some e o mapa volta a mostrar o município escolhido. "
+    + "<b>Nenhum POI é apagado</b> — a área é foco de tela, não filtro de banco.",
+    async () => {
+      setAreaLayer(null);
+      await salvarArea([]);
+      toast("Área apagada", "ok");
+    });
+});
+
 function setAreaLayer(latlngs) {
   if (areaLayer) { map.removeLayer(areaLayer); areaLayer = null; }
   if (latlngs && latlngs.length >= 3) {
     areaLayer = L.polygon(latlngs, AREA_STYLE).addTo(map);
+    ligarPopupArea(areaLayer);
     // "rejeitados" era verdade quando o polígono barrava a gravação. Hoje ele
     // define o FOCO: o que cai fora é gravado com cidade e UF e fica fora da
     // tela, não fora do banco.
