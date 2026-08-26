@@ -281,10 +281,26 @@ def main(argv=None) -> int:
         con.close()
         return 0
 
+    # A CIDADE VEM DA ÁREA, e não cravada no código.
+    #
+    # A primeira versão gravava "Canoas" para todo mundo. Em 26/08/2026 isso pôs
+    # cinco POIs de Bento Gonçalves como sendo de Canoas — um deles chamado,
+    # literalmente, "Loja Todeschini BENTO GONÇALVES". O teste de coerência do
+    # projeto acusou no mesmo dia: 5 POIs a 81 km da cidade que declaram.
+    #
+    # `municipio_da_area` resolve pelo polígono, que é a única fonte que sabe
+    # onde a mineração está acontecendo.
+    cidade, uf = au.municipio_da_area(poly)
+    if not cidade:
+        raise SystemExit("não consegui resolver o município da área — sem isso os "
+                         "POIs entrariam com cidade errada, e cidade errada "
+                         "estraga o recorte de toda etapa seguinte")
+    print(f"  gravando como {cidade}/{uf}")
+
     import psycopg2.extras
     dados = [(x["nome"], "maps_categoria", x["lat"], x["lng"], x["lat"], x["lng"],
               f"maps_cat:{ev.norm_nome(x['nome'])}:{round(x['lat'],5)}:{round(x['lng'],5)}",
-              x["categoria"], "Canoas", "RS", "descoberto", True) for x in novos]
+              x["categoria"], cidade, uf, "descoberto", True) for x in novos]
     psycopg2.extras.execute_values(cur, """
         insert into pois (nome, fonte, lat_origem, lng_origem, maps_lat, maps_lng,
                           place_id, categoria, cidade, uf, status, match_valido)

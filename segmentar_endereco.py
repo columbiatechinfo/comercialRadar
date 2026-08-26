@@ -442,12 +442,20 @@ def do_municipio(cod: str, limite: int = 0, aplicar: bool = False,
     # A caixa aceita os cantos que estão fora do desenho; o polígono decide.
     # POI sem coordenada não dá para julgar, e some do recorte — o endereço
     # dele continua legível numa rodada por município.
+    # A CAIXA COM MARGEM BASTA, e o polígono exato ATRAPALHA aqui.
+    #
+    # Esta etapa alimenta a normalização, que alimenta o cruzamento — e o
+    # cruzamento compara com 150 m de folga, para achar o duplicado da borda.
+    # Cortar aqui no polígono exato deixava esses vizinhos SEM endereço lido, e
+    # o cruzamento os comparava sem a chave de junção. Medido em 26/08: 80 POIs
+    # aqui contra 307 lá, e só 22% do que ele viu tinha logradouro canônico.
+    #
+    # Ler o endereço de um vizinho custa uma linha numa chamada que já vai
+    # acontecer — e `endereco_segmentado` é tabela GERAL, então esse trabalho
+    # serve a qualquer área futura que o alcance.
     if poligono:
-        antes = len(linhas)
-        linhas = [r for r in linhas if r[1] is not None
-                  and au.ponto_no_poligono(r[1], r[2], poligono)]
-        print(f"  área {area!r}: {len(linhas):,} de {antes:,} POIs da caixa "
-              "estão dentro do desenho")
+        print(f"  área {area!r}: {len(linhas):,} POIs na caixa + "
+              f"{int(au.MARGEM_TRABALHO_M)} m de margem")
 
     enderecos = [r[0] for r in linhas]
     distintos = sorted(set(enderecos))

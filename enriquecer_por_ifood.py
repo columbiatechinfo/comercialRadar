@@ -191,14 +191,32 @@ def candidatos_de(links) -> list:
     junta-se os candidatos, e a escolha vira medicao la na frente.
     """
     vistos, saida = set(), []
-    for url, _texto in (links or []):
+    for url, texto in (links or []):
         real = _desembrulhar(url)
         mid = id_do_link(real)
-        if not mid or mid in vistos:
-            continue
-        vistos.add(mid)
-        m = re.search(r"/delivery/[^/]+/([^/]+)/", real)
-        saida.append((mid, (m.group(1) if m else "").replace("-", " ")))
+        if mid and mid not in vistos:
+            vistos.add(mid)
+            m = re.search(r"/delivery/[^/]+/([^/]+)/", real)
+            saida.append((mid, (m.group(1) if m else "").replace("-", " ")))
+
+        # O TEXTO DO RESULTADO TAMBÉM CARREGA ID, e eu o descartava.
+        #
+        # O buscador mostra a URL da loja no corpo do resultado, não só no
+        # `href` — e às vezes o `href` é do agregador enquanto o texto traz o
+        # link do iFood inteiro. Ler só o `href` jogava fora o id que estava ali
+        # na tela, e o par virava `sem_link`.
+        #
+        # Vale para qualquer motor da cascata: o snippet é texto, e o id é um
+        # padrão fixo dentro dele. Custa uma regex sobre o que já foi baixado.
+        for achado in UUID.findall(texto or ""):
+            if achado in vistos:
+                continue
+            # só conta quando o texto REALMENTE fala do iFood; um uuid solto
+            # pode ser de qualquer outro serviço
+            if "ifood" not in (texto or "").lower():
+                continue
+            vistos.add(achado)
+            saida.append((achado, ""))
     return saida
 
 

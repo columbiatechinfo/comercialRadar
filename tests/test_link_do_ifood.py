@@ -91,3 +91,24 @@ def test_a_trava_vale_acima_da_ia():
     s = io.open(os.path.join(RAIZ, "enriquecer_por_ifood.py"), encoding="utf-8").read()
     i = s.index("escolhas = await asyncio.to_thread")
     assert "_raio_para" in s[i:i + 900], "a trava deixou de valer depois da IA"
+
+
+def test_o_id_tambem_e_lido_do_TEXTO_do_resultado():
+    """O buscador mostra a URL da loja no CORPO do resultado, não só no `href`.
+
+    Às vezes o `href` aponta para um agregador e o texto traz o link do iFood
+    inteiro. Ler só o `href` jogava fora o id que estava ali na tela, e o par
+    virava `sem_link` — que era 67% do placar.
+    """
+    links = [("https://agregador.com/loja",
+              "Peça no iFood: www.ifood.com.br/delivery/canoas-rs/x/"
+              "11111111-1111-4111-8111-111111111111")]
+    assert len(e.candidatos_de(links)) == 1
+
+
+def test_uuid_solto_no_texto_nao_conta():
+    """Um uuid pode ser de qualquer serviço. Só vale quando o texto fala do
+    iFood — senão a busca passaria a inventar candidatos."""
+    links = [("https://outro.com",
+              "identificador 33333333-3333-4333-8333-333333333333 de outro sistema")]
+    assert e.candidatos_de(links) == []

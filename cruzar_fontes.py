@@ -75,22 +75,11 @@ _ACENTOS = "áàâãéêíóôõúüçÁÀÂÃÉÊÍÓÔÕÚÜÇ"
 _LISOS = "aaaaeeiooouucAAAAEEIOOOUUC"
 
 
-# 150 m de folga em volta da area desenhada.
+# A margem vive no `area_utils` (`MARGEM_TRABALHO_M`), e nao mais aqui.
 #
-# A fusao precisa enxergar o vizinho de FORA da linha: o duplicado do POI que
-# esta na borda pode estar do outro lado dela, e cortar exato o tornaria
-# invisivel — o ponto entraria na entrega duas vezes justamente por causa do
-# recorte. 150 m e a propria rede de candidatos (celula de ~110 m mais as
-# vizinhas), entao a margem nao inventa alcance: ela so nao amputa o que o
-# algoritmo ja usa.
-MARGEM_GRAUS = 150 / 111000.0
-
-
-def _com_margem(poligono):
-    """A caixa do poligono, folgada. Devolve `(sul, norte, oeste, leste)`."""
-    s, n, o, l = au.bbox(poligono)
-    return (s - MARGEM_GRAUS, n + MARGEM_GRAUS,
-            o - MARGEM_GRAUS, l + MARGEM_GRAUS)
+# Ela nasceu neste arquivo e por isso ficou so' neste arquivo — o que produziu
+# tres recortes diferentes no processo (medido: 80, 85 e 307 POIs nas etapas de
+# segmentar, normalizar e cruzar). Uma definicao so' e o conserto.
 
 
 def _um_lado_dentro(par, poligono):
@@ -119,7 +108,7 @@ def carregar(cur, cidade: str, poligono=None) -> list:
     par = {"cidade": cidade, "ac": _ACENTOS, "li": _LISOS}
     sql = SQL_POIS
     if poligono:
-        s, n, o, l = _com_margem(poligono)
+        s, n, o, l = au.bbox_com_margem(poligono)
         sql += SQL_AREA
         par.update({"area_s": s, "area_n": n, "area_o": o, "area_l": l})
     cur.execute(sql, par)

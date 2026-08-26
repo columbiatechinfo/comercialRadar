@@ -61,3 +61,25 @@ def test_nao_depende_do_ifood():
     nada do caminho morto."""
     s = io.open(os.path.join(RAIZ, "descobrir_maps.py"), encoding="utf-8").read()
     assert "extrair_ifood" not in s and "marketplace.ifood" not in s
+
+
+def test_a_cidade_vem_da_area_e_nao_do_codigo():
+    """CRAVAR A CIDADE CUSTOU CINCO POIs ERRADOS, 26/08/2026.
+
+    A primeira versão gravava "Canoas" para todo mundo. A descoberta rodou em
+    Bento Gonçalves e os cinco POIs novos entraram como sendo de Canoas — um
+    deles chamado, literalmente, "Loja Todeschini BENTO GONÇALVES".
+
+    Quem acusou foi o `test_coerencia_local` do próprio projeto, no mesmo dia:
+    5 POIs a 81 km da cidade que declaram. Cidade errada não fica quieta — ela
+    estraga o recorte de toda etapa seguinte, porque metade das consultas do
+    sistema casa por nome de cidade.
+    """
+    s = io.open(os.path.join(RAIZ, "descobrir_maps.py"), encoding="utf-8").read()
+    # O que importa é o que se GRAVA, não o que se menciona: "Canoas" aparece
+    # no comentário que explica este próprio erro.
+    i = s.index("dados = [(")
+    insercao = s[i:i + 400]
+    assert '"Canoas"' not in insercao, "a cidade voltou a ser cravada no insert"
+    assert "cidade, uf" in insercao, "a cidade deixou de vir do polígono"
+    assert "municipio_da_area" in s

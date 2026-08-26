@@ -237,7 +237,48 @@ def bbox(poligono):
     return min(lats), max(lats), min(lngs), max(lngs)
 
 
-def recorte_sql(poligono, col_lat: str, col_lng: str, prefixo: str = "area"):
+# A MARGEM DA ÁREA DE TRABALHO — UMA definição, para TODAS as etapas.
+#
+# Ela nasceu dentro do `cruzar_fontes`: a fusão precisa enxergar o vizinho de
+# FORA da linha, porque o duplicado do POI que está na borda pode estar do outro
+# lado dela, e cortar exato o tornaria invisível.
+#
+# O QUE ISSO QUEBROU, e foi medido em 26/08/2026: cada etapa acabou com um
+# recorte próprio, cada um mais largo que o anterior.
+#
+#     segmentar    polígono EXATO        80 POIs
+#     normalizar   caixa do polígono     85 POIs
+#     cruzar       caixa + 150 m        307 POIs
+#
+# O cruzamento comparava 222 POIs que ninguém tinha normalizado — e a
+# normalização existe justamente para lhe dar a chave de junção. Só 22% dos
+# POIs que ele viu tinham logradouro canônico, e a culpa não era da skill: era
+# de eu ter escrito três recortes em três momentos do dia sem alinhá-los.
+#
+# 150 m é a própria rede de candidatos do cruzamento (célula de ~110 m mais as
+# vizinhas), então a margem não inventa alcance — ela só não amputa o que o
+# algoritmo já usa. Mudá-la aqui muda para todo mundo, que é o ponto.
+MARGEM_TRABALHO_M = 150.0
+
+
+def bbox_com_margem(poligono, metros: float = MARGEM_TRABALHO_M):
+    """A caixa do polígono, folgada. `(sul, norte, oeste, leste)`.
+
+    Um grau de latitude são ~111 km em qualquer lugar; de longitude encolhe com
+    o cosseno da latitude. Usar 111 km nos dois daria uma margem mais ESTREITA
+    em longitude do que a pedida — no RS, ~13% menor. Aqui cada eixo usa a sua.
+    """
+    import math
+
+    s, n, o, l = bbox(poligono)
+    d_lat = metros / 111_000.0
+    lat_media = math.radians((s + n) / 2)
+    d_lng = metros / (111_320.0 * max(0.1, math.cos(lat_media)))
+    return (s - d_lat, n + d_lat, o - d_lng, l + d_lng)
+
+
+def recorte_sql(poligono, col_lat: str, col_lng: str, prefixo: str = "area",
+                margem_m: float = MARGEM_TRABALHO_M):
     """Corte de uma consulta pela área desenhada, em parâmetros NOMEADOS.
 
     A CAIXA vai ao banco; o polígono exato fica em Python. Não é preguiça: a
@@ -263,7 +304,8 @@ A COORDENADA MANDA, E ÀS VEZES ELA DISCORDA DO CAMPO `cidade`. Quem consulta
     """
     if not poligono:
         return "", {}
-    s, n, o, l = bbox(poligono)
+    s, n, o, l = (bbox_com_margem(poligono, margem_m) if margem_m
+                  else bbox(poligono))
     return (f" and {col_lat} between %({prefixo}_s)s and %({prefixo}_n)s"
             f" and {col_lng} between %({prefixo}_o)s and %({prefixo}_l)s",
             {f"{prefixo}_s": s, f"{prefixo}_n": n,

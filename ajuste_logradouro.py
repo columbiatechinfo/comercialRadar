@@ -164,6 +164,49 @@ SQL_CNEFE_FIM = """
 SQL_CNEFE = SQL_CNEFE_INICIO + SQL_CNEFE_FIM
 
 
+# A ZONA UTM DO MUNICÍPIO, e por que ela vira filtro obrigatório.
+#
+# A skill ABORTA quando a base cruza mais de uma zona UTM — e está certa: ela
+# aprende equivalência por distância métrica, e metro medido em zonas diferentes
+# não se compara. Sem essa trava, "30 m" significaria coisas distintas na mesma
+# base e o léxico aprenderia de eco.
+#
+# O QUE ISSO CUSTOU EM 26/08/2026: **um** POI derrubou a normalização de Canoas
+# inteira. O 175652, chamado "Serra", estava em -20.13,-40.31 — o município de
+# Serra, no ESPÍRITO SANTO, a 1.400 km. Veio da captura: o Maps buscou o nome e
+# devolveu a cidade homônima. Um registro contra 320.250, e a skill parou tudo.
+#
+# O conserto NÃO é apagar o POI (coordenada errada é dado a corrigir, não a
+# esconder) nem afrouxar a skill. É a exportação não mandar a ela o que não
+# pertence àquele município. Quem está fora fica fora DESTA exportação, e
+# continua no banco esperando a correção de coordenada.
+#
+# A faixa vem do próprio polígono do município, com folga generosa: não se está
+# validando endereço aqui, só evitando o registro de outro estado.
+SQL_ZONA = """
+   and p.maps_lng between %(zona_o)s and %(zona_l)s
+   and p.maps_lat between %(zona_s)s and %(zona_n)s
+"""
+
+
+def faixa_do_municipio(cod: str, folga_graus: float = 0.5) -> dict:
+    """A caixa do município, folgada, para descartar o que é de outro estado."""
+    ref = bc.conectar_referencia()
+    try:
+        with ref.cursor() as cur:
+            cur.execute("""select ST_XMin(g), ST_XMax(g), ST_YMin(g), ST_YMax(g)
+                             from (select ST_Envelope(geom) g from ibge_malha
+                                    where cod_municipio = %s) x""", (str(cod),))
+            r = cur.fetchone()
+    finally:
+        ref.close()
+    if not r:
+        return {}
+    xmin, xmax, ymin, ymax = (float(v) for v in r)
+    return {"zona_o": xmin - folga_graus, "zona_l": xmax + folga_graus,
+            "zona_s": ymin - folga_graus, "zona_n": ymax + folga_graus}
+
+
 def _gravar_csv(caminho: Path, linhas, scope: str) -> int:
     caminho.parent.mkdir(parents=True, exist_ok=True)
     n = 0
@@ -222,12 +265,15 @@ def exportar(cod: str, limite_cnefe: int, dirtrab: Path, area: str = "") -> dict
         _log(f"  área {area!r}: só o entorno do desenho entra (recorte pela caixa)")
 
     p = {"ac": _ACENTOS, "li": _LISOS, "cidade": nome}
+    zona = faixa_do_municipio(cod)
+    c_zona = SQL_ZONA if zona else ""
+    p.update(zona)
     con = bc.conectar()
     cur = con.cursor()
 
     # POIS — depende do que a IA já leu. O que falta é DITO, nunca silenciado:
     # uma fonte que entra menor sem aviso vira "a base tem pouco POI".
-    cur.execute(SQL_POIS_SEM_LEITURA + c_pois, {**p, **par_pois})
+    cur.execute(SQL_POIS_SEM_LEITURA + c_zona + c_pois, {**p, **par_pois})
     falta = cur.fetchone()[0]
     if falta:
         _log(f"  ⚠️  {falta:,} POIs com endereço ainda NÃO segmentado — ficam de fora.")
@@ -235,7 +281,7 @@ def exportar(cod: str, limite_cnefe: int, dirtrab: Path, area: str = "") -> dict
         _log(f"        python segmentar_endereco.py --municipio {cod}"
              + (f" --area {area}" if area else "") + " --aplicar")
 
-    cur.execute(SQL_POIS + c_pois, {**p, **par_pois})
+    cur.execute(SQL_POIS + c_zona + c_pois, {**p, **par_pois})
     contagem["pois"] = _gravar_csv(entrada / "pois.csv", cur.fetchall(), cod)
 
     cur.execute(SQL_CADASTRO + c_cad, {**p, **par_cad})

@@ -43,7 +43,13 @@ def test_o_corte_vira_caixa_e_nao_poligono():
     """
     frag, par = au.recorte_sql([[1, 2], [3, 4], [1, 4]], "p.lat", "p.lng")
     assert "between" in frag and "p.lat" in frag and "p.lng" in frag
-    assert par == {"area_s": 1, "area_n": 3, "area_o": 2, "area_l": 4}
+    # A caixa vem FOLGADA (`MARGEM_TRABALHO_M`), então cada limite passa do
+    # vértice — a margem existe para o cruzamento achar o duplicado da borda.
+    assert par["area_s"] < 1 and par["area_n"] > 3
+    assert par["area_o"] < 2 and par["area_l"] > 4
+    # sem margem, o corte volta a ser a caixa crua
+    _, cru = au.recorte_sql([[1, 2], [3, 4], [1, 4]], "p.lat", "p.lng", margem_m=0)
+    assert cru == {"area_s": 1, "area_n": 3, "area_o": 2, "area_l": 4}
 
 
 def test_sem_poligono_o_corte_some():
@@ -67,7 +73,14 @@ def test_a_ia_de_endereco_recebe_a_area():
     js = _fonte("segmentar_endereco.py")
     assert '"--area"' in js, "`segmentar_endereco` perdeu o --area"
     assert "recorte_sql" in js, "a leitura voltou a varrer o município inteiro"
-    assert "ponto_no_poligono" in js, "ficou só a caixa, sem o polígono exato"
+    # O POLÍGONO EXATO SAIU DAQUI DE PROPÓSITO, em 26/08/2026.
+    #
+    # Esta etapa alimenta a normalização, que alimenta o cruzamento — e o
+    # cruzamento compara com margem, para achar o duplicado da borda. Cortar
+    # aqui no polígono exato deixava esses vizinhos SEM endereço lido: medido,
+    # 80 POIs aqui contra 307 lá, e só 22% do que o cruzamento viu tinha
+    # logradouro canônico.
+    assert "MARGEM_TRABALHO_M" in js, "a etapa deixou de usar a margem comum"
 
 
 def test_a_leitura_traz_coordenada():
@@ -182,12 +195,20 @@ def test_o_cruzamento_folga_a_area_em_150_metros():
 
     150 m é a própria rede de candidatos (célula de ~110 m mais as vizinhas):
     a margem não inventa alcance, só não amputa o que o algoritmo já usa.
+
+    A MARGEM É UMA SÓ, e vive no `area_utils`. Ela nasceu dentro do
+    `cruzar_fontes` e por isso ficou só lá — o que produziu três recortes
+    diferentes no processo (medido em 26/08: 80, 85 e 307 POIs nas etapas de
+    segmentar, normalizar e cruzar). O cruzamento comparava 222 POIs que
+    ninguém tinha normalizado.
     """
-    import cruzar_fontes as cf
-    assert abs(cf.MARGEM_GRAUS * 111000 - 150) < 1, "a folga mudou de tamanho"
+    assert abs(au.MARGEM_TRABALHO_M - 150) < 1, "a folga mudou de tamanho"
     quadrado = [[-29.9, -51.1], [-29.9, -51.09], [-29.89, -51.09], [-29.89, -51.1]]
-    s, n, o, l = cf._com_margem(quadrado)
+    s, n, o, l = au.bbox_com_margem(quadrado)
     assert s < -29.9 and n > -29.89 and o < -51.1 and l > -51.09
+    # a longitude encolhe com o cosseno da latitude: usar 111 km nos dois eixos
+    # daria uma margem ~13% mais estreita em longitude, no RS
+    assert (l - -51.09) > (n - -29.89)
 
 
 def test_basta_um_lado_dentro_da_area():
