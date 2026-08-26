@@ -101,6 +101,31 @@ class HumanSession:
                 "--disable-setuid-sandbox",
                 "--disable-blink-features=AutomationControlled",
                 "--disable-dev-shm-usage",
+                # HTTP/2 + PROXY + GOOGLE = TRAVA TOTAL. Medido em 26/08/2026.
+                #
+                # O sintoma não parece de rede: `ERR_TIMED_OUT` no
+                # `page.goto("https://www.google.com/maps")`, o pool marca o IP
+                # como queimado, entra em cooldown de 10 min e vai para o
+                # próximo — que trava igual. Na run de Bento Gonçalves foram 15
+                # IPs perdidos assim, e a leitura fácil ("os proxies morreram")
+                # é justamente a errada.
+                #
+                # O MESMO IP, no MESMO instante, respondia 200 em 0,9 s num GET
+                # direto ao mesmo endereço. E `example.com` e `bing.com` abriam
+                # normalmente PELO NAVEGADOR através do mesmo proxy. O que
+                # falhava era só a combinação Chromium + proxy + Google.
+                #
+                # Nem `wait_until="commit"` escapava: o navegador não recebia o
+                # primeiro byte. Então não é página pesada nem sub-recurso
+                # travado — é a negociação do protocolo. `--disable-quic` não
+                # resolve; `--disable-http2` resolve.
+                #
+                # MEDIDO em 8 IPs: 0/8 abriam o Maps sem a flag (média 17,8 s
+                # até estourar), 8/8 abriam com ela (média 2,8 s).
+                #
+                # É a mesma família da cicatriz de 24/07/2026, quando IPs da
+                # Webshare "penduravam no google.com só pelo navegador".
+                "--disable-http2",
                 f"--window-size={viewport['width']},{viewport['height']}",
             ],
         )

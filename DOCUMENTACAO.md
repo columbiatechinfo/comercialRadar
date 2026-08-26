@@ -401,6 +401,43 @@ grátis generosa com billing).
                    fora do polígono → status 'fora_da_area' (não ingere)
 ```
 
+### Os proxies não estavam ruins — o HTTP/2 estava (26/08/2026)
+
+A run de Bento Gonçalves perdeu **15 IPs** antes de conseguir buscar. O sintoma:
+`ERR_TIMED_OUT` no `page.goto("https://www.google.com/maps")`, o pool marca o IP
+como queimado, cooldown de 10 min, próximo IP, mesma coisa.
+
+**A leitura fácil — "os proxies morreram" — é a errada.** O que a medição mostrou:
+
+| teste | resultado |
+|---|---|
+| os 100 IPs do cache vs. a conta | **os mesmos 100**, todos válidos |
+| o mesmo IP, GET direto ao Maps | **200 em 0,9 s** |
+| `example.com` e `bing.com` pelo navegador, mesmo proxy | **abrem** |
+| `google.com/maps` pelo navegador, mesmo proxy | **trava** |
+
+Nem `wait_until="commit"` escapava: o navegador não recebia o primeiro byte. Não
+é página pesada nem sub-recurso travado — é a **negociação do protocolo**.
+
+`--disable-quic` não resolve. **`--disable-http2` resolve:**
+
+```
+sem a flag   0/8 IPs abriram o Maps · média 17,8 s até estourar
+com a flag   8/8 IPs abriram o Maps · média  2,8 s
+```
+
+A flag está em `human_browser.py`, que é o launcher do `search_pois_v2`. A
+captura dos tiles (`src/capture-cli.ts`) não usa proxy e nunca sofreu disso.
+
+É a mesma família da cicatriz de 24/07/2026, quando IPs da Webshare
+"penduravam no google.com só pelo navegador".
+
+#### E a API da Webshare falhando do notebook
+
+Sintoma separado, mesma run: `⚠️ API Webshare falhou: urlopen error timed out`,
+com queda para o cache local. Do **i9** a mesma API responde em **1,1 s**. É mais
+um argumento para mover a captura e o iFood para lá — veja abaixo.
+
 ### O vazio do pandas virou a palavra "nan" no banco (25/08/2026)
 
 `str(float('nan'))` devolve `'nan'`. A importação estadual testava `if v is None`
