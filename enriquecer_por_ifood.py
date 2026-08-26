@@ -71,6 +71,22 @@ CABECALHO = {"User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
 # descartaria par legítimo; afrouxar para 2 km deixaria passar o bairro errado.
 RAIO_CONFERE_M = 250.0
 
+# E 2 km QUANDO O NOME BATE EXATAMENTE.
+#
+# A trava fixa de 250 m descartava acerto legítimo. Medido em 26/08: "Santo Açaí
+# Oficial" casou com uma loja chamada, literalmente, "Santo Açaí Oficial" — e foi
+# recusada por estar a 2.147 m. A distância não vinha de a loja ser outra: vinha
+# da coordenada do POI, que na base estadual erra por quilômetros.
+#
+# Nome idêntico é evidência MUITO mais forte que proximidade. Quando ele bate,
+# a distância deixa de ser prova e vira só um guarda-corpo contra a homônima de
+# outra cidade — e para isso 2 km bastam, porque cidade vizinha fica bem além.
+#
+# Quando o nome NÃO bate, os 250 m continuam valendo: aí a proximidade é a única
+# coisa segurando o par, e afrouxá-la deixaria passar o vizinho de ramo.
+RAIO_NOME_EXATO_M = 2000.0
+SIM_NOME_EXATO = 0.85
+
 
 # ─── quem pode estar no iFood ───────────────────────────────────────────────
 #
@@ -124,13 +140,96 @@ def _pode_estar(categoria: str, nome: str) -> bool:
 def id_do_link(url: str) -> str:
     """O uuid da loja, quando a URL é de uma loja do iFood.
 
-    `/delivery/<cidade>/<slug>/<uuid>` tem o id; `/restaurantes` e as páginas
-    institucionais não têm, e devolvem vazio em vez de casar por engano.
+    QUALQUER SUBDOMÍNIO SERVE. `madero.ifood.com.br/delivery/...` é loja tão
+    válida quanto `www.ifood.com.br/delivery/...` — grandes redes têm subdomínio
+    próprio. Exigir `www` descartava essas, e foi o que aconteceu com o Madero
+    na medição de 26/08.
     """
-    if "ifood.com.br" not in url or "/delivery/" not in url:
+    if ".ifood.com.br" not in url or "/delivery/" not in url:
         return ""
     m = UUID.search(url)
     return m.group(0) if m else ""
+
+
+def _desembrulhar(url: str) -> str:
+    """A URL real dentro do redirecionador do buscador.
+
+    O Bing devolve `bing.com/ck/a?...&u=<base64>` e o Yahoo `.../RU=<encoded>/`.
+    Sem desembrulhar, uma busca que ACHOU a loja conta como `sem_link` — medido:
+    "Sonho Meu Doceria" trouxe 9 resultados, todos embrulhados, e o par foi dado
+    como não encontrado.
+    """
+    import base64
+    from urllib.parse import unquote, urlparse, parse_qs
+
+    if "search.yahoo.com" in url:
+        m = re.search(r"/RU=([^/]+)/", url)
+        return unquote(m.group(1)) if m else url
+    if "bing.com/ck/" in url:
+        q = parse_qs(urlparse(url).query)
+        bruto = (q.get("u") or [""])[0]
+        # o Bing prefixa com "a1" e usa base64 url-safe sem padding
+        if bruto.startswith("a1"):
+            bruto = bruto[2:]
+        try:
+            faltando = "=" * (-len(bruto) % 4)
+            return base64.urlsafe_b64decode(bruto + faltando).decode("utf-8", "replace")
+        except Exception:  # noqa: BLE001 — embrulho ilegível é "não veio"
+            return url
+    return url
+
+
+def candidatos_de(links) -> list:
+    """TODOS os ids de loja nos resultados, desembrulhados e sem repetir.
+
+    O slug e um sinal FRACO — medido em 26/08: "Sushi Arte" acertou com 0,20 de
+    semelhanca de slug (quase sorte) e "Tempero do Cheff" escolheu por slug uma
+    loja a 1.088 km. Escolher SO por ele erra nos dois sentidos.
+
+    Quem decide de verdade e a DISTANCIA, e ela so existe depois do `/extra` —
+    que custa uma chamada HTTP barata, sem navegador. Entao aqui nao se escolhe:
+    junta-se os candidatos, e a escolha vira medicao la na frente.
+    """
+    vistos, saida = set(), []
+    for url, _texto in (links or []):
+        real = _desembrulhar(url)
+        mid = id_do_link(real)
+        if not mid or mid in vistos:
+            continue
+        vistos.add(mid)
+        m = re.search(r"/delivery/[^/]+/([^/]+)/", real)
+        saida.append((mid, (m.group(1) if m else "").replace("-", " ")))
+    return saida
+
+
+def escolher_link(poi: dict, links) -> tuple:
+    """O link da loja MAIS PARECIDA com o POI — não o primeiro que aparecer.
+
+    ISTO ERA O MAIOR DEFEITO, e a medição de 26/08 o expôs: buscar "Sushi Arte"
+    devolvia sete lojas do iFood, e o código pegava a primeira —
+    `daniisushi-harmonia`. A trava dos 250 m então descartava o par, e o placar
+    dizia "longe" quando o certo estava no terceiro resultado.
+
+    O slug da URL carrega o nome da loja (`/delivery/canoas-rs/<slug>/<uuid>`),
+    então dá para comparar ANTES de gastar uma chamada ao `/extra`. Devolve
+    `(merchant_id, semelhança)`; sem candidato razoável, `("", 0)`.
+    """
+    melhor, melhor_sem = "", 0.0
+    for url, _texto in (links or []):
+        real = _desembrulhar(url)
+        mid = id_do_link(real)
+        if not mid:
+            continue
+        # o slug fica entre a cidade e o uuid
+        m = re.search(r"/delivery/[^/]+/([^/]+)/", real)
+        slug = (m.group(1) if m else "").replace("-", " ")
+        sem = ev.semelhanca_nome(poi["nome"], slug)
+        if sem > melhor_sem:
+            melhor, melhor_sem = mid, sem
+    # Um token em comum já basta para tentar: o `/extra` e a trava de distância
+    # decidem depois. Exigir mais aqui descartaria "Manga Rosa" x "manga rosa
+    # modas", que é o mesmo negócio.
+    return (melhor, melhor_sem) if melhor_sem > 0 else ("", 0.0)
 
 
 def detalhe(merchant_id: str, timeout: int = 20) -> dict | None:
@@ -144,6 +243,12 @@ def detalhe(merchant_id: str, timeout: int = 20) -> dict | None:
         return None
 
 
+def _raio_para(poi: dict, det: dict) -> float:
+    """O raio aceitável para ESTE par — depende de quanto o nome já provou."""
+    sem = ev.semelhanca_nome(poi.get("nome", ""), det.get("name") or "")
+    return RAIO_NOME_EXATO_M if sem >= SIM_NOME_EXATO else RAIO_CONFERE_M
+
+
 def _confere(poi: dict, det: dict) -> tuple:
     """`(ok, distancia_m)` — o que veio é mesmo a loja deste POI?"""
     end = det.get("address") or {}
@@ -151,7 +256,7 @@ def _confere(poi: dict, det: dict) -> tuple:
     if la is None or lo is None:
         return False, float("inf")
     d = ev.distancia_m(poi["lat"], poi["lng"], float(la), float(lo))
-    return d <= RAIO_CONFERE_M, d
+    return d <= _raio_para(poi, det), d
 
 
 def campos(det: dict) -> dict:
@@ -172,6 +277,160 @@ def campos(det: dict) -> dict:
         "categoria": (det.get("mainCategory") or {}).get("name")
         if isinstance(det.get("mainCategory"), dict) else det.get("mainCategory"),
     }
+
+
+PROMPT_LOJA = """Você decide QUAL loja do iFood corresponde a um estabelecimento, ou se NENHUMA corresponde.
+
+Recebe um ESTABELECIMENTO (nome, categoria, endereço, cidade) e uma lista de LOJAS candidatas do iFood, cada uma com nome, endereço completo e a distância até o estabelecimento.
+
+Responda o NÚMERO da loja correta, ou 0 se nenhuma for.
+
+O QUE PESA, nesta ordem:
+  1. NOME. "Santo Açaí Oficial" e "Santo Açaí" são a mesma loja; "Santo Açaí" e "La Casa de Açaí" NÃO são, ainda que ambas vendam açaí e estejam perto.
+  2. ENDEREÇO. Mesma rua e número é confirmação forte.
+  3. DISTÂNCIA. Ajuda a desempatar, mas NÃO decide sozinha: a loja certa pode estar 300 m longe (coordenada imprecisa) e a errada a 50 m.
+
+RESPONDA 0 QUANDO:
+  - nenhum nome corresponde de verdade (só o ramo em comum não basta)
+  - todas são de rede diferente, mesmo que o produto seja igual
+  - você ficaria em dúvida — errar aqui grava CNPJ de outra empresa no ponto
+
+Responda APENAS um array JSON, um objeto por caso, na MESMA ORDEM:
+  "escolha": <número da loja, ou 0>
+  "motivo": no maximo 12 palavras
+
+CASOS:
+"""
+
+
+def _descrever_caso(poi: dict, cands: list) -> str:
+    """Um estabelecimento e suas lojas candidatas, numeradas."""
+    linhas = [f'ESTABELECIMENTO: "{poi["nome"]}"']
+    for rot, val in (("categoria", poi.get("categoria")),
+                     ("cidade", poi.get("cidade"))):
+        if val:
+            linhas.append(f"   {rot}: {val}")
+    linhas.append("LOJAS DO IFOOD:")
+    for i, (det, d) in enumerate(cands, 1):
+        end = det.get("address") or {}
+        partes = [x for x in (end.get("streetName"), end.get("streetNumber"),
+                              end.get("district")) if x]
+        linhas.append(f'  {i}. "{det.get("name") or "?"}" · '
+                      f'{", ".join(partes) or "sem endereço"} · a {d:.0f} m')
+    return "\n".join(linhas)
+
+
+def _chamar_ia(lote: list) -> list:
+    """Manda o lote à Spark e devolve as escolhas."""
+    import json as _json
+    import urllib.request as _url
+    from segmentar_endereco import SPARK, MODELO, _conferir_endpoint, _extrair_json
+
+    _conferir_endpoint(SPARK)
+    texto = "\n\n".join(f"{i + 1}.\n{_descrever_caso(p, c)}"
+                        for i, (p, c) in enumerate(lote))
+    corpo = {"model": MODELO,
+             "messages": [{"role": "user", "content": PROMPT_LOJA + texto}],
+             "temperature": 0, "max_tokens": 200 * len(lote) + 400}
+    req = _url.Request(f"{SPARK}/chat/completions", method="POST",
+                       data=_json.dumps(corpo).encode("utf-8"),
+                       headers={"Content-Type": "application/json"})
+    with _url.urlopen(req, timeout=300) as r:
+        d = _json.loads(r.read())
+    txt = (d["choices"][0]["message"].get("content") or "").strip()
+    # UM CASO SÓ VOLTA COMO OBJETO, NÃO COMO ARRAY.
+    #
+    # O `_extrair_json` exige array e levanta `ValueError` no objeto solto — e o
+    # lote inteiro virava "a IA recusou". Medido em 26/08: ela respondeu
+    # `{"escolha": 1, "motivo": "nome exato e mesmo estabelecimento"}`, que é o
+    # ACERTO, e o meu parser transformou isso em recusa. Seis casos de seis.
+    #
+    # Envolver o objeto num array é mais honesto que pedir ao modelo que sempre
+    # devolva array: a resposta dele estava certa; quem lia é que era estreito.
+    try:
+        return _extrair_json(txt)
+    except ValueError:
+        pass
+    # A RESPOSTA VEM EM TRÊS FORMATOS, e os três são legítimos.
+    #
+    # Com um caso só, um objeto solto. Com vários, às vezes um array (que o
+    # `_extrair_json` já pega) e às vezes UM OBJETO POR LINHA, sem array em
+    # volta. Recortar do primeiro `{` ao último `}` funciona no primeiro caso e
+    # quebra no terceiro com "Extra data" — foi o que zerou o placar em 26/08.
+    #
+    # Ler objeto a objeto atende os três, e um objeto ilegível no meio custa só
+    # aquele caso, não o lote inteiro.
+    achados = []
+    for m in re.finditer(r"\{[^{}]*\}", txt):
+        try:
+            achados.append(_json.loads(m.group(0)))
+        except ValueError:
+            continue
+    if not achados:
+        raise ValueError(f"nao consegui ler a resposta: {txt[:160]!r}")
+    return achados
+
+
+def julgar_lojas(casos: list, lote: int = 4) -> dict:
+    """`{indice_do_caso: (det_escolhido, distancia)}` — ou ausente se NENHUMA.
+
+    POR QUE A IA ENTRA AQUI, e a medição de 26/08 é o argumento.
+
+    O slug é sinal fraco: "Sushi Arte" acertou com 0,20 de semelhança (quase
+    sorte) e "Tempero do Cheff" escolheu por slug uma loja a 1.088 km. A
+    distância também não basta sozinha: entre seis açaís de Canoas, o mais
+    PRÓXIMO do POI era "La Casa de Açaí" — e o certo era "Santo Açaí", mais
+    longe. Escolher pelo mínimo geográfico trocou um acerto por um erro.
+
+    Decidir "esta loja é este estabelecimento?" é leitura semântica de nome e
+    endereço — a mesma classe de julgamento que a Spark já faz na fusão de POIs,
+    e pela mesma régua do projeto: segmentar é leitura (IA), canonizar é prova
+    (skill), julgar identidade sem prova é leitura de novo.
+
+    `escolha: 0` é resposta legítima e obrigatória: gravar o CNPJ da loja errada
+    é pior que não gravar nada — vira dado falso com aparência de verificado.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    import json as _json
+    import urllib.error as _err
+
+    if not casos:
+        return {}
+    lotes = [casos[k:k + lote] for k in range(0, len(casos), lote)]
+    fora: dict = {}
+
+    def _um(bloco):
+        idxs = [i for i, _, _ in bloco]
+        entrada = [(p, c) for _, p, c in bloco]
+        try:
+            lidas = _chamar_ia(entrada)
+        except Exception as erro:  # noqa: BLE001
+            # LOTE QUE FALHOU FICA SEM ESCOLHA, e isso e' diferente de "nenhuma
+            # serve": o par nao foi julgado.
+            #
+            # E O ERRO E' DITO. A primeira versao engolia a excecao em silencio,
+            # e uma falha DENTRO das threads virou "a IA recusou 6 de 6" — eu
+            # cheguei a culpar o modelo por um defeito meu. Erro escondido em
+            # thread e' o mais caro de achar, porque some sem deixar rastro.
+            print(f"    ⚠️  lote nao julgado: {type(erro).__name__}: "
+                  f"{str(erro)[:120]}", flush=True)
+            return {}
+        saida = {}
+        for k, idx in enumerate(idxs):
+            d = lidas[k] if k < len(lidas) and isinstance(lidas[k], dict) else {}
+            try:
+                escolha = int(d.get("escolha") or 0)
+            except (TypeError, ValueError):
+                escolha = 0
+            cands = entrada[k][1]
+            if 1 <= escolha <= len(cands):
+                saida[idx] = cands[escolha - 1]
+        return saida
+
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        for parcial in pool.map(_um, lotes):
+            fora.update(parcial)
+    return fora
 
 
 SQL = """
@@ -239,23 +498,38 @@ async def enriquecer(pois: list, workers: int = 4, usar_proxy: bool = True,
                 links = await pool.buscar(consulta(poi))
             except Exception as erro:  # noqa: BLE001
                 return {**poi, "estado": "erro_busca", "detalhe": type(erro).__name__}
-            mid = ""
-            for url, _ in (links or []):
-                mid = id_do_link(url)
-                if mid:
-                    break
-            if not mid:
+            cands = candidatos_de(links)
+            if not cands:
                 return {**poi, "estado": "sem_link"}
-            det = await asyncio.to_thread(detalhe, mid)
-            if not det:
-                return {**poi, "estado": "sem_detalhe", "merchant_id": mid}
-            ok, d = _confere(poi, det)
+
+            # BUSCA O DETALHE DE CADA CANDIDATO e guarda para a IA julgar.
+            #
+            # Nem o slug nem a distancia decidem sozinhos — os dois foram
+            # medidos e falham (ver `julgar_lojas`). Aqui so se COLETA; quem
+            # escolhe e a Spark, depois, com nome e endereco na mesa.
+            detalhados = []
+            for mid, _slug in cands[:5]:
+                det_i = await asyncio.to_thread(detalhe, mid)
+                if det_i:
+                    _, d_i = _confere(poi, det_i)
+                    detalhados.append((det_i, d_i))
+            if not detalhados:
+                return {**poi, "estado": "sem_detalhe",
+                        "merchant_id": cands[0][0]}
+            if len(detalhados) > 1:
+                # varios candidatos: a IA decide, no fim, em lote
+                return {**poi, "estado": "para_ia", "cands": detalhados}
+            det, d = detalhados[0]
+            sem_slug = 0.0
+            ok = d <= _raio_para(poi, det)
             if not ok:
                 # DESCARTADO, e dito. Gravar o CNPJ de uma homônima seria dado
                 # falso com aparência de verificado.
-                return {**poi, "estado": "longe", "merchant_id": mid,
+                return {**poi, "estado": "longe",
+                        "merchant_id": det.get("id"), "candidatos": len(cands),
                         "dist_m": d, "achado": det.get("name")}
-            return {**poi, "estado": "ok", "dist_m": d, **campos(det)}
+            return {**poi, "estado": "ok", "dist_m": d,
+                    "sem_slug": round(sem_slug, 2), **campos(det)}
 
     for r in await asyncio.gather(*(um(p) for p in pois)):
         resultados.append(r)
@@ -263,6 +537,36 @@ async def enriquecer(pois: list, workers: int = 4, usar_proxy: bool = True,
         await pool.close()
     except Exception:  # noqa: BLE001
         pass
+
+    # ── A IA DECIDE OS EMPATES, EM LOTE ──────────────────────────────────
+    #
+    # Em lote de propósito: uma chamada por POI desperdiçaria a janela do modelo
+    # e o paralelismo já medido (lote 4, 64 threads). Aqui os casos duvidosos
+    # viajam juntos e voltam decididos.
+    duvidosos = [(i, r) for i, r in enumerate(resultados)
+                 if r.get("estado") == "para_ia"]
+    if duvidosos:
+        print(f"  {len(duvidosos)} POIs com vários candidatos — a Spark decide",
+              flush=True)
+        casos = [(i, r, r["cands"]) for i, r in duvidosos]
+        escolhas = await asyncio.to_thread(julgar_lojas, casos)
+        for i, r in duvidosos:
+            r.pop("cands", None)
+            if i not in escolhas:
+                # `0` da IA, ou lote que falhou. Nos dois casos NÃO se grava —
+                # e o motivo aparece, em vez de virar um "longe" enganoso.
+                resultados[i] = {**r, "estado": "ia_recusou"}
+                continue
+            det, d = escolhas[i]
+            if d > _raio_para(r, det):
+                # A IA escolheu, mas a coordenada desmente. A trava continua
+                # valendo ACIMA da IA: ela lê nome, não mede metro.
+                resultados[i] = {**r, "estado": "longe", "dist_m": d,
+                                 "achado": det.get("name"),
+                                 "merchant_id": det.get("id")}
+                continue
+            resultados[i] = {**r, "estado": "ok", "dist_m": d,
+                             "sem_slug": 0.0, **campos(det)}
     return resultados
 
 
@@ -289,7 +593,8 @@ def _resumo(achados: list) -> None:
     c = Counter(a["estado"] for a in achados)
     t = max(1, len(achados))
     print()
-    for k in ("ok", "longe", "sem_link", "sem_detalhe", "erro_busca"):
+    for k in ("ok", "longe", "ia_recusou", "sem_link", "sem_detalhe",
+              "erro_busca", "para_ia"):
         if c.get(k):
             print(f"    {k:12} {c[k]:>5}  {c[k]/t:>5.0%}")
     com = [a for a in achados if a.get("estado") == "ok" and a.get("cnpj")]
