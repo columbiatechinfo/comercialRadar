@@ -91,20 +91,54 @@ def test_a_leitura_traz_coordenada():
     assert "maps_lat" in s[i:i + 400], "a leitura voltou a não trazer coordenada"
 
 
-def test_o_minerar_passa_a_area_para_as_duas_etapas_6():
+def test_a_etapa_de_enderecos_roda_a_CIDADE_e_nao_a_area():
+    """A EXCEÇÃO DECLARADA, 26/08/2026, e ela vale SÓ para esta etapa.
+
+    "todos os passos da fase 1 de extração rodam apenas na área selecionada ou
+     cidade selecionada" — menos a normalização de logradouro, que roda a
+     cidade inteira, incremental.
+
+    O motivo é que o recorte destrói o próprio trabalho: a skill aprende
+    `tokenA ≡ tokenB` por PROVA (mesmo número, 30 m, dois imóveis distintos), e
+    com um pedaço ela quase não tem o que provar.
+
+        Bento Gonçalves, por área:       84 marcações,     4 ALTA
+        Bento Gonçalves, cidade:     70.670 marcações, 1.511 ALTA
+
+    `--so-novos` impede o custo de se repetir: passa só o que ainda não foi
+    feito, e ninguém fica para trás — o POI a 50 m fora do desenho seria
+    invisível para sempre num recorte por área.
+    """
     s = _fonte("minerar_tudo.py")
     i = s.index("segmentar_endereco.py")
     j = s.index("ajuste_logradouro.py", i)
-    assert '"--area", a.area' in s[i:j + 200], \
-        "a etapa 6 voltou a rodar sem saber da área"
+    trecho = s[i:j + 300]
+    assert "--so-novos" in trecho, "a etapa voltou a recortar por área"
+    assert '"--area", a.area' not in trecho, \
+        "o recorte por área voltou à etapa de endereços"
 
 
 # ─── a normalização também ───────────────────────────────────────────────────
 
-def test_a_normalizacao_corta_as_quatro_fontes():
+def test_a_normalizacao_corta_SO_O_POI():
+    """ESTE TESTE COBRAVA O CONTRÁRIO ATÉ 26/08/2026, e estava errado.
+
+    Ele exigia que as QUATRO fontes fossem recortadas pela área. O dono do
+    produto corrigiu o desenho: "normaliza a base toda da cidade; cada nova
+    extração de partes da cidade já tem com quem comparar".
+
+    Recortar a autoridade junto destruía o sentido da comparação — de que serve
+    normalizar o POI da área contra um pedaço do CNEFE do mesmo tamanho? Medido
+    em Bento Gonçalves: 91 POIs da área contra 63.033 linhas de CNEFE inteiras.
+
+    O POI é o único que muda a cada mineração; é o único que se recorta.
+    """
     s = _fonte("ajuste_logradouro.py")
-    for col in ("p.maps_lat", "c.lat", "m.lat", "latitude::numeric"):
-        assert col in s, f"a fonte de {col} deixou de ser recortada"
+    i = s.index("c_pois, par_pois =")
+    corpo = s[i:i + 500]
+    assert 'c_cad = c_ifd = ""' in corpo, "cadastro/iFood voltaram a ser recortados"
+    # E o POI nem por área vai mais: vai por "ainda não normalizado".
+    assert "SO_NOVOS" in s, "o modo incremental do POI sumiu"
 
 
 def test_o_cnefe_foi_partido_para_o_corte_caber():

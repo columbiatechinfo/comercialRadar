@@ -713,24 +713,58 @@ def main(argv=None) -> int:
     # ninguém entendesse por quê.
     _etapa(7, "endereços — a IA lê o que está grudado, a skill prova a forma")
     if cod:
-        # A ÁREA VAI JUNTO, SEMPRE — e é ela que decide o tamanho do trabalho.
+        # ESTA ETAPA É A EXCEÇÃO: ela roda a CIDADE, não a área.
         #
-        # Sem o recorte, desenhar 1,5 ha mandava a IA da Spark ler os 7.223
-        # endereços distintos de Cachoeirinha (360 lotes) e a skill normalizar
-        # as 69.150 linhas do CNEFE do município. Com ele: 7 endereços e 262
-        # linhas.
+        # Decisão do dono do produto, 26/08/2026, e ele foi explícito de que
+        # vale SÓ para a normalização de logradouro — "todos os passos da fase 1
+        # de extração rodam apenas na área selecionada ou cidade selecionada".
         #
-        # NÃO EXISTE "sem área" para desligar isto, e não precisa existir:
-        # escolher o município no painel GRAVA a divisa dele como área de
-        # trabalho (`/api/area/municipio` escreve no mesmo `area_atual` que o
-        # desenho manual usa). Então o polígono já diz a verdade nos dois casos
-        # — quando é o município, a caixa cobre o município e o recorte não tira
-        # nada. Ramificar aqui por "é área ou é município?" seria inventar uma
-        # distinção que o dado não faz.
+        # O motivo é que aqui o recorte destrói o próprio trabalho. A skill
+        # aprende `tokenA ≡ tokenB` por PROVA: mesmo número, 30 m, support de
+        # dois imóveis distintos. Com um pedaço ela quase não tem o que provar.
+        #
+        #     Bento Gonçalves, por área:       84 marcações,     4 ALTA
+        #     Canoas, município inteiro:  308.881 marcações, 5.997 ALTA
+        #
+        # E o custo não se repete: `--so-novos` faz as duas rodarem sobre o que
+        # AINDA NÃO foi feito. Numa cidade virgem passa tudo uma vez; nas
+        # rodadas seguintes, só o que a mineração acabou de descobrir. Assim
+        # ninguém fica para trás — o POI que caiu 50 m fora do desenho seria
+        # invisível para sempre num recorte por área.
+        # ANTES DE TUDO: A BASE FIXA DO MUNICÍPIO, se ela ainda não foi feita.
+        #
+        # Regra do dono do produto, 26/08/2026: base grande normaliza por
+        # MUNICÍPIO quando muda; POI normaliza só na área. Sem esta linha, a
+        # regra existia num comando avulso que alguém precisava lembrar de
+        # rodar — e numa cidade nova o efeito seria exatamente o que já
+        # aconteceu em Bento Gonçalves:
+        #
+        #     ajuste_logradouro --area  →  normaliza um pedaço do CNEFE
+        #     léxico do município vazio →  84 marcações, 4 ALTA
+        #     cruzamento                →  sem a chave de junção que ele espera
+        #
+        # Com a base feita antes, o mesmo município deu 63.148 marcações — e
+        # Canoas, 308.881 com 5.997 ALTA. A skill aprende `tokenA ≡ tokenB` por
+        # prova (mesmo número, 30 m, dois imóveis distintos): com um pedaço ela
+        # quase não tem o que provar.
+        #
+        # `normalizar_bases` decide sozinho se há trabalho: compara a carga da
+        # base com a cobertura já normalizada e, sem motivo, não faz nada. Então
+        # isto custa segundos nas rodadas seguintes do mesmo município.
+        #
+        # É TOLERANTE: numa cidade sem CNEFE, ou se a skill abortar, a rodada
+        # continua — perde-se qualidade de agrupamento, não a mineração.
+        _tolerante([PYTHON, "normalizar_bases.py", "--municipio", cod],
+                   "normalização da base fixa do município")
+
         _tolerante([PYTHON, "segmentar_endereco.py", "--municipio", cod,
-                    "--area", a.area, "--aplicar"], "segmentação de endereço")
+                    "--so-novos", "--aplicar"], "segmentação de endereço")
+        # `--so-novos`, e NÃO `--area`. Regra do dono do produto: normaliza
+        # todos os POIs ainda não normalizados da cidade foco, mesmo minerando
+        # um pedaço — assim nenhum fica para trás. Na prática quase todos já
+        # estão feitos, então só os que a mineração acabou de descobrir passam.
         _tolerante([PYTHON, "ajuste_logradouro.py", "--municipio", cod,
-                    "--area", a.area, "--aplicar"], "ajuste de logradouro")
+                    "--so-novos", "--aplicar"], "ajuste de logradouro")
     else:
         _log("  pulado — sem código IBGE do município")
 

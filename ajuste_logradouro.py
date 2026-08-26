@@ -97,7 +97,8 @@ _CIDADE = ("upper(translate(coalesce({col}, ''), %(ac)s, %(li)s)) = "
 
 SQL_POIS = f"""
 select p.id::text, e.logradouro, coalesce(e.numero, ''),
-       coalesce(e.complemento, ''), p.maps_lat, p.maps_lng
+       coalesce(e.complemento, ''),
+       coalesce(p.maps_lat, p.lat_origem), coalesce(p.maps_lng, p.lng_origem)
   from pois p
   join endereco_segmentado e on e.endereco = p.endereco
  where {_CIDADE(col='p.cidade')}
@@ -183,9 +184,18 @@ SQL_CNEFE = SQL_CNEFE_INICIO + SQL_CNEFE_FIM
 #
 # A faixa vem do próprio polígono do município, com folga generosa: não se está
 # validando endereço aqui, só evitando o registro de outro estado.
+# A COORDENADA ORIGINAL VALE, e ignorá-la custava 12.535 POIs só em Canoas.
+#
+# `maps_lat` é a coordenada que a busca no Maps confirmou; `lat_origem` é a que
+# a fonte trouxe. Olhar só a primeira descartava tudo que veio de planilha com
+# status `descoberto` — e esses TÊM coordenada, com endereço completo e precisão
+# declarada (`via` em 4.484, `porta_aprox` em 1.033).
+#
+# O `segmentar_endereco` já lia as duas com `coalesce`; aqui não, e a
+# inconsistência aparecia como "POI sem coordenada" num dado que tinha.
 SQL_ZONA = """
-   and p.maps_lng between %(zona_o)s and %(zona_l)s
-   and p.maps_lat between %(zona_s)s and %(zona_n)s
+   and coalesce(p.maps_lng, p.lng_origem) between %(zona_o)s and %(zona_l)s
+   and coalesce(p.maps_lat, p.lat_origem) between %(zona_s)s and %(zona_n)s
 """
 
 
@@ -255,7 +265,8 @@ def _gravar_csv(caminho: Path, linhas, scope: str) -> int:
     return n
 
 
-def exportar(cod: str, limite_cnefe: int, dirtrab: Path, area: str = "") -> dict:
+def exportar(cod: str, limite_cnefe: int, dirtrab: Path, area: str = "",
+             so_novos: bool = False) -> dict:
     """Cada fonte vira um CSV com as colunas canônicas. Devolve o que saiu.
 
     COM `area`, SÓ OS REGISTROS DE DENTRO DO DESENHO ENTRAM.
@@ -280,13 +291,55 @@ def exportar(cod: str, limite_cnefe: int, dirtrab: Path, area: str = "") -> dict
     if area and not poligono:
         raise SystemExit(f"não há área desenhada salva com a referência {area!r}")
 
-    c_pois, par_pois = au.recorte_sql(poligono, "p.maps_lat", "p.maps_lng")
-    c_cad, par_cad = au.recorte_sql(poligono, "c.lat", "c.lng", "cad")
-    c_ifd, par_ifd = au.recorte_sql(poligono, "m.lat", "m.lng", "ifd")
+    # O POI VAI POR "AINDA NÃO NORMALIZADO", não por área.
+    #
+    # Regra do dono do produto, 26/08/2026: "a cada rodada são normalizados
+    # todos os POIs não normalizados ainda daquela cidade foco, mesmo que apenas
+    # um pedaço esteja sendo processado, pra evitar deixar itens para trás".
+    #
+    # É mais simples E mais completo que recortar pela área. Recortando, o POI
+    # que ficou 50 m fora do desenho nunca seria normalizado — e ninguém saberia,
+    # porque ele só reapareceria numa mineração futura que o incluísse. Aqui não
+    # há como ficar para trás: quem não tem marcação, entra.
+    #
+    # E o custo não cresce: na prática quase todos já estão normalizados, então
+    # só os NOVOS passam. Numa cidade virgem passa tudo uma vez; nas rodadas
+    # seguintes, só o que a mineração acabou de descobrir.
+    SO_NOVOS = """
+   and not exists (select 1 from logradouro_ajustado la
+                    where la.fonte = 'pois' and la.record_id = p.id::text
+                      and la.scope_id = %(cod_norm)s)
+"""
+
+    # SÓ O POI É RECORTADO PELA ÁREA. As bases de referência vão INTEIRAS.
+    #
+    # Regra do dono do produto, 26/08/2026: "normaliza a base toda da cidade;
+    # cada nova extração de partes da cidade já tem com quem comparar".
+    #
+    # A primeira versão recortava as quatro juntas, e isso destruía o sentido da
+    # comparação: de que serve normalizar o POI da área contra um pedaço do
+    # CNEFE do mesmo tamanho? A autoridade tem de estar inteira para o POI novo
+    # ter com quem se comparar — é ela que decide a grafia canônica.
+    #
+    # Medido em Canoas: CNEFE 175.590, cadastro 102.065, iFood 770 — as três
+    # inteiras. O POI entra conforme o modo: 30.456 no município, ou só os da
+    # área numa mineração.
+    # `so_novos` substitui o recorte por área: a cidade inteira, menos o que já
+    # tem marcação. `--area` continua aceito e vira aviso, para quem chamar na
+    # mão saber que ele não recorta mais o POI.
+    c_pois, par_pois = ("", {}) if so_novos else au.recorte_sql(
+        poligono, "p.maps_lat", "p.maps_lng")
+    if so_novos:
+        c_pois = SO_NOVOS
+        par_pois = {"cod_norm": str(cod)}
+    c_cad = c_ifd = ""
+    par_cad = par_ifd = {}
     # O CNEFE guarda coordenada como TEXTO. O cast impede o uso de índice, mas o
     # `cod_municipio` já cortou para um município e é ele que carrega a consulta.
-    c_cne, par_cne = au.recorte_sql(poligono, "latitude::numeric",
-                                    "longitude::numeric", "cne")
+    # O CNEFE também vai inteiro — ele é a AUTORIDADE (`autoridade_nivel: 100`).
+    # Sem ele completo a skill só aprende por dominância de frequência e se
+    # recusa a decidir entre duas grafias igualmente comuns.
+    c_cne, par_cne = "", {}
     # AQUI O CORTE É PELA CAIXA, e de propósito — as outras etapas afinam para
     # o polígono exato depois, esta não.
     #
@@ -297,7 +350,8 @@ def exportar(cod: str, limite_cnefe: int, dirtrab: Path, area: str = "") -> dict
     # skill precisa ver. A margem da caixa é o entorno mínimo que sustenta a
     # decisão sobre as ruas que a área contém.
     if poligono:
-        _log(f"  área {area!r}: só o entorno do desenho entra (recorte pela caixa)")
+        _log(f"  área {area!r}: o recorte NÃO se aplica ao POI — ele vai por "
+             '"ainda não normalizado", para ninguém ficar para trás')
 
     p = {"ac": _ACENTOS, "li": _LISOS, "cidade": nome}
     zona = faixa_do_municipio(cod)
@@ -504,6 +558,9 @@ def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--municipio", required=True, help="código IBGE de 7 dígitos")
+    p.add_argument("--so-novos", dest="so_novos", action="store_true",
+                   help="POIs AINDA NÃO normalizados da cidade (é o que a "
+                        "mineração usa: ninguém fica para trás e só o novo passa)")
     p.add_argument("--area", default="",
                    help="nome da área desenhada: normaliza só os logradouros de "
                         "dentro dela. Sem isto, normaliza o município inteiro.")
@@ -518,7 +575,8 @@ def main(argv=None) -> int:
     _log(f"  trabalho em {dirtrab}")
 
     _log("\n1/3 exportando as fontes")
-    contagem = exportar(a.municipio, a.limite_cnefe, dirtrab, area=a.area)
+    contagem = exportar(a.municipio, a.limite_cnefe, dirtrab, area=a.area,
+                        so_novos=a.so_novos)
     if not sum(contagem.values()):
         _log("  nenhuma linha — nada a ajustar")
         return 1

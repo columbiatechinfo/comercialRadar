@@ -86,3 +86,73 @@ def test_o_que_fica_de_fora_nao_e_apagado():
     da exportação continua no banco."""
     s = _fonte("ajuste_logradouro.py")
     assert "delete" not in s.lower(), "a exportação passou a apagar registro"
+
+
+def test_a_mineracao_normaliza_a_base_antes_da_area():
+    """SEM ISTO A REGRA VIRAVA UM COMANDO QUE ALGUÉM PRECISAVA LEMBRAR.
+
+    O `normalizar_bases` existia solto, e eu o rodei na mão nos 16 municípios.
+    Numa cidade nova o processo faria o que já fez em Bento Gonçalves:
+
+        ajuste_logradouro --area  →  normaliza um pedaço do CNEFE
+        léxico do município vazio →  84 marcações, 4 ALTA
+        cruzamento                →  sem a chave de junção que ele espera
+
+    Com a base feita antes, o mesmo município deu 63.148 marcações; Gravataí,
+    partindo do zero, deu 134.880 com 2.583 ALTA.
+    """
+    s = _fonte("minerar_tudo.py")
+    i = s.index("normalizar_bases.py")
+    j = s.index("ajuste_logradouro.py", 0)
+    assert i < j, "a base fixa passou a ser normalizada DEPOIS da área"
+
+
+def test_a_base_fixa_nao_derruba_a_rodada():
+    """Cidade sem CNEFE, ou skill abortando, não pode custar a mineração —
+    perde-se qualidade de agrupamento, não a rodada."""
+    s = _fonte("minerar_tudo.py")
+    i = s.index("normalizar_bases.py")
+    assert "_tolerante" in s[max(0, i - 200):i], \
+        "a normalização da base virou etapa que derruba a rodada"
+
+
+def test_a_segunda_execucao_nao_refaz():
+    """`normalizar_bases` compara carga da base com cobertura normalizada. Sem
+    isso, cada mineração no mesmo município repetiria o trabalho inteiro."""
+    s = _fonte("normalizar_bases.py")
+    assert "nada a fazer" in s, "o curto-circuito de 'já está pronto' sumiu"
+
+
+def test_so_o_poi_e_recortado_pela_area():
+    """A REGRA, e ela é o coração do desenho:
+
+        "normaliza a base toda da cidade; cada nova extração de partes da
+         cidade já tem com quem comparar"
+
+    A primeira versão recortava as QUATRO fontes juntas pela área — e isso
+    destruía o sentido da comparação: de que serve normalizar o POI da área
+    contra um pedaço do CNEFE do mesmo tamanho?
+
+    Medido em Bento Gonçalves com área desenhada: 91 POIs contra 63.033 linhas
+    de CNEFE. Antes, o CNEFE vinha recortado junto e a comparação não tinha com
+    quem acontecer.
+    """
+    s = _fonte("ajuste_logradouro.py")
+    i = s.index("c_pois, par_pois =")
+    corpo = s[i:i + 500]
+    assert 'c_cad = c_ifd = ""' in corpo, \
+        "cadastro e iFood voltaram a ser recortados pela área"
+    j = s.index("c_cne, par_cne")
+    assert 'c_cne, par_cne = "", {}' in s[j:j + 80], \
+        "o CNEFE voltou a ser recortado — ele é a AUTORIDADE e vai inteiro"
+    # E o POI evoluiu de "recortado por área" para "ainda não normalizado":
+    # é mais completo, porque o POI a 50 m fora do desenho não fica para trás.
+    assert "SO_NOVOS" in s, "o modo incremental do POI sumiu"
+
+
+def test_as_quatro_fontes_continuam_sendo_exportadas():
+    """Recortar menos não pode virar exportar menos: as quatro entram na skill,
+    e é do cruzamento entre elas que sai a forma canônica."""
+    s = _fonte("ajuste_logradouro.py")
+    for fonte in ("pois", "cadastro", "ifood", "cnefe"):
+        assert f'contagem["{fonte}"]' in s, f"a fonte {fonte} saiu da exportação"

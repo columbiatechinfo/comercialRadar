@@ -395,7 +395,7 @@ def nome_do_municipio(cod: str) -> tuple:
 
 def do_municipio(cod: str, limite: int = 0, aplicar: bool = False,
                  refazer: bool = False, refazer_metodo: str = "",
-                 area: str = "") -> None:
+                 area: str = "", so_novos: bool = False) -> None:
     import base_comum as bc
     import area_utils as au
 
@@ -416,9 +416,28 @@ def do_municipio(cod: str, limite: int = 0, aplicar: bool = False,
     poligono = au.carregar_area(area) if area else None
     if area and not poligono:
         raise SystemExit(f"não há área desenhada salva com a referência {area!r}")
-    corte, par_area = au.recorte_sql(
-        poligono, "coalesce(p.maps_lat, p.lat_origem)",
-        "coalesce(p.maps_lng, p.lng_origem)")
+    # `--so-novos`: A CIDADE INTEIRA, MENOS O QUE JÁ FOI LIDO.
+    #
+    # Mesma regra que a normalização passou a seguir, 26/08/2026: "a cada rodada
+    # são normalizados todos os não normalizados ainda daquela cidade foco,
+    # mesmo que apenas um pedaço esteja sendo processado".
+    #
+    # E aqui ela é ainda mais barata que na normalização, porque
+    # `endereco_segmentado` é indexado pelo TEXTO do endereço e não tem empresa:
+    # o que já foi lido nunca é relido. Numa cidade virgem passa tudo uma vez;
+    # depois só o que a mineração acabou de descobrir.
+    #
+    # Sem isto o recorte por área deixava buraco silencioso: medido em Bento
+    # Gonçalves, 7.791 POIs sem endereço segmentado — e a normalização não os
+    # alcançava, porque a segmentação nunca tinha chegado neles.
+    if so_novos:
+        corte, par_area = ("""
+           and not exists (select 1 from endereco_segmentado s
+                            where s.endereco = p.endereco)""", {})
+    else:
+        corte, par_area = au.recorte_sql(
+            poligono, "coalesce(p.maps_lat, p.lat_origem)",
+            "coalesce(p.maps_lng, p.lng_origem)")
 
     con = bc.conectar()
     cur = con.cursor()
@@ -453,7 +472,9 @@ def do_municipio(cod: str, limite: int = 0, aplicar: bool = False,
     # Ler o endereço de um vizinho custa uma linha numa chamada que já vai
     # acontecer — e `endereco_segmentado` é tabela GERAL, então esse trabalho
     # serve a qualquer área futura que o alcance.
-    if poligono:
+    if so_novos:
+        print(f"  {len(linhas):,} POIs da cidade com endereço ainda não lido")
+    elif poligono:
         print(f"  área {area!r}: {len(linhas):,} POIs na caixa + "
               f"{int(au.MARGEM_TRABALHO_M)} m de margem")
 
@@ -543,6 +564,9 @@ def main() -> int:
     p.add_argument("--amostra", type=int, default=0,
                    help="lê N endereços do banco, mostra e NÃO grava")
     p.add_argument("--municipio", default="", help="código IBGE")
+    p.add_argument("--so-novos", dest="so_novos", action="store_true",
+                   help="todos os POIs da cidade com endereço ainda NÃO lido "
+                        "(é o que a mineração usa: ninguém fica para trás)")
     p.add_argument("--area", default="",
                    help="nome da área desenhada: só lê os endereços de dentro "
                         "dela. Sem isto, lê o município inteiro.")
@@ -576,7 +600,8 @@ def main() -> int:
         return 0
     if a.municipio:
         do_municipio(a.municipio, aplicar=a.aplicar, refazer=a.refazer,
-                     refazer_metodo=a.refazer_metodo, area=a.area)
+                     refazer_metodo=a.refazer_metodo, area=a.area,
+                     so_novos=a.so_novos)
         return 0
     p.print_help()
     return 2

@@ -55,9 +55,26 @@ import base_comum as bc
 BASE = Path(__file__).resolve().parent
 PYTHON = sys.executable
 
-# As fontes cuja atualização torna a normalização velha. POI não entra: ele muda
-# a cada mineração, e é justamente por isso que ele é normalizado por área.
-FONTES_FIXAS = ("cnefe", "cadastro_cliente", "tratamento-cnpj")
+# TODAS as bases que só mudam quando o operador CLICA no botão de atualizar.
+#
+# A lista estava incompleta e o dono do produto apontou: são as bases fixas
+# inteiras, não só o CNEFE. Faltavam justamente as que mais mexem no dado —
+# Overture, OpenStreetMap e Foursquare vêm no dataset estadual, e o Cadastur
+# traz prestador do MTur.
+#
+# O nome aqui é o que a fonte GRAVA em `fonte_arquivos`, não o nome comercial:
+#
+#     cnefe                   os 100+ mil endereços do IBGE — a AUTORIDADE
+#     extracao-poi-estadual   Overture + OpenStreetMap + Foursquare, por UF
+#     cadastur                prestadores do MTur
+#     cnpj / tratamento-cnpj  a Receita Federal
+#     cadastro_cliente        a carteira da concessionária
+#
+# Todas param no tempo entre um clique e outro. Se qualquer uma foi carregada
+# depois da última normalização daquele município, ela está velha — e é isso
+# que `precisa()` compara.
+FONTES_FIXAS = ("cnefe", "cadastro_cliente", "tratamento-cnpj", "cnpj",
+                "extracao-poi-estadual", "cadastur")
 
 
 def _linhas_cnefe(cod: str) -> int:
