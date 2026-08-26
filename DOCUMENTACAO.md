@@ -401,6 +401,76 @@ grátis generosa com billing).
                    fora do polígono → status 'fora_da_area' (não ingere)
 ```
 
+### O cruzamento entre as fontes (etapa 7, 25/08/2026)
+
+`cruzar_fontes.py` substitui o antigo `povoar_vinculo.py --juntar`, que agrupava
+por nome idêntico mais coordenada arredondada — e por isso **não usava nada do
+que a etapa 6 produzia**. A normalização virava dado que ninguém consumia.
+
+#### As regras, e o porquê de cada uma
+
+| evidência | peso | condição |
+|---|---|---|
+| logradouro canônico + número iguais | 5 | — |
+| mesma rua canônica | 2 | — |
+| mesmo domínio | **4** | dentro de 20 m |
+| mesmo telefone | 2 | dentro de 20 m, **nunca sozinho** |
+| nomes praticamente iguais | 3 | — |
+| mesma categoria | 1 | — |
+
+Soma ≥ 8 funde direto (confiança 8–10). Entre 4 e 7 vai para a IA da Spark
+(confiança 7 se ela disser MESMO). Mesma rua a menos de 20 m sem número pergunta
+mesmo sem somar 4 — endereço é o maior indício.
+
+O peso do site é **4 e não 3** de propósito: `MIN_PARA_IA` também é 4, então o
+site sozinho já manda perguntar e o telefone sozinho não. É a ordem declarada
+("site, por ser um domínio, tem mais peso que telefone") escrita em
+comportamento, não em comentário.
+
+#### Dois achados de medição que mudaram o resultado
+
+**O `nan` do pandas.** 28.394 POIs têm `website = 'nan'` e 17.193 têm
+`telefone = 'nan'` — string, não nulo. Tratados como valor real, os 28 mil
+compartilhavam o mesmo domínio: o cruzamento de Cachoeirinha propunha **1.460
+fusões**, e com a guarda propõe **126**. As outras 1.334 (91%) eram evidência
+fabricada.
+
+**Vizinhança não é suspeita.** A regra "mesma rua a menos de 20 m" enche o balde
+da IA com a loja do lado: 19.879 pares, **18.220 sem um token de nome, domínio
+ou telefone em comum** (Mercado Pop Latino + Óptica Caelum, 19 m). O corte de
+`filtrar_para_ia` exige *algo* ligando os dois além do lugar — 415 chamadas em
+vez de 4.970 — e o que sobra é "Farmácia São João" × "Farmácia São João" a 30 m.
+`--tudo-para-ia` desliga o corte; é julgamento sobre custo, e quem paga decide.
+
+#### O que a IA recebe
+
+Tudo que o banco tem dos dois lados: fonte, categoria, endereço, logradouro
+normalizado, telefone, site, CNPJ, razão social, nome fantasia, CNAE, distância
+e a evidência já apurada, escrita. Campo vazio não é impresso — e "vazio" inclui
+a palavra `nan`, senão a IA lê "os dois têm o mesmo telefone: nan".
+
+`INCERTO` é resposta legítima; veredito fora do vocabulário vira `INCERTO` em vez
+de virar fusão por engano de parsing. Lote que falha é **marcado**, não
+descartado.
+
+#### O POI absorvido não é apagado
+
+Vira `status='fundido'`, mantém linha e `place_id`, e o vínculo passa para o
+sobrevivente como mais uma aba — reversível pelo `x` da ficha. A transitividade é
+resolvida (se A absorve B e B absorveria C, C vai para A), senão o vínculo de C
+apontaria para um POI já fundido e a ficha ficaria órfã.
+
+Sobrevive quem tem mais evidência acumulada (Street View, análise de IA): ela
+aponta para um `poi_id`, e escolher o outro obrigaria a mover trabalho pago.
+
+#### Um defeito que isto desenterrou
+
+`logradouro_ajustado` tinha 77.737 linhas com `fonte = '?'`: a ingestão procurava
+a coluna `source_id` e a skill escreve `aj_source_id` (ela prefixa com `aj_` tudo
+que acrescenta). Sem a fonte não dava para ligar a marcação de volta ao POI nem
+separá-la da do CNEFE. Corrigido; as linhas órfãs foram removidas depois de
+confirmar que todas tinham equivalente exato sob a fonte certa.
+
 ### Clique no polígono: o que tem aqui dentro (25/08/2026)
 
 Clicar na área desenhada abre um popup com o **total de POIs do banco dentro

@@ -593,9 +593,17 @@ def main(argv=None) -> int:
         _tolerante([PYTHON, "povoar_vinculo.py", "--proprios",
                     "--empresa", a.empresa, "--aplicar"], "vínculo próprio")
         if cidade:
-            _tolerante([PYTHON, "povoar_vinculo.py", "--juntar",
+            # `cruzar_fontes`, e nao mais o `--juntar` do `povoar_vinculo`.
+            #
+            # Aquele agrupava por nome IDENTICO mais coordenada arredondada a
+            # 5 casas, e com isso nao usava NADA do que a etapa 6 produziu — a
+            # normalizacao virava dado que ninguem consumia. Este aplica as
+            # regras declaradas (endereco > site > telefone, raio de 20 m,
+            # telefone nunca sozinho), grava a confianca de 1 a 10 e manda o
+            # meio-termo para a IA da Spark decidir.
+            _tolerante([PYTHON, "cruzar_fontes.py",
                         "--cidade", cidade, "--empresa", a.empresa,
-                        "--aplicar"], "junção por nome e coordenada")
+                        "--aplicar"], "cruzamento entre as fontes")
     else:
         _log("  pulado — o cruzamento carimba a empresa dona, e ela vem no")
         _log("  comando (--empresa), nunca do .env")

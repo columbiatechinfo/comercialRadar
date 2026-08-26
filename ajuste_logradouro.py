@@ -349,8 +349,20 @@ def ingerir(rundir: Path, cod: str, aplicar: bool) -> None:
         for r in csv.DictReader(f):
             tier = r.get("aj_logr_tier") or ""
             tiers[tier] = tiers.get(tier, 0) + 1
+            # `aj_source_id`, NÃO `source_id`.
+            #
+            # A skill prefixa tudo que ela ACRESCENTA com `aj_`, inclusive o eco
+            # da fonte. Procurar `source_id` fazia o `or "?"` vencer sempre, e a
+            # tabela acumulou 77.737 linhas com `fonte='?'` sem que nada
+            # reclamasse — a chave é `(fonte, record_id)` e '?' é um valor
+            # perfeitamente válido para ela.
+            #
+            # O estrago não era só cosmético: sem a fonte não dá para juntar a
+            # marcação de volta ao POI (é `pois` + `p.id::text`) nem separá-la
+            # da do CNEFE, que é o dobro do volume. A normalização virava dado
+            # que ninguém conseguia consumir.
             linhas.append((
-                r.get("source_id") or r.get("fonte") or "?",
+                r.get("aj_source_id") or r.get("source_id") or "?",
                 r.get("record_id") or "",
                 str(cod),
                 r.get("logradouro") or "",
