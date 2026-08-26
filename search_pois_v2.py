@@ -385,7 +385,7 @@ async def search_one(sess, reg, max_dist, wid, full=False) -> dict:
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# Worker — consome lotes, recicla browser+IP a cada lote
+# Worker — UMA sessao por worker, viva enquanto houver lote
 # ══════════════════════════════════════════════════════════════════════════
 async def _dispensar_consent(page):
     """Dispensa o muro de consentimento do Google (várias variações de UI/idioma)."""
@@ -449,91 +449,140 @@ async def abrir_maps(sess) -> bool:
 
 async def worker(wid, queue: asyncio.Queue, state, pw, pool: ProxyPool,
                  counter, total, out_json, lock, max_dist, metrics, full=False, usar_proxy=True):
-    while True:
-        try:
-            batch_idx, batch = queue.get_nowait()
-        except asyncio.QueueEmpty:
-            return
+    """UMA SESSÃO POR WORKER, viva enquanto houver lote — não uma por lote.
 
-        proxy = await pool.acquire_blocking() if usar_proxy else None
-        if usar_proxy and not proxy:
-            print(f"\n  W{wid} sem proxy disponível — lote {batch_idx} re-enfileirado")
-            queue.put_nowait((batch_idx, batch))
-            await asyncio.sleep(5)
-            continue
+    O QUE MUDOU, E POR QUE (26/08/2026, decisão do dono do produto)
 
-        ip_label = f"{proxy['address']}:{proxy['port']}" if proxy else "direto"
-        profile_dir = config.BROWSER_PROFILES_DIR / f"w{wid}_b{batch_idx}"
-        sess = None
-        captcha_no_lote = False
-        idx_parou = 0
+    Antes cada lote abria navegador, pegava um IP, buscava 8 nomes, fechava e
+    APAGAVA o perfil. A intenção era boa — não deixar rastro entre lotes — e o
+    efeito era o contrário do pretendido: cada lote era uma chegada A FRIO, sem
+    cookie, sem histórico, sem nada. É o padrão que um detector reconhece
+    primeiro, porque pessoa nenhuma navega assim.
 
-        try:
-            tz_lng = batch[0].get("lng")
-            sess = await HumanSession.create(pw, proxy, profile_dir, layer="maps", tz_hint_lng=tz_lng)
+    Medido em Bento Gonçalves: 15 IPs queimados numa área com 25 nomes para
+    buscar. E o que de fato derrubava a busca era o HTTP/2 (ver `human_browser`),
+    não o IP — a reciclagem estava tratando o sintoma errado e pagando caro por
+    isso.
 
-            if not await abrir_maps(sess):
-                print(f"\n  🌐 [W{wid}] lote {batch_idx} IP={ip_label} | Maps não abriu")
-                queue.put_nowait((batch_idx, batch))
-                if proxy:
-                    await pool.mark_cooldown(proxy, segundos=600)
-                continue
+    Agora a sessão nasce uma vez, ganha um IP e fica. Ela acumula o que uma
+    sessão real acumula: cookie de consentimento, histórico, o hábito. O perfil
+    fica em disco entre execuções, e é isso que faz a liberação do desafio
+    sobreviver de uma rodada para a seguinte.
 
-            for j, reg in enumerate(batch):
-                idx_parou = j
-                if await sess.is_captcha():
-                    captcha_no_lote = True
-                    print(f"\n  🚫 [W{wid}] CAPTCHA no lote {batch_idx} IP={ip_label} — abortando")
-                    break
+    QUANDO A SESSÃO É TROCADA, e só nestes casos:
 
-                res = await search_one(sess, reg, max_dist, wid, full=full)
+        CAPTCHA          o IP foi marcado; insistir nele queima os seguintes
+        Maps não abriu   a sessão não serve para nada
 
-                async with lock:
-                    state["results"].append(res)
-                    state["results"].sort(key=lambda x: x.get("idx", 0))
-                    salvar_json(out_json, state["results"])
+    Fora isso ela atravessa a run inteira.
+    """
+    sess = None
+    proxy = None
+    ip_label = "direto"
+    # PERFIL POR WORKER, e NÃO por lote — e ele não é apagado no fim.
+    #
+    # `w0`, `w1`… são dez pessoas diferentes que voltam ao Maps todo dia. Apagar
+    # o perfil a cada lote era jogar fora exatamente a prova de que já estiveram
+    # ali antes.
+    profile_dir = config.BROWSER_PROFILES_DIR / f"w{wid}"
 
-                counter["done"] += 1
-                metrics["pois"] += 1
-                done = counter["done"]
-                pct = done / total * 100 if total else 0
-                st = res["status"]
-                ok_mark = "✅" if res["match_valido"] else "❌"
-                nome = reg.get("ocr_texto", "")[:30]
-                print(f"\r🌐 [W{wid}] lote {batch_idx+1}/{metrics['n_lotes']} "
-                      f"IP={ip_label} | {ok_mark} POI {j+1}/{len(batch)} "
-                      f"[{done}/{total} {pct:.0f}%] {st:14} {nome}", flush=True)
+    async def _abrir(tz_lng):
+        """Levanta sessão nova. Devolve False quando não conseguiu."""
+        nonlocal sess, proxy, ip_label
+        if usar_proxy:
+            proxy = await pool.acquire_blocking()
+            if not proxy:
+                return False
+            ip_label = f"{proxy['address']}:{proxy['port']}"
+        sess = await HumanSession.create(pw, proxy, profile_dir, layer="maps",
+                                         tz_hint_lng=tz_lng)
+        if not await abrir_maps(sess):
+            print(f"\n  🌐 [W{wid}] IP={ip_label} | Maps não abriu")
+            await _derrubar(cooldown=600)
+            return False
+        return True
 
-                # Cadência humanizada entre buscas (exceto após o último do lote)
-                if j < len(batch) - 1:
-                    await sess.humanized_wait()
-
-        except Exception as e:
-            print(f"\n  W{wid} erro no lote {batch_idx}: {str(e)[:100]}")
-        finally:
-            if sess:
-                try:
-                    await sess.close()
-                    metrics["bytes"] += sess.bytes_used
-                except Exception:
-                    pass
-            # Limpa o profile do lote (cookies/cache descartados na rotação)
+    async def _derrubar(cooldown: int = 0):
+        """Fecha a sessão e devolve o IP — para o descanso ou para a fila."""
+        nonlocal sess, proxy
+        if sess:
             try:
-                shutil.rmtree(profile_dir, ignore_errors=True)
+                await sess.close()
+                metrics["bytes"] += sess.bytes_used
             except Exception:
                 pass
+            sess = None
+        if proxy:
+            if cooldown:
+                await pool.mark_cooldown(proxy, segundos=cooldown)
+            else:
+                await pool.release(proxy)
+            proxy = None
+
+    try:
+        while True:
+            try:
+                batch_idx, batch = queue.get_nowait()
+            except asyncio.QueueEmpty:
+                return
+
+            if sess is None:
+                if not await _abrir(batch[0].get("lng")):
+                    # sem sessão: devolve o lote e espera o pool respirar
+                    queue.put_nowait((batch_idx, batch))
+                    await asyncio.sleep(5)
+                    continue
+
+            captcha_no_lote = False
+            idx_parou = 0
+            try:
+                for j, reg in enumerate(batch):
+                    idx_parou = j
+                    if await sess.is_captcha():
+                        captcha_no_lote = True
+                        print(f"\n  🚫 [W{wid}] CAPTCHA no lote {batch_idx} "
+                              f"IP={ip_label} — trocando de sessão")
+                        break
+
+                    res = await search_one(sess, reg, max_dist, wid, full=full)
+
+                    async with lock:
+                        state["results"].append(res)
+                        state["results"].sort(key=lambda x: x.get("idx", 0))
+                        salvar_json(out_json, state["results"])
+
+                    counter["done"] += 1
+                    metrics["pois"] += 1
+                    done = counter["done"]
+                    pct = done / total * 100 if total else 0
+                    st = res["status"]
+                    ok_mark = "✅" if res["match_valido"] else "❌"
+                    nome = reg.get("ocr_texto", "")[:30]
+                    print(f"\r🌐 [W{wid}] lote {batch_idx+1}/{metrics['n_lotes']} "
+                          f"IP={ip_label} | {ok_mark} POI {j+1}/{len(batch)} "
+                          f"[{done}/{total} {pct:.0f}%] {st:14} {nome}", flush=True)
+
+                    if j < len(batch) - 1:
+                        await sess.humanized_wait()
+            except Exception as e:
+                print(f"\n  W{wid} erro no lote {batch_idx}: {str(e)[:100]}")
+                # Sessão em estado desconhecido: derruba sem punir o IP, que
+                # provavelmente não tem culpa de um erro nosso.
+                await _derrubar()
+                continue
 
             if captcha_no_lote:
                 metrics["captcha_lotes"] += 1
-                if proxy:
-                    await pool.mark_cooldown(proxy)
                 restantes = batch[idx_parou:]
                 if restantes:
                     novo_idx = metrics["n_lotes"]
                     metrics["n_lotes"] += 1
                     queue.put_nowait((novo_idx, restantes))
-            elif proxy:
-                await pool.release(proxy)
+                await _derrubar(cooldown=900)
+            # Sem CAPTCHA a sessão CONTINUA VIVA para o próximo lote — é este
+            # `else` ausente que separa esta versão da anterior.
+    finally:
+        await _derrubar()
 
 
 # ══════════════════════════════════════════════════════════════════════════
