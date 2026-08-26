@@ -52,6 +52,7 @@ from pathlib import Path
 
 import config  # noqa: F401  (.env + UTF-8)
 import i9
+import i9_windows
 import area_utils
 
 BASE = Path(__file__).resolve().parent
@@ -624,16 +625,45 @@ def main(argv=None) -> int:
     # Sob demanda, como a captura: o iFood não tem base pública por UF, e a
     # metade cara (enumerar os ids) precisa de navegador na praça daquela área.
     #
-    # Também no i9, pelo mesmo motivo — ele abre navegador com proxy. E aqui não
-    # há arquivo a trazer: o extrator grava direto no banco, que mora no i9.
+    # RODA NO WINDOWS DO i9 — e hoje está BLOQUEADA POR FORA.
+    #
+    # Duas coisas separadas, e eu já as confundi uma vez neste arquivo.
+    #
+    # ONDE RODA. O i9 é uma máquina com dois ambientes: o WSL Linux, onde moram
+    # banco, datasets e a captura, e o Windows, que tem desktop. O iFood abre
+    # navegador, e navegador visível não sobe no WSL — medido em 26/08/2026,
+    # cinco variantes (sem `WAYLAND_DISPLAY`, `--ozone-platform=x11`,
+    # `XDG_RUNTIME_DIR` do WSLg e as combinações), todas estourando o launch em
+    # ~46 s. No Windows do i9 sobe em 1,1 s, e o banco responde de lá. Então a
+    # etapa vai para o Windows do i9, não para o notebook: o notebook é onde o
+    # operador trabalha.
+    #
+    # POR QUE ESTÁ FALHANDO. Não é a máquina, e escrever que era foi erro meu.
+    # Em 25/08 esta etapa gravou 1.598 lojas; em 26/08 devolve zero — no
+    # notebook E no i9, com proxy E sem proxy. O que mudou foi o iFood: o
+    # Cloudflare passou de desafio automático para **Turnstile interativo**
+    # ("Confirme que é humano"), e navegador automatizado não clica.
+    #
+    # O QUE JÁ NÃO DEPENDE DISTO: a metade que traz CNPJ. O endpoint
+    # `marketplace.ifood.com.br/v1/merchants/{id}/extra` responde 200 sem
+    # navegador nenhum (medido: 1.598 respostas, zero falhas, CNPJ em 99,7%).
+    # Preso está só enumerar os ids de uma área — e para isso o iFood não expõe
+    # rota pública: `/v1/page/home` existe e devolve 403, todo o resto 404, e o
+    # sitemap não lista loja.
+    #
+    # A etapa é tolerante de propósito: ela falha, diz por quê, e a mineração
+    # segue. Perder o iFood custa CNPJ, não custa a rodada.
     _etapa(5, "iFood — a descoberta que traz CNPJ em 99,7% das lojas")
     if a.pular_ifood:
         _log("  pulado por --pular-ifood")
     else:
-        rc = i9.rodar(["extrair_ifood.py", "--area", a.area], _log)
+        rc = i9_windows.rodar_no_windows(["extrair_ifood.py", "--area", a.area],
+                                         log=_log)
         if rc != 0:
-            _log(f"⚠️  iFood falhou (código {rc}). As demais etapas continuam;")
-            _log("   esta pode ser repetida sozinha depois.")
+            _log(f"⚠️  iFood falhou (código {rc}).")
+            _log("   Se a saída acima disser 'nenhuma loja', é o Turnstile do")
+            _log("   Cloudflare — bloqueio externo, não defeito daqui. As demais")
+            _log("   etapas continuam; esta pode ser repetida sozinha depois.")
 
     # ── 6 · endereços ─────────────────────────────────────────────────────
     #
