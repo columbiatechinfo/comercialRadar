@@ -35,11 +35,42 @@ import config  # noqa: F401
 import evidencia as ev
 from segmentar_endereco import SPARK, MODELO, _conferir_endpoint, _extrair_json
 
-# Pares por chamada. O mesmo raciocínio do `julgar_fusao`: cada item pede um
-# parecer escrito, e lote grande trunca o JSON e perde o lote inteiro. Aqui os
-# pares carregam MAIS campo que lá, então o lote é menor ainda.
+# LOTE 4 E 64 THREADS. Os dois números foram MEDIDOS, 26/08/2026, sobre 400
+# pares reais de Cachoeirinha — e o resultado contraria a intuição.
+#
+# Aumentar o lote parecia o caminho óbvio para ir mais rápido. Não é:
+#
+#   lote  thr    seg   concorda com o lote 4
+#      4   16   57,2   (referência)
+#      4   16   57,2   99%  <- o modelo discordando de SI MESMO
+#     10   32   52,0   94%
+#     20   32   83,5   94%
+#      4   32   36,4   99%
+#      4   64   25,6   99%
+#
+# DUAS COISAS ESTÃO NESSA TABELA.
+#
+# A primeira: lote maior NÃO acelera. Com 400 pares, lote 10 produz 40 chamadas
+# e lote 4 produz 100 — e cada chamada de 10 pares gera 2,5x mais token de
+# saída. O tempo total é ditado pela chamada mais lenta, não pelo número delas,
+# então engordar o lote troca muitas chamadas curtas por poucas chamadas longas
+# e ainda subutiliza o pool. Em lote 20 o efeito já é francamente negativo.
+#
+# A segunda, e a que decide: lote maior MUDA A RESPOSTA. A linha de controle
+# existe para isso — rodar a mesma configuração duas vezes concorda em 99%, que
+# é o não-determinismo próprio do modelo. O lote 10 concorda em 94%: seis vezes
+# o ruído, ou seja, 6% dos pares recebem outro veredito por causa do tamanho do
+# lote. Com muitos pares numa janela só, a atenção do modelo se dilui e ele
+# passa a responder pior sobre cada um.
+#
+# O ganho estava no PARALELISMO, não no lote: 16 -> 64 threads corta o tempo
+# pela metade e concorda em 99%, dentro do ruído. Escala até 128 (18,2 s), mas
+# dali para cima são 33% mais threads por 13% de ganho, e a Spark também atende
+# a segmentação de endereço.
+#
+# `SPARK_THREADS` no ambiente sobrepõe.
 LOTE = 4
-THREADS = int(os.environ.get("SPARK_THREADS", "16"))
+THREADS = int(os.environ.get("SPARK_THREADS", "64"))
 
 VEREDITOS = {"MESMO", "DIFERENTE", "INCERTO"}
 

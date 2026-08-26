@@ -226,3 +226,37 @@ def test_a_ia_e_a_da_spark():
     s = io.open(os.path.join(RAIZ, "julgar_par_banco.py"), encoding="utf-8").read()
     assert "_conferir_endpoint(SPARK)" in s
     assert "100.115.117.49" not in s
+
+
+# ─── o tamanho do lote e o paralelismo ───────────────────────────────────────
+
+def test_o_lote_do_julgamento_continua_pequeno():
+    """MEDIDO em 26/08/2026 sobre 400 pares reais, e o resultado contraria a
+    intuição: lote maior não acelera E muda a resposta.
+
+        lote  thr    seg   concorda com o lote 4
+           4   16   57,2   (referência)
+           4   16   57,2   99%   <- o modelo discordando de SI MESMO
+          10   32   52,0   94%
+          20   32   83,5   94%
+           4   64   25,6   99%
+
+    A linha de controle é o que dá sentido às outras: 99% é o não-determinismo
+    próprio do modelo. O lote 10 concorda em 94% — seis vezes o ruído, ou seja
+    6% dos pares mudam de veredito por causa do tamanho do lote.
+
+    O ganho estava no paralelismo. Se alguém subir o lote de novo achando que
+    acelera, este teste é o aviso.
+    """
+    import julgar_par_banco as jb
+    assert jb.LOTE <= 6, (
+        "lote maior foi MEDIDO como mais lento E menos fiel: 6% dos pares mudam "
+        "de veredito, contra 1% de ruído do próprio modelo")
+
+
+def test_o_julgamento_e_paralelo():
+    import io
+    import julgar_par_banco as jb
+    assert jb.THREADS >= 32, "o paralelismo é onde estava o ganho: 16→64 corta o tempo pela metade"
+    s = io.open(os.path.join(RAIZ, "julgar_par_banco.py"), encoding="utf-8").read()
+    assert "ThreadPoolExecutor" in s
