@@ -189,6 +189,41 @@ SQL_ZONA = """
 """
 
 
+def zona_dominante(cod: str) -> tuple:
+    """`(oeste, leste, fora)` — a faixa da zona UTM onde está a maioria.
+
+    MUNICÍPIO PODE ATRAVESSAR DIVISA DE ZONA, e isso não é erro de dado.
+    A divisa 21S/22S fica em 54°O; Santa Maria vai de -54,12 a -53,53 e tem 905
+    endereços a oeste contra 148.578 a leste. A skill aborta com as duas juntas,
+    e está certa — metro medido em zonas diferentes não se compara.
+
+    Diferente do POI de Serra/ES (que era de OUTRO estado e simplesmente não
+    pertencia), aqui os 905 são endereços legítimos. Então não se descarta em
+    silêncio: normaliza-se a zona dominante e DIZ-SE quantos ficaram de fora.
+    Eles continuam no banco, e uma rodada futura por zona os alcança.
+
+    As divisas UTM ficam a cada 6°, nos múltiplos: ..., -60, -54, -48, ...
+    """
+    ref = bc.conectar_referencia()
+    try:
+        with ref.cursor() as cur:
+            cur.execute("""
+                select floor(longitude::numeric / 6) * 6 as zona, count(*)
+                  from ibge_cnefe
+                 where cod_municipio = %s and coalesce(longitude,'') <> ''
+                 group by 1 order by 2 desc""", (str(cod),))
+            faixas = cur.fetchall()
+    except Exception:  # noqa: BLE001
+        return None, None, 0
+    finally:
+        ref.close()
+    if len(faixas) <= 1:
+        return None, None, 0          # zona única: nada a recortar
+    dominante, n_dom = faixas[0]
+    fora = sum(n for _, n in faixas[1:])
+    return float(dominante), float(dominante) + 6.0, fora
+
+
 def faixa_do_municipio(cod: str, folga_graus: float = 0.5) -> dict:
     """A caixa do município, folgada, para descartar o que é de outro estado."""
     ref = bc.conectar_referencia()
@@ -266,6 +301,14 @@ def exportar(cod: str, limite_cnefe: int, dirtrab: Path, area: str = "") -> dict
 
     p = {"ac": _ACENTOS, "li": _LISOS, "cidade": nome}
     zona = faixa_do_municipio(cod)
+    # Município que atravessa divisa de zona UTM: aperta para a dominante.
+    z_o, z_l, fora = zona_dominante(cod)
+    if z_o is not None:
+        zona["zona_o"] = max(zona.get("zona_o", z_o), z_o)
+        zona["zona_l"] = min(zona.get("zona_l", z_l), z_l)
+        _log(f"  ⓘ o município atravessa divisa de zona UTM — normalizando a "
+             f"faixa {z_o:.0f}° a {z_l:.0f}°; {fora:,} endereços ficam de fora "
+             f"desta rodada (continuam no banco)")
     c_zona = SQL_ZONA if zona else ""
     p.update(zona)
     con = bc.conectar()
@@ -293,8 +336,12 @@ def exportar(cod: str, limite_cnefe: int, dirtrab: Path, area: str = "") -> dict
 
     ref = bc.conectar_referencia()
     with ref.cursor() as c2:
-        c2.execute(SQL_CNEFE_INICIO + c_cne + SQL_CNEFE_FIM,
-                   {"cod": cod, "lim": limite_cnefe or 2000000, **par_cne})
+        z_cne = ("" if z_o is None else
+                 " and longitude::numeric between %(zona_o)s and %(zona_l)s")
+        c2.execute(SQL_CNEFE_INICIO + c_cne + z_cne + SQL_CNEFE_FIM,
+                   {"cod": cod, "lim": limite_cnefe or 2000000,
+                    **par_cne, **({} if z_o is None else
+                                  {"zona_o": z_o, "zona_l": z_l})})
         contagem["cnefe"] = _gravar_csv(entrada / "cnefe.csv", c2.fetchall(), cod)
     ref.close()
 

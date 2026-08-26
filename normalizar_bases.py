@@ -60,6 +60,21 @@ PYTHON = sys.executable
 FONTES_FIXAS = ("cnefe", "cadastro_cliente", "tratamento-cnpj")
 
 
+def _linhas_cnefe(cod: str) -> int:
+    """Quantos endereços o CNEFE tem neste município — o denominador da
+    cobertura. Vem do banco de REFERÊNCIA, que é onde o CNEFE mora."""
+    ref = bc.conectar_referencia()
+    try:
+        with ref.cursor() as cur:
+            cur.execute("select count(*) from ibge_cnefe where cod_municipio = %s",
+                        (str(cod),))
+            return (cur.fetchone() or [0])[0]
+    except Exception:  # noqa: BLE001 — sem referência, cobertura não é critério
+        return 0
+    finally:
+        ref.close()
+
+
 def precisa(cur, cod: str) -> tuple:
     """`(precisa, motivo)` — a normalização deste município está velha?"""
     cur.execute("""
@@ -74,12 +89,32 @@ def precisa(cur, cod: str) -> tuple:
 
     if norm_em is None:
         return True, "o CNEFE deste município nunca foi normalizado"
+
+    # DATA NÃO BASTA — COBERTURA TAMBÉM CONTA.
+    #
+    # A etapa 7 normaliza por ÁREA, e isso grava linhas de CNEFE recentes com o
+    # `scope_id` do município. Olhando só a data, o município parecia "em dia"
+    # com 0,1% de cobertura: medido em 26/08, Bento Gonçalves tinha 67 de 64.356
+    # linhas normalizadas e foi pulado, enquanto Canoas e Cachoeirinha estavam
+    # em 99%.
+    #
+    # A pergunta certa não é "quando rodou" e sim "rodou INTEIRO". Abaixo de 80%
+    # o que existe é resíduo de área, não a base normalizada.
+    cur.execute("select count(*) from logradouro_ajustado "
+                " where scope_id = %s and fonte = 'cnefe'", (str(cod),))
+    tem = (cur.fetchone() or [0])[0]
+    total = _linhas_cnefe(cod)
+    if total and tem / total < 0.8:
+        return True, (f"só {tem:,} de {total:,} linhas do CNEFE normalizadas "
+                      f"({tem / total:.0%}) — é resíduo de área, não o município")
+
     if base_em is None:
-        return False, "não há registro de carga de base fixa"
+        return False, f"{tem:,} linhas normalizadas; sem registro de carga de base"
     if base_em > norm_em:
         return True, (f"base fixa carregada em {base_em:%d/%m/%Y} e normalização "
                       f"de {norm_em:%d/%m/%Y}")
-    return False, f"normalização de {norm_em:%d/%m/%Y} está à frente da base"
+    return False, (f"{tem:,} de {total:,} linhas ({tem / max(1, total):.0%}), "
+                   f"normalização de {norm_em:%d/%m/%Y}")
 
 
 def normalizar(cod: str, forcar: bool = False, log=print) -> int:

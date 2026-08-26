@@ -112,8 +112,17 @@ def test_o_cnefe_foi_partido_para_o_corte_caber():
     fim seria SQL inválido. Ela é montada em duas metades de propósito."""
     s = _fonte("ajuste_logradouro.py")
     assert "SQL_CNEFE_INICIO" in s and "SQL_CNEFE_FIM" in s
-    i = s.index("SQL_CNEFE_INICIO + c_cne + SQL_CNEFE_FIM")
-    assert i > 0, "o corte saiu do meio da consulta do CNEFE"
+    # A montagem ganhou um terceiro pedaço em 26/08 — o recorte de zona UTM,
+    # para município que atravessa a divisa (Santa Maria: 905 endereços a oeste
+    # de 54°O contra 148.578 a leste). O que o teste cobra é a ORDEM: os cortes
+    # entram ENTRE o início e o `order by ... limit`, nunca depois.
+    # A MONTAGEM, não a definição da constante — `index` puro pegava a primeira
+    # ocorrência, que é a declaração lá em cima.
+    i = s.index("c2.execute(SQL_CNEFE_INICIO")
+    j = s.index("SQL_CNEFE_FIM", i)
+    meio = s[i:j]
+    assert "c_cne" in meio, "o corte por área saiu do meio da consulta"
+    assert "z_cne" in meio, "o corte por zona UTM saiu do meio da consulta"
 
 
 def test_a_normalizacao_nao_chama_ia():
