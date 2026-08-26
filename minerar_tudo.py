@@ -51,12 +51,16 @@ import time
 from pathlib import Path
 
 import config  # noqa: F401  (.env + UTF-8)
+import i9
 import area_utils
 
 BASE = Path(__file__).resolve().parent
 PYTHON = sys.executable
 SKILL = BASE / "skills" / "extracao-poi-estadual"
 DATASETS = BASE / "dados_externos" / "estadual"
+# Onde o watcher do servidor procura o resultado da captura. Com a etapa
+# rodando no i9 o arquivo nasce la e o `i9.Espelho` o traz para ca.
+CAPTURAS = BASE / "capturas"
 
 # Escrito pelo próprio orquestrador quando a skill termina inteira. A skill tem
 # `status` próprio e é retomável, mas ela responde "em que etapa estou", não "o
@@ -511,6 +515,15 @@ def main(argv=None) -> int:
                  {"bases": a.pular_bases, "cadastur": a.pular_cadastur,
                   "ifood": a.pular_ifood})
 
+    # O CÓDIGO DO MUNICÍPIO NÃO DEPENDE DAS BASES PÚBLICAS.
+    #
+    # Ele nascia dentro do `else` lá embaixo, e com isso `--pular-bases` (ou uma
+    # área cuja UF não se identifica) deixava `cod` sem valor — a etapa 6
+    # estourava `UnboundLocalError: local variable 'cod'`, DEPOIS de a captura
+    # já ter rodado. Horas de trabalho perdidas por uma variável que já estava
+    # calculada vinte linhas acima, em `cod_previa`, para o diagnóstico.
+    cod = cod_previa
+
     # ── 1 e 2 · bases públicas ────────────────────────────────────────────
     if a.pular_bases:
         _etapa(1, "bases públicas — PULADAS por --pular-bases (depuração)")
@@ -567,13 +580,41 @@ def main(argv=None) -> int:
                     "--so-carregar", "--gerar"], "Cadastur")
 
     # ── 4 · captura + OCR ─────────────────────────────────────────────────
+    #
+    # RODA NO i9, e por dois motivos independentes.
+    #
+    # O primeiro é de carga: a captura sobe dez navegadores reais e a busca abre
+    # uma sessão com proxy por lote. É o que come CPU, memória e banda do
+    # notebook enquanto o operador tenta usar o sistema.
+    #
+    # O segundo decide a questão: **a API da Webshare não responde do
+    # notebook**. Medido em 26/08/2026 — `urlopen error timed out` de lá, 1,1 s
+    # do i9. Sem ela o pool cai num cache em disco e trabalha às cegas sobre a
+    # lista de ontem, que foi o que aconteceu na run de Bento Gonçalves.
     _etapa(4, "captura + OCR do Maps — a única que traz painel e foto")
-    cmd = [PYTHON, "minerar_captura.py", "--area", a.area, "--sessao", a.sessao,
+    i9.sincronizar(_log)
+
+    cmd = ["minerar_captura.py", "--area", a.area, "--sessao", a.sessao,
            "--zoom", str(a.zoom), "--workers", str(a.workers),
            "--capture-workers", str(a.capture_workers)]
     if a.no_proxy:
         cmd.append("--no-proxy")
-    rc_captura = _rodar(cmd)
+
+    # O MAPA AO VIVO PRECISA DO ARQUIVO AQUI.
+    #
+    # Quem grava os POIs durante a mineração é o watcher do servidor, e ele
+    # observa `crops/<sessao>_db.json` LOCAL. Com a captura rodando lá o arquivo
+    # nasce lá; sem alguém trazê-lo o operador veria a tela parada até o fim —
+    # justamente a hora em que ele quer ver o marcador caindo.
+    relativo = f"capturas/{a.sessao}/crops/{a.sessao}_db.json"
+    espelho = i9.Espelho(relativo, CAPTURAS / a.sessao / "crops" / f"{a.sessao}_db.json")
+    espelho.start()
+    try:
+        rc_captura = i9.rodar(cmd, _log)
+    finally:
+        espelho.encerrar()
+        _log(f"  (o resultado veio do i9 {espelho.trouxe}x durante a captura)")
+
     if rc_captura != 0:
         _log(f"⚠️  A captura terminou com código {rc_captura}. As etapas de")
         _log("   endereço e cruzamento seguem sobre o que já entrou.")
@@ -582,11 +623,17 @@ def main(argv=None) -> int:
     #
     # Sob demanda, como a captura: o iFood não tem base pública por UF, e a
     # metade cara (enumerar os ids) precisa de navegador na praça daquela área.
+    #
+    # Também no i9, pelo mesmo motivo — ele abre navegador com proxy. E aqui não
+    # há arquivo a trazer: o extrator grava direto no banco, que mora no i9.
     _etapa(5, "iFood — a descoberta que traz CNPJ em 99,7% das lojas")
     if a.pular_ifood:
         _log("  pulado por --pular-ifood")
     else:
-        _tolerante([PYTHON, "extrair_ifood.py", "--area", a.area], "iFood")
+        rc = i9.rodar(["extrair_ifood.py", "--area", a.area], _log)
+        if rc != 0:
+            _log(f"⚠️  iFood falhou (código {rc}). As demais etapas continuam;")
+            _log("   esta pode ser repetida sozinha depois.")
 
     # ── 6 · endereços ─────────────────────────────────────────────────────
     #

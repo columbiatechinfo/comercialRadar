@@ -293,11 +293,49 @@ async function runWorker(
   // Mantém 10 workers, mas abre de forma escalonada para reduzir estouro no início
   await new Promise(r => setTimeout(r, workerId * 1500));
 
+  // QUAL CHROMIUM, e por que isto precisa ser escolhível.
+  //
+  // MEDIDO no i9 em 26/08/2026, quando a captura passou a rodar lá: o build
+  // `chromium-1217` de LINUX carrega a Maps JS inteira (todas as requisições
+  // 200) e nunca dispara o evento `idle` — o mapa não fica pronto, os workers
+  // desistem, a captura termina dizendo "concluída" com 0 tiles e o OCR segue
+  // com 0 recortes. Sucesso relatado sobre nada.
+  //
+  // O mesmo teste, na mesma máquina, no mesmo minuto:
+  //
+  //     chromium-1217  NAO INICIALIZOU em 45,1 s
+  //     chromium-1234  PRONTO em 1,8 s
+  //
+  // Não é a versão do pacote: o notebook roda o MESMO playwright 1.59.1 com o
+  // MESMO 1217 e captura sem problema — no build de WINDOWS. É o binário de
+  // Linux que não renderiza o mapa vetorial.
+  //
+  // `CAPTURE_CHROME` no .env da máquina resolve sem mexer no package.json, que
+  // é compartilhado. Vazio (o caso do notebook) = o playwright escolhe.
+  const chromeDaMaquina = (process.env.CAPTURE_CHROME || '').trim();
+
   const browser: Browser = await chromium.launch({
     headless: true,
+    executablePath: chromeDaMaquina || undefined,
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
+      // HTTP/2 + Chromium + Google = o mapa nunca fica pronto. Medido no i9 em
+      // 26/08/2026, quando a captura passou a rodar lá.
+      //
+      // O sintoma nao acusa a causa: os quatro workers imprimiam "Mapa nao
+      // inicializou", a captura terminava dizendo "concluida" com 0/1 tiles, e
+      // o OCR seguia com 0 recortes. Sucesso relatado sobre nada.
+      //
+      // Nao era a chave (o sha256 do MAPS_JS_KEY e o mesmo nas duas maquinas),
+      // nao era referrer (na porta 8766 nao ha erro de referrer), nao era WebGL
+      // (o SwiftShader do i9 responde). Era o protocolo: com esta flag o mesmo
+      // teste, na mesma porta, na mesma maquina, devolve `pronto: true`.
+      //
+      // Mesma causa que travava a busca no Maps atraves de proxy — la o efeito
+      // aparecia como "IP queimado" e 0/8 IPs abriam a pagina. Ver
+      // `human_browser.py` e `tests/test_http2_mata_o_maps.py`.
+      '--disable-http2',
       `--window-size=${config.viewportWidth},${config.viewportHeight}`,
     ],
   });
@@ -309,6 +347,8 @@ async function runWorker(
   });
 
   const page: Page = await ctx.newPage();
+
+
 
   // Abre a página HTML local com Maps JS — ÚNICA vez durante toda a sessão
   await page.goto(mapUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
