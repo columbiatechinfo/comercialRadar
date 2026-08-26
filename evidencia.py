@@ -97,6 +97,24 @@ def norm_nome(s: str) -> str:
     return re.sub(r"[^a-z0-9 ]", " ", _sem_acento(s)).strip()
 
 
+def nome_util(s: str) -> str:
+    """O nome, ou vazio quando ele não identifica nada.
+
+    ISTO FALTAVA, E CUSTOU CINCO PISCINAS. Em 26/08/2026, em Bento Gonçalves,
+    quatro fusões foram aplicadas entre POIs a 96–119 m um do outro com o
+    motivo "nomes iguais (100%)". Os nomes eram, os dois, a palavra "nan" — o
+    vazio do pandas que a importação do i9 ainda grava porque roda código
+    antigo. Eram cinco clubes com piscina distintos, virados um só.
+
+    Eu já protegia domínio, telefone e logradouro contra esse vazio; esqueci o
+    campo mais óbvio. A guarda vale para qualquer buraco escrito como texto, e
+    também para o nome vazio de verdade — dois POIs sem nome não são "o mesmo
+    negócio", são dois pontos sobre os quais o nome não diz nada.
+    """
+    t = _sem_acento(s or "").strip()
+    return "" if t in _VAZIO else (s or "")
+
+
 def tokens(s: str) -> set:
     """Tokens com mais de 2 letras. `de`, `da`, `do` não distinguem nada e
     inflariam a semelhança de qualquer par."""
@@ -109,6 +127,9 @@ def semelhanca_nome(a: str, b: str) -> float:
     "Padaria Silva" e "Silva Padaria" são o mesmo negócio com as palavras
     trocadas; `difflib` os trata como distantes.
     """
+    a, b = nome_util(a), nome_util(b)
+    if not a or not b:
+        return 0.0                 # sem nome nao ha semelhanca a medir
     ta, tb = tokens(a), tokens(b)
     if not ta or not tb:
         return 0.0

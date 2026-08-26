@@ -399,6 +399,38 @@ def _importar_no_i9(uf: str, cod: str, empresa: str) -> int:
                   "--empresa", shlex.quote(empresa or ""),
                   "--aplicar"]),
     ])
+    # O CODIGO VAI JUNTO, TODA VEZ.
+    #
+    # O i9 rodava uma COPIA propria de `extracao_estadual.py`, sem sincronia
+    # nenhuma com o repositorio, e isso trouxe um defeito de volta depois de
+    # corrigido. Em 25/08 arrumei o vazio do pandas virando a palavra "nan" e
+    # limpei 105.146 campos; em 26/08 a importacao de Bento Goncalves gravou
+    # 1.408 POIs de nome "nan" outra vez, porque a maquina que importa nao tinha
+    # a correcao. O erro nao parou no banco: quatro clubes com piscina distintos,
+    # a ate 119 m um do outro, foram FUNDIDOS num so por "nomes iguais (100%)".
+    #
+    # Conferir a versao e avisar nao bastaria: o aviso chega quando o dado ja
+    # entrou. Mandar o arquivo antes de cada execucao elimina a classe inteira,
+    # e custa os 40 KB que ja viajam por esta mesma conexao.
+    #
+    # `config.py` e `base_comum.py` NAO vao: o primeiro e legitimamente
+    # diferente (credencial e caminho daquela maquina) e o segundo ja esta
+    # igual. Sobrescreve-los quebraria o i9.
+    import base64
+
+    fonte = (BASE / "extracao_estadual.py").read_bytes()
+    envio = subprocess.run(
+        ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=20", I9_SSH,
+         "wsl -d Ubuntu -- bash -s"],
+        input=("cd " + shlex.quote(I9_DIR) + " || exit 1" + chr(10)
+               + "base64 -d > extracao_estadual.py" + chr(10)).encode("utf-8")
+              + base64.b64encode(fonte) + bytes((10,)),
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    if envio.returncode != 0:
+        _log("  ⚠️  nao consegui atualizar o extracao_estadual.py do i9 — "
+             "ele pode estar rodando codigo antigo:")
+        _log("      " + envio.stdout.decode("utf-8", "replace")[:200])
+
     _log(f"  o dataset esta no i9 — importando {cod} la, junto do banco")
     # BYTES, e nao `text=True`. No Windows o wrapper de texto traduz cada
     # quebra de linha para CRLF, e o bash do outro lado recebe o ultimo

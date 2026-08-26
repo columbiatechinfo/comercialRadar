@@ -129,3 +129,59 @@ def test_o_banco_esta_limpo(tabela, coluna):
     finally:
         con.close()
     assert n == 0, f"{tabela}.{coluna} voltou a ter {n:,} campos com texto de vazio"
+
+
+# ─── a terceira guarda: o NOME ───────────────────────────────────────────────
+
+def test_nome_vazio_nao_produz_semelhanca():
+    """CUSTOU CINCO PISCINAS, 26/08/2026.
+
+    Em Bento Gonçalves, quatro fusões foram aplicadas entre POIs a 96–119 m com
+    o motivo "nomes iguais (100%)". Os nomes eram, os dois, a palavra "nan".
+    Eram cinco clubes com piscina distintos, virados um só — e a IA confirmou,
+    porque com "nan" e "nan" na mesa ela não tinha como discordar.
+
+    Domínio, telefone e logradouro já estavam protegidos. O nome, que é o campo
+    mais óbvio, não estava.
+    """
+    import evidencia as ev
+    assert ev.semelhanca_nome("nan", "nan") == 0.0
+    assert ev.semelhanca_nome("", "") == 0.0
+    assert ev.semelhanca_nome("None", "none") == 0.0
+    assert ev.semelhanca_nome("Padaria Silva", "Silva Padaria") == 1.0
+
+
+def test_dois_pois_sem_nome_no_mesmo_bairro_nao_fundem():
+    """O caso exato, reconstruído: dois clubes com piscina sem nome, a ~110 m."""
+    import evidencia as ev
+    a = {"nome": "nan", "categoria": "Piscina/Clube", "lat": -29.150, "lng": -51.510}
+    b = {"nome": "nan", "categoria": "Piscina/Clube", "lat": -29.151, "lng": -51.510}
+    assert ev.avaliar(a, b)["decisao"] == "descartar"
+
+
+def test_o_i9_recebe_o_codigo_a_cada_importacao():
+    """A causa ESTRUTURAL do retorno do defeito.
+
+    O i9 rodava uma cópia própria de `extracao_estadual.py`, sem sincronia com o
+    repositório: a correção de 25/08 existia aqui e não lá, e a importação de
+    26/08 regravou 1.408 POIs de nome "nan".
+
+    Conferir a versão e avisar não bastaria — o aviso chega quando o dado já
+    entrou. O arquivo vai antes de cada execução.
+    """
+    import io
+    s = io.open(os.path.join(RAIZ, "minerar_tudo.py"), encoding="utf-8").read()
+    i = s.index("def _importar_no_i9(")
+    j = s.index("def _etapa(", i)
+    corpo = s[i:j]
+    assert "base64" in corpo and "extracao_estadual.py" in corpo, \
+        "o i9 voltou a rodar a própria cópia do importador"
+    assert corpo.index("base64.b64encode") < corpo.index("importando {cod} la"), \
+        "o código precisa ir ANTES de a importação rodar"
+    # O que importa é o que se ESCREVE no i9, não o que se menciona. `config.py`
+    # aparece no comentário logo acima, explicando por que ele NÃO vai: é
+    # legitimamente diferente lá (credencial e caminho daquela máquina), e
+    # sobrescrevê-lo quebraria o i9.
+    gravados = re.findall(r"base64 -d > ([\w./]+)", corpo)
+    assert gravados == ["extracao_estadual.py"], \
+        f"o envio passou a gravar outros arquivos no i9: {gravados}"
