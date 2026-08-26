@@ -41,6 +41,7 @@ import argparse
 import json
 
 import config  # noqa: F401
+import area_utils as au
 import base_comum as bc
 import evidencia as ev
 
@@ -65,8 +66,41 @@ select p.id, p.nome, p.fonte, p.categoria, p.endereco, p.telefone, p.website,
                          = upper(translate(%(cidade)s, %(ac)s, %(li)s)))
 """
 
+# O corte pela area entra depois do `where`, e por isso a consulta acima termina
+# nele. Ver `_com_margem`: a caixa vai folgada de proposito.
+SQL_AREA = (" and p.maps_lat between %(area_s)s and %(area_n)s"
+            " and p.maps_lng between %(area_o)s and %(area_l)s")
+
 _ACENTOS = "áàâãéêíóôõúüçÁÀÂÃÉÊÍÓÔÕÚÜÇ"
 _LISOS = "aaaaeeiooouucAAAAEEIOOOUUC"
+
+
+# 150 m de folga em volta da area desenhada.
+#
+# A fusao precisa enxergar o vizinho de FORA da linha: o duplicado do POI que
+# esta na borda pode estar do outro lado dela, e cortar exato o tornaria
+# invisivel — o ponto entraria na entrega duas vezes justamente por causa do
+# recorte. 150 m e a propria rede de candidatos (celula de ~110 m mais as
+# vizinhas), entao a margem nao inventa alcance: ela so nao amputa o que o
+# algoritmo ja usa.
+MARGEM_GRAUS = 150 / 111000.0
+
+
+def _com_margem(poligono):
+    """A caixa do poligono, folgada. Devolve `(sul, norte, oeste, leste)`."""
+    s, n, o, l = au.bbox(poligono)
+    return (s - MARGEM_GRAUS, n + MARGEM_GRAUS,
+            o - MARGEM_GRAUS, l + MARGEM_GRAUS)
+
+
+def _um_lado_dentro(par, poligono):
+    """Basta UM dos dois estar na area desenhada.
+
+    Exigir os dois perderia exatamente o caso que a margem existe para pegar.
+    Nenhum dos dois dentro e vizinhanca de fora do pedido — nao se paga por ela.
+    """
+    return (au.ponto_no_poligono(par["a"]["lat"], par["a"]["lng"], poligono)
+            or au.ponto_no_poligono(par["b"]["lat"], par["b"]["lng"], poligono))
 
 
 def _empresa(cur, nome: str) -> str:
@@ -81,8 +115,14 @@ def _empresa(cur, nome: str) -> str:
     return r[1]
 
 
-def carregar(cur, cidade: str) -> list:
-    cur.execute(SQL_POIS, {"cidade": cidade, "ac": _ACENTOS, "li": _LISOS})
+def carregar(cur, cidade: str, poligono=None) -> list:
+    par = {"cidade": cidade, "ac": _ACENTOS, "li": _LISOS}
+    sql = SQL_POIS
+    if poligono:
+        s, n, o, l = _com_margem(poligono)
+        sql += SQL_AREA
+        par.update({"area_s": s, "area_n": n, "area_o": o, "area_l": l})
+    cur.execute(sql, par)
     pois = []
     for (pid, nome, fonte, cat, end, tel, site, cnpj, rz, nf, cnae,
          la, lo, place, logr_m, logr_o, num_c, tier, evid) in cur.fetchall():
@@ -229,19 +269,32 @@ def aplicar(con, decisoes: list) -> int:
 
 
 def cruzar(cidade: str, empresa: str, aplicar_de_fato: bool, usar_ia: bool,
-           tudo_para_ia: bool = False) -> None:
+           tudo_para_ia: bool = False, area: str = "") -> None:
     con = bc.conectar()
     con.autocommit = False
     cur = con.cursor()
     dono = _empresa(cur, empresa)
 
-    pois = carregar(cur, cidade)
-    print(f"  {dono} · {cidade or 'todas as cidades'}: {len(pois):,} POIs")
+    poligono = au.carregar_area(area) if area else None
+    if area and not poligono:
+        raise SystemExit(f"nao ha area desenhada salva com a referencia {area!r}")
+
+    pois = carregar(cur, cidade, poligono)
+    escopo = f"area {area!r} + 150 m" if poligono else (cidade or "todas as cidades")
+    print(f"  {dono} · {escopo}: {len(pois):,} POIs")
     com_logr = sum(1 for p in pois if p.get("logr_marcado"))
     print(f"  {com_logr:,} com logradouro normalizado "
           f"({com_logr / max(1, len(pois)):.0%}) — é a chave de junção")
 
     pares = candidatos(pois)
+    # SO INTERESSA O PAR QUE TOCA A AREA. A margem trouxe o entorno para que o
+    # duplicado da borda fosse visto; par com os DOIS lados fora e vizinhanca de
+    # fora do pedido, e julga-la seria pagar pelo que o operador nao desenhou.
+    if poligono:
+        antes = len(pares)
+        pares = [(a, b) for a, b in pares
+                 if _um_lado_dentro({"a": a, "b": b}, poligono)]
+        print(f"  {antes:,} pares na caixa folgada · {len(pares):,} tocam a area")
     print(f"  {len(pares):,} pares vizinhos a comparar")
     if not pares:
         con.close()
@@ -311,11 +364,14 @@ def main(argv=None) -> int:
     p.add_argument("--aplicar", action="store_true")
     p.add_argument("--sem-ia", dest="sem_ia", action="store_true",
                    help="não chama a Spark; os duvidosos ficam como estão")
+    p.add_argument("--area", default="",
+                   help="nome da area desenhada: cruza so o que a toca (com 150 m "
+                        "de folga). Sem isto, cruza o municipio inteiro.")
     p.add_argument("--tudo-para-ia", dest="tudo_para_ia", action="store_true",
                    help="pergunta também sobre os pares que são só vizinhança "
                         "(12x mais chamadas — veja `filtrar_para_ia`)")
     a = p.parse_args(argv)
-    cruzar(a.cidade, a.empresa, a.aplicar, not a.sem_ia, a.tudo_para_ia)
+    cruzar(a.cidade, a.empresa, a.aplicar, not a.sem_ia, a.tudo_para_ia, a.area)
     return 0
 
 

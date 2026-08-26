@@ -603,6 +603,7 @@ def main(argv=None) -> int:
             # meio-termo para a IA da Spark decidir.
             _tolerante([PYTHON, "cruzar_fontes.py",
                         "--cidade", cidade, "--empresa", a.empresa,
+                        "--area", a.area,
                         "--aplicar"], "cruzamento entre as fontes")
     else:
         _log("  pulado — o cruzamento carimba a empresa dona, e ela vem no")

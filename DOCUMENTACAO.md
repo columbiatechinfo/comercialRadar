@@ -550,6 +550,14 @@ trabalho sobre o município inteiro e só depois cruzar com o polígono**.
 | IA de endereço | 7.223 endereços distintos do município, 360 lotes na Spark | 7 |
 | normalização (CNEFE) | 69.150 linhas | 262 |
 | pontos do iFood | 15 pontos de células de 2,5 km, **zero** dentro do desenho | 1 |
+| cruzamento entre fontes | 11.897 POIs, 831.211 pares, 742 chamadas de IA | 22 POIs, 52 pares, 0 chamadas |
+
+O cruzamento é a exceção que confirma a regra: ele folga a caixa em **150 m** e
+mantém o par em que **um** dos lados toca a área. A fusão precisa enxergar o
+vizinho de fora da linha — o duplicado do POI da borda pode estar do outro lado
+dela, e cortar exato o tornaria invisível, fazendo o ponto entrar na entrega
+duas vezes por causa do recorte. 150 m é a própria rede de candidatos (célula
+de ~110 m mais as vizinhas), então a margem não inventa alcance.
 
 O corte compartilhado é `area_utils.recorte_sql()`: a **caixa** vai ao banco (quatro
 floats numa coluna indexada) e o **polígono exato** é julgado em Python sobre o

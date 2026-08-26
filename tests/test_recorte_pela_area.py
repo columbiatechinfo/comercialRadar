@@ -154,3 +154,57 @@ def test_a_celula_escolhe_o_endereco_mais_central():
     assert len(saida) == 2, "as células saíram erradas"
     densidades = sorted(r[2] for r in saida)
     assert densidades == [1, 2], f"a densidade da célula está errada: {densidades}"
+
+
+# ─── o cruzamento também ─────────────────────────────────────────────────────
+
+def test_o_cruzamento_recorta_pela_area():
+    """A quarta etapa com a mesma doença, achada em 26/08/2026.
+
+    MEDIDO na micro área de Cachoeirinha:
+
+        sem recorte   11.897 POIs · 831.211 pares · 742 chamadas de IA
+        com recorte       22 POIs ·      52 pares ·   0 chamadas
+
+    Para uma área com 6 POIs.
+    """
+    s = _fonte("cruzar_fontes.py")
+    assert '"--area"' in s, "`cruzar_fontes` perdeu o --area"
+    assert "SQL_AREA" in s and "_um_lado_dentro" in s
+
+
+def test_o_cruzamento_folga_a_area_em_150_metros():
+    """A fusão precisa enxergar o vizinho de FORA da linha.
+
+    O duplicado do POI que está na borda pode estar do outro lado dela; cortar
+    exato o tornaria invisível, e o ponto entraria na entrega DUAS VEZES por
+    causa do recorte — o oposto do que o cruzamento existe para fazer.
+
+    150 m é a própria rede de candidatos (célula de ~110 m mais as vizinhas):
+    a margem não inventa alcance, só não amputa o que o algoritmo já usa.
+    """
+    import cruzar_fontes as cf
+    assert abs(cf.MARGEM_GRAUS * 111000 - 150) < 1, "a folga mudou de tamanho"
+    quadrado = [[-29.9, -51.1], [-29.9, -51.09], [-29.89, -51.09], [-29.89, -51.1]]
+    s, n, o, l = cf._com_margem(quadrado)
+    assert s < -29.9 and n > -29.89 and o < -51.1 and l > -51.09
+
+
+def test_basta_um_lado_dentro_da_area():
+    """Exigir os DOIS perderia exatamente o caso que a margem existe para pegar.
+    Nenhum dos dois dentro é vizinhança de fora do pedido."""
+    import cruzar_fontes as cf
+    poly = [[-29.9, -51.1], [-29.9, -51.09], [-29.89, -51.09], [-29.89, -51.1]]
+    dentro = {"lat": -29.895, "lng": -51.095}
+    fora = {"lat": -29.88, "lng": -51.08}
+    assert cf._um_lado_dentro({"a": dentro, "b": fora}, poly)
+    assert cf._um_lado_dentro({"a": fora, "b": dentro}, poly)
+    assert not cf._um_lado_dentro({"a": fora, "b": fora}, poly)
+
+
+def test_sem_area_o_cruzamento_pega_o_municipio():
+    """Escolher o município no painel grava a divisa como área, então na prática
+    o polígono existe sempre — mas a função tem de continuar valendo sem ele."""
+    import cruzar_fontes as cf
+    import inspect
+    assert inspect.signature(cf.carregar).parameters["poligono"].default is None
