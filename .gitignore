@@ -121,3 +121,12 @@ frontend/bancada.html
 # centenas de MB regeraveis com `python cadastur.py`, e o que vale deles ja
 # esta em `cadastur_prestador`.
 dados_externos/cadastur/
+
+# Perfis de navegador: cookies, sessao e credencial de quem usou. Nunca vao ao
+# repositorio — o gitleaks barrou um commit meu por isso em 26/08/2026, e
+# estava certo. `.perfis_ifood` guarda ate `cf_clearance`, que e uma prova de
+# identidade emitida a uma PESSOA.
+.perfis_ifood/
+browser_profiles/
+*/Default/Cookies
+*/Default/Network/Cookies
