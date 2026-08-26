@@ -249,6 +249,27 @@ def avaliar(a: dict, b: dict) -> dict:
                 "dist_m": d, "decisao": "descartar",
                 "porque": "telefone é a única evidência, e ele não decide sozinho"}
 
+    # MESMO NOME + MESMA RUA = CONFIANÇA MÁXIMA, e a distância não derruba.
+    #
+    # Regra do dono do produto, 26/08/2026: "se tiver o mesmo nome e mesmo
+    # logradouro é confiança máxima, mesmo a 50 metros ou 100".
+    #
+    # E ela está certa contra a medição: dos pares de mesmo nome e mesma rua em
+    # Canoas, 89% estão a menos de 20 m — mas 11% ficam além, e o excedente
+    # dessas duplicatas é de 11.983 POIs. A distância que os separa não é o
+    # estabelecimento ser outro: é a coordenada de uma das fontes errar. Duas
+    # bases dizendo o MESMO nome na MESMA rua é evidência mais forte que
+    # qualquer proximidade.
+    #
+    # O teto de 1 km existe para não unir a filial do outro bairro: "Farmácia
+    # São João" na "Avenida Brasil" pode legitimamente ser duas lojas se a
+    # avenida cruza a cidade. Dentro de 1 km, numa mesma rua, é o mesmo ponto.
+    if mesma_rua and sem >= 0.85 and d <= 1000:
+        motivos.append("mesmo nome na mesma rua")
+        return {"confianca": 10, "pontos": max(pontos, 10), "motivos": motivos,
+                "dist_m": d, "decisao": "fundir",
+                "porque": "mesmo nome e mesmo logradouro — a distância não desmente"}
+
     if pontos >= MIN_PARA_FUNDIR:
         # 8 pontos -> 8; cada 2 pontos a mais sobe 1, com teto em 10.
         conf = min(10, 8 + (pontos - MIN_PARA_FUNDIR) // 2)

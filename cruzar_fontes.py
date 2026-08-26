@@ -52,14 +52,16 @@ CELULA = 0.001
 SQL_POIS = """
 select p.id, p.nome, p.fonte, p.categoria, p.endereco, p.telefone, p.website,
        p.cnpj, p.razao_social, p.nome_fantasia, p.cnae,
-       p.maps_lat, p.maps_lng, p.place_id,
+       coalesce(p.maps_lat, p.lat_origem), coalesce(p.maps_lng, p.lng_origem),
+       p.place_id,
        la.logradouro_marcado, la.logradouro_original, la.numero_canonico, la.tier,
        (select count(*) from streetview_imgs s where s.poi_id = p.id)
      + (select count(*) from analise_ia a where a.poi_id = p.id) as evid
   from pois p
   left join logradouro_ajustado la
          on la.fonte = 'pois' and la.record_id = p.id::text
- where p.maps_lat is not null and p.maps_lng is not null
+ where coalesce(p.maps_lat, p.lat_origem) is not null
+   and coalesce(p.maps_lng, p.lng_origem) is not null
    and coalesce(p.status, '') <> 'fundido'
    and p.tenant_id = (select nullif(current_setting('app.tenant_id', true), '')::uuid)
    and (%(cidade)s = '' or upper(translate(coalesce(p.cidade, ''), %(ac)s, %(li)s))
@@ -68,8 +70,21 @@ select p.id, p.nome, p.fonte, p.categoria, p.endereco, p.telefone, p.website,
 
 # O corte pela area entra depois do `where`, e por isso a consulta acima termina
 # nele. Ver `_com_margem`: a caixa vai folgada de proposito.
-SQL_AREA = (" and p.maps_lat between %(area_s)s and %(area_n)s"
-            " and p.maps_lng between %(area_o)s and %(area_l)s")
+# A COORDENADA ORIGINAL VALE AQUI TAMBÉM — e ignorá-la deixava duplicata na
+# tela do operador.
+#
+# Medido em 26/08/2026, Av. Farroupilha, Canoas: "Bico de Pão" aparecia TRÊS
+# vezes. Dois dos registros tinham `maps_lat` nulo e só `lat_origem` — e o
+# `where p.maps_lat is not null` os tornava invisíveis para a fusão. Um deles
+# era idêntico ao que a fusão via: mesmo nome, mesmo telefone (51 3478-4848),
+# mesmo site (bicodepaors.com) e a MESMA coordenada. Fundiria com confiança 10.
+#
+# `maps_lat` é a coordenada que a busca no Maps confirmou; `lat_origem` é a que
+# a fonte trouxe. Exigir a primeira descartava tudo que veio de planilha com
+# status `descoberto` — justamente o que mais tende a duplicar o que as bases
+# públicas já trouxeram.
+SQL_AREA = (" and coalesce(p.maps_lat, p.lat_origem) between %(area_s)s and %(area_n)s"
+            " and coalesce(p.maps_lng, p.lng_origem) between %(area_o)s and %(area_l)s")
 
 _ACENTOS = "áàâãéêíóôõúüçÁÀÂÃÉÊÍÓÔÕÚÜÇ"
 _LISOS = "aaaaeeiooouucAAAAEEIOOOUUC"

@@ -260,3 +260,89 @@ def test_o_julgamento_e_paralelo():
     assert jb.THREADS >= 32, "o paralelismo é onde estava o ganho: 16→64 corta o tempo pela metade"
     s = io.open(os.path.join(RAIZ, "julgar_par_banco.py"), encoding="utf-8").read()
     assert "ThreadPoolExecutor" in s
+
+
+# ─── a coordenada original conta ─────────────────────────────────────────────
+
+def test_a_fusao_enxerga_quem_so_tem_coordenada_de_origem():
+    """DEIXAVA DUPLICATA NA TELA DO OPERADOR, 26/08/2026.
+
+    Na Av. Farroupilha, Canoas, "Bico de Pão" aparecia TRÊS vezes. Dois dos
+    registros tinham `maps_lat` nulo e só `lat_origem` — e o
+    `where p.maps_lat is not null` os tornava invisíveis para a fusão.
+
+    Um deles era IDÊNTICO ao que a fusão via: mesmo nome, mesmo telefone
+    (51 3478-4848), mesmo site (bicodepaors.com) e a MESMA coordenada. Fundiria
+    com confiança 10 — e não fundia porque nunca era carregado.
+
+    Medido na mesma área: 86 POIs e 0 fusões antes; 118 POIs e 7 fusões depois.
+    Eram 32 POIs invisíveis, e são justamente os de planilha — os que mais
+    duplicam o que as bases públicas já trouxeram.
+    """
+    import io
+    s = io.open(os.path.join(RAIZ, "cruzar_fontes.py"), encoding="utf-8").read()
+    assert "coalesce(p.maps_lat, p.lat_origem)" in s, \
+        "a fusão voltou a exigir `maps_lat` e a ignorar a coordenada de origem"
+    assert " where p.maps_lat is not null" not in s
+
+
+def test_a_mineracao_usa_a_INVERSAO_do_ifood():
+    """`extrair_ifood` DESCOBRE pelo feed, e essa metade morreu com o Turnstile
+    interativo — deixá-la na etapa era manter algo que só sabia falhar.
+
+    `enriquecer_por_ifood` vai no sentido contrário e não abre o iFood: parte do
+    POI, acha o link por busca, tira o id da URL e chama `/extra`, que responde
+    200 sem navegador (1.598 respostas, zero falhas, CNPJ em 99,7%).
+    """
+    import io
+    s = io.open(os.path.join(RAIZ, "minerar_tudo.py"), encoding="utf-8").read()
+    i = s.index('_etapa(6, "iFood')
+    j = s.index("_etapa(7,", i)
+    corpo = s[i:j]
+    assert "enriquecer_por_ifood.py" in corpo, "a etapa 6 não usa a inversão"
+    assert "extrair_ifood.py" not in corpo, \
+        "a descoberta pelo feed voltou — ela está bloqueada por fora"
+
+
+def test_mesmo_nome_e_mesma_rua_e_confianca_maxima():
+    """REGRA DO DONO DO PRODUTO, 26/08/2026: "se tiver o mesmo nome e mesmo
+    logradouro é confiança máxima, mesmo a 50 metros ou 100".
+
+    E ela vence a medição. Dos pares de mesmo nome e mesma rua em Canoas, 89%
+    estão a menos de 20 m — mas 11% ficam além, e o excedente dessas duplicatas
+    era de 11.983 POIs. A distância que os separa não é o estabelecimento ser
+    outro: é a coordenada de uma das fontes errar.
+
+    O teto de 1 km existe para não unir a filial do outro bairro: "Farmácia São
+    João" na "Avenida Brasil" pode ser duas lojas se a avenida cruza a cidade.
+    """
+    def par(dist_m):
+        dlat = dist_m / 111000.0
+        return ev.avaliar(
+            _poi(nome="Bico de Pão", logr_marcado="AVENIDA FARROUPILHA",
+                 tier="CONFIRMA"),
+            _poi(nome="Bico de Pão", logr_marcado="AVENIDA FARROUPILHA",
+                 tier="CONFIRMA", lat=-29.9 + dlat))
+    for d in (5, 80, 400):
+        r = par(d)
+        assert r["decisao"] == "fundir" and r["confianca"] == 10, \
+            f"a {d} m deixou de ser confiança máxima"
+    assert par(3000)["decisao"] != "fundir", \
+        "a 3 km pode ser filial — isso tem de ir para a IA, não fundir sozinho"
+
+
+def test_o_cruzamento_compara_a_CIDADE_e_nao_so_a_area():
+    """Ao minerar uma área nova, o que ela descobriu tem de ser confrontado com
+    toda a base daquela cidade.
+
+    Recortando pela área, um POI novo era comparado com ~118 vizinhos em vez dos
+    49.559 da cidade. Medido: 7 fusões na área contra 13.271 na cidade — e
+    Canoas caiu de 49.629 para 36.854 POIs ativos (26%).
+    """
+    import io
+    s = io.open(os.path.join(RAIZ, "minerar_tudo.py"), encoding="utf-8").read()
+    i = s.index("cruzar_fontes.py")
+    corpo = s[i:i + 300]
+    assert '"--area"' not in corpo, \
+        "o cruzamento voltou a comparar só a área — a cidade fica com duplicata"
+    assert '"--cidade"' in corpo

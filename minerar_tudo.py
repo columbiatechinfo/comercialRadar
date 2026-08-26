@@ -691,17 +691,35 @@ def main(argv=None) -> int:
     #
     # A etapa é tolerante de propósito: ela falha, diz por quê, e a mineração
     # segue. Perder o iFood custa CNPJ, não custa a rodada.
-    _etapa(6, "iFood — a descoberta que traz CNPJ em 99,7% das lojas")
+    _etapa(6, "iFood — o CNPJ, partindo dos POIs que já achamos")
     if a.pular_ifood:
         _log("  pulado por --pular-ifood")
     else:
-        rc = i9_windows.rodar_no_windows(["extrair_ifood.py", "--area", a.area],
-                                         log=_log)
+        # A INVERSÃO, e ela substitui o `extrair_ifood` que estava aqui.
+        #
+        # `extrair_ifood` DESCOBRE: abre o feed de cada bairro no navegador e
+        # colhe a lista. Essa metade morreu em 26/08 — Turnstile interativo, que
+        # recusa até o clique humano quando o navegador é dirigido por
+        # automação. Deixá-lo aqui era manter uma etapa que só sabia falhar.
+        #
+        # `enriquecer_por_ifood` vai no sentido contrário e não abre o iFood:
+        #
+        #     POI que já existe  →  busca web "nome cidade ifood"
+        #     link               →  o id está DENTRO da URL
+        #     /merchants/{id}/extra  →  CNPJ, rua, número, CEP, coordenada
+        #
+        # O `/extra` responde 200 sem navegador (medido: 1.598 respostas, zero
+        # falhas, CNPJ em 99,7%). E alcança QUALQUER POI da base — antes o iFood
+        # só enriquecia o que ele mesmo tinha descoberto.
+        #
+        # RODA AQUI, não no i9: ele usa o pool de busca (`SerpPool`), que é a
+        # mesma infraestrutura do `minerar_web`, e não precisa de desktop.
+        rc = _tolerante([PYTHON, "enriquecer_por_ifood.py", "--area", a.area,
+                         "--empresa", a.empresa, "--aplicar"],
+                        "iFood — CNPJ pelo link da loja")
         if rc != 0:
-            _log(f"⚠️  iFood falhou (código {rc}).")
-            _log("   Se a saída acima disser 'nenhuma loja', é o Turnstile do")
-            _log("   Cloudflare — bloqueio externo, não defeito daqui. As demais")
-            _log("   etapas continuam; esta pode ser repetida sozinha depois.")
+            _log("   A etapa é tolerante: perder o iFood custa CNPJ, não a")
+            _log("   rodada. Pode ser repetida sozinha depois.")
 
     # ── 7 · endereços ─────────────────────────────────────────────────────
     #
@@ -782,9 +800,23 @@ def main(argv=None) -> int:
             # regras declaradas (endereco > site > telefone, raio de 20 m,
             # telefone nunca sozinho), grava a confianca de 1 a 10 e manda o
             # meio-termo para a IA da Spark decidir.
+            # SEM `--area`: a comparação é com a CIDADE INTEIRA.
+            #
+            # Regra do dono do produto, 26/08/2026: ao minerar uma área nova, o
+            # que ela descobriu tem de ser confrontado com toda a base daquela
+            # cidade — não só com os vizinhos do desenho.
+            #
+            # Recortando pela área, um POI novo era comparado com ~118 vizinhos
+            # em vez dos 49.559 da cidade. E o custo disso apareceu: Canoas
+            # tinha 13.271 duplicatas esperando, com 11.983 delas de MESMO NOME
+            # e MESMO LOGRADOURO — nunca fundidas porque a fusão nunca as viu
+            # juntas.
+            #
+            # O que sustenta essa mudança é a fusão ser incremental por
+            # natureza: o POI já fundido sai da consulta (`status='fundido'`),
+            # então a cada rodada só o que ainda não foi resolvido é comparado.
             _tolerante([PYTHON, "cruzar_fontes.py",
                         "--cidade", cidade, "--empresa", a.empresa,
-                        "--area", a.area,
                         "--aplicar"], "cruzamento entre as fontes")
     else:
         _log("  pulado — o cruzamento carimba a empresa dona, e ela vem no")
