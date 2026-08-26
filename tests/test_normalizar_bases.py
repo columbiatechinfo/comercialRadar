@@ -156,3 +156,46 @@ def test_as_quatro_fontes_continuam_sendo_exportadas():
     s = _fonte("ajuste_logradouro.py")
     for fonte in ("pois", "cadastro", "ifood", "cnefe"):
         assert f'contagem["{fonte}"]' in s, f"a fonte {fonte} saiu da exportação"
+
+
+def test_o_S_sozinho_nao_vira_santo_por_padrao():
+    """MEDIDO em 26/08/2026, sobre a base ja normalizada: das 253 expansoes de
+    `S` -> `SAO`, 222 estavam ERRADAS -- 88%.
+
+    O que o `S` era de verdade, nos casos reais:
+
+        QUADR S UM / S DOIS      letra de QUADRA + numeral, no Guajuviras
+                                 (Canoas). Nao existe santo chamado "Um".
+        BECO S NOME              S = SEM. E o dano nao e so o santo inventado:
+        ESTRADA S DENOMINACAO    apaga-se o sinal de que a via NAO TEM NOME.
+        RUA S SALVADOR DALI      o pintor, em Rubem Berta (POA), no CNEFE cru.
+
+    "DR" e "PE" tem uma leitura so; "S" e SAO, SEM, SETOR e letra de quadra ao
+    mesmo tempo. Por isso ele passou a expandir CONTRA UMA LISTA de santos.
+
+    E ERRAR PARA O LADO DE NAO EXPANDIR E DE PROPOSITO: se as duas bases guardam
+    "S FULANO", elas continuam casando entre si e nada se perde. Expandir errado
+    e que corrompe -- cria forma canonica inexistente e pode colidir duas vias.
+    """
+    import sys
+    d = os.path.join(RAIZ, "skills", "ajuste-logradouro")
+    if d not in sys.path:
+        sys.path.insert(0, d)
+    import normalizacao_hardening as H
+
+    # os que quebravam
+    for txt in ("QUADR S UM", "QUADRA S DOIS", "BECO S NOME",
+                "ESTRADA S DENOMINACAO", "BECO S M DENOMINACAO 2",
+                "RUA S SALVADOR DALI"):
+        assert "SAO" not in H.expandir_titulos(txt),             f"{txt!r} voltou a inventar um santo"
+
+    # os que tem de continuar funcionando
+    for txt, esperado in (("ESTRADA S ISIDORO", "ESTRADA SAO ISIDORO"),
+                          ("ESTRADA S GOTARDO", "ESTRADA SAO GOTARDO"),
+                          ("RUA S JOSE", "RUA SAO JOSE"),
+                          ("AV S SEBASTIAO", "AV SAO SEBASTIAO")):
+        assert H.expandir_titulos(txt) == esperado,             f"{txt!r} deixou de expandir um santo real"
+
+    # e os outros titulos nao foram afetados
+    assert H.expandir_titulos("RUA DR SELBACH") == "RUA DOUTOR SELBACH"
+    assert H.expandir_titulos("RUA STA RITA") == "RUA SANTA RITA"

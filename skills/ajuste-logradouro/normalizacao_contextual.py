@@ -73,6 +73,10 @@ def expandir_titulos_guardado(toks, tem_tipo: bool = True):
                 and i + 2 < n):
             out += ["NOSSA", "SENHORA"]; mexeu = True; i += 2; slot_titulo = i; continue
 
+        # "S" so expande contra a lista de santos -- ver H.s_e_sao
+        if t == "S" and not H.s_e_sao(toks[i + 1] if i + 1 < n else ""):
+            out.append(t); i += 1; continue
+
         if (t in H._TITULOS and t not in BLOQUEADOS and no_slot
                 and tem_nome_depois and not prev_artigo):
             exp = H._TITULOS[t]

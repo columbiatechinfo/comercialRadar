@@ -120,6 +120,68 @@ _TITULOS = {
     "NS": "NOSSA SENHORA", "NSA": "NOSSA SENHORA", "PCA": "PRACA",
 }
 
+# --------------------------------------------------------------------------
+# "S" NAO E UM TITULO COMO OS OUTROS -- e a entrada mais ambigua desta tabela.
+#
+# MEDIDO em 26/08/2026 sobre a base ja normalizada: das 253 expansoes de
+# `S` -> `SAO`, 222 estavam ERRADAS -- 88%. O que "S" era de verdade:
+#
+#     QUADR S UM, S DOIS, S CINCO   letra de QUADRA + numeral (Guajuviras,
+#                                   Canoas). Nao existe santo chamado "Um".
+#     BECO S NOME                   S = SEM. Virou "BECO SAO NOME", e o pior
+#     ESTRADA S DENOMINACAO         nao e o santo inventado: e que se APAGA o
+#                                   sinal de que a via NAO TEM NOME.
+#     RUA S SALVADOR DALI           o pintor, em Rubem Berta (POA). CNEFE cru.
+#
+# Diferente de "DR" ou "PE", que so tem uma leitura, "S" e SAO, SEM, SETOR e
+# letra de quadra ao mesmo tempo. Por isso ele deixou de expandir por padrao e
+# passou a expandir CONTRA UMA LISTA.
+#
+# POR QUE ERRAR PARA O LADO DE NAO EXPANDIR: se as duas bases guardam "S
+# FULANO", elas continuam casando entre si -- nao se perde nada. Expandir
+# errado e que corrompe, porque cria uma forma canonica que nao existe e pode
+# colidir duas vias diferentes.
+_SANTOS = {
+    "JOSE", "JOAO", "PEDRO", "PAULO", "ANTONIO", "FRANCISCO", "SEBASTIAO",
+    "LUIS", "LUIZ", "MIGUEL", "JORGE", "MARCOS", "MATEUS", "LUCAS", "TOME",
+    "TIAGO", "ANDRE", "FELIPE", "BARTOLOMEU", "SIMAO", "JUDAS", "MATIAS",
+    "ESTEVAO", "BENTO", "BENEDITO", "CRISTOVAO", "DOMINGOS", "GABRIEL",
+    "RAFAEL", "VICENTE", "LOURENCO", "LEOPOLDO", "GERALDO", "ROQUE", "BRAS",
+    "BRAZ", "CAETANO", "JERONIMO", "AGOSTINHO", "AMBROSIO", "ANSELMO",
+    "BERNARDO", "CAMILO", "CLEMENTE", "CONRADO", "DIMAS", "FIDELIS",
+    "GONCALO", "GOTARDO", "HENRIQUE", "HILARIO", "ISIDORO", "IVO", "JACO",
+    "JULIAO", "LAZARO", "LEANDRO", "LEONARDO", "MANOEL", "MANUEL", "MARCELO",
+    "MARTINHO", "NICOLAU", "NORBERTO", "PATRICIO", "RAIMUNDO", "ROMUALDO",
+    "SATURNINO", "SEVERINO", "SILVESTRE", "TARCISIO", "TEODORO", "VALENTIM",
+    "VITOR", "AFONSO", "ALBERTO", "ALEXANDRE", "BOAVENTURA", "CARLOS",
+    "CIPRIANO", "EDUARDO", "ELIAS", "FABIANO", "GREGORIO", "INACIO",
+    "JOAQUIM", "JUSTINO", "MARTIM", "MAURICIO", "PIO", "TADEU", "URBANO",
+    "VALERIO", "VITAL",
+}
+# SALVADOR fica DE FORA de proposito: o unico caso real na base e "S SALVADOR
+# DALI", o pintor. "Sao Salvador" existe, mas e raro demais para pagar o preco
+# de rebatizar o Dali de santo.
+
+# S seguido de um destes nunca e santo -- e a leitura "SEM" ou "letra de quadra".
+_NUNCA_SANTO = {
+    "UM", "DOIS", "TRES", "QUATRO", "CINCO", "SEIS", "SETE", "OITO", "NOVE",
+    "DEZ", "ONZE", "DOZE", "TREZE", "QUATORZE", "CATORZE", "QUINZE",
+    "NOME", "DENOMINACAO", "DENOMINACOES", "IDENTIFICACAO", "NUMERO",
+    "INFORMACAO", "SAIDA", "DADOS",
+}
+
+
+def s_e_sao(proximo: str) -> bool:
+    """Decide se o token `S` desta posicao e mesmo `SAO`. Ver o bloco acima."""
+    if not proximo:
+        return False
+    p = proximo.upper()
+    if p in _NUNCA_SANTO or p.isdigit():
+        return False
+    if len(p) == 1:                     # "S M DENOMINACAO" -- inicial solta
+        return False
+    return p in _SANTOS
+
 
 def expandir_titulos(s):
     toks = s.split()
@@ -130,7 +192,9 @@ def expandir_titulos(s):
         # "N SRA"/"N S" -> NOSSA SENHORA
         if t == "N" and i + 1 < n and toks[i + 1] in ("SRA", "SR", "S", "SA"):
             out += ["NOSSA", "SENHORA"]; i += 2; continue
-        if t in _TITULOS:
+        if t == "S" and not s_e_sao(toks[i + 1] if i + 1 < n else ""):
+            out.append(t)               # ambiguo demais: fica como esta
+        elif t in _TITULOS:
             out += _TITULOS[t].split()
         else:
             out.append(t)
