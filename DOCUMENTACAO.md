@@ -401,6 +401,36 @@ grátis generosa com billing).
                    fora do polígono → status 'fora_da_area' (não ingere)
 ```
 
+### Por que o iFood cai no CAPTCHA mesmo com proxy (26/08/2026)
+
+O Cloudflare do iFood passou a usar **Turnstile interativo** ("Confirme que é
+humano"), e navegador automatizado não clica. A pergunta era por que o proxy não
+resolve. Medido, isolando uma variável por vez:
+
+| build | proxy | modo | resultado |
+|---|---|---|---|
+| Chromium do Playwright | não | visível | DESAFIO |
+| **Chrome real** (`channel="chrome"`) | não | visível | **PASSOU** |
+| Chrome real | Webshare | visível | DESAFIO (0/4 IPs) |
+| Chrome real | não | oculto | DESAFIO |
+
+**São três sinais somados, não um.** O Chromium empacotado anuncia
+`navigator.webdriver=True` e é barrado sozinho — foi o que mascarou o efeito do
+proxy na primeira medição, porque com ele tudo falha. Trocado por Chrome real,
+o IP volta a pesar: os quatro IPs da Webshare (datacenter) foram barrados. E
+mesmo o Chrome real, oculto, é barrado.
+
+Só a combinação **Chrome real + IP residencial + visível** passa — que é
+exatamente a configuração de uma pessoa usando o próprio computador.
+
+**O que NÃO era:** nem o `--disable-http2` (testado com e sem, mesmo resultado)
+nem os IPs estarem mortos (os 100 do cache são os 100 da conta, todos válidos,
+e respondem 200 em GET direto).
+
+**Consequência prática:** o iFood por navegador exige proxy RESIDENCIAL, que a
+conta atual não tem. O endpoint de detalhe (`/v1/merchants/{id}/extra`) continua
+aberto e sem navegador — é dele que vem o CNPJ. Toda listagem está 404 ou 403.
+
 ### Os proxies não estavam ruins — o HTTP/2 estava (26/08/2026)
 
 A run de Bento Gonçalves perdeu **15 IPs** antes de conseguir buscar. O sintoma:
