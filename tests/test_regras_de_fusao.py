@@ -213,9 +213,19 @@ def test_a_transitividade_e_tratada():
 
 
 def test_a_confianca_e_gravada_com_a_origem():
+    """Cuidado ao ler este teste: ele checa a INTENCAO, nao a forma do SQL.
+
+    A versao um-a-um escrevia `confianca = %s`; a escrita em lote passou a
+    escrever `confianca = f.conf`, lendo da lista de VALUES. As duas colunas
+    continuam sendo gravadas, e e isso que importa — quem abre a ficha do POI
+    precisa saber o quanto se confia na fusao e o que a decidiu.
+    """
     import io
     s = io.open(os.path.join(RAIZ, "cruzar_fontes.py"), encoding="utf-8").read()
-    assert "confianca = %s" in s and "confianca_origem = %s" in s
+    i = s.index("def aplicar(")
+    corpo = s[i:s.index("def cruzar(", i)]
+    assert "confianca =" in corpo and "confianca_origem =" in corpo,         "a fusao deixou de gravar a confianca ou a origem dela"
+    assert "motivo" in corpo, "o motivo em texto sumiu da gravacao"
     assert 'origem="regra"' in s and 'origem="ia"' in s, \
         "deixou de distinguir a fusão por regra da fusão decidida pela IA"
 
@@ -346,3 +356,39 @@ def test_o_cruzamento_compara_a_CIDADE_e_nao_so_a_area():
     assert '"--area"' not in corpo, \
         "o cruzamento voltou a comparar só a área — a cidade fica com duplicata"
     assert '"--cidade"' in corpo
+
+
+def test_a_gravacao_das_fusoes_e_em_lote():
+    """MEDIDO em 26/08/2026, sobre 400 fusões de POIs reais de Canoas:
+
+        um a um    180,6 s  ·      2 fusões/s  ·  13.271 levariam 99,8 min
+        EM LOTE      0,3 s  ·  1.596 fusões/s  ·  13.271 levam    0,1 min
+
+    602× — e o custo não era o banco, era a latência: dois comandos por fusão
+    contra o Postgres do i9 viram 26.542 idas e voltas.
+
+    A DECISÃO continua uma a uma em Python, e tem de continuar: a transitividade
+    exige ordem (se A absorve B e depois B absorveria C, C vai para A, não para
+    B, que já é POI fundido). O que virou lote é só a ESCRITA, depois de as
+    cadeias já estarem resolvidas.
+    """
+    import io
+    s = io.open(os.path.join(RAIZ, "cruzar_fontes.py"), encoding="utf-8").read()
+    i = s.index("def aplicar(")
+    j = s.index("def cruzar(", i)
+    corpo = s[i:j]
+    assert "execute_values" in corpo, "a gravação voltou a ser uma a uma"
+    assert "id = any(" in corpo, "o `update pois` voltou a ser um por vez"
+    # a decisão continua sequencial — é o que preserva a transitividade
+    assert "def raiz(" in corpo and "sorted(decisoes" in corpo, \
+        "a resolução de cadeia saiu de antes da escrita"
+
+
+def test_o_lote_tem_teto():
+    """`execute_values` embute os valores no texto do comando. Com 13 mil linhas
+    ele passa de megabytes e o parser do Postgres vira o gargalo no lugar da
+    rede — troca-se um problema por outro."""
+    import io
+    s = io.open(os.path.join(RAIZ, "cruzar_fontes.py"), encoding="utf-8").read()
+    i = s.index("def aplicar(")
+    assert "LOTE = 1000" in s[i:i + 3000], "o teto do bloco sumiu"

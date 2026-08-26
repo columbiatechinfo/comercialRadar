@@ -240,36 +240,72 @@ def _sobrevivente(a: dict, b: dict) -> tuple:
     return (a, b) if str(a["id"]) < str(b["id"]) else (b, a)
 
 
-def aplicar(con, decisoes: list) -> int:
-    """Grava as fusões. `decisoes` são dicts com `a`, `b`, `evidencia` e
-    `confianca` já resolvida.
+def aplicar(con, decisoes: list, log=print) -> int:
+    """Grava as fusões EM LOTE. Devolve quantos POIs foram absorvidos.
 
-    A TRANSITIVIDADE É TRATADA: se A absorve B e depois B absorveria C, C tem de
-    ir para A. Sem isto o vínculo de C apontaria para um POI já marcado como
-    fundido, e a ficha dele ficaria órfã na tela.
+    POR QUE EM LOTE, e o número que obrigou a mudança
+
+    A primeira versão mandava dois `UPDATE` por fusão, um a um. Em Canoas foram
+    13.271 fusões = **26.542 idas e voltas** ao Postgres do i9, e a etapa levou
+    ~15 minutos — quase tudo em latência de rede, não em trabalho de banco.
+    Numa capital isso escala mal.
+
+    Aqui a decisão de QUEM absorve QUEM continua sendo tomada em Python, uma a
+    uma (a transitividade exige ordem), mas a ESCRITA vira dois comandos:
+
+        um `UPDATE ... FROM (VALUES ...)` para reapontar os vínculos
+        um `UPDATE ... WHERE id = ANY(...)` para marcar os absorvidos
+
+    A TRANSITIVIDADE CONTINUA TRATADA, e ela é o motivo de a decisão não poder
+    ser feita em SQL puro: se A absorve B e depois B absorveria C, C tem de ir
+    para A — não para B, que já é um POI fundido. `raiz()` resolve a cadeia
+    ANTES de qualquer escrita, então o lote já sai com o destino final.
+
+    O TAMANHO DO LOTE É 1.000 de propósito. `execute_values` monta um comando
+    com todos os valores embutidos; com 13 mil linhas o texto do comando passa
+    de megabytes e o parser do Postgres vira o gargalo no lugar da rede.
     """
+    import psycopg2.extras
+
     cur = con.cursor()
-    destino, n = {}, 0
+    destino = {}
 
     def raiz(pid):
         while pid in destino:
             pid = destino[pid]
         return pid
 
+    # 1. RESOLVE AS CADEIAS PRIMEIRO, em memória. Nada é escrito aqui.
+    fusoes = []
     for d in sorted(decisoes, key=lambda x: -x["confianca"]):
         vive, morre = _sobrevivente(d["a"], d["b"])
         rv, rm = raiz(vive["id"]), raiz(morre["id"])
         if rv == rm:
             continue                      # já estão no mesmo POI
         motivo = (f"{d['origem']}: " + " · ".join(d["evidencia"]["motivos"]))[:400]
-        cur.execute("""update vinculo_poi set poi_id = %s, confianca = %s,
-                              confianca_origem = %s, motivo = %s
-                        where poi_id = %s and estado = 'vinculado'""",
-                    (rv, d["confianca"], d["origem"], motivo, rm))
-        cur.execute("update pois set status = 'fundido' where id = %s", (rm,))
+        fusoes.append((rm, rv, d["confianca"], d["origem"], motivo))
         destino[rm] = rv
-        n += 1
-    return n
+
+    if not fusoes:
+        return 0
+
+    # 2. ESCREVE EM LOTE. Dois comandos por bloco, não dois por fusão.
+    LOTE = 1000
+    for i in range(0, len(fusoes), LOTE):
+        bloco = fusoes[i:i + LOTE]
+        psycopg2.extras.execute_values(cur, """
+            update vinculo_poi v
+               set poi_id = f.vive, confianca = f.conf,
+                   confianca_origem = f.origem, motivo = f.motivo
+              from (values %s) as f(morre, vive, conf, origem, motivo)
+             where v.poi_id = f.morre and v.estado = 'vinculado'""",
+            bloco, template="(%s::bigint, %s::bigint, %s::int, %s::text, %s::text)")
+
+        cur.execute("update pois set status = 'fundido' where id = any(%s)",
+                    ([m for m, *_ in bloco],))
+        if len(fusoes) > LOTE:
+            log(f"    gravadas {min(i + LOTE, len(fusoes)):,} de {len(fusoes):,}")
+    return len(fusoes)
 
 
 def cruzar(cidade: str, empresa: str, aplicar_de_fato: bool, usar_ia: bool,
@@ -353,7 +389,7 @@ def cruzar(cidade: str, empresa: str, aplicar_de_fato: bool, usar_ia: bool,
         con.close()
         return
 
-    n = aplicar(con, decisoes)
+    n = aplicar(con, decisoes, print)
     con.commit()
     print(f"\n  GRAVADO: {n:,} POIs absorvidos — marcados 'fundido', NÃO apagados, "
           "com o vínculo transferido. Reversível pelo `x` da ficha.")
