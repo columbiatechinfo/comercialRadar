@@ -303,11 +303,12 @@ def _diagnostico(uf: str, cod: str, cidade: str, empresa: str,
          ("" if cadastur_baixado() else
           "snapshot do MTur ainda nao baixado (uma vez so, ver o log)")),
         (4, "captura + OCR do Maps", True, ""),
-        (5, "iFood", tem_cnefe and not pular["ifood"],
+        (5, "descoberta por categoria no Maps", not pular["descoberta"], ""),
+        (6, "iFood", tem_cnefe and not pular["ifood"],
          "" if tem_cnefe else "sem CNEFE do municipio: nao ha endereco-semente"),
-        (6, "enderecos (IA + skill)", bool(cod), 
+        (7, "enderecos (IA + skill)", bool(cod),
          "" if cod else "precisa do codigo IBGE do municipio"),
-        (7, "cruzamento entre as fontes", bool(empresa),
+        (8, "cruzamento entre as fontes", bool(empresa),
          "" if empresa else "informe --empresa: o vinculo carimba a dona do dado"),
     ]
 
@@ -460,7 +461,7 @@ def _importar_no_i9(uf: str, cod: str, empresa: str) -> int:
 def _etapa(n: int, titulo: str) -> None:
     _log("")
     _log("─" * 62)
-    _log(f"▶ {n}/7 {titulo}")
+    _log(f"▶ {n}/8 {titulo}")
     _log("─" * 62)
 
 
@@ -499,6 +500,9 @@ def main(argv=None) -> int:
                    help="pula o Cadastur/MTur desta rodada")
     p.add_argument("--pular-ifood", dest="pular_ifood", action="store_true",
                    help="pula a descoberta do iFood desta rodada")
+    p.add_argument("--pular-descoberta", dest="pular_descoberta",
+                   action="store_true",
+                   help="não varre as categorias do Maps nesta rodada")
     p.add_argument("--produzir-bases", dest="produzir_bases", action="store_true",
                    help="produz o dataset da UF NESTA máquina. São horas e ela "
                         "disputa CPU com a captura — o lugar disso é o i9.")
@@ -514,7 +518,7 @@ def main(argv=None) -> int:
     cod_previa = _cod_municipio(cidade, uf) if uf and cidade else ""
     _diagnostico(uf, cod_previa, cidade, a.empresa,
                  {"bases": a.pular_bases, "cadastur": a.pular_cadastur,
-                  "ifood": a.pular_ifood})
+                  "ifood": a.pular_ifood, "descoberta": a.pular_descoberta})
 
     # O CÓDIGO DO MUNICÍPIO NÃO DEPENDE DAS BASES PÚBLICAS.
     #
@@ -620,7 +624,41 @@ def main(argv=None) -> int:
         _log(f"⚠️  A captura terminou com código {rc_captura}. As etapas de")
         _log("   endereço e cruzamento seguem sobre o que já entrou.")
 
-    # ── 5 · iFood ─────────────────────────────────────────────────────────
+    # ── 5 · descoberta por categoria no Maps ──────────────────────────────
+    #
+    # A SUBSTITUTA DA DESCOBERTA DO iFOOD, e ela nasceu de uma perda.
+    #
+    # Até 25/08 quem enumerava comércio por ramo era o iFood. Em 26/08 essa
+    # metade morreu por fora: Turnstile interativo que recusa até clique humano
+    # quando o navegador é dirigido por automação, API de listagem 404/403, app
+    # blindado contra emulador. Só o detalhe (`/extra`) sobreviveu.
+    #
+    # O Google Maps faz a mesma pergunta por outro caminho, com o navegador que
+    # a captura já usa: cada busca de categoria devolve a lista daquele ramo com
+    # o nome ESCRITO pelo Google e a coordenada real. Sem OCR no meio — e é aí
+    # que ela se separa da etapa 4.
+    #
+    # POR QUE DEPOIS DA CAPTURA, E NÃO ANTES. As duas descobrem, e a dedup é por
+    # nome + coordenada. Rodando depois, a captura já pôs no banco o que ela viu,
+    # e aqui só entra o que É DIFERENTE — em vez de as duas competirem para
+    # gravar o mesmo ponto e uma delas perder por milímetros de coordenada.
+    #
+    # MEDIDO em Bento Gonçalves: 6 estabelecimentos na área, 3 deles novos
+    # (Famiglia Volpini, In Piazza di Bento, Dolce Gusto) que nem a captura nem
+    # as bases públicas tinham.
+    #
+    # PROXY É O PADRÃO, a pedido do dono do produto: varrer dezenas de
+    # categorias seguidas pelo IP do operador faria o Google pedir CAPTCHA no
+    # navegador PESSOAL dele.
+    _etapa(5, "descoberta por categoria no Maps — o que os botões de ramo mostram")
+    if a.pular_descoberta:
+        _log("  pulado por --pular-descoberta")
+    else:
+        _tolerante([PYTHON, "descobrir_maps.py", "--area", a.area,
+                    "--empresa", a.empresa, "--aplicar"],
+                   "descoberta por categoria")
+
+    # ── 6 · iFood ─────────────────────────────────────────────────────────
     #
     # Sob demanda, como a captura: o iFood não tem base pública por UF, e a
     # metade cara (enumerar os ids) precisa de navegador na praça daquela área.
@@ -653,7 +691,7 @@ def main(argv=None) -> int:
     #
     # A etapa é tolerante de propósito: ela falha, diz por quê, e a mineração
     # segue. Perder o iFood custa CNPJ, não custa a rodada.
-    _etapa(5, "iFood — a descoberta que traz CNPJ em 99,7% das lojas")
+    _etapa(6, "iFood — a descoberta que traz CNPJ em 99,7% das lojas")
     if a.pular_ifood:
         _log("  pulado por --pular-ifood")
     else:
@@ -665,7 +703,7 @@ def main(argv=None) -> int:
             _log("   Cloudflare — bloqueio externo, não defeito daqui. As demais")
             _log("   etapas continuam; esta pode ser repetida sozinha depois.")
 
-    # ── 6 · endereços ─────────────────────────────────────────────────────
+    # ── 7 · endereços ─────────────────────────────────────────────────────
     #
     # A NORMALIZAÇÃO VEM DEPOIS DE TUDO QUE GRAVA POI, e não antes.
     #
@@ -673,7 +711,7 @@ def main(argv=None) -> int:
     # a captura e o iFood entrarem depois e ficarem de fora — e o cruzamento do
     # passo 7, que depende do logradouro canônico, cruzaria menos sem que
     # ninguém entendesse por quê.
-    _etapa(6, "endereços — a IA lê o que está grudado, a skill prova a forma")
+    _etapa(7, "endereços — a IA lê o que está grudado, a skill prova a forma")
     if cod:
         # A ÁREA VAI JUNTO, SEMPRE — e é ela que decide o tamanho do trabalho.
         #
@@ -696,8 +734,8 @@ def main(argv=None) -> int:
     else:
         _log("  pulado — sem código IBGE do município")
 
-    # ── 7 · cruzamento ────────────────────────────────────────────────────
-    _etapa(7, "cruzamento — quem é o mesmo ponto vira UM, com várias abas")
+    # ── 8 · cruzamento ────────────────────────────────────────────────────
+    _etapa(8, "cruzamento — quem é o mesmo ponto vira UM, com várias abas")
     if a.empresa:
         _tolerante([PYTHON, "povoar_vinculo.py", "--proprios",
                     "--empresa", a.empresa, "--aplicar"], "vínculo próprio")
