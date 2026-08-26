@@ -431,6 +431,56 @@ nova a cada clique, e da segunda abertura em diante o container ainda não exist
 quando `openPopup` retorna. O popup abre com os números certos e o botão não faz
 nada. `tests/test_popup_da_area.py` tranca isso.
 
+### O processo caro roda dentro do desenho — nas três etapas (25/08/2026)
+
+A mesma doença estava em três lugares, sempre com a mesma forma: **montar o
+trabalho sobre o município inteiro e só depois cruzar com o polígono**.
+
+| etapa | antes | com o recorte |
+|---|---|---|
+| busca no Maps | 88 ícones do tile, 80 fora do desenho, buscados assim mesmo | 8 |
+| IA de endereço | 7.223 endereços distintos do município, 360 lotes na Spark | 7 |
+| normalização (CNEFE) | 69.150 linhas | 262 |
+| pontos do iFood | 15 pontos de células de 2,5 km, **zero** dentro do desenho | 1 |
+
+O corte compartilhado é `area_utils.recorte_sql()`: a **caixa** vai ao banco (quatro
+floats numa coluna indexada) e o **polígono exato** é julgado em Python sobre o
+que sobra. Mandar `ponto_no_poligono` ao SQL viraria varredura sequencial.
+
+**Não existe "sem área" para desligar isto, e não precisa existir.** Escolher o
+município no painel *grava a divisa dele* como área de trabalho
+(`/api/area/municipio` escreve no mesmo `area_atual` do desenho manual). O
+polígono já diz a verdade nos dois casos — quando é o município, a caixa cobre o
+município. Ramificar por "é área ou é município?" seria inventar uma distinção
+que o dado não faz.
+
+**A normalização corta pela CAIXA, não pelo polígono exato**, e isso é escolha: a
+skill decide a grafia de uma *rua*, e rua não termina na linha que o operador
+desenhou. Cortar exato partiria a Av. General Flores da Cunha ao meio e jogaria
+fora metade da prova de que ela é a mesma da "Av. Gen. Flores da Cunha".
+
+#### Por que o iFood dava "nenhum endereço do CNEFE em área desenhada"
+
+A grade se formava sobre o município, escolhia um endereço por célula de 2,5 km —
+o mais próximo do **centro da célula** — e só então cruzava com o polígono. Numa
+área de 1,5 ha nenhum centro de célula cai dentro. Havia **262 endereços do CNEFE
+disponíveis** ali, e os 15 escolhidos eram todos de outros bairros. A etapa 5
+falhava inteira, e a mensagem sugeria falta de dado quando o dado estava lá.
+
+Agora, com polígono, a ordem se inverte: recorta primeiro (`CNEFE_NA_CAIXA`),
+julga o polígono em Python, e só então forma as células (`_agrupar_em_celulas`).
+Sem polígono o caminho antigo continua, no banco — Porto Alegre não cabe em
+memória.
+
+#### A IA e a skill fazem coisas diferentes
+
+Confusão que já custou explicação: `segmentar_endereco.py` **separa** o campo
+grudado (`"Avenida Cruzeiro, nº 420, 94930-615"` → logradouro | número | CEP) e é
+ele que chama a IA da Spark, uma vez por texto de endereço distinto, cacheado
+para sempre em `endereco_segmentado`. `ajuste_logradouro.py` **decide a grafia
+canônica** e **não chama IA nenhuma** — é determinístico e só aprende de par
+provado.
+
 ### A busca só roda dentro da área desenhada (25/08/2026)
 
 O tile é fotografado inteiro — o retângulo tem tamanho fixo e não encolhe com o

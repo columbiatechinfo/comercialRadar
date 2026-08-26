@@ -35,7 +35,9 @@ No i9, como a extração estadual: é onde o banco está, onde o CNEFE está, e 
 skill passa no próprio gate (o `selftest` dela ataca lock POSIX e symlink, que o
 Windows recusa sem privilégio).
 
-A IA, quando é chamada, é a da SPARK. O i9 nunca carrega modelo.
+ESTE ARQUIVO NÃO CHAMA IA. Quem chama é o `segmentar_endereco`, e é a da Spark
+— o i9 nunca carrega modelo. Aqui a decisão é determinística: a skill só aprende
+`tokenA ≡ tokenB` de par provado, e é isso que torna a marcação auditável.
 
 USO
     python ajuste_logradouro.py --municipio 4304606 --listar
@@ -135,7 +137,11 @@ select count(*) from pois p
 #
 # A escolha é determinística (`order by` completo) para que duas execuções sobre
 # a mesma base tirem a MESMA linha — a skill depende de idempotência.
-SQL_CNEFE = """
+# O CNEFE em DUAS METADES, para o corte da área caber no meio.
+#
+# As outras consultas terminam no `where` e aceitam o fragmento colado no fim.
+# Esta termina em `order by ... limit`, e colar depois disso seria SQL inválido.
+SQL_CNEFE_INICIO = """
 select distinct on (cod_unico_endereco)
        cod_unico_endereco,
        trim(concat_ws(' ', nullif(nom_tipo_seglogr,''), nullif(nom_titulo_seglogr,''),
@@ -145,11 +151,17 @@ select distinct on (cod_unico_endereco)
                       nullif(nom_comp_elem2,''), nullif(val_comp_elem2,''))),
        latitude, longitude
   from ibge_cnefe
- where cod_municipio = %s
+ where cod_municipio = %(cod)s
    and coalesce(nom_seglogr, '') <> ''
- order by cod_unico_endereco, latitude nulls last, longitude nulls last
- limit %s
 """
+
+SQL_CNEFE_FIM = """
+ order by cod_unico_endereco, latitude nulls last, longitude nulls last
+ limit %(lim)s
+"""
+
+# Mantido para quem importa o nome: a consulta inteira, sem recorte de área.
+SQL_CNEFE = SQL_CNEFE_INICIO + SQL_CNEFE_FIM
 
 
 def _gravar_csv(caminho: Path, linhas, scope: str) -> int:
@@ -165,11 +177,49 @@ def _gravar_csv(caminho: Path, linhas, scope: str) -> int:
     return n
 
 
-def exportar(cod: str, limite_cnefe: int, dirtrab: Path) -> dict:
-    """Cada fonte vira um CSV com as colunas canônicas. Devolve o que saiu."""
+def exportar(cod: str, limite_cnefe: int, dirtrab: Path, area: str = "") -> dict:
+    """Cada fonte vira um CSV com as colunas canônicas. Devolve o que saiu.
+
+    COM `area`, SÓ OS REGISTROS DE DENTRO DO DESENHO ENTRAM.
+
+    Normalizar o município inteiro para atender uma área de 1,5 ha é o mesmo
+    desperdício que a busca no Maps e o iFood tinham. Sem `area`, nada muda: a
+    exportação vale para o município, que é o caso de quem escolheu o município.
+
+    O CNEFE é recortado junto, e isso tem consequência que precisa ser DITA. Ele
+    é a autoridade da skill (`autoridade_nivel: 100`) — é ele que decide entre
+    duas grafias igualmente comuns. Recortado, ele decide sobre as ruas da área
+    com os endereços da área. Se sobrar pouco, o `--listar` mostra o número
+    antes de qualquer decisão ser tomada.
+    """
+    import area_utils as au
+
     nome, uf = municipio(cod)
     entrada = dirtrab / "entrada"
     contagem = {}
+
+    poligono = au.carregar_area(area) if area else None
+    if area and not poligono:
+        raise SystemExit(f"não há área desenhada salva com a referência {area!r}")
+
+    c_pois, par_pois = au.recorte_sql(poligono, "p.maps_lat", "p.maps_lng")
+    c_cad, par_cad = au.recorte_sql(poligono, "c.lat", "c.lng", "cad")
+    c_ifd, par_ifd = au.recorte_sql(poligono, "m.lat", "m.lng", "ifd")
+    # O CNEFE guarda coordenada como TEXTO. O cast impede o uso de índice, mas o
+    # `cod_municipio` já cortou para um município e é ele que carrega a consulta.
+    c_cne, par_cne = au.recorte_sql(poligono, "latitude::numeric",
+                                    "longitude::numeric", "cne")
+    # AQUI O CORTE É PELA CAIXA, e de propósito — as outras etapas afinam para
+    # o polígono exato depois, esta não.
+    #
+    # A skill decide a grafia de uma RUA, e rua não termina na linha que o
+    # operador desenhou. Cortar exatamente no polígono partiria a Av. General
+    # Flores da Cunha ao meio e jogaria fora metade da prova de que ela é a
+    # mesma da "Av. Gen. Flores da Cunha" — quando é exatamente esse par que a
+    # skill precisa ver. A margem da caixa é o entorno mínimo que sustenta a
+    # decisão sobre as ruas que a área contém.
+    if poligono:
+        _log(f"  área {area!r}: só o entorno do desenho entra (recorte pela caixa)")
 
     p = {"ac": _ACENTOS, "li": _LISOS, "cidade": nome}
     con = bc.conectar()
@@ -177,26 +227,28 @@ def exportar(cod: str, limite_cnefe: int, dirtrab: Path) -> dict:
 
     # POIS — depende do que a IA já leu. O que falta é DITO, nunca silenciado:
     # uma fonte que entra menor sem aviso vira "a base tem pouco POI".
-    cur.execute(SQL_POIS_SEM_LEITURA, p)
+    cur.execute(SQL_POIS_SEM_LEITURA + c_pois, {**p, **par_pois})
     falta = cur.fetchone()[0]
     if falta:
         _log(f"  ⚠️  {falta:,} POIs com endereço ainda NÃO segmentado — ficam de fora.")
         _log(f"      Resolva antes com:")
-        _log(f"        python segmentar_endereco.py --municipio {cod} --aplicar")
+        _log(f"        python segmentar_endereco.py --municipio {cod}"
+             + (f" --area {area}" if area else "") + " --aplicar")
 
-    cur.execute(SQL_POIS, p)
+    cur.execute(SQL_POIS + c_pois, {**p, **par_pois})
     contagem["pois"] = _gravar_csv(entrada / "pois.csv", cur.fetchall(), cod)
 
-    cur.execute(SQL_CADASTRO, p)
+    cur.execute(SQL_CADASTRO + c_cad, {**p, **par_cad})
     contagem["cadastro"] = _gravar_csv(entrada / "cadastro.csv", cur.fetchall(), cod)
 
-    cur.execute(SQL_IFOOD, p)
+    cur.execute(SQL_IFOOD + c_ifd, {**p, **par_ifd})
     contagem["ifood"] = _gravar_csv(entrada / "ifood.csv", cur.fetchall(), cod)
     con.close()
 
     ref = bc.conectar_referencia()
     with ref.cursor() as c2:
-        c2.execute(SQL_CNEFE, (cod, limite_cnefe or 2000000))
+        c2.execute(SQL_CNEFE_INICIO + c_cne + SQL_CNEFE_FIM,
+                   {"cod": cod, "lim": limite_cnefe or 2000000, **par_cne})
         contagem["cnefe"] = _gravar_csv(entrada / "cnefe.csv", c2.fetchall(), cod)
     ref.close()
 
@@ -347,6 +399,9 @@ def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--municipio", required=True, help="código IBGE de 7 dígitos")
+    p.add_argument("--area", default="",
+                   help="nome da área desenhada: normaliza só os logradouros de "
+                        "dentro dela. Sem isto, normaliza o município inteiro.")
     p.add_argument("--limite-cnefe", dest="limite_cnefe", type=int, default=0)
     p.add_argument("--listar", action="store_true", help="só exporta e conta")
     p.add_argument("--aplicar", action="store_true")
@@ -358,7 +413,7 @@ def main(argv=None) -> int:
     _log(f"  trabalho em {dirtrab}")
 
     _log("\n1/3 exportando as fontes")
-    contagem = exportar(a.municipio, a.limite_cnefe, dirtrab)
+    contagem = exportar(a.municipio, a.limite_cnefe, dirtrab, area=a.area)
     if not sum(contagem.values()):
         _log("  nenhuma linha — nada a ajustar")
         return 1

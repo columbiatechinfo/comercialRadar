@@ -566,10 +566,24 @@ def main(argv=None) -> int:
     # ninguém entendesse por quê.
     _etapa(6, "endereços — a IA lê o que está grudado, a skill prova a forma")
     if cod:
+        # A ÁREA VAI JUNTO, SEMPRE — e é ela que decide o tamanho do trabalho.
+        #
+        # Sem o recorte, desenhar 1,5 ha mandava a IA da Spark ler os 7.223
+        # endereços distintos de Cachoeirinha (360 lotes) e a skill normalizar
+        # as 69.150 linhas do CNEFE do município. Com ele: 7 endereços e 262
+        # linhas.
+        #
+        # NÃO EXISTE "sem área" para desligar isto, e não precisa existir:
+        # escolher o município no painel GRAVA a divisa dele como área de
+        # trabalho (`/api/area/municipio` escreve no mesmo `area_atual` que o
+        # desenho manual usa). Então o polígono já diz a verdade nos dois casos
+        # — quando é o município, a caixa cobre o município e o recorte não tira
+        # nada. Ramificar aqui por "é área ou é município?" seria inventar uma
+        # distinção que o dado não faz.
         _tolerante([PYTHON, "segmentar_endereco.py", "--municipio", cod,
-                    "--aplicar"], "segmentação de endereço")
+                    "--area", a.area, "--aplicar"], "segmentação de endereço")
         _tolerante([PYTHON, "ajuste_logradouro.py", "--municipio", cod,
-                    "--aplicar"], "ajuste de logradouro")
+                    "--area", a.area, "--aplicar"], "ajuste de logradouro")
     else:
         _log("  pulado — sem código IBGE do município")
 

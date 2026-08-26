@@ -165,6 +165,58 @@ select distinct on (c.cel_lat, c.cel_lon)
 """
 
 
+# QUANDO HÁ ÁREA DESENHADA, O CNEFE VEM RECORTADO E A GRADE É MONTADA DEPOIS.
+#
+# A `GRADE` acima monta as células sobre o MUNICÍPIO INTEIRO e escolhe um
+# endereço por célula, o mais próximo do centro dela. Para uma área desenhada
+# pequena isso produzia ZERO pontos, e não por falta de endereço: medido em
+# Cachoeirinha, 25/08/2026, havia 262 endereços do CNEFE dentro da caixa de uma
+# área de 1,5 ha, e a grade devolveu 15 pontos espalhados pela cidade — nenhum
+# dentro do desenho. O `ponto_no_poligono` descartava os 15, o iFood recebia
+# lista vazia e a etapa 5 falhava inteira.
+#
+# Aqui a ordem se inverte: recorta primeiro, agrupa depois. A caixa vai ao banco
+# junto do `cod_municipio` (que tem índice), o polígono exato é julgado em
+# Python sobre as dezenas de linhas que sobram, e só então as células são
+# formadas — sobre o que está DENTRO. Assim uma área menor que uma célula ainda
+# rende o ponto que ela contém.
+CNEFE_NA_CAIXA = """
+select nom_tipo_seglogr, nom_seglogr, num_endereco, cep, dsc_localidade,
+       latitude::numeric as lat, longitude::numeric as lon, cod_municipio
+  from ibge_cnefe
+ where cod_municipio = any(%(muns)s)
+   and num_endereco ~ '^[1-9][0-9]*'
+   and coalesce(nom_seglogr, '') <> ''
+   and coalesce(latitude, '')  <> ''
+   and coalesce(longitude, '') <> ''
+   and cod_especie = %(especie)s
+   and latitude::numeric  between %(s)s and %(n)s
+   and longitude::numeric between %(o)s and %(l)s
+"""
+
+
+def _agrupar_em_celulas(linhas, passo):
+    """Um endereço por célula, o mais central, com a densidade da célula junto.
+
+    É o que o `distinct on` da `GRADE` faz no banco. Aqui em Python porque o
+    conjunto já está recortado pela área e é pequeno — e porque agrupar depois
+    do recorte é justamente o que conserta o zero.
+
+    Cada item de `linhas`: (tipo, nome, numero, cep, loc, lat, lon, cod).
+    """
+    celulas = {}
+    for r in linhas:
+        lat, lon = float(r[5]), float(r[6])
+        chave = (round(lat / passo) * passo, round(lon / passo) * passo)
+        celulas.setdefault(chave, []).append((lat, lon, r))
+    saida = []
+    for (cel_lat, cel_lon), itens in celulas.items():
+        lat, lon, r = min(itens, key=lambda t: abs(t[0] - cel_lat) + abs(t[1] - cel_lon))
+        saida.append((cel_lat, cel_lon, len(itens),
+                      r[0], r[1], r[2], r[3], r[4], lat, lon, r[7]))
+    return saida
+
+
 def _texto(tipo, nome, numero, municipio):
     """`Rua Victor Barreto, 2301, Canoas` — o formato que a caixa do iFood aceita.
 
@@ -197,17 +249,31 @@ def pontos(cidade=None, uf=None, poligono=None, area_ref=None,
             muns = (_municipios_da_area(cur, poligono) if poligono
                     else _municipios_da_cidade(cur, cidade, uf))
             nome_por_cod = {c: n for c, n, _ in muns}
-            cur.execute(GRADE, {"muns": [c for c, _, _ in muns],
-                                "passo": passo, "especie": especie})
-            linhas = cur.fetchall()
+            cods = [c for c, _, _ in muns]
+            if poligono:
+                # Recorta primeiro, agrupa depois — veja `CNEFE_NA_CAIXA`.
+                sul, norte, oeste, leste = au.bbox(poligono)
+                cur.execute(CNEFE_NA_CAIXA,
+                            {"muns": cods, "especie": especie,
+                             "s": sul, "n": norte, "o": oeste, "l": leste})
+                na_caixa = cur.fetchall()
+                dentro = [r for r in na_caixa
+                          if au.ponto_no_poligono(float(r[5]), float(r[6]), poligono)]
+                linhas = _agrupar_em_celulas(dentro, passo)
+            else:
+                cur.execute(GRADE, {"muns": cods,
+                                    "passo": passo, "especie": especie})
+                linhas = cur.fetchall()
     finally:
         con.close()
 
     saida = []
     for (cel_lat, cel_lon, n, tipo, nome, numero, cep, loc, lat, lon, cod) in linhas:
         lat, lon = float(lat), float(lon)
-        # O recorte fino do polígono acontece AQUI, sobre dezenas de linhas —
-        # nunca sobre as 111 milhões.
+        # Redundante no caminho da ÁREA (lá o recorte já aconteceu antes de
+        # agrupar) e necessário no caminho do MUNICÍPIO, onde a grade vem do
+        # banco sem saber de polígono. Custa um ray casting sobre dezenas de
+        # linhas, e some se alguém passar `poligono` junto de `cidade`.
         if poligono and not au.ponto_no_poligono(lat, lon, poligono):
             continue
         municipio = nome_por_cod.get(cod, "")

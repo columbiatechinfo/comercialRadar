@@ -394,27 +394,62 @@ def nome_do_municipio(cod: str) -> tuple:
 
 
 def do_municipio(cod: str, limite: int = 0, aplicar: bool = False,
-                 refazer: bool = False, refazer_metodo: str = "") -> None:
+                 refazer: bool = False, refazer_metodo: str = "",
+                 area: str = "") -> None:
     import base_comum as bc
+    import area_utils as au
 
     nome, uf = nome_do_municipio(cod)
     print(f"  {nome}/{uf} ({cod})")
+
+    # A ÁREA DESENHADA RECORTA A LEITURA.
+    #
+    # Sem isto, desenhar 1,5 ha e mandar minerar punha a IA da Spark para ler os
+    # 7.223 endereços distintos de Cachoeirinha inteira — 360 lotes — para uma
+    # área com 6 POIs. Município inteiro só quando o município inteiro foi
+    # escolhido, que é o caso em que `area` chega vazio e `recorte_sql` devolve
+    # fragmento vazio.
+    #
+    # O que já foi lido continua valendo: `endereco_segmentado` é indexado pelo
+    # TEXTO do endereço e não tem empresa nem área. Recortar a leitura não
+    # invalida nada do que rodadas anteriores pagaram.
+    poligono = au.carregar_area(area) if area else None
+    if area and not poligono:
+        raise SystemExit(f"não há área desenhada salva com a referência {area!r}")
+    corte, par_area = au.recorte_sql(
+        poligono, "coalesce(p.maps_lat, p.lat_origem)",
+        "coalesce(p.maps_lng, p.lng_origem)")
 
     con = bc.conectar()
     cur = con.cursor()
     # `translate` faz o papel do `unaccent` sem depender da extensão: só os
     # acentos que de fato aparecem em nome de município brasileiro.
     cur.execute("""
-        select p.endereco
+        select p.endereco, coalesce(p.maps_lat, p.lat_origem),
+               coalesce(p.maps_lng, p.lng_origem)
           from pois p
          where p.endereco is not null and p.endereco <> ''
            and upper(translate(coalesce(p.cidade, ''),
                      'áàâãéêíóôõúüçÁÀÂÃÉÊÍÓÔÕÚÜÇ', 'aaaaeeiooouucAAAAEEIOOOUUC'))
-               = upper(translate(%s,
+               = upper(translate(%(nome)s,
                      'áàâãéêíóôõúüçÁÀÂÃÉÊÍÓÔÕÚÜÇ', 'aaaaeeiooouucAAAAEEIOOOUUC'))
-           and (p.uf = %s or p.uf is null)
-         limit %s""", (nome, uf, limite or 200000))
-    enderecos = [r[0] for r in cur.fetchall()]
+           and (p.uf = %(uf)s or p.uf is null)
+        """ + corte + """
+         limit %(lim)s""",
+                {"nome": nome, "uf": uf, "lim": limite or 200000, **par_area})
+    linhas = cur.fetchall()
+
+    # A caixa aceita os cantos que estão fora do desenho; o polígono decide.
+    # POI sem coordenada não dá para julgar, e some do recorte — o endereço
+    # dele continua legível numa rodada por município.
+    if poligono:
+        antes = len(linhas)
+        linhas = [r for r in linhas if r[1] is not None
+                  and au.ponto_no_poligono(r[1], r[2], poligono)]
+        print(f"  área {area!r}: {len(linhas):,} de {antes:,} POIs da caixa "
+              "estão dentro do desenho")
+
+    enderecos = [r[0] for r in linhas]
     distintos = sorted(set(enderecos))
     print(f"  {len(enderecos):,} endereços · {len(distintos):,} distintos")
 
@@ -500,6 +535,9 @@ def main() -> int:
     p.add_argument("--amostra", type=int, default=0,
                    help="lê N endereços do banco, mostra e NÃO grava")
     p.add_argument("--municipio", default="", help="código IBGE")
+    p.add_argument("--area", default="",
+                   help="nome da área desenhada: só lê os endereços de dentro "
+                        "dela. Sem isto, lê o município inteiro.")
     p.add_argument("--aplicar", action="store_true")
     p.add_argument("--refazer", action="store_true",
                    help="rele quem ja esta em endereco_segmentado")
@@ -530,7 +568,7 @@ def main() -> int:
         return 0
     if a.municipio:
         do_municipio(a.municipio, aplicar=a.aplicar, refazer=a.refazer,
-                     refazer_metodo=a.refazer_metodo)
+                     refazer_metodo=a.refazer_metodo, area=a.area)
         return 0
     p.print_help()
     return 2

@@ -237,6 +237,39 @@ def bbox(poligono):
     return min(lats), max(lats), min(lngs), max(lngs)
 
 
+def recorte_sql(poligono, col_lat: str, col_lng: str, prefixo: str = "area"):
+    """Corte de uma consulta pela área desenhada, em parâmetros NOMEADOS.
+
+    A CAIXA vai ao banco; o polígono exato fica em Python. Não é preguiça: a
+    caixa é comparação de quatro floats numa coluna que costuma ter índice,
+    enquanto o `ponto_no_poligono` é ray casting por linha — mandá-lo ao banco
+    viraria varredura sequencial. A caixa derruba a ordem de grandeza, e o que
+    sobra dela é pouco o bastante para julgar em memória.
+
+    QUEM CHAMA PRECISA FILTRAR DEPOIS. A caixa aceita os cantos que estão fora
+    do desenho; devolver só ela seria entregar mais do que o operador pediu — e
+    é exatamente o erro que produziu 0 pontos no iFood e 157 buscas fora da área
+    no Maps.
+
+A COORDENADA MANDA, E ÀS VEZES ELA DISCORDA DO CAMPO `cidade`. Quem consulta
+    por nome de cidade e recorta por geometria vai achar registro que o nome
+    incluía e a posição exclui. Medido em Cachoeirinha: 2 POIs em 8.391 dizem
+    "Cachoeirinha" e caem fora da divisa — um deles a 11 metros dela. Está
+    certo excluí-los; está errado fazer isso calado, que é como "a base
+    encolheu" nasce. Quem chama deve DIZER o número.
+
+    Devolve `(fragmento, params)`. Com polígono nulo devolve `("", {})`, e a
+    consulta segue valendo para o município inteiro.
+    """
+    if not poligono:
+        return "", {}
+    s, n, o, l = bbox(poligono)
+    return (f" and {col_lat} between %({prefixo}_s)s and %({prefixo}_n)s"
+            f" and {col_lng} between %({prefixo}_o)s and %({prefixo}_l)s",
+            {f"{prefixo}_s": s, f"{prefixo}_n": n,
+             f"{prefixo}_o": o, f"{prefixo}_l": l})
+
+
 def coord_do_registro(reg):
     """Coordenada efetiva de um registro do pipeline (maps_* > *_origem)."""
     la = reg.get("maps_lat")
