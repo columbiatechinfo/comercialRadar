@@ -401,6 +401,44 @@ grátis generosa com billing).
                    fora do polígono → status 'fora_da_area' (não ingere)
 ```
 
+### O vazio do pandas virou a palavra "nan" no banco (25/08/2026)
+
+`str(float('nan'))` devolve `'nan'`. A importação estadual testava `if v is None`
+— que não pega `NaN`, `NaT` nem `pd.NA` — e gravou **105.148 campos** com texto
+onde devia haver nulo, todos numa tarde de importações:
+
+| campo | contaminados |
+|---|---|
+| `pois.email` | 28.662 |
+| `pois.website` | 28.394 |
+| `pois.instagram` | 18.837 |
+| `pois.telefone` | 17.193 |
+| `pois.endereco` | 7.919 |
+| `pois.nome` | 1.452 |
+| outros (categoria, vinculo_poi.nome, fachada_anotacao) | 2.691 |
+
+**O estrago não ficou no banco.** O painel conta "com telefone" por
+`telefone is not null`: em Cachoeirinha ele mostrava 11.918 POIs com telefone
+quando 6.559 tinham — 45% inventado; em site, 74%; em email, 73%. Era o
+"Com telefone 11.850 (100%)" que aparecia na tela.
+
+E o cruzamento contava `mesmo domínio: nan` como prova: das 1.460 fusões que ele
+propunha, **1.334 (91%)** eram esse nada casando com esse nada.
+
+**Duas guardas, de propósito.** `extracao_estadual.val()` usa `pd.isna` (pega
+NaN, NaT e `pd.NA` de uma vez, com guarda de tipo porque ele devolve array para
+lista) e recusa também o texto já escrito assim na fonte — o parquet do Overture
+traz "None" e "null" digitados em campo de contato. Do outro lado,
+`evidencia.py` trata os mesmos valores como ausência, porque uma guarda só na
+entrada não protege do que já está gravado.
+
+O `cadastur.py` já fazia certo, com o comentário "Pandas devolve NaN, e NaN vira
+a string 'nan'". O conhecimento existia; faltava neste caminho.
+
+Os 105.146 campos foram corrigidos. `pois.nome` é `NOT NULL`, então os 1.452 sem
+nome viraram string vazia — que é o idioma que o resto do código já usa
+(`coalesce(nome,'') <> ''`).
+
 ### O cruzamento entre as fontes (etapa 7, 25/08/2026)
 
 `cruzar_fontes.py` substitui o antigo `povoar_vinculo.py --juntar`, que agrupava

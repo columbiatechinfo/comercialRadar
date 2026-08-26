@@ -94,6 +94,7 @@ def listar(saida: str):
 
 def ingerir(saida: str, cod_municipio: str, limite: int = 0, aplicar: bool = False,
             empresa: str = ""):
+    import pandas as pd          # o `val()` lá embaixo depende de `pd.isna`
     arq = _padronizado(saida)
     df = _ler(arq, cod_municipio)
     if df.empty:
@@ -142,11 +143,42 @@ def ingerir(saida: str, cod_municipio: str, limite: int = 0, aplicar: bool = Fal
     ja = {r[0] for r in cur.fetchall()}
     print(f"  já no banco: {len(ja):,} · a inserir: {len(ids) - len(ja):,}")
 
+    # VAZIO DO PANDAS NÃO É `None`, e essa distinção custou 105.148 campos.
+    #
+    # `str(float('nan'))` devolve a palavra "nan". O `if v is None` deixava
+    # passar, e o banco recebeu texto onde devia receber nulo. Medido em
+    # 25/08/2026, só na importação de hoje:
+    #
+    #   28.662  pois.email          18.837  pois.instagram
+    #   28.394  pois.website        17.193  pois.telefone
+    #    7.919  pois.endereco        1.452  pois.nome
+    #
+    # O estrago não ficou no banco. O painel conta "com telefone" por
+    # `telefone is not null`, então em Cachoeirinha ele mostrava 11.918 POIs com
+    # telefone quando 6.559 tinham — 45% inventado. Em site, 74%. E o
+    # cruzamento contava "mesmo domínio: nan" como prova: das 1.460 fusões que
+    # ele propunha, 1.334 (91%) eram esse nada casando com esse nada.
+    #
+    # `pd.isna` pega NaN, NaT e pd.NA de uma vez. A guarda de tipo existe porque
+    # ele devolve ARRAY para lista e array, e um array num `if` levanta
+    # ValueError — que é como um campo multivalorado derrubaria a importação
+    # inteira em vez de virar um nulo.
     def val(r, col):
         v = r.get(col)
         if v is None:
             return None
+        if not isinstance(v, (list, tuple, set, dict)):
+            try:
+                if pd.isna(v):
+                    return None
+            except (TypeError, ValueError):
+                pass
         s = str(v).strip()
+        # E o texto que JÁ VEIO escrito assim da fonte. O parquet do Overture
+        # traz "None" e "null" digitados em campo de contato; deixá-los passar
+        # reconstrói o mesmo problema por outro caminho.
+        if s.lower() in ("nan", "none", "null", "nat", "<na>", "-", "--", "n/a"):
+            return None
         return s or None
 
     linhas = []
