@@ -783,6 +783,20 @@ def main(argv=None) -> int:
         # estão feitos, então só os que a mineração acabou de descobrir passam.
         _tolerante([PYTHON, "ajuste_logradouro.py", "--municipio", cod,
                     "--so-novos", "--aplicar"], "ajuste de logradouro")
+
+        # E SÓ AGORA A COORDENADA PODE SER CONFERIDA CONTRA O ENDEREÇO.
+        #
+        # A ordem não é gosto: a correção casa o logradouro NORMALIZADO contra
+        # o CNEFE. Rodando antes do ajuste acima, "Av. Gen. Flores da Cunha" não
+        # encontraria "AVENIDA GENERAL FLORES DA CUNHA" e o POI passaria batido.
+        #
+        # MEDIDO em Canoas, 27/08/2026: 1.850 POIs a mais de 100 m da porta que
+        # o próprio endereço deles declara, sendo 351 a mais de 2 km. Todos os
+        # piores vieram de `maps_painel` — a busca por nome casou com um
+        # homônimo em outro bairro, e o `place_id` não protege disso.
+        _tolerante([PYTHON, "corrigir_coordenada.py", "--cidade", cidade,
+                    "--municipio", cod, "--aplicar"],
+                   "coordenada conferida contra o endereço")
     else:
         _log("  pulado — sem código IBGE do município")
 
