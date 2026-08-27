@@ -41,6 +41,7 @@ Foi construído para levantamentos comerciais de campo (ex.: base de clientes po
 | 📊 | **Dashboard** — cobertura, CNPJ por confiança, custo real × cenário Google e **cálculo de retorno** por faixa de qualidade |
 | 👥 | **Cadastro do cliente** — importa a carteira de imóveis da empresa e cruza com os POIs, marcando o que **não visitar** e o que acresce à base |
 | ⚡ | **Tempo real** — markers e cards atualizam via WebSocket conforme o backend processa |
+| 🚧 | **Qualidade na entrada** — o banco RECUSA registro que não pode ser comparado (sem nome e sem endereço) e duplicata exata; a coordenada vira endereço com número pelo CNEFE antes de o ponto existir |
 
 ---
 
@@ -203,6 +204,87 @@ Abra **http://localhost:8765**.
 > A área é passada pelo **nome** (`--area area_atual`), não por caminho de
 > arquivo: ela mora na tabela `area_trabalho`, para o servidor e todos os
 > coletores enxergarem a mesma coisa.
+
+---
+
+## 🚧 O que entra na base — e o que o banco recusa
+
+A base só serve se cada registro puder ser **comparado** com outro. Um ponto que
+não cruza com ninguém não é um ponto a menos: é um marker no mapa que nunca vai
+para lugar nenhum, e que ainda atrapalha a contagem.
+
+Por isso as regras não vivem na disciplina de quem escreve o código — vivem em
+**trigger no Postgres**. Código esquece; o banco não.
+
+### O quadro do que é comparável
+
+| nome | endereço | coordenada | veredito |
+|---|---|---|---|
+| ✅ | qualquer forma | — | **aceita** |
+| ✅ | ✗ | ✅ | **recusa** — o endereço é gerado **antes** de inserir |
+| ✗ | com número | — | **aceita** — a porta identifica sozinha |
+| ✗ | só logradouro | ✅ | **aceita** — a coordenada supre a porta |
+| ✗ | só logradouro | ✗ | **recusa** |
+| ✅ | ✗ | ✗ | **recusa** — só o nome não diz qual dos 25 "São João" é |
+| ✗ | ✗ | ✅ | **recusa** — coordenada e categoria dão 1 ponto; o mínimo para a IA é 4 |
+
+As onze combinações são verificadas por `tests/test_endereco_reverso.py` e por
+inserção real no banco. É *trigger* e não *CHECK* porque o número canônico mora
+em `logradouro_ajustado`, e um `CHECK` do Postgres não consulta outra tabela.
+
+**Duplicata exata também é recusada:** índice único parcial sobre
+`(nome, endereço)`, ativo só para POI não fundido e vínculo não desvinculado —
+o absorvido tem, por definição, o mesmo nome e endereço de quem o absorveu, e
+ele fica gravado para a fusão poder ser desfeita.
+
+### A coordenada vira endereço (`endereco_reverso.py`)
+
+Quando o ponto chega com nome e coordenada mas sem endereço — o caso da
+varredura por categoria, que o Maps devolve sem endereço —, ele é geocodificado
+**antes** de existir como POI. Só segue quem obtiver endereço **com número**.
+
+A cascata é **CNEFE → Maps**, e o OSM ficou de fora por medição sobre 200 POIs
+de Canoas:
+
+| | acha porta | ≤ 20 m | ≤ 50 m | por ponto |
+|---|---:|---:|---:|---:|
+| Photon (`layer=house`) | 99% | **2%** | 7,5% | 26 ms |
+| **CNEFE (IBGE)** | 100% | **85%** | **96%** | **0,18 ms** |
+
+Aquele 99% engana: o Photon devolve a porta mais próxima que **conhece**, e o
+OSM quase não tem numeração predial no RS — um estabelecimento recebia endereço
+a **834 metros**. Gravar isso não seria buraco, seria corrupção, porque endereço
+errado casa com o vizinho errado no cruzamento.
+
+O CNEFE já está carregado para os **5.570 municípios do país** (111.102.875
+endereços). O raio de **50 m** é onde a medição para de ser confiável; além
+dele a porta mais próxima começa a ser a do outro quarteirão.
+
+Endereço que veio da coordenada fica marcado em **`pois.endereco_gerado_por`**
+(`cnefe` ou `maps`) — endereço observado e endereço inferido não são a mesma
+coisa, e sem a marca ninguém separa os dois depois.
+
+### Quando duas fontes são o mesmo ponto
+
+O cruzamento (`cruzar_fontes.py`) propõe candidatos por **dois caminhos**:
+
+- **vizinhança** — grade de 111 m, que acha duplicata sem nome em comum
+  ("Farmácia" e "Drogaria São João" na mesma porta);
+- **mesmo nome na mesma rua** — uma **chave**, não um raio. A grade sozinha
+  alcança ~330 m, e 334 de 344 grupos duplicados de Canoas estavam além disso.
+
+E o **número da porta decide** quando o nome se repete:
+
+| caso | medido | conduta |
+|---|---:|---|
+| mesmo nome, mesma rua, **mesmo número** | 167 | **funde a qualquer distância** — a coordenada é que erra |
+| mesmo nome, mesma rua, **número diferente** | 48 | **não funde sozinho** — "Saque e Pague" 1011 × 1623 são caixas distintos |
+| sem número num dos lados | 51 | vale o teto de 1 km |
+
+**Dado do Google Maps tem mais confiança** por ser verificável e recente: entre
+duas fontes, quem tem `place_id` sobrevive à fusão e empresta nome, endereço e
+coordenada ao ponto — mas obedece às mesmas regras, e um POI do Maps duplicado
+é apagado como qualquer outro.
 
 ---
 

@@ -6,6 +6,139 @@ versionamento [SemVer](https://semver.org/lang/pt-BR/).
 ## [Não lançado]
 
 ### Adicionado
+
+- **O que não é comparável não entra** (`trigger poi_comparavel`,
+  `trigger vinculo_comparavel`). Um registro só é aceito se houver COMO
+  compará-lo com outro — a regra não é "tem nome" nem "tem endereço", é ter,
+  junto, o bastante para identificar. As 11 linhas do quadro foram provadas com
+  inserção real:
+
+  | nome | endereço | coordenada | veredito |
+  |---|---|---|---|
+  | ✅ | qualquer forma | — | aceita |
+  | ✅ | ✗ | ✅ | **recusa** — gere o endereço antes de inserir |
+  | ✗ | com número | — | aceita (a porta identifica sozinha) |
+  | ✗ | só logradouro | ✅ | aceita (a coordenada supre a porta) |
+  | ✗ | só logradouro | ✗ | **recusa** |
+  | ✅ ou ✗ | ✗ | — | **recusa** (só o nome, ou só a coordenada) |
+
+  É *trigger* e não *CHECK* porque o número canônico mora em
+  `logradouro_ajustado`, e um CHECK do Postgres não consulta outra tabela. Ele
+  também olha o padrão no próprio `endereco`: no instante do INSERT a
+  normalização ainda não rodou para aquele POI, e sem isso todo POI sem nome
+  seria recusado por um número que só existiria minutos depois.
+
+- **`endereco_reverso.py` — a coordenada vira endereço com número.** Cascata
+  **CNEFE → Maps**, sem OSM. O Photon do i9 foi testado e reprovado por
+  medição, sobre 200 POIs de Canoas:
+
+  | | acha porta | ≤ 20 m | ≤ 50 m | por ponto |
+  |---|---:|---:|---:|---:|
+  | Photon (`layer=house`) | 99% | **2%** | 7,5% | 26 ms |
+  | **CNEFE (IBGE)** | 100% | **85%** | **96%** | **0,18 ms** |
+
+  Aquele 99% é o tipo de número que engana: o Photon devolve a porta mais
+  próxima que *conhece*, e o OSM quase não tem numeração predial no RS —
+  "Eixo Sul Distribuidora" recebia um endereço a **834 metros**. Gravar isso
+  não seria buraco, seria corrupção: endereço errado casa com o vizinho errado
+  no cruzamento. O CNEFE já está carregado para os **5.570 municípios do país**
+  (111.102.875 endereços). O raio de 50 m é onde a medição para de ser
+  confiável; além dele a porta mais próxima começa a ser a do outro quarteirão.
+
+- **`pois.endereco_gerado_por`** — marca de onde veio o endereço quando ele
+  **não** veio da fonte (`cnefe` ou `maps`). Endereço observado e endereço
+  inferido não são a mesma coisa, e sem a marca ninguém separa os dois depois.
+
+- **`area_utils.codigo_ibge_da_area`** — o código IBGE sai da mesma consulta
+  espacial que já resolve cidade e UF. Existe porque o CNEFE é indexado por
+  **código**: "Santana" existe em nove estados, e casar por nome traria as
+  portas do município errado — pior que endereço nenhum, porque parece certo.
+
+- **Segundo caminho de candidatos na fusão** (`cruzar_fontes.candidatos`):
+  "mesmo nome na mesma rua" é uma **chave**, não um raio. A grade de 111 m
+  alcançava ~330 m, e a regra dos 1.000 m era letra morta justamente na faixa
+  que existia para cobrir — 334 de 344 grupos duplicados estavam a mais de
+  100 m. Custo do canal novo: **412 pares, 0,017%** do total.
+
+### Corrigido
+
+- **A fusão nunca via a duplicata longe, e o número da porta decide.** Dos 266
+  pares que a regra fundiria, 167 tinham o **mesmo número** ("Posto Ipiranga,
+  Guilherme Schell 1046" contra o mesmo endereço a 7,7 km — a coordenada de uma
+  fonte é que erra) e 48 tinham número **diferente** ("Saque e Pague" nos
+  números 1011 e 1623 da mesma avenida: caixas distintos). Agora número igual
+  funde a qualquer distância; número diferente cai nos pontos e na IA.
+  Efeito: 266 → **218** fusões automáticas, "Saque e Pague" de 48 para **0**.
+
+- **O mapa mostrava os pontos FUNDIDOS.** `server.py` não filtrava
+  `status='fundido'` nem exigia vínculo ativo. Medido em Canoas: o mapa
+  devolvia **49.636** pontos quando a cidade deduplicada tem **28.533**. Os
+  absorvidos continuavam desenhados ao lado de quem os absorveu, e a
+  deduplicação inteira não aparecia para quem olha. O banco já estava certo; o
+  mapa é que nunca tinha sido avisado.
+
+- **A gravação das fusões vira lote** — 26.542 idas e voltas ao Postgres do i9
+  viravam ~100 minutos. Medido sobre 400 fusões reais: **2 → 1.596 fusões/s,
+  602×**. A *decisão* continua sequencial, porque a transitividade exige ordem;
+  só a *escrita* virou lote, em blocos de 1.000.
+
+- **A comparação gastava o tempo normalizando o mesmo nome.** Perfilando 200
+  mil pares: 72,4 s, e o gargalo era `unicodedata.category` (39,3 milhões de
+  chamadas) — cada POI aparece em ~140 pares e tinha o nome normalizado 140
+  vezes. As cinco funções de texto ganharam memória: **35,2 s → 5,2 s, 6,7×**,
+  com **200.000 de 200.000 vereditos idênticos**.
+
+- **A busca podia ficar viva sem trabalhar.** `_abrir` devolvia `False` sem
+  imprimir quando o pool não dava proxy, e o laço tentava de novo **sem teto**.
+  Duas runs ficaram penduradas 14 e 10 minutos, com log parado e CPU no chão.
+  Agora ela diz o que houve (com `flush`, senão a mensagem fica no buffer),
+  desiste após 5 tentativas e o resumo final denuncia quantos POIs ficaram sem
+  busca — antes eles sumiam da conta e "3 processados" se lia como "3 de 3".
+
+- **"0 no Maps" não podia significar duas coisas.** Uma run inteira reportou 0
+  nas 46 categorias em pleno bairro comercial. A causa era o perfil de
+  navegador apodrecido (mesma URL, mesmo proxy: perfil velho → `goto` timeout;
+  perfil novo → 20 links). O defeito real era `buscar_categoria` devolver `[]`
+  calada, fazendo falha de infraestrutura ter a mesma aparência de resultado
+  legítimo. O worker agora descarta o perfil e refaz a sessão.
+
+- **O painel do Maps leva 8 s, e o teto era 9.** `WAIT_PROXIMO_MS` 9.000 →
+  25.000. Um segundo de folga passava em rede boa e falhava no roteador do
+  celular. A mensagem mentia — dizia "não encontrado", que se lê como "esse
+  botão não existe" — e mandou o diagnóstico para idioma da página, perfil
+  corrompido e muro de consentimento antes de alguém medir o tempo.
+
+- **`S` só vira `SÃO` contra lista** — **222 de 253** expansões estavam erradas.
+  `QUADR S UM` (letra de quadra), `BECO S NOME` e `ESTRADA S DENOMINAÇÃO`
+  (`S` = SEM, e o dano não é só o santo inventado: apaga-se o sinal de que a
+  via não tem nome), `RUA S SALVADOR DALI` (o pintor).
+
+- **`config.py` entrou na sincronização do i9.** Um teste o proibia alegando
+  que guardava caminho da máquina; não guarda — tudo sai de
+  `Path(__file__).resolve().parent` e credencial vem do `.env`, esse sim nunca
+  sincronizado. A proibição custou caro: o teto de 25 s ficou no notebook e a
+  run seguinte falhou igual, com a mensagem entregando a causa sem querer
+  ("não pintou em 12s" = 9.000 + 2.500). `tests/test_sincronia_i9.py` passou a
+  verificar o **fecho transitivo dos imports** — e encontrou
+  `spatial_clustering`, `extract_full`, `realtime_ingest` e `auth` rodando
+  velhos no i9 sem que ninguém soubesse.
+
+### Removido
+
+- **Dado impossível de comparar, e município fora de escopo.** Da tabela de
+  POIs (nunca das bases): **29.355** de outros municípios, **6.205** sem nome
+  ou sem endereço, **93** duplicatas exatas (ficou a do Maps) e 5 sem vínculo.
+  `pois` foi de 83.235 → **47.577**. `cadastro_cliente` (102.065),
+  `cnpj_tratado` (27.147) e `cnefe_coletiva` (27.227) ficaram **intactas** — as
+  FKs separam por construção: `CASCADE` no que é derivado do POI, `SET NULL`
+  nas bases.
+
+- **`"nan"` de dentro do JSON dos vínculos** — 74.572 campos em 39.436
+  registros (site 37.709, telefone 23.407, endereço 11.972, categoria 1.484).
+  A chave permanece com valor `null`: quem lê sabe que o campo está vazio, em
+  vez de ler "nan" como se fosse um site chamado nan.
+
+### Adicionado (rodadas anteriores)
 - **Endereço grudado lido pela IA da Spark** (`segmentar_endereco.py`): a
   `pois` guarda um campo `endereco` só, com formatos diferentes dentro da mesma
   coluna, e a skill `ajuste-logradouro` declara que não segmenta campo único.

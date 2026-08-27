@@ -3680,3 +3680,288 @@ python ajuste_logradouro.py --municipio 4304606 --aplicar
 Sempre **por município**: a skill aborta se a base cruzar mais de uma zona UTM, e
 o léxico é por `scope_id` municipal de propósito — sobrenome raro numa cidade não
 é sobrenome errado na outra.
+
+---
+
+## 38. O que não é comparável não entra (27/08/2026)
+
+Dois dias em que a pergunta deixou de ser "quantos POIs temos" e passou a ser
+"quantos deles servem para alguma coisa". A resposta mudou a base inteira.
+
+### 38.1 O mapa mostrava os pontos que a fusão tinha absorvido
+
+A queixa era antiga: *"não é pra ter mais que 30 mil pontos de interesse numa
+cidade como Canoas"*. As fusões já estavam aplicadas no banco — 14.320 POIs com
+`status='fundido'` —, mas a consulta do mapa em `server.py` filtrava apenas
+`match_valido IS NOT FALSE` e a presença de coordenada.
+
+Medido: o mapa devolvia **49.636** pontos em Canoas quando a cidade
+deduplicada tinha **28.533**. O absorvido continuava desenhado ao lado de quem
+o absorveu.
+
+> **O banco estava certo desde a véspera; o mapa é que nunca tinha sido
+> avisado.** Toda deduplicação é invisível enquanto a consulta que desenha não
+> souber dela.
+
+A consulta passou a exigir `status <> 'fundido'` **e** ao menos um vínculo
+`estado='vinculado'` — o segundo porque um ponto cujas fontes foram todas
+desvinculadas não tem o que mostrar.
+
+### 38.2 O quadro do que é comparável
+
+Regra do dono do produto, formalizada em quadro e provada linha a linha com
+inserção real no banco:
+
+| # | nome | endereço | coordenada | veredito |
+|---|---|---|---|---|
+| 1–4 | ✅ | qualquer forma | — | aceita |
+| 5 | ✅ | ✗ | ✅ | **recusa** — gere o endereço ANTES de inserir |
+| 6 | ✗ | com número | — | aceita — a porta identifica sozinha |
+| 7 | ✗ | só logradouro | ✗ | **recusa** |
+| 8 | ✗ | ✗ | ✗ | **recusa** |
+| 9 | ✅ | ✗ | ✗ | **recusa** — só o nome |
+| 10 | ✗ | só logradouro | ✅ | aceita — a coordenada supre a porta |
+| 11 | ✗ | ✗ | ✅ | **recusa** — só a coordenada |
+
+A linha 11 não é opinião: `PESO["categoria"] = 1` e `MIN_PARA_IA = 4`. Um
+registro com coordenada e categoria tem **teto de 1 ponto** — ele não funde com
+ninguém, por construção das regras. Medido antes da limpeza: 2.755 vínculos
+nesse estado, **2.754 da fonte estadual**, e **2.753 deles sustentavam POIs de
+fonte única** — exatamente o que a regra obriga.
+
+**Por que trigger e não CHECK:** o número canônico mora em
+`logradouro_ajustado`, e um `CHECK` do Postgres não consulta outra tabela. O
+trigger também olha o padrão no próprio `endereco`, porque no instante do
+INSERT a normalização ainda não rodou para aquele POI — sem isso, todo POI sem
+nome seria recusado por um número que só existiria minutos depois.
+
+Duplicata exata é barrada por índice **único parcial** sobre `(nome, endereço)`,
+ativo só para POI não fundido e vínculo não desvinculado: o absorvido tem, por
+definição, o mesmo nome e endereço de quem o absorveu, e ele fica gravado para
+a fusão poder ser desfeita.
+
+### 38.3 O Photon foi testado e reprovado — e o 99% era a armadilha
+
+A cascata proposta para gerar endereço pela coordenada era OSM primeiro, Maps
+depois. O Photon do próprio i9 respondeu, rápido, e com `layer=house` achou
+porta em **99%** dos 200 POIs de teste. Parecia resolvido.
+
+Não era. A distância entre o ponto e a porta devolvida:
+
+| | ≤ 20 m | 20–50 m | 50–100 m | **> 100 m** |
+|---|---:|---:|---:|---:|
+| Photon | 4 (2%) | 11 | 39 | **144 (73%)** |
+
+Ele devolve a porta mais próxima que **conhece**, e o OSM quase não tem
+numeração predial no RS: *"Eixo Sul Distribuidora"* recebia *"Rua Senador
+Salgado Filho 250"*, a **834 metros**.
+
+> **Cobertura que mente é pior que buraco.** Endereço errado não fica inerte na
+> base: ele casa com o vizinho errado no cruzamento. Um número de sucesso que
+> não vem acompanhado da medição de QUALIDADE não é resultado, é ilusão.
+
+O CNEFE, medido do mesmo jeito, sobre os mesmos 200 pontos:
+
+| | acha porta | ≤ 20 m | ≤ 50 m | por ponto |
+|---|---:|---:|---:|---:|
+| Photon (`layer=house`) | 99% | **2%** | 7,5% | 26 ms |
+| **CNEFE (IBGE)** | 100% | **85%** | **96%** | **0,18 ms** |
+| Maps (navegador) | alto | alto | alto | ~30.000 ms |
+
+A cascata ficou **CNEFE → Maps**, sem OSM. E a pergunta "e numa cidade nova?"
+não tinha problema a resolver: o CNEFE já está carregado para os **5.570
+municípios do país** — 111.102.875 endereços.
+
+`endereco_reverso.py`, medido pronto: **285 de 300 POIs (95%) resolvidos em
+2 ms por ponto**; só 5% iriam ao Maps. O raio de **50 m** é onde a medição para
+de ser confiável.
+
+O município é resolvido por **código IBGE**, nunca por nome:
+`area_utils.codigo_ibge_da_area` sai da mesma consulta espacial que já dá cidade
+e UF. *"Santana"* existe em nove estados, e o CNEFE é indexado por código —
+casar por nome traria as portas do município errado, que é pior que endereço
+nenhum porque parece certo.
+
+### 38.4 A duplicata longe nunca era proposta
+
+A regra *"mesmo nome e mesmo logradouro é confiança máxima, mesmo a 50 metros
+ou 100"* estava implementada em `evidencia.avaliar` com alcance de 1.000 m. Mas
+`cruzar_fontes.candidatos` só propunha par pela grade de 111 m, varrendo 3×3 —
+alcance real de ~330 m.
+
+**A regra era letra morta justamente na faixa que existia para cobrir.** Medido
+depois de uma rodada completa: 344 grupos de mesmo nome + mesmo logradouro
+continuavam separados, e **334 estavam a mais de 100 m**.
+
+Alargar a grade seria o conserto errado (1 km faria os 2,5 milhões de pares
+virarem ~100 milhões). *"Mesmo nome na mesma rua"* é uma **chave**, não um
+raio: um dicionário resolve em O(n). Custo do canal novo: **412 pares, 0,017%**
+do total, e nenhum inútil.
+
+E aí apareceu o contra-exemplo que faltava. Dos 266 pares que a regra fundiria:
+
+| | quantos | o que é |
+|---|---:|---|
+| mesmo número de porta | **167** | *"Posto Ipiranga, Guilherme Schell 1046"* × o mesmo, a 7,7 km — a coordenada de uma fonte é que erra |
+| número **diferente** | **48** | *"Saque e Pague"* nos números 1011 e 1623 da mesma avenida: caixas eletrônicos distintos |
+| sem número num dos lados | 51 | ambíguo |
+
+> **Quando o endereço concorda, a distância mente. Quando a coordenada
+> concorda, o endereço mente.** O número da porta é o desempate.
+
+Efeito medido: 266 → **218** fusões automáticas; *"Saque e Pague"* de 48 para
+**0**.
+
+### 38.5 Desempenho: dois gargalos, duas naturezas
+
+**A gravação era latência.** Dois `UPDATE` por fusão contra o Postgres do i9
+viravam 26.542 idas e voltas — ~100 minutos para Canoas. Medido sobre 400
+fusões reais, com rollback:
+
+```
+um a um    180,6 s  ·      2 fusões/s  ·  13.271 levariam 99,8 min
+EM LOTE      0,3 s  ·  1.596 fusões/s  ·  13.271 levam     0,1 min      602×
+```
+
+A *decisão* continua sequencial — a transitividade exige ordem: se A absorve B
+e depois B absorveria C, C vai para A, não para B, que já é POI fundido. Só a
+*escrita* virou lote, em blocos de 1.000 (acima disso o texto do comando passa
+de megabytes e o parser do Postgres vira o novo gargalo).
+
+**A comparação era trabalho repetido.** Perfilando 200 mil pares: 72,4 s, e o
+gargalo não era decidir — era `unicodedata.category` (39,3 milhões de chamadas)
+tirando acento. Com 35.321 POIs em 2,5 milhões de pares, cada POI aparece em
+~140 pares e tinha o nome normalizado 140 vezes, sempre com o mesmo resultado.
+
+```
+sem memória : 35,2 s ·  5.678 pares/s
+com memória :  5,2 s · 38.211 pares/s     6,7×
+```
+
+E o que torna seguro: **200.000 de 200.000 vereditos idênticos**. `tokens`
+passou a devolver `frozenset` — conjunto mutável em cache seria corrompido pelo
+primeiro chamador que o alterasse, e o estrago apareceria em outro par muito
+depois, sem causa visível.
+
+### 38.6 Erro que se disfarça de dado
+
+Três defeitos da mesma família, no mesmo dia:
+
+**"0 no Maps".** Uma run reportou 0 nas 46 categorias, em pleno bairro
+comercial. `buscar_categoria` devolvia `[]` em dois pontos sem dizer nada — o
+`goto` que falha e o feed que não aparece. A causa era o perfil de navegador
+apodrecido (mesma URL, mesmo proxy: perfil velho → `goto` timeout; perfil novo
+→ 20 links). Agora a função devolve `(achados, motivo)` e o worker descarta o
+perfil e refaz a sessão.
+
+**A run viva sem trabalhar.** `_abrir` devolvia `False` sem imprimir quando o
+pool não dava proxy, e o laço devolvia o lote, dormia 5 s e tentava de novo
+**sem teto**. Duas runs ficaram penduradas 14 e 10 minutos: processo vivo, log
+parado, CPU no chão, navegador nascendo e morrendo. Agora ela diz o que houve
+(com `flush=True`, senão a mensagem fica presa no buffer de 8 KB), desiste após
+5 tentativas, e o resumo denuncia quantos POIs ficaram sem busca — antes eles
+sumiam da conta e "3 processados" se lia como "3 de 3" quando eram 3 de 21.
+
+**"Botão não encontrado" quando era tempo.** `WAIT_PROXIMO_MS` era 9.000 e o
+painel do Maps leva **8,0 s** na primeira coordenada. Um segundo de folga
+passava em rede boa e falhava no roteador do celular. A mensagem dizia "não
+encontrado", que se lê como "esse botão não existe" — e mandou o diagnóstico
+para idioma da página, perfil corrompido e muro de consentimento antes de
+alguém medir o tempo. Teto para 25.000, e a mensagem passou a dizer que foi
+tempo e quanto se esperou.
+
+> Os três têm a mesma forma: **falha de infraestrutura com a mesma aparência de
+> resultado legítimo.** Custam uma run inteira antes de alguém desconfiar.
+
+### 38.7 `S` não é `SÃO`
+
+Das 253 expansões de `S` → `SÃO` na base, **222 estavam erradas**:
+
+```
+QUADR S UM, S DOIS      letra de QUADRA + numeral (Guajuviras). Não existe
+                        santo chamado "Um".
+BECO S NOME             S = SEM. E o dano não é só o santo inventado: apaga-se
+ESTRADA S DENOMINAÇÃO   o sinal de que a via NÃO TEM NOME.
+RUA S SALVADOR DALI     o pintor, em Rubem Berta (POA), no CNEFE cru.
+```
+
+`DR` e `PE` têm uma leitura só; `S` é SÃO, SEM, SETOR e letra de quadra ao mesmo
+tempo. Passou a expandir **contra uma lista de santos**. Errar para o lado de
+não expandir é de propósito: se as duas bases guardam "S FULANO" elas continuam
+casando entre si; expandir errado é que corrompe.
+
+### 38.8 O código certo, na máquina errada
+
+O teto de 25 s foi ajustado, commitado, e a run seguinte falhou igual. A
+mensagem de erro entregou a causa sem querer: *"não pintou em 12s"* — que é
+9.000 + 2.500. **O código novo chegou ao i9; o número não.**
+
+`i9.py` tinha a lista `_PY` digitada à mão, com `search_pois_v2.py` e sem
+`config.py` — que é lido pela busca, pelo navegador e pelo pool de proxies. Um
+teste do projeto até **proibia** sincronizá-lo, alegando que guardava caminho da
+máquina. Não guarda: tudo sai de `Path(__file__).resolve().parent` e credencial
+vem do `.env`, esse sim nunca sincronizado. Verificado no próprio i9 depois de
+sincronizado — `BASE_DIR` e perfis resolveram para os caminhos **de lá**.
+
+> **O sintoma é o pior que existe: "o conserto não funcionou".** Perde-se tempo
+> relendo a correção certa e procurando defeito onde não há.
+
+`tests/test_sincronia_i9.py` passou a verificar o **fecho transitivo dos
+imports** em vez de uma lista de nomes — e encontrou `spatial_clustering`,
+`extract_full`, `realtime_ingest` e `auth` rodando velhos no i9 sem que ninguém
+soubesse. O fecho segue só import de **nível de módulo**: import dentro de
+função protegido por `try/except` é opcional por construção, e seguir os dois
+faria o teste exigir meio repositório no i9.
+
+### 38.9 A limpeza, e o que ficou intacto
+
+| passo | apagados |
+|---|---:|
+| Fora de Canoas e Parnaíba | **29.355** POIs |
+| Sem nome ou sem endereço | **6.205** POIs · 57 vínculos |
+| Duplicata exata nome + endereço | **93** POIs · 52 vínculos (ficou a do Maps) |
+| Sem vínculo algum | 5 |
+
+`pois`: 83.235 → **47.577**. E as tabelas base **intactas**:
+`cadastro_cliente` 102.065, `cnpj_tratado` 27.147, `cnefe_coletiva` 27.227 — as
+FKs separam por construção (`CASCADE` no derivado do POI, `SET NULL` nas bases).
+
+Antes disso, **74.572 campos** com `"nan"` foram limpos de dentro do JSON dos
+vínculos (site 37.709, telefone 23.407, endereço 11.972, categoria 1.484). A
+chave permanece com valor `null`.
+
+**Lição de operação:** a primeira tentativa fez tudo numa transação só e estourou
+10 minutos sem terminar; a segunda, em lotes de 2.000 com commit, perdeu a
+conexão no lote 20.000 — e os 20.000 já estavam gravados. **Commit por lote é o
+que transforma queda em retomada.**
+
+### 38.10 O cadastro e a base estadual não têm duplicidade interna
+
+Verificado, porque a suspeita era razoável e o número é grande:
+
+**Cadastro da Corsan** — as 13.355 linhas não-residenciais de Canoas têm
+`num_ligacao` **único**. O campo `cliente` vale `'corsan'` nas 102.065 linhas e
+não identifica ninguém (foi o que fez o primeiro agrupamento sair errado). 864
+linhas dividem endereço: **673 diferem no complemento** (`SALA 01`, `SALA 02`,
+`PAVILHÃO 5` — unidades reais, cada uma com sua ligação) e 191 têm complemento
+`0`, não preenchido. O caso extremo é *Engenheiro Irineu Carvalho, 98*, com
+**88 ligações**: um condomínio cujo complemento ninguém registrou.
+
+**Base estadual** — 27.927 vínculos com 27.927 `id_fonte` distintos. Mesmo nome
++ mesmo endereço: **48** excedentes (0,17%). Mesmo nome + mesma coordenada: 24.
+Os nomes que repetem são redes reais espalhadas (Farmácia São João ×25, Posto
+Ipiranga ×15, Shell ×15).
+
+> O volume é real; não é inflado por repetição dentro de cada base.
+
+### 38.11 Estado ao fim do dia
+
+| | |
+|---|---:|
+| `pois` na tabela | 47.577 |
+| Canoas — ativos | 28.535 |
+| Canoas — fundidos | 14.851 |
+| **Markers no mapa (Canoas)** | **28.533** |
+| Suíte | 510 passando · 40 puladas |
+| Triggers ativos | `poi_comparavel`, `vinculo_comparavel` |
+
