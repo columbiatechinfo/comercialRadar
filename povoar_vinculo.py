@@ -54,6 +54,28 @@ import base_comum as bc
 CONF_POR_ORIGEM = {"g/": 9, "ChIJ": 9, "0x": 9, "m/": 8}
 
 
+def _util(v):
+    """O valor, ou `None` quando ele é um buraco escrito como texto.
+
+    ISTO É UMA PORTA, E ELA ESTAVA ABERTA. Em 27/08/2026 foram limpos 74.572
+    campos com `"nan"` de dentro do JSON dos vínculos — site 37.709, telefone
+    23.407, endereço 11.972, categoria 1.484. A limpeza foi uma vez; esta
+    função é o que impede a volta.
+
+    O `nan` do pandas virando a string "nan" numa importação não fica inerte:
+    `evidencia` já o trata como vazio, mas o PAINEL o mostra como se fosse um
+    site chamado nan. Foi assim que 45–74% dos contatos exibidos eram falsos.
+
+    Reaproveita a lista de `evidencia._VAZIO` de propósito — duas listas de
+    buraco divergem, e o dia em que divergirem uma delas deixa passar.
+    """
+    import evidencia as _ev
+    if v is None:
+        return None
+    t = _ev._sem_acento(str(v)).strip()
+    return None if t in _ev._VAZIO else v
+
+
 def _empresa(cur, nome: str) -> str:
     cur.execute("select id, nome from tenants where lower(nome)=lower(%s) and ativo",
                 (nome.strip(),))
@@ -106,8 +128,8 @@ def proprios(empresa: str, aplicar: bool) -> None:
         # dele o id do POI — que é a única identidade que sobra.
         idf = place_id.split(":", 1)[1] if ":" in place_id else (place_id or f"poi:{pid}")
         dados.append((pid, fonte, idf, nome, la, lo,
-                      json.dumps({"categoria": cat, "endereco": end,
-                                  "telefone": tel, "site": site},
+                      json.dumps({"categoria": _util(cat), "endereco": _util(end),
+                                  "telefone": _util(tel), "site": _util(site)},
                                  ensure_ascii=False),
                       10, "importacao",
                       "POI de fonte única: o registro é o ponto"))

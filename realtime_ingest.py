@@ -154,6 +154,52 @@ def _horarios(h):
     return []
 
 
+def _endereco_pela_coordenada(r: dict):
+    """A coordenada vira endereço com número, ou o ponto não entra.
+
+    A busca no Maps nem sempre devolve endereço. Desde 27/08/2026 o trigger
+    `poi_comparavel` recusa POI sem ele — um registro sem nome nem endereço tem
+    teto de 1 ponto de evidência e nunca funde com ninguém.
+
+    Sem esta ponte o INSERT levantaria `CheckViolation` e derrubaria a ingestão
+    da SESSÃO INTEIRA, não só daquele ponto. Aqui a cascata é a mesma da
+    descoberta por categoria — CNEFE primeiro (95% em 2 ms), Maps no resíduo.
+
+    O município sai da CIDADE do registro, não da área: a ingestão roda ponto a
+    ponto e o tile fotografa além da faixa desenhada, então o POI da cidade
+    vizinha precisa ser resolvido contra o CNEFE DELA.
+    """
+    try:
+        import endereco_reverso as rev
+        import base_comum as _bc
+    except ImportError:
+        return None
+    la = _f(r.get("maps_lat")) or _f(r.get("lat_origem")) or _f(r.get("lat"))
+    lo = _f(r.get("maps_lng")) or _f(r.get("lng_origem")) or _f(r.get("lng"))
+    if la is None or lo is None:
+        return None
+
+    cidade = _s(r.get("cidade")) or _cidade_uf(r.get("endereco_planilha"))[0]
+    if not cidade:
+        return None
+    try:
+        ref = _bc.conectar_referencia()
+        try:
+            c = ref.cursor()
+            c.execute("""select cod_municipio from ibge_malha
+                          where st_contains(geom, st_setsrid(st_point(%s,%s),4326))
+                          limit 1""", (lo, la))
+            achado = c.fetchone()
+        finally:
+            ref.close()
+    except Exception:
+        return None
+    if not achado:
+        return None
+    return rev.endereco_de(la, lo, achado[0], nome=str(r.get("nome") or ""),
+                           cidade=cidade, usar_maps=False)
+
+
 def ingerir_registro(r: dict, poligono=None, conn=None) -> tuple:
     """
     Grava UM registro do pipeline no banco. Retorna (resultado, poi_id):
@@ -310,6 +356,27 @@ def ingerir_registro(r: dict, poligono=None, conn=None) -> tuple:
             #
             # O `id` preservado é o que mantém os filhos ligados. É por isso que
             # aqui é UPDATE, e não um DELETE mais esperto.
+
+            # ── SEM ENDEREÇO O POI NÃO ENTRA, E ESTA É A ÚLTIMA PORTA ────────
+            #
+            # O trigger `poi_comparavel` recusa POI sem endereço desde
+            # 27/08/2026: um registro sem nome nem endereço tem teto de 1 ponto
+            # de evidência e nunca funde com ninguém.
+            #
+            # A busca no Maps nem sempre devolve endereço — e quando não devolve,
+            # este INSERT levantaria `CheckViolation` e derrubaria a ingestão da
+            # sessão inteira, não só daquele ponto. Aqui a coordenada vira
+            # endereço antes, pela mesma cascata da descoberta por categoria:
+            # CNEFE (95% em 2 ms) e Maps no resíduo.
+            #
+            # Quem nem assim obtiver endereço é PULADO com o motivo dito. Perder
+            # um ponto incomparável é barato; perder a sessão é caro.
+            if not _s(r.get("endereco")):
+                achado = _endereco_pela_coordenada(r)
+                if not achado:
+                    return ("pulado", None)
+                r["endereco"] = achado["endereco"]
+
             _COLS = ("fonte", "sessao", "nome", "categoria", "endereco", "telefone", "website",
                      "avaliacao", "total_avaliacoes", "plus_code", "status_horario",
                      "lat_origem", "lng_origem", "maps_lat", "maps_lng", "maps_url", "place_id",
