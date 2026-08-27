@@ -376,16 +376,62 @@ def main(argv=None) -> int:
                          "estraga o recorte de toda etapa seguinte")
     print(f"  gravando como {cidade}/{uf}")
 
+    # O ENDEREÇO É GERADO PELA COORDENADA, ANTES DE GRAVAR.
+    #
+    # A varredura por categoria devolve nome e coordenada, nunca endereço — o
+    # Maps não o entrega na lista. E POI sem endereço deixou de ser um estado
+    # válido: regra do dono do produto de 27/08/2026, com o trigger
+    # `poi_comparavel` recusando a linha no banco.
+    #
+    # A cascata é CNEFE e depois Maps. MEDIDO em 300 POIs de Canoas: o CNEFE
+    # resolve 95% em 2 ms; os outros 5% custam dezenas de segundos no Maps, e
+    # por isso ele fica atrás. Quem nem assim obtiver endereço com número NÃO
+    # ENTRA — é a regra, e é o que impede o ponto incomparável de nascer.
+    import endereco_reverso as rev
+    cod = au.codigo_ibge_da_area(poly)
+    if not cod:
+        raise SystemExit("não resolvi o código IBGE da área — sem ele o CNEFE "
+                         "não sabe em que município procurar a porta")
+
+    com_endereco, sem_endereco = [], []
+    for x in novos:
+        achado = rev.endereco_de(x["lat"], x["lng"], cod,
+                                 nome=x["nome"], cidade=cidade, usar_maps=True)
+        if achado:
+            x["endereco"] = achado["endereco"]
+            x["gerado_por"] = achado["fonte"]
+            com_endereco.append(x)
+        else:
+            sem_endereco.append(x)
+
+    if sem_endereco:
+        print(f"  {len(sem_endereco)} sem endereço nem pelo CNEFE nem pelo Maps — "
+              f"não entram (a regra exige endereço com número):")
+        for x in sem_endereco[:5]:
+            print(f"      {x['nome'][:44]}")
+
+    if not com_endereco:
+        print("\n  nenhum POI com endereço — nada gravado")
+        con.close()
+        return 0
+
     import psycopg2.extras
-    dados = [(x["nome"], "maps_categoria", x["lat"], x["lng"], x["lat"], x["lng"],
+    dados = [(x["nome"], x["endereco"], x["gerado_por"], "maps_categoria",
+              x["lat"], x["lng"], x["lat"], x["lng"],
               f"maps_cat:{ev.norm_nome(x['nome'])}:{round(x['lat'],5)}:{round(x['lng'],5)}",
-              x["categoria"], cidade, uf, "descoberto", True) for x in novos]
+              x["categoria"], cidade, uf, "descoberto", True) for x in com_endereco]
     psycopg2.extras.execute_values(cur, """
-        insert into pois (nome, fonte, lat_origem, lng_origem, maps_lat, maps_lng,
+        insert into pois (nome, endereco, endereco_gerado_por, fonte,
+                          lat_origem, lng_origem, maps_lat, maps_lng,
                           place_id, categoria, cidade, uf, status, match_valido)
         values %s on conflict do nothing""", dados, page_size=500)
     con.commit()
-    print(f"\n  GRAVADO: {len(novos):,} POIs novos descobertos por categoria")
+    por_fonte = {}
+    for x in com_endereco:
+        por_fonte[x["gerado_por"]] = por_fonte.get(x["gerado_por"], 0) + 1
+    detalhe = " · ".join(f"{k}: {v}" for k, v in sorted(por_fonte.items()))
+    print(f"\n  GRAVADO: {len(com_endereco):,} POIs novos descobertos por categoria"
+          f"  (endereço gerado — {detalhe})")
     con.close()
     return 0
 

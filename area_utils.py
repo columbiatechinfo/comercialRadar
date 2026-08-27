@@ -178,6 +178,9 @@ def ponto_no_poligono(lat, lng, poligono) -> bool:
 
 
 _MUN_CACHE: dict = {}
+# O código IBGE sai da MESMA linha da malha que resolve cidade e UF. Guardá-lo
+# à parte evita uma segunda consulta espacial para a mesma resposta.
+_COD_CACHE: dict = {}
 
 
 def municipio_da_area(poligono=None, ref=AREA_PADRAO) -> tuple:
@@ -217,18 +220,37 @@ def municipio_da_area(poligono=None, ref=AREA_PADRAO) -> tuple:
         con = bc.conectar_referencia()
         try:
             with con.cursor() as cur:
-                cur.execute("""SELECT nome, uf FROM ibge_malha
+                cur.execute("""SELECT nome, uf, cod_municipio FROM ibge_malha
                                 WHERE ST_Contains(geom,
                                         ST_SetSRID(ST_Point(%s, %s), 4326))
                                 LIMIT 1""", (lng, lat))
                 r = cur.fetchone()
             out = ((r[0] or ""), (r[1] or "").upper()) if r else ("", "")
+            _COD_CACHE[chave] = (r[2] or "") if r else ""
         finally:
             con.close()
     except Exception:
         out = ("", "")
     _MUN_CACHE[chave] = out
     return out
+
+
+def codigo_ibge_da_area(poligono=None, ref=AREA_PADRAO) -> str:
+    """O código IBGE de 7 dígitos da área — a mesma verdade, outro campo.
+
+    Vem da MESMA consulta de `municipio_da_area`, e é por isso que ele não
+    resolve por nome: "Santana" existe em nove estados, e o CNEFE é indexado
+    por código, não por nome. Casar por nome traria as portas do município
+    errado — e endereço do município errado é pior que endereço nenhum, porque
+    parece certo.
+    """
+    poly = poligono if poligono is not None else carregar_area(ref)
+    if not poly or len(poly) < 3:
+        return ""
+    chave = (round(poly[0][0], 5), round(poly[0][1], 5), len(poly))
+    if chave not in _COD_CACHE:
+        municipio_da_area(poly, ref)          # preenche os dois caches
+    return _COD_CACHE.get(chave, "")
 
 
 def bbox(poligono):

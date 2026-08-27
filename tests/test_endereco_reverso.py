@@ -143,3 +143,69 @@ def test_o_cnefe_responde_de_verdade():
         assert a["numero"], "veio sem número"
         assert a["distancia_m"] <= er.RAIO_MAX_M
         assert a["fonte"] == "cnefe"
+
+
+# ==========================================================================
+# A LIGAÇÃO COM A INGESTÃO — de nada adianta o módulo existir e ninguém chamar
+# ==========================================================================
+def test_a_descoberta_por_categoria_gera_o_endereco_antes_de_gravar():
+    """A varredura do Maps devolve nome e coordenada, NUNCA endereço — a lista
+    do Maps não o traz. Antes desta ligação ela inseria POI sem endereço, e o
+    trigger `poi_comparavel` passou a recusar cada um deles: a etapa inteira
+    pararia de gravar sem ninguém entender por quê."""
+    s = io.open(os.path.join(RAIZ, "descobrir_maps.py"), encoding="utf-8").read()
+    i = s.index("insert into pois")
+    antes = s[max(0, i - 2600):i]
+    assert "endereco_reverso" in antes, \
+        "a descoberta voltou a inserir sem gerar o endereço pela coordenada"
+    assert "endereco_gerado_por" in s, "o endereço gerado deixou de ser marcado"
+    assert "sem_endereco" in antes, \
+        "quem não obteve endereço voltou a ser inserido — a regra diz que não entra"
+
+
+def test_o_codigo_ibge_vem_do_poligono_e_nao_do_nome():
+    """"Santana" existe em nove estados, e o CNEFE é indexado por CÓDIGO. Casar
+    por nome traria as portas do município errado — e endereço do município
+    errado é pior que endereço nenhum, porque parece certo."""
+    import area_utils as au
+    assert hasattr(au, "codigo_ibge_da_area"), "o código IBGE da área sumiu"
+    s = io.open(os.path.join(RAIZ, "descobrir_maps.py"), encoding="utf-8").read()
+    assert "codigo_ibge_da_area" in s, \
+        "a descoberta voltou a resolver o município por outro caminho"
+    # e ela ABORTA sem o código, em vez de procurar no município errado
+    i = s.index("codigo_ibge_da_area")
+    assert "SystemExit" in s[i:i + 400], \
+        "sem código IBGE a etapa deixou de abortar — procuraria porta em qualquer lugar"
+
+
+def test_o_resgate_funciona_contra_o_banco():
+    """Ponta a ponta, com dado real: um POI urbano de Canoas sem endereço tem de
+    receber uma porta do CNEFE; uma coordenada no meio do rio, nenhuma.
+
+    Medido em 27/08/2026: o POI urbano recebeu "RUA IGUACU, 218" a 5,1 m; a
+    coordenada no Guaíba não recebeu nada, como deve.
+    """
+    import base_comum as bc
+    try:
+        con = bc.conectar()
+    except Exception:
+        import pytest
+        pytest.skip("banco indisponível")
+    try:
+        cur = con.cursor()
+        cur.execute("""select coalesce(maps_lat,lat_origem), coalesce(maps_lng,lng_origem)
+          from pois where cidade='Canoas' and coalesce(maps_lat,lat_origem) is not null
+          order by id offset 40 limit 1""")
+        r = cur.fetchone()
+    finally:
+        con.close()
+    if not r:
+        import pytest
+        pytest.skip("sem POI de Canoas para amostrar")
+
+    urbano = er.endereco_de(float(r[0]), float(r[1]), "4304606", usar_maps=False)
+    assert urbano and urbano["numero"], "POI urbano ficou sem porta"
+
+    # o Guaíba não tem porta, e é isso que garante que a regra recusa de verdade
+    rio = er.endereco_de(-30.05, -51.25, "4304606", usar_maps=False)
+    assert rio is None, f"achou porta no meio do rio: {rio}"
