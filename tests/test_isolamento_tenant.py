@@ -53,8 +53,8 @@ def cenario():
                         (f"ZZ TESTE {lado} {uuid.uuid4().hex[:8]}",))
             ids[lado] = cur.fetchone()[0]
             cur.execute(
-                """insert into pois (nome, fonte, lat_origem, lng_origem, tenant_id)
-                   values (%s,'teste',-29.9,-51.2,%s) returning id""",
+                """insert into pois (nome, endereco, fonte, lat_origem, lng_origem, tenant_id)
+                   values (%s,'Rua Teste, 1','teste',-29.9,-51.2,%s) returning id""",
                 (f"ZZ POI {lado}", ids[lado]))
             ids[f"poi_{lado}"] = cur.fetchone()[0]
     yield ids
@@ -97,8 +97,8 @@ def test_a_nao_grava_carimbando_b(cenario):
     with con.cursor() as cur:
         with pytest.raises(psycopg2.errors.InsufficientPrivilege) as erro:
             cur.execute(
-                """insert into pois (nome, fonte, lat_origem, lng_origem, tenant_id)
-                   values ('ZZ INVASOR','teste',-29.9,-51.2,%s)""", (cenario["B"],))
+                """insert into pois (nome, endereco, fonte, lat_origem, lng_origem, tenant_id)
+                   values ('ZZ INVASOR','Rua Teste, 1','teste',-29.9,-51.2,%s)""", (cenario["B"],))
         assert "row-level security" in str(erro.value)
     con.rollback()
     con.close()

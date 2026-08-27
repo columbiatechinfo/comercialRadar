@@ -291,7 +291,36 @@ def filtrar_para_ia(perguntar: list, tudo: bool = False) -> tuple:
 
 
 def _sobrevivente(a: dict, b: dict) -> tuple:
-    """O de MAIS evidência vive. Empate desempata pelo id, para ser estável."""
+    """Quem vive é quem tem o dado MAIS VERIFICÁVEL, não só o mais volumoso.
+
+    A ORDEM, e por que ela é esta:
+
+    1. QUEM TEM `place_id` DO GOOGLE MAPS. Regra do dono do produto,
+       27/08/2026: "dado vindo do Google Maps tem peso maior que as demais
+       fontes por ser verificável e recente".
+
+       E é uma afirmação sobre a natureza do dado, não preferência de marca. O
+       `place_id` é uma ficha pública que qualquer pessoa abre e confere hoje:
+       nome como o estabelecimento se anuncia, endereço que o Google
+       geocodificou, telefone, horário, foto. As outras bases são extrações
+       datadas — a estadual e o cadastro dizem o que era verdade quando foram
+       exportados, e nada neles envelhece de forma visível.
+
+       Isto decide o que o mapa MOSTRA: o sobrevivente empresta nome, endereço
+       e coordenada ao ponto fundido. O absorvido não some — vira aba, com
+       tudo o que trouxe.
+
+    2. MAIS EVIDÊNCIA. Entre dois sem Maps, ou dois com Maps, vence quem tem
+       mais fontes sustentando.
+
+    3. O MENOR id. Não é critério de qualidade: é o desempate que torna o
+       resultado o mesmo em toda execução. Sem ele, duas rodadas sobre os
+       mesmos dados poderiam eleger sobreviventes diferentes, e a ficha do
+       ponto mudaria de dono sem nada ter mudado no mundo.
+    """
+    ma, mb = bool(a.get("place_id")), bool(b.get("place_id"))
+    if ma != mb:
+        return (a, b) if ma else (b, a)
     if a["evid"] != b["evid"]:
         return (a, b) if a["evid"] > b["evid"] else (b, a)
     return (a, b) if str(a["id"]) < str(b["id"]) else (b, a)

@@ -954,7 +954,25 @@ def listar_pois():
                 FROM pois p
                 LEFT JOIN analise_ia a ON a.poi_id = p.id
                 WHERE p.match_valido IS NOT FALSE
-                  AND COALESCE(p.maps_lat, p.lat_origem) IS NOT NULL""")
+                  AND COALESCE(p.maps_lat, p.lat_origem) IS NOT NULL
+                  -- O PONTO FUNDIDO NAO EXISTE MAIS COMO PONTO.
+                  --
+                  -- Ele virou aba de outro, e o registro so fica no banco para
+                  -- a fusao poder ser desfeita. Sem esta linha o mapa mostrava
+                  -- as duas coisas: o ponto sobrevivente E o absorvido, lado a
+                  -- lado, e a deduplicacao inteira nao aparecia para quem olha.
+                  --
+                  -- MEDIDO em Canoas, 27/08/2026: o mapa devolvia 49.636 pontos
+                  -- quando a cidade deduplicada tem 34.487. Os 14.320 fundidos
+                  -- continuavam desenhados, e a queixa "nao e pra ter mais que
+                  -- 30 mil pontos" era sobre isto — o banco ja estava certo, o
+                  -- mapa e que nao tinha sido avisado.
+                  AND COALESCE(p.status, '') <> 'fundido'
+                  -- E o ponto sem NENHUMA ficha ativa nao tem o que mostrar: as
+                  -- fontes que o sustentavam foram desvinculadas. Ele fica no
+                  -- banco, auditavel, e some do mapa.
+                  AND EXISTS (SELECT 1 FROM vinculo_poi v
+                               WHERE v.poi_id = p.id AND v.estado = 'vinculado')""")
             cols = ["id", "nome", "categoria", "endereco", "telefone", "avaliacao",
                     "total_avaliacoes", "fonte", "fonte_dado", "status", "lat", "lng",
                     "tem_cnpj", "situacao_cadastral", "endereco_fonte", "tem_tel", "tem_sv", "tem_foto",

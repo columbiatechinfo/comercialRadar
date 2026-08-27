@@ -34,18 +34,20 @@ def cenario():
     tenant = str(cur.fetchone()[0])
     cur.execute("select set_config('app.tenant_id', %s, false)", (tenant,))
     cur.execute("""
-        insert into pois (nome, fonte, lat_origem, lng_origem, maps_lat, maps_lng,
+        insert into pois (nome, endereco, fonte, lat_origem, lng_origem, maps_lat, maps_lng,
                           place_id, cidade, uf, status, match_valido)
-        values ('Bah Burger', 'estadual', -29.91, -51.18, -29.91, -51.18,
+        values ('Bah Burger', 'Rua Teste, 100', 'estadual', -29.91, -51.18, -29.91, -51.18,
                 'overture:teste-bah', 'Canoas', 'RS', 'teste', true)
         returning id""")
     poi = cur.fetchone()[0]
     V.vincular(con, poi, "overture", "teste-bah", 9, "regra_forte",
                nome="Bah Burger", lat=-29.91, lng=-51.18,
-               dados={"categoria": "Hamburgueria", "telefone": "5133330000"})
+               dados={"categoria": "Hamburgueria", "telefone": "5133330000",
+                      "endereco": "Rua Teste, 100"})
     V.vincular(con, poi, "osm", "teste-figurati", 4, "ia",
                nome="Figurati Pizza Napolitana", lat=-29.9101, lng=-51.1801,
-               dados={"categoria": "Pizzaria", "telefone": "5133330000"},
+               dados={"categoria": "Pizzaria", "telefone": "5133330000",
+                      "endereco": "Rua Teste, 102"},
                motivo="telefone igual", modelo="qwen3vl-moe")
     yield con, poi
     con.rollback()
@@ -151,12 +153,17 @@ def test_o_mesmo_registro_nao_compoe_dois_pois_ao_mesmo_tempo(cenario):
     con, poi = cenario
     with con.cursor() as cur:
         cur.execute("""
-            insert into pois (nome, fonte, lat_origem, lng_origem, place_id,
+            insert into pois (nome, endereco, fonte, lat_origem, lng_origem, place_id,
                               cidade, uf, status, match_valido)
-            values ('Outro', 'estadual', -29.9, -51.1, 'x:outro', 'Canoas', 'RS',
-                    'teste', true) returning id""")
+            values ('Outro', 'Rua Teste, 200', 'estadual', -29.9, -51.1, 'x:outro',
+                    'Canoas', 'RS', 'teste', true) returning id""")
         outro = cur.fetchone()[0]
     import psycopg2
+    # O nome e o endereço aqui não são detalhe do cenário: sem eles o trigger
+    # `vinculo_comparavel` recusa a linha ANTES de a unicidade ser avaliada, e
+    # o teste passaria a provar a trava errada.
     with pytest.raises(psycopg2.errors.UniqueViolation):
-        V.vincular(con, outro, "osm", "teste-figurati", 8, "ia")
+        V.vincular(con, outro, "osm", "teste-figurati", 8, "ia",
+                   nome="Figurati Pizza Napolitana",
+                   dados={"endereco": "Rua Teste, 102"})
     con.rollback()

@@ -48,14 +48,14 @@ def test_dois_pois_com_o_mesmo_place_id_sao_recusados(con):
     """
     import psycopg2
     with con.cursor() as cur:
-        cur.execute("""insert into pois (nome, fonte, place_id, cidade, uf, status,
+        cur.execute("""insert into pois (nome, endereco, fonte, place_id, cidade, uf, status,
                                          match_valido, lat_origem, lng_origem)
-                       values ('Teste A', 'teste', 'teste:duplica-1', 'Canoas', 'RS',
+                       values ('Teste A', 'Rua Teste, 1', 'teste', 'teste:duplica-1', 'Canoas', 'RS',
                                'teste', true, -29.9, -51.1)""")
         with pytest.raises(psycopg2.errors.UniqueViolation):
-            cur.execute("""insert into pois (nome, fonte, place_id, cidade, uf, status,
+            cur.execute("""insert into pois (nome, endereco, fonte, place_id, cidade, uf, status,
                                              match_valido, lat_origem, lng_origem)
-                           values ('Teste B', 'outra', 'teste:duplica-1', 'Canoas', 'RS',
+                           values ('Teste B', 'Rua Teste, 1', 'outra', 'teste:duplica-1', 'Canoas', 'RS',
                                    'teste', true, -29.9, -51.1)""")
 
 
@@ -69,10 +69,10 @@ def test_poi_sem_place_id_continua_podendo_existir(con):
     """
     with con.cursor() as cur:
         for n in ("Sem id 1", "Sem id 2"):
-            cur.execute("""insert into pois (nome, fonte, place_id, cidade, uf, status,
+            cur.execute("""insert into pois (nome, endereco, fonte, place_id, cidade, uf, status,
                                              match_valido, lat_origem, lng_origem)
-                           values (%s, 'teste', '', 'Canoas', 'RS', 'teste', true,
-                                   -29.9, -51.1)""", (n,))
+                           values (%s, 'Rua Teste, 1', 'teste', '', 'Canoas', 'RS', 'teste',
+                                   true, -29.9, -51.1)""", (n,))
         cur.execute("select count(*) from pois where place_id = '' and fonte = 'teste'")
         assert cur.fetchone()[0] >= 2
 
@@ -86,10 +86,10 @@ def test_a_mesma_vista_do_street_view_nao_entra_duas_vezes(con):
     """
     import psycopg2
     with con.cursor() as cur:
-        cur.execute("""insert into pois (nome, fonte, place_id, cidade, uf, status,
+        cur.execute("""insert into pois (nome, endereco, fonte, place_id, cidade, uf, status,
                                          match_valido, lat_origem, lng_origem)
-                       values ('Ponto SV', 'teste', 'teste:sv-1', 'Canoas', 'RS',
-                               'teste', true, -29.9, -51.1) returning id""")
+                       values ('Ponto SV', 'Rua Teste, 1', 'teste', 'teste:sv-1', 'Canoas',
+                               'RS', 'teste', true, -29.9, -51.1) returning id""")
         poi = cur.fetchone()[0]
 
         # Os sete ângulos do giro entram sem reclamação.
