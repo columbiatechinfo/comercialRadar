@@ -82,26 +82,53 @@ async def _dispensar_consent(page):
 
 
 async def buscar_categoria(page, termo: str, lat: float, lng: float,
-                           max_scroll: int = 8) -> list:
+                           max_scroll: int = 8) -> tuple:
     """Todos os estabelecimentos de um ramo perto de uma coordenada.
 
-    Devolve `[(nome, lat, lng)]`. A coordenada sai do `!3d!4d` do href — é o
-    ponto REAL do lugar, não o centro do mapa.
+    Devolve `(achados, motivo)`. `achados` é `[(nome, lat, lng, termo)]`, com a
+    coordenada tirada do `!3d!4d` do href — o ponto REAL do lugar, não o centro
+    do mapa. `motivo` é "" quando deu certo e o QUE HOUVE quando não deu.
+
+    POR QUE ELA DEVOLVE MOTIVO, e não só a lista
+
+    A versão anterior devolvia `[]` em dois pontos sem dizer nada: o `goto` que
+    falha e o feed que não aparece. De fora, os dois viravam a mesma linha —
+    "0 no Maps" — indistinguível de "esta área não tem padaria".
+
+    Em 26/08/2026 isso escondeu uma run inteira: as 46 categorias reportaram 0,
+    e a causa era o perfil de navegador apodrecido, com TODA navegação em
+    timeout. O painel dizia "varreu tudo, não achou nada". Não varreu nada.
+
+    Área sem resultado e busca que não aconteceu são fatos diferentes, e quem
+    lê o log precisa poder distinguir os dois.
     """
     from urllib.parse import quote
     url = (f"https://www.google.com/maps/search/{quote(termo)}/"
            f"@{lat},{lng},15z?hl=pt-BR")
     try:
         await page.goto(url, timeout=45000, wait_until="domcontentloaded")
-    except Exception:
-        return []
+    except Exception as e:
+        return [], f"navegação falhou ({type(e).__name__})"
     await asyncio.sleep(3)
     await _dispensar_consent(page)
     await asyncio.sleep(1.5)
 
     feed = page.locator('div[role="feed"]')
     if not await feed.count():
-        return []
+        try:
+            titulo = await page.title()
+        except Exception:
+            titulo = ""
+        if not (titulo or "").strip():
+            return [], "página veio em branco (sessão morta)"
+        for sel, causa in (('form[action*="consent"]', "muro de consentimento"),
+                           ('iframe[src*="recaptcha"]', "CAPTCHA")):
+            try:
+                if await page.locator(sel).count():
+                    return [], causa
+            except Exception:
+                pass
+        return [], "sem lista de resultados no DOM"
 
     # ROLA ATÉ O FIM. O Maps carrega os resultados por scroll; parar cedo perde
     # a cauda. Para quando a altura não cresce mais (chegou em "Você chegou ao
@@ -140,7 +167,7 @@ async def buscar_categoria(page, termo: str, lat: float, lng: float,
             continue
         vistos.add(chave)
         achados.append((nome.strip(), la, lo, termo))
-    return achados
+    return achados, ""
 
 
 async def varrer(poligono, termos: list, workers: int = 3, usar_proxy: bool = True,
@@ -153,6 +180,7 @@ async def varrer(poligono, termos: list, workers: int = 3, usar_proxy: bool = Tr
     from human_browser import HumanSession
     from playwright.async_api import async_playwright
     from proxy_pool import ProxyPool
+    import shutil
     import tempfile
     from pathlib import Path
 
@@ -176,22 +204,59 @@ async def varrer(poligono, termos: list, workers: int = 3, usar_proxy: bool = Tr
         fila.put_nowait(t)
 
     achados: dict = {}
+    falhas: list = []          # categoria que NAO foi buscada, e por que
     lock = asyncio.Lock()
 
+    # PERFIL PODRE DERRUBA A ETAPA INTEIRA -- e foi o que aconteceu em 26/08/2026.
+    #
+    # O perfil de navegador e reaproveitado entre runs de proposito: sessao
+    # morna toma menos CAPTCHA que sessao recem-nascida. So que quando ele
+    # apodrece, TODA navegacao daquele worker passa a dar timeout, e as 46
+    # categorias saem com "0 no Maps" -- que se le como "a area nao tem nada".
+    #
+    # MEDIDO na hora do conserto, mesma URL, mesmo proxy, mesmo momento:
+    #     perfil cr_descobre_0 (velho) -> goto TIMEOUT, feed 0, links 0
+    #     perfil novo em branco        -> feed 1, 20 links
+    # Headless ou headful, com ou sem tz_hint: so o perfil mudava o resultado.
+    #
+    # Por isso o worker agora se cura: na primeira falha de NAVEGACAO ele joga
+    # o perfil fora, refaz a sessao e tenta a mesma categoria outra vez. Uma
+    # vez so -- se falhar de novo, o problema nao e o perfil, e insistir apenas
+    # gastaria proxy.
     async def _worker(wid, pw):
         proxy = None
         if pool:
             proxy = await pool.acquire_blocking()
         perfil = Path(tempfile.gettempdir()) / f"cr_descobre_{wid}"
-        sess = await HumanSession.create(pw, proxy, perfil, layer="maps",
-                                         tz_hint_lng=clng)
+
+        async def _abrir():
+            return await HumanSession.create(pw, proxy, perfil, layer="maps",
+                                             tz_hint_lng=clng)
+
+        sess = await _abrir()
+        curou = False
         try:
             while True:
                 try:
                     termo = fila.get_nowait()
                 except asyncio.QueueEmpty:
                     return
-                lista = await buscar_categoria(sess.page, termo, clat, clng)
+                lista, motivo = await buscar_categoria(sess.page, termo, clat, clng)
+
+                if motivo and not curou and (
+                        "navegação" in motivo or "branco" in motivo):
+                    print(f"  [{termo}] {motivo} — descartando o perfil e "
+                          f"refazendo a sessão", flush=True)
+                    curou = True
+                    try:
+                        await sess.close()
+                    except Exception:
+                        pass
+                    shutil.rmtree(perfil, ignore_errors=True)
+                    sess = await _abrir()
+                    lista, motivo = await buscar_categoria(sess.page, termo,
+                                                           clat, clng)
+
                 dentro = [x for x in lista
                           if au.ponto_no_poligono(x[1], x[2], poligono)]
                 async with lock:
@@ -199,8 +264,12 @@ async def varrer(poligono, termos: list, workers: int = 3, usar_proxy: bool = Tr
                         ch = (ev.norm_nome(nome), round(la, 5), round(lo, 5))
                         achados.setdefault(ch, {"nome": nome, "lat": la, "lng": lo,
                                                 "categoria": term})
-                print(f"  [{termo}] {len(lista)} no Maps · {len(dentro)} na área",
-                      flush=True)
+                if motivo:
+                    falhas.append((termo, motivo))
+                    print(f"  [{termo}] ⚠️  NÃO BUSCADO — {motivo}", flush=True)
+                else:
+                    print(f"  [{termo}] {len(lista)} no Maps · {len(dentro)} na área",
+                          flush=True)
         finally:
             try:
                 await sess.close()
@@ -211,6 +280,16 @@ async def varrer(poligono, termos: list, workers: int = 3, usar_proxy: bool = Tr
 
     async with async_playwright() as pw:
         await asyncio.gather(*(_worker(i, pw) for i in range(workers)))
+
+    # O RESUMO TEM DE DIZER O QUE NAO FOI FEITO. Silencio aqui e o que fez uma
+    # run inteira parecer "varreu 46 categorias" quando nao varreu nenhuma.
+    if falhas:
+        print(f"\n  ⚠️  {len(falhas)} de {len(termos)} categorias NÃO foram "
+              f"buscadas — o número abaixo não cobre a área toda:", flush=True)
+        for termo, motivo in falhas[:10]:
+            print(f"       {termo}: {motivo}", flush=True)
+        if len(falhas) > 10:
+            print(f"       … e mais {len(falhas) - 10}", flush=True)
     return list(achados.values())
 
 
