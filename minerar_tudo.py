@@ -797,6 +797,25 @@ def main(argv=None) -> int:
         _tolerante([PYTHON, "corrigir_coordenada.py", "--cidade", cidade,
                     "--municipio", cod, "--aplicar"],
                    "coordenada conferida contra o endereço")
+
+        # E POR ÚLTIMO O MUNICÍPIO, porque ele APAGA.
+        #
+        # A ordem protege: o passo acima ainda pode consertar a coordenada de um
+        # ponto cujo endereço é daqui. Só depois se pergunta se o ponto pertence
+        # à cidade — e aí a resposta é definitiva.
+        #
+        # Regra do dono do produto, 27/08/2026: "os que vêm da base com CEP de
+        # outra cidade têm que ser deletados com certeza, a fonte do endereço é
+        # confiável". O CEP não é texto livre: os Correios o atribuem a um
+        # trecho de logradouro de um município, e essa declaração vale mais que
+        # o campo `cidade`, que é preenchido pelo processo e já errou antes.
+        #
+        # MEDIDO em Canoas: 229 POIs com CEP de outro município — e todos os 348
+        # da primeira contagem tinham coordenada DENTRO da divisa. Se a
+        # coordenada mandasse, nenhum seria pego.
+        _tolerante([PYTHON, "conferir_municipio.py", "--cidade", cidade,
+                    "--municipio", cod, "--aplicar"],
+                   "POIs de outro município")
     else:
         _log("  pulado — sem código IBGE do município")
 
