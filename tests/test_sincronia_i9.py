@@ -39,19 +39,42 @@ import i9  # noqa: E402
 
 
 def _importa_locais(caminho):
-    """Módulos do próprio projeto que este arquivo importa (raiz do repo)."""
+    """Módulos do projeto que este arquivo importa NO NÍVEL DO MÓDULO.
+
+    A distinção não é purismo — ela decide o que o i9 precisa ter.
+
+    Import no topo do arquivo é OBRIGATÓRIO: sem ele o módulo nem carrega, e a
+    etapa morre com ImportError antes da primeira linha de trabalho.
+
+    Import DENTRO de função é opcional por construção, e no projeto ele é usado
+    justamente para isso. `endereco_reverso.por_maps` importa `geocodificar`
+    assim, protegido por try/except: levar `geocodificar` ao i9 arrastaria 21
+    módulos (a pilha de agentes inteira) para atender 5% dos casos, enquanto o
+    CNEFE resolve 95% sem nenhum deles.
+
+    Seguir import de dentro de função faria este teste exigir meio repositório
+    no i9 e, pior, ensinaria a resposta errada: mandar tudo em vez de olhar o
+    que é mesmo necessário.
+    """
     try:
         arvore = ast.parse(io.open(caminho, encoding="utf-8").read())
     except (OSError, SyntaxError):
         return set()
     nomes = set()
-    for no in ast.walk(arvore):
+    for no in arvore.body:                       # só o topo, não `ast.walk`
         if isinstance(no, ast.Import):
             for a in no.names:
                 nomes.add(a.name.split(".")[0])
         elif isinstance(no, ast.ImportFrom):
             if no.module and no.level == 0:
                 nomes.add(no.module.split(".")[0])
+        elif isinstance(no, ast.Try):            # `try: import x` também é topo
+            for filho in no.body:
+                if isinstance(filho, ast.Import):
+                    for a in filho.names:
+                        nomes.add(a.name.split(".")[0])
+                elif isinstance(filho, ast.ImportFrom) and filho.module and filho.level == 0:
+                    nomes.add(filho.module.split(".")[0])
     # só o que é arquivo .py na raiz do repositório
     return {n for n in nomes if os.path.isfile(os.path.join(RAIZ, n + ".py"))}
 

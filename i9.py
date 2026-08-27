@@ -84,6 +84,15 @@ _PY = [
     "extracao_estadual.py", "evidencia.py",
     "spatial_clustering.py", "extract_full.py", "realtime_ingest.py",
     "auth.py",  # o `realtime_ingest` importa; o fecho é transitivo
+    # A ingestao roda no i9 e e ela quem precisa gerar o endereco pela
+    # coordenada antes de gravar o POI — sem este arquivo la, o trigger
+    # `poi_comparavel` recusaria o ponto que o i9 tentasse inserir.
+    #
+    # `geocodificar.py` NAO entra, e e escolha: ele arrasta 21 modulos (a pilha
+    # de agentes inteira) para atender 5% dos casos. Por isso o import dele em
+    # `endereco_reverso` mora DENTRO da funcao e e protegido — no i9 a cascata
+    # resolve pelo CNEFE, que cobre 95%, e o residuo fica para quem tem a pilha.
+    "endereco_reverso.py",
 ]
 
 
