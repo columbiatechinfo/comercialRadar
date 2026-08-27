@@ -57,11 +57,33 @@ PREFIXO = 'export PATH="$HOME/.local/node/bin:$PATH" PYTHONUTF8=1 PYTHONIOENCODI
 
 # Tudo que a captura, a busca e o iFood tocam. Um arquivo esquecido aqui é um
 # defeito corrigido que volta — foi assim que o "nan" ressuscitou.
+#
+# E FOI ASSIM DE NOVO EM 27/08/2026, com `config.py`.
+#
+# O teto de espera do botão "Próximo" subiu de 9 s para 25 s aqui, com medição.
+# A run seguinte, no i9, continuou falhando — e a mensagem de erro entregou o
+# motivo sem querer: dizia "não pintou em 12s", que é 9.000 + 2.500. O código
+# novo tinha chegado; o NÚMERO não. `search_pois_v2.py` estava nesta lista,
+# `config.py` não estava.
+#
+# `config.py` é lido por três dos módulos daqui (a busca, o navegador e o pool
+# de proxies) e guarda todo teto, limite e caminho. Sem ele, ajustar constante
+# no notebook não muda nada onde o trabalho acontece — e o sintoma é o pior
+# possível: o conserto "não funcionou", quando na verdade não chegou.
+# O teste `test_o_fecho_das_dependencias_esta_completo` guarda esta lista: ele
+# lê os `import` de cada arquivo daqui e exige que todo módulo do projeto que
+# eles usam também esteja presente. Foi ele quem encontrou os três últimos —
+# `spatial_clustering` (monta os lotes de POIs), `extract_full` (fotos e
+# avaliações) e `realtime_ingest` — que rodavam velhos no i9 sem que ninguém
+# soubesse. Não confie na memória para manter isto em dia; o teste não esquece.
 _PY = [
+    "config.py",  # PRIMEIRO de propósito: é o que os outros leem
     "minerar_captura.py", "detect_crops.py", "ocr_pois.py", "search_pois_v2.py",
     "human_browser.py", "proxy_pool.py", "extrair_ifood.py", "enriquecer_ifood.py",
     "pontos_de_busca.py", "area_utils.py", "base_comum.py", "db_export.py",
     "extracao_estadual.py", "evidencia.py",
+    "spatial_clustering.py", "extract_full.py", "realtime_ingest.py",
+    "auth.py",  # o `realtime_ingest` importa; o fecho é transitivo
 ]
 
 

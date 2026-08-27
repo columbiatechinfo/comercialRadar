@@ -392,3 +392,48 @@ def test_o_lote_tem_teto():
     s = io.open(os.path.join(RAIZ, "cruzar_fontes.py"), encoding="utf-8").read()
     i = s.index("def aplicar(")
     assert "LOTE = 1000" in s[i:i + 3000], "o teto do bloco sumiu"
+
+
+def test_as_funcoes_de_texto_tem_memoria():
+    """MEDIDO em Canoas, 27/08/2026, perfilando 200 mil pares reais: 72,4 s, e
+    o gargalo não era decidir — era `unicodedata.category` (39,3 milhões de
+    chamadas), `str.join` (2,9 milhões) e `re.sub` (1,9 milhão).
+
+    Tudo isso é tirar acento. E era trabalho REPETIDO: 35.321 POIs em 2,5
+    milhões de pares significa que cada POI aparece em ~140 pares e o nome dele
+    era normalizado 140 vezes, sempre com o mesmo resultado.
+
+    Com memória, medido sobre os mesmos pares:
+
+        sem : 35,2 s ·  5.678 pares/s
+        com :  5,2 s · 38.211 pares/s      6,7x
+
+    E o que torna isto seguro: 200.000 de 200.000 vereditos IDÊNTICOS. São
+    funções puras — mesma string entra, mesma string sai.
+    """
+    for nome in ("_sem_acento", "norm_nome", "tokens", "so_digitos", "dominio"):
+        f = getattr(ev, nome)
+        assert hasattr(f, "cache_info"), f"{nome} perdeu a memória"
+
+
+def test_tokens_devolve_conjunto_imutavel():
+    """Conjunto MUTÁVEL em cache seria corrompido pelo primeiro chamador que o
+    alterasse — e o estrago apareceria em outro par, muito depois, como
+    semelhança errada sem causa visível."""
+    t = ev.tokens("Padaria do Silva")
+    assert isinstance(t, frozenset), "tokens voltou a devolver set mutável"
+    # e continua servindo para as operações de conjunto que a semelhança usa
+    assert ev.semelhanca_nome("Padaria Silva", "Silva Padaria") == 1.0
+
+
+def test_a_memoria_nao_muda_veredito():
+    """O ponto que importa: acelerar não pode decidir diferente."""
+    a = {"id": 1, "nome": "Padaria São João", "lat": -29.92, "lng": -51.18,
+         "logr_marcado": "RUA MATEO BEI", "logr_original": "", "numero_canonico": "100",
+         "tier": "CONFIRMA", "telefone": "", "website": "", "categoria": "", "evid": 0}
+    b = dict(a, id=2)
+    com = ev.avaliar(a, b)
+    for nome in ("_sem_acento", "norm_nome", "tokens", "so_digitos", "dominio"):
+        getattr(ev, nome).cache_clear()
+    frio = ev.avaliar(a, b)
+    assert com["decisao"] == frio["decisao"] and com["confianca"] == frio["confianca"]

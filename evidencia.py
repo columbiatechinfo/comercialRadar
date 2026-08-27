@@ -33,6 +33,7 @@ from __future__ import annotations
 import math
 import re
 import unicodedata
+from functools import lru_cache
 
 # Peso de cada evidência; a soma vira a confiança de 1 a 10.
 #
@@ -88,11 +89,39 @@ def distancia_m(la1, lo1, la2, lo2) -> float:
     return 2 * r * math.asin(min(1.0, math.sqrt(a)))
 
 
+# ==========================================================================
+# MEMORIA DAS FUNCOES DE TEXTO -- e o que torna a comparacao viavel.
+#
+# MEDIDO em Canoas, 27/08/2026, perfilando 200 mil pares reais:
+#
+#     72,4 s no total, e o gargalo NAO era a decisao:
+#         unicodedata.category .... 39,3 milhoes de chamadas
+#         str.join ................  2,9 milhoes (37 s acumulados)
+#         re.sub ..................  1,9 milhao
+#
+# Tudo isso e tirar acento e limpar pontuacao. O trabalho era REPETIDO: sao
+# 35.321 POIs e 2,5 milhoes de pares, entao cada POI aparece em ~140 pares e o
+# nome dele era normalizado 140 vezes, sempre com o mesmo resultado.
+#
+# As cinco funcoes abaixo sao PURAS -- mesma string entra, mesma string sai --
+# e por isso podem ser lembradas sem mudar nenhum veredito. O cache e por
+# string, nao por par: 35 mil normalizacoes em vez de 5 milhoes.
+#
+# O TETO DE 200.000 cobre uma capital inteira com folga (nome, logradouro,
+# telefone e site de cada POI). Passando disso o LRU descarta o menos usado, o
+# que degrada o desempenho e nunca a correcao.
+#
+# `tokens` devolve FROZENSET de proposito: conjunto mutavel em cache seria
+# corrompido pelo primeiro chamador que o alterasse. As operacoes `&` e `|`
+# funcionam igual e devolvem conjunto novo.
+# ==========================================================================
+@lru_cache(maxsize=200_000)
 def _sem_acento(s: str) -> str:
     return "".join(c for c in unicodedata.normalize("NFD", (s or "").lower())
                    if unicodedata.category(c) != "Mn")
 
 
+@lru_cache(maxsize=200_000)
 def norm_nome(s: str) -> str:
     return re.sub(r"[^a-z0-9 ]", " ", _sem_acento(s)).strip()
 
@@ -115,10 +144,11 @@ def nome_util(s: str) -> str:
     return "" if t in _VAZIO else (s or "")
 
 
-def tokens(s: str) -> set:
+@lru_cache(maxsize=200_000)
+def tokens(s: str) -> frozenset:
     """Tokens com mais de 2 letras. `de`, `da`, `do` não distinguem nada e
     inflariam a semelhança de qualquer par."""
-    return {t for t in norm_nome(s).split() if len(t) > 2}
+    return frozenset(t for t in norm_nome(s).split() if len(t) > 2)
 
 
 def semelhanca_nome(a: str, b: str) -> float:
@@ -147,6 +177,7 @@ def semelhanca_nome(a: str, b: str) -> float:
     return len(ta & tb) / len(ta | tb)
 
 
+@lru_cache(maxsize=200_000)
 def so_digitos(s: str) -> str:
     if _sem_acento(s or "").strip() in _VAZIO:
         return ""
@@ -158,6 +189,7 @@ def so_digitos(s: str) -> str:
     return d
 
 
+@lru_cache(maxsize=200_000)
 def dominio(url: str) -> str:
     """O domínio, sem `www` e sem caminho.
 
@@ -264,11 +296,39 @@ def avaliar(a: dict, b: dict) -> dict:
     # O teto de 1 km existe para não unir a filial do outro bairro: "Farmácia
     # São João" na "Avenida Brasil" pode legitimamente ser duas lojas se a
     # avenida cruza a cidade. Dentro de 1 km, numa mesma rua, é o mesmo ponto.
-    if mesma_rua and sem >= 0.85 and d <= 1000:
-        motivos.append("mesmo nome na mesma rua")
-        return {"confianca": 10, "pontos": max(pontos, 10), "motivos": motivos,
-                "dist_m": d, "decisao": "fundir",
-                "porque": "mesmo nome e mesmo logradouro — a distância não desmente"}
+    # O NÚMERO DA PORTA DESEMPATA, e sem ele esta regra fundia rede legítima.
+    #
+    # MEDIDO em Canoas, 27/08/2026, sobre os 266 pares que a regra fundiria:
+    #
+    #     mesmo número de porta ....  167   "Posto Ipiranga, Guilherme Schell
+    #                                        1046" x o mesmo, a 7,7 km — a
+    #                                        coordenada de uma fonte é que erra
+    #     número DIFERENTE .........   48   "Saque e Pague" nos números 1011 e
+    #                                        1623 da mesma avenida: caixas
+    #                                        eletrônicos distintos da mesma rede
+    #     sem número num dos lados ..   51   ambíguo
+    #
+    # Os 48 são o contra-exemplo que faltava. Nome de rede numa avenida longa
+    # repete de verdade, e fundir apagaria ponto real do mapa. Já quando os dois
+    # dizem a MESMA porta, ser 7 km é a coordenada mentindo — nunca a identidade.
+    #
+    # Por isso: número igual funde a qualquer distância (o endereço já provou o
+    # que a coordenada nega). Número diferente NÃO usa este atalho — cai nos
+    # pontos e, se houver evidência, na IA. Faltando número, o teto de 1 km
+    # volta a valer, porque aí só resta a proximidade para sustentar.
+    if mesma_rua and sem >= 0.85:
+        num_a, num_b = logradouro_de(a)[1], logradouro_de(b)[1]
+        if num_a and num_b and num_a == num_b:
+            motivos.append("mesmo nome, mesma rua e mesmo número")
+            return {"confianca": 10, "pontos": max(pontos, 10), "motivos": motivos,
+                    "dist_m": d, "decisao": "fundir",
+                    "porque": "mesmo endereço exato — a distância é a coordenada "
+                              "errando, não outro estabelecimento"}
+        if not (num_a and num_b) and d <= 1000:
+            motivos.append("mesmo nome na mesma rua")
+            return {"confianca": 10, "pontos": max(pontos, 10), "motivos": motivos,
+                    "dist_m": d, "decisao": "fundir",
+                    "porque": "mesmo nome e mesmo logradouro — a distância não desmente"}
 
     if pontos >= MIN_PARA_FUNDIR:
         # 8 pontos -> 8; cada 2 pontos a mais sobe 1, com teto em 10.

@@ -87,12 +87,37 @@ def test_o_src_e_varrido_e_nao_digitado():
     assert "rglob" in s, "a lista voltou a ser digitada à mão"
 
 
-def test_o_que_nao_pode_ser_sobrescrito():
-    """`config.py` e `.env` são legitimamente diferentes no i9 — credencial e
-    caminho daquela máquina. Mandá-los quebraria o i9."""
+def test_o_env_nunca_e_sobrescrito():
+    """O `.env` é legitimamente diferente no i9: credencial e caminho daquela
+    máquina. Mandá-lo quebraria o i9 — e ainda levaria segredo de uma máquina
+    para outra sem necessidade.
+
+    ESTE TESTE JÁ PROIBIU `config.py` TAMBÉM, E ESTAVA ERRADO NISSO.
+
+    A premissa era que `config.py` guardava caminho de máquina. Não guarda: todo
+    caminho dele sai de `Path(__file__).resolve().parent`, portanto resolve
+    sozinho onde quer que o arquivo esteja, e toda credencial vem do `.env`.
+    Verificado no próprio i9 em 27/08/2026, depois de sincronizado:
+
+        BASE_DIR ............ /home/orbisgrid/comercialradar
+        BROWSER_PROFILES_DIR  /home/orbisgrid/comercialradar/.browser_profiles
+        WEBSHARE_API_KEY .... presente (veio do .env DE LÁ)
+
+    E a proibição custou caro. O teto de espera do botão "Próximo" subiu de 9 s
+    para 25 s com medição; a run seguinte continuou falhando porque o número
+    ficou no notebook. A mensagem de erro entregou a causa sem querer: dizia
+    "não pintou em 12s", que é 9.000 + 2.500.
+
+    `config.py` é onde moram TODOS os tetos e limites que a busca, o navegador e
+    o pool de proxies leem. Não sincronizá-lo é garantir que ajustar constante
+    aqui não surta efeito onde o trabalho acontece — com o pior sintoma
+    possível: "o conserto não funcionou".
+    """
     import i9
-    for proibido in ("config.py", ".env"):
-        assert proibido not in i9.ARQUIVOS, f"{proibido} não pode ser sincronizado"
+    assert ".env" not in i9.ARQUIVOS, "o .env não pode ser sincronizado"
+    assert "config.py" in i9.ARQUIVOS, (
+        "config.py saiu da sincronização — os tetos ajustados aqui deixariam "
+        "de valer no i9, que é onde a busca roda")
 
 
 def test_o_node_do_i9_entra_no_path():

@@ -49,6 +49,11 @@ import evidencia as ev
 # candidatos, e o `evidencia.avaliar` é quem aplica os 20 m onde eles valem.
 CELULA = 0.001
 
+# Teto do grupo "mesmo nome + mesma rua". Vinte POIs dão 190 pares, que é
+# barato; quarenta dariam 780, e um nome genérico numa avenida longa produz
+# exatamente isso sem que nenhum deles seja duplicado de verdade.
+TETO_GRUPO_NOME = 20
+
 SQL_POIS = """
 select p.id, p.nome, p.fonte, p.categoria, p.endereco, p.telefone, p.website,
        p.cnpj, p.razao_social, p.nome_fantasia, p.cnae,
@@ -143,16 +148,52 @@ def carregar(cur, cidade: str, poligono=None) -> list:
 
 
 def candidatos(pois: list) -> list:
-    """Pares vizinhos, sem comparar todo mundo com todo mundo.
+    """Pares candidatos por DOIS caminhos, porque um raio só não dá conta.
 
-    Cada POI entra na célula dele; a comparação varre a célula e as 8 vizinhas,
-    e o `id < id` garante que cada par apareça uma vez só.
+    1. VIZINHANÇA. Cada POI entra na célula dele; a comparação varre a célula e
+       as 8 vizinhas. Alcance de ~330 m no pior caso, e é o caminho que acha
+       duplicado sem nome em comum — "Farmácia" e "Drogaria São João" na mesma
+       porta.
+
+    2. MESMO NOME NA MESMA RUA. Uma chave, não um raio.
+
+    O SEGUNDO CAMINHO EXISTE POR UM DEFEITO MEU, achado em 27/08/2026.
+
+    A regra do dono do produto — "mesmo nome e mesmo logradouro é confiança
+    máxima, mesmo a 50 metros ou 100" — foi implementada em `evidencia.avaliar`
+    com alcance de 1.000 m. Só que a geração de candidatos continuou sendo a
+    grade de 111 m. A regra virou letra morta justamente na faixa que ela
+    existia para cobrir: o par a 400 m nunca era proposto, então nunca era
+    julgado.
+
+    MEDIDO em Canoas, depois de uma rodada completa: 344 grupos de mesmo nome +
+    mesmo logradouro continuavam separados, e 334 deles estavam a MAIS de 100 m.
+    Só 8 dentro de 20 m. O buraco era quase todo fora do alcance da grade.
+
+    Alargar a grade para 1 km seria o conserto errado: as células de 111 m
+    viram 19x19 e os 2,7 milhões de pares de Canoas passariam de 100 milhões,
+    para achar algumas centenas. Chave é O(n) com um dicionário.
+
+    O TETO POR GRUPO existe porque nome genérico em rua longa explode: uma rua
+    com 40 "Farmácia" daria 780 pares sozinha. Acima do teto o grupo é deixado
+    para a vizinhança resolver — e o que ficou de fora é DITO, nunca calado.
     """
+    vistos, pares = set(), []
+
+    def _juntar(a, b):
+        if a["id"] == b["id"]:
+            return
+        chave = (a["id"], b["id"]) if str(a["id"]) < str(b["id"]) \
+            else (b["id"], a["id"])
+        if chave in vistos:
+            return
+        vistos.add(chave)
+        pares.append((a, b))
+
+    # 1. vizinhança
     grade = {}
     for p in pois:
         grade.setdefault((int(p["lat"] / CELULA), int(p["lng"] / CELULA)), []).append(p)
-
-    vistos, pares = set(), []
     for (cy, cx), aqui in grade.items():
         vizinhos = []
         for dy in (-1, 0, 1):
@@ -160,14 +201,30 @@ def candidatos(pois: list) -> list:
                 vizinhos.extend(grade.get((cy + dy, cx + dx), ()))
         for a in aqui:
             for b in vizinhos:
-                if a["id"] == b["id"]:
-                    continue
-                chave = (a["id"], b["id"]) if str(a["id"]) < str(b["id"]) \
-                    else (b["id"], a["id"])
-                if chave in vistos:
-                    continue
-                vistos.add(chave)
-                pares.append((a, b))
+                _juntar(a, b)
+
+    # 2. mesmo nome na mesma rua, a qualquer distância dentro da cidade
+    por_chave = {}
+    for p in pois:
+        nome = ev.nome_util(p.get("nome"))
+        rua, _num = ev.logradouro_de(p)
+        if not nome or not rua:
+            continue
+        por_chave.setdefault((ev.norm_nome(nome), rua), []).append(p)
+
+    grandes = 0
+    for (_n, _r), grupo in por_chave.items():
+        if len(grupo) < 2:
+            continue
+        if len(grupo) > TETO_GRUPO_NOME:
+            grandes += 1
+            continue
+        for i, a in enumerate(grupo):
+            for b in grupo[i + 1:]:
+                _juntar(a, b)
+    if grandes:
+        print(f"  {grandes} grupo(s) de mesmo nome+rua acima de "
+              f"{TETO_GRUPO_NOME} POIs ficaram para a vizinhança resolver")
     return pares
 
 
