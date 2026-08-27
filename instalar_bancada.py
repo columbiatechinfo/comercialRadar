@@ -26,6 +26,7 @@ Uso:
 from __future__ import annotations
 
 import io
+import json
 import pathlib
 import re
 import sys
@@ -299,6 +300,104 @@ A evidencia ja capturada continua neste ponto.`)) return;
 """
 
 
+# Trocas no HTML do modelo. Cada uma tem um defeito medido atrás, e todas
+# precisam viver AQUI: `frontend/bancada.html` é gerado e está no `.gitignore`,
+# então conserto feito lá some na próxima instalação.
+_TROCAS = [
+    # ── `lon` NUNCA EXISTIU no nosso payload ────────────────────────────────
+    # O modelo foi escrito contra o exemplo dele, que usava `lon`. Em todo o
+    # projeto o campo é `lng` — `pois.maps_lng`, `lng_origem`, `ANCORA_CAMPOS`.
+    # A tela quebrava com "Cannot read properties of undefined (reading
+    # 'toFixed')" e o operador via o aviso vermelho POR CIMA do dataset de
+    # exemplo, que continuava desenhado.
+    ("  if (a.lat == null) {",
+     "  if (a.lat == null || a.lng == null) {"),
+    ("const lat = a.lat.toFixed(6), lon = a.lon.toFixed(6), head = azimuteDaLigacao();",
+     "const lat = a.lat.toFixed(6), lon = a.lng.toFixed(6), head = azimuteDaLigacao();"),
+    ("${esc(a.lat?.toFixed(6))}, ${esc(a.lon?.toFixed(6))} · ${esc(a.nv_geo || '')} ·",
+     "${esc(a.lat?.toFixed(6))}, ${esc(a.lng?.toFixed(6))} · ${esc(a.nv_geo || '')} ·"),
+    ("const lat = c.lat ?? a.lat, lon = c.lon ?? a.lon, hd = c.heading ?? 0;",
+     "const lat = c.lat ?? a.lat, lon = c.lng ?? a.lng, hd = c.heading ?? 0;"),
+    ("const p = proj(a.lat, a.lon, MAPA.z);",
+     "const p = proj(a.lat, a.lng, MAPA.z);"),
+    ("const pts = [{id: 'ancora', rot: 'Cadastro', lat: atual.ancora.lat, lon: atual.ancora.lon}];",
+     "const pts = [{id: 'ancora', rot: 'Cadastro', lat: atual.ancora.lat, lon: atual.ancora.lng}];"),
+    ("if (c && c.lat != null && c.lon != null) pts.push({id: f.id, rot: f.rotulo, lat: c.lat, lon: c.lon});",
+     "if (c && c.lat != null && c.lng != null) pts.push({id: f.id, rot: f.rotulo, lat: c.lat, lon: c.lng});"),
+    ("return [`${a.lat?.toFixed(6)}, ${a.lon?.toFixed(6)}, nível ${rotOS(a.nv_geo || '—')}`",
+     "return [`${a.lat?.toFixed(6)}, ${a.lng?.toFixed(6)}, nível ${rotOS(a.nv_geo || '—')}`"),
+    # ── FILA VAZIA é estado normal ──────────────────────────────────────────
+    # `boot()` abria a primeira ligação sem checar se existe alguma. Com as 40
+    # do exemplo embutidas isso nunca falhava; tirado o exemplo, a PRIMEIRA
+    # carga passou a estourar aqui, antes de a busca sequer responder.
+    ("  abrir(D.ligacoes[0].num_ligacao);",
+     "  if (D.ligacoes && D.ligacoes.length) abrir(D.ligacoes[0].num_ligacao);"),
+]
+
+
+def _esvaziar_dataset(html: str) -> tuple:
+    """Troca o lote de DEMONSTRAÇÃO por um esqueleto da mesma forma.
+
+    O modelo faz `D = JSON.parse(<script id=dataset>)` ao carregar e SÓ DEPOIS
+    busca o real. Enquanto a busca não volta — e sempre que ela falha — o que
+    fica na tela são as 40 ligações de exemplo: nomes, faturas e comentários de
+    gente que não existe, com a marca do cliente em volta.
+
+    Em 27/08/2026 o operador viu o aviso vermelho de falha E a tela cheia de
+    dado plausível. O aviso ele leu; a tela ele acreditou.
+
+    > Dado de exemplo se passando por dado real é pior que tela vazia. A tela
+    > vazia faz perguntar; o exemplo faz decidir errado.
+
+    O `vocabulario` FICA: são os rótulos da própria bancada (status, tier,
+    motivos de reprova), não dado de ninguém, e sem ele a página não monta nem
+    o cabeçalho. A API manda o dela por cima.
+    """
+    abre = '<script id="dataset" type="application/json">'
+    if abre not in html:
+        return html, 0
+    i = html.index(abre)
+    j = html.index("</script>", i)
+    antigo = json.loads(html[i + len(abre):j])
+    quantas = len(antigo.get("ligacoes") or [])
+
+    meta = antigo.get("meta", {})
+    vazio = {
+        "meta": {"produto": meta.get("produto"),
+                 "versao_payload": meta.get("versao_payload"),
+                 "gerado_em": None, "base": "", "tenant": "",
+                 "fonte_ancora": "POI",
+                 "srid_armazenamento": meta.get("srid_armazenamento"),
+                 "srid_analise": meta.get("srid_analise"),
+                 "assistente": {"nome": "", "endpoint": None},
+                 "nota_probabilidade": ""},
+        "vocabulario": antigo.get("vocabulario", {}),
+        "ancora_campos": [], "imagem_campos": [],
+        "servico_campos": [], "fatura_campos": [],
+        "fontes": [], "ligacoes": [],
+    }
+    novo = abre + "\n" + json.dumps(vazio, ensure_ascii=False, indent=1) + "\n"
+    return html[:i] + novo + html[j:], quantas
+
+
+def _corrigir_modelo(html: str) -> tuple:
+    """Aplica as trocas e esvazia o exemplo. Devolve `(html, relatorio)`.
+
+    Troca que NÃO CASA é avisada, nunca silenciada: o zip do modelo pode mudar,
+    e uma correção que deixou de ser aplicada tem de aparecer na instalação —
+    não semanas depois, na tela do operador.
+    """
+    relatorio = {"aplicadas": 0, "nao_casaram": []}
+    for velho, novo in _TROCAS:
+        if velho in html:
+            html = html.replace(velho, novo, 1)
+            relatorio["aplicadas"] += 1
+        else:
+            relatorio["nao_casaram"].append(velho[:56])
+    html, relatorio["ligacoes_de_exemplo_removidas"] = _esvaziar_dataset(html)
+    return html, relatorio
+
+
 def instalar() -> dict:
     if not ZIP.exists():
         raise SystemExit(f"nao achei o modelo em {ZIP}")
@@ -307,6 +406,8 @@ def instalar() -> dict:
         html = z.read("Radar_Comercial.html").decode("utf-8")
 
     tamanho_original = len(html)
+
+    html, correcoes = _corrigir_modelo(html)
 
     # O enxerto entra antes de `</body>`, depois de todo o script do modelo.
     if "</body>" not in html:
@@ -333,15 +434,26 @@ def instalar() -> dict:
         # e `d.id = "cr-aviso"`, e a busca literal dava zero. Marca posta de
         # proposito para ser contada nao tem essas surpresas.
         "o enxerto entrou UMA vez": html.count("cr-enxerto-v1") == 1,
+        # As correções do modelo. Elas são feitas por troca de texto, e texto
+        # muda quando o zip muda — uma que deixou de casar tem de aparecer AQUI,
+        # na instalação, e não semanas depois na tela do operador.
+        "todas as correções do modelo casaram": not correcoes["nao_casaram"],
+        "nenhuma ligação de exemplo sobrou": '"ligacoes": []' in html,
+        "a tela lê `lng`, não `lon`": "a.lon" not in html,
     }
     return {"bytes": len(html), "original": tamanho_original,
-            "checagens": checagens}
+            "checagens": checagens, "correcoes": correcoes}
 
 
 if __name__ == "__main__":
     r = instalar()
+    c = r["correcoes"]
     print(f"  bancada.html instalada · {r['bytes']/1024:.0f} KB "
           f"(modelo: {r['original']/1024:.0f} KB)")
+    print(f"  correções aplicadas: {c['aplicadas']}/{len(_TROCAS)} · "
+          f"ligações de exemplo removidas: {c['ligacoes_de_exemplo_removidas']}")
+    for t in c["nao_casaram"]:
+        print(f"  >>  NAO CASOU: {t}…")
     ruins = [k for k, v in r["checagens"].items() if not v]
     for nome, bom in r["checagens"].items():
         print(f"  {'OK ' if bom else '>> '} {nome}")
