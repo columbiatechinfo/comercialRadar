@@ -101,7 +101,24 @@ EXPLORE_MAX_S = 2.5
 # ──────────────────────────────────────────────────────────────────────────
 WAIT_PAINEL_MS = 12000             # quanto esperar o painel do POI aparecer
 WAIT_LISTA_MS = 9000               # quanto esperar a lista de resultados
-WAIT_PROXIMO_MS = 9000             # quanto esperar o botão "Próximo"
+# TETO PARA O BOTÃO "Próximo" APARECER. Foi 9.000 até 26/08/2026, e nove
+# segundos era um segundo de folga sobre a realidade — por isso a etapa
+# quebrava sem motivo aparente quando a rede piorava.
+#
+# MEDIDO na noite do conserto, coordenadas reais da área de Canoas, via proxy:
+#
+#     primeira coordenada (sessão fria) .... 8,0 s
+#     as quatro seguintes .................. 0,0 s  (o botão persiste)
+#
+# Oito contra nove. Numa rede boa passava; no roteador do celular, a mesma run
+# deu 3 sucessos e 13 "botão Próximo não encontrado" — o erro dizia que não
+# existia, quando ele só ainda não tinha pintado.
+#
+# SUBIR ISTO É QUASE DE GRAÇA: `wait_for` devolve no instante em que o elemento
+# fica visível, então o teto só é pago quando ele REALMENTE não vem. E como o
+# botão persiste entre POIs do mesmo lote, na prática só a primeira coordenada
+# de cada sessão chega perto do limite.
+WAIT_PROXIMO_MS = 25000            # quanto esperar o botão "Próximo"
 WAIT_APOS_BUSCA_MS = 1200          # respiro curto após Enter (o resto é espera ativa)
 
 # ──────────────────────────────────────────────────────────────────────────

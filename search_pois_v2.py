@@ -296,7 +296,18 @@ async def nivel2(sess, lat, lng, nome_ocr, wid):
             try:
                 await proximo.first.wait_for(state="visible", timeout=2500)
             except Exception:
-                return None, "botão Próximo não encontrado"
+                # A MENSAGEM PRECISA DIZER QUE FOI TEMPO, e não ausência.
+                #
+                # Ela dizia "não encontrado", e isso mandou o diagnóstico para
+                # o lado errado por meia hora em 26/08/2026: procurou-se
+                # idioma da página, perfil corrompido, muro de consentimento.
+                # Era só o painel do Maps ainda não ter pintado.
+                #
+                # "Não existe" e "ainda não veio" pedem conserto diferente —
+                # trocar seletor num caso, dar tempo no outro.
+                seg = (config.WAIT_PROXIMO_MS + 2500) / 1000
+                return None, (f"botão Próximo não pintou em {seg:.0f}s "
+                              f"(painel do Maps lento, não é ausência do botão)")
 
         await proximo.first.click()
         await page.wait_for_timeout(800)
