@@ -180,6 +180,24 @@ class ProxyPool:
             self._last_used[escolhido["id"]] = agora
             return escolhido
 
+    def resumo(self) -> tuple:
+        """(livres, de castigo) agora. Para quem precisa DIZER por que não pegou.
+
+        Quando `acquire_blocking` devolve None, quem chama tem duas leituras
+        possíveis, e a conduta muda em cada uma: se os IPs estão todos EM USO,
+        é só esperar; se estão de CASTIGO, o Google barrou e insistir queima o
+        resto do pool. Sem estes dois números a mensagem de erro não ajuda
+        ninguém a decidir.
+
+        Deliberadamente SEM lock: é leitura para log, chamada num caminho de
+        falha, e travar aqui seria pior que um número um instante velho.
+        """
+        agora = time.time()
+        castigo = sum(1 for p in self._proxies
+                      if (self._cooldown.get(p["id"]) or 0) > agora)
+        livres = sum(1 for p in self._proxies if self._disponivel(p, agora))
+        return livres, castigo
+
     async def acquire_blocking(self, intervalo: float = 2.0, tentativas: int = 60) -> Optional[Dict]:
         """Tenta adquirir, aguardando se todos estiverem ocupados/cooldown."""
         for _ in range(tentativas):

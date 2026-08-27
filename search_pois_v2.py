@@ -479,6 +479,11 @@ async def worker(wid, queue: asyncio.Queue, state, pw, pool: ProxyPool,
     sess = None
     proxy = None
     ip_label = "direto"
+    # Cada tentativa de abrir já custa até 2 min dentro de `acquire_blocking`.
+    # Cinco seguidas são ~10 minutos de pool sem dar um IP: não é congestão
+    # passageira, é problema que insistir não resolve.
+    MAX_FALHAS_ABRIR = 5
+    falhas_seguidas = 0
     # PERFIL POR WORKER, e NÃO por lote — e ele não é apagado no fim.
     #
     # `w0`, `w1`… são dez pessoas diferentes que voltam ao Maps todo dia. Apagar
@@ -487,17 +492,45 @@ async def worker(wid, queue: asyncio.Queue, state, pw, pool: ProxyPool,
     profile_dir = config.BROWSER_PROFILES_DIR / f"w{wid}"
 
     async def _abrir(tz_lng):
-        """Levanta sessão nova. Devolve False quando não conseguiu."""
+        """Levanta sessão nova. Devolve False quando não conseguiu, e DIZ POR QUÊ.
+
+        O SILÊNCIO AQUI CUSTOU DUAS RUNS, em 26/08/2026.
+
+        `acquire_blocking` espera 60 tentativas de 2 s e devolve None quando o
+        pool inteiro está ocupado ou de castigo. A versão anterior devolvia
+        False sem imprimir nada; lá em cima o laço devolve o lote para a fila,
+        dorme 5 s e tenta outra vez — para sempre.
+
+        Visto de fora isso é uma run viva que nunca escreve linha nenhuma: log
+        parado, CPU no chão, navegador nascendo e morrendo. Ninguém consegue
+        distinguir "está trabalhando devagar" de "está girando em falso", e
+        foram 15 minutos por run até alguém desconfiar.
+
+        Toda saída daqui leva `flush=True`. Sem isso a mensagem fica no buffer
+        de 8 KB do stdout — que, num processo que escreve pouco, pode levar
+        minutos para descarregar. Mensagem que chega tarde demais não serve.
+        """
         nonlocal sess, proxy, ip_label
         if usar_proxy:
             proxy = await pool.acquire_blocking()
             if not proxy:
+                livres, castigo = pool.resumo()
+                print(f"  🌐 [W{wid}] SEM PROXY após 2 min de espera — "
+                      f"{livres} livres, {castigo} de castigo. Devolvendo o "
+                      f"lote para a fila.", flush=True)
                 return False
             ip_label = f"{proxy['address']}:{proxy['port']}"
-        sess = await HumanSession.create(pw, proxy, profile_dir, layer="maps",
-                                         tz_hint_lng=tz_lng)
+        try:
+            sess = await HumanSession.create(pw, proxy, profile_dir, layer="maps",
+                                             tz_hint_lng=tz_lng)
+        except Exception as e:
+            print(f"  🌐 [W{wid}] IP={ip_label} | navegador não subiu: "
+                  f"{type(e).__name__}: {str(e)[:80]}", flush=True)
+            await _derrubar()
+            return False
         if not await abrir_maps(sess):
-            print(f"\n  🌐 [W{wid}] IP={ip_label} | Maps não abriu")
+            print(f"  🌐 [W{wid}] IP={ip_label} | Maps não abriu — IP de "
+                  f"castigo por 10 min", flush=True)
             await _derrubar(cooldown=600)
             return False
         return True
@@ -528,10 +561,32 @@ async def worker(wid, queue: asyncio.Queue, state, pw, pool: ProxyPool,
 
             if sess is None:
                 if not await _abrir(batch[0].get("lng")):
-                    # sem sessão: devolve o lote e espera o pool respirar
+                    # SEM SESSÃO: devolve o lote e espera o pool respirar — mas
+                    # NÃO PARA SEMPRE.
+                    #
+                    # Este laço não tinha limite, e foi o que travou duas runs
+                    # em 26/08/2026. `acquire_blocking` já espera 2 minutos por
+                    # conta própria; falhando, o worker devolvia o lote, dormia
+                    # 5 s e tentava de novo, indefinidamente. A run ficava viva,
+                    # de CPU no chão, sem escrever uma linha, por 15 minutos —
+                    # até alguém parar na mão.
+                    #
+                    # Desistir é melhor que pendurar: com o teto, a run termina,
+                    # DIZ quantos POIs ficaram sem busca, e as etapas seguintes
+                    # (normalização, cruzamento) ainda acontecem sobre o que já
+                    # foi encontrado. Rodar de novo ACRESCENTA — o que ficou
+                    # para trás é retomado na próxima, sem nada perdido.
+                    falhas_seguidas += 1
                     queue.put_nowait((batch_idx, batch))
+                    if falhas_seguidas >= MAX_FALHAS_ABRIR:
+                        print(f"  🛑 [W{wid}] desistindo após {falhas_seguidas} "
+                              f"tentativas de abrir sessão — o lote volta para "
+                              f"a fila e a run segue sem este worker",
+                              flush=True)
+                        return
                     await asyncio.sleep(5)
                     continue
+                falhas_seguidas = 0
 
             captcha_no_lote = False
             idx_parou = 0
@@ -734,6 +789,10 @@ async def run(session_path: Path, n_workers: int, max_dist: float, full=False, i
     metrics = {
         "bytes": 0, "pois": 0, "captcha_lotes": 0,
         "n_lotes": len(lotes), "inicio": time.time(),
+        # Quantos POIs ENTRARAM na fila. Sem este número o resumo não consegue
+        # dizer quantos ficaram sem busca quando um worker desiste — eles
+        # simplesmente somem da conta, e 3 de 21 buscados parece 3 de 3.
+        "a_buscar": sum(len(b) for b in lotes),
     }
 
     config.BROWSER_PROFILES_DIR.mkdir(parents=True, exist_ok=True)
@@ -793,6 +852,17 @@ def _imprimir_metricas(metrics, results):
     print(f"   🔥 IPs queimados        : {metrics.get('_burned', '—')}")
     print(f"   🚫 Lotes com CAPTCHA    : {metrics['captcha_lotes']} ({captcha_rate:.1f}%)")
     print(f"   ⏱  Tempo total          : {dur/60:.1f} min")
+
+    # O QUE NÃO FOI FEITO TEM DE APARECER. Quando um worker desiste de abrir
+    # sessão, os POIs do lote dele nunca viram resultado — não entram em nenhum
+    # dos status acima e somem da conta. "3 processados" então se lê como
+    # "3 de 3", quando eram 3 de 21.
+    faltaram = max(0, metrics.get("a_buscar", pois) - pois)
+    if faltaram:
+        print(f"   ─────────────────────────────")
+        print(f"   ⚠️  FICARAM SEM BUSCA    : {faltaram} de "
+              f"{metrics['a_buscar']} — os números acima não cobrem a área")
+        print(f"      rodar de novo acrescenta; nada foi perdido")
     print(f"{'═' * 56}")
 
 
