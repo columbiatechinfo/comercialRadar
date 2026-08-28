@@ -208,3 +208,42 @@ def test_a_coluna_existe_no_banco():
         con.close()
     assert r, "a coluna `multiloja` não existe — aplicar a migração 0037"
     assert r[0] == "boolean" and r[1] == "NO", f"tipo inesperado: {r}"
+
+
+def test_a_marca_e_gravada_mesmo_sem_par_para_comparar():
+    """O DEFEITO QUE ESTE TESTE GUARDA, medido em 28/08/2026.
+
+    A gravação da marca morava dentro do bloco de carimbo do `cruzado_em`, que
+    fica DEPOIS do `if not pares: return`. Numa rodada sem par nenhum a marca
+    simplesmente não era atualizada — e essa é a rodada COMUM: a mineração das
+    08:19 daquele dia carregou 32.361 POIs, comparou zero pares (todos já
+    carimbados) e saiu sem tocar nela.
+
+    O dado envelhecia exatamente nas passadas baratas, que são a maioria."""
+    codigo = _so_codigo("cruzar_fontes.py")
+    i = codigo.index("if not pares:")
+    saida = codigo[i:i + 400]
+    assert "_gravar_multiloja" in saida, \
+        "a saída antecipada voltou a pular a gravação da marca"
+
+    # e continua acontecendo no caminho normal
+    assert codigo.count("_gravar_multiloja(cur, pois)") >= 2, \
+        "a marca deixou de ser gravada em um dos dois caminhos"
+
+
+def _so_codigo(nome):
+    """O arquivo sem COMENTÁRIOS e sem DOCSTRINGS.
+
+    A primeira versão do teste acima tirava só os comentários, e casou com a
+    docstring do próprio `_gravar_multiloja` — que cita `if not pares: return`
+    ao explicar por que a função existe. É a terceira vez num dia que um teste
+    meu examina prosa achando que examina código.
+    """
+    import ast
+    s = io.open(os.path.join(RAIZ, nome), encoding="utf-8").read()
+    for no in ast.walk(ast.parse(s)):
+        if isinstance(no, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef,
+                           ast.Module)) and ast.get_docstring(no):
+            s = s.replace(no.body[0].value.value, "")
+    return "\n".join(l for l in s.splitlines()
+                     if not l.lstrip().startswith("#"))

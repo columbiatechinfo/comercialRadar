@@ -519,6 +519,34 @@ def aplicar(con, decisoes: list, log=print) -> int:
     return len(fusoes)
 
 
+def _gravar_multiloja(cur, pois: list) -> int:
+    """Leva a marca de multiloja para o banco — como DADO, nao como decisao.
+
+    Ela ja foi um corte na `evidencia`, e o corte errava 32% das vezes (ver a
+    migracao 0037). Hoje quem decide o par e a IA; a marca fica porque saber que
+    um ponto esta num predio de varias lojas vale na tela e na revisao humana.
+
+    E DERIVADA e recalculada a cada passada: o numero de nomes numa porta muda
+    quando POIs entram, saem ou se fundem. Grava os DOIS lados (`true` e
+    `false`) sobre todos os POIs carregados — so escrever os `true` deixaria
+    para tras quem deixou de ser multiloja.
+
+    FICA FORA DO BLOCO DE CARIMBO, e isso e conserto de 28/08/2026. Ela morava
+    junto do `cruzado_em`, depois do `if not pares: return` — entao numa run que
+    nao encontrava par nenhum a marca simplesmente nao era atualizada. E essa e
+    a run COMUM: a rodada de 08:19 daquele dia carregou 32.361 POIs, comparou
+    zero pares (todos ja carimbados) e saiu sem tocar na marca. O dado envelhecia
+    exatamente nas passadas baratas.
+    """
+    ids = [p["id"] for p in pois]
+    if not ids:
+        return 0
+    marcados = [p["id"] for p in pois if p.get("multiloja")]
+    cur.execute("update pois set multiloja = (id = any(%s)) where id = any(%s)",
+                (marcados, ids))
+    return len(marcados)
+
+
 def _desfundir(cur, cidade: str, poligono=None,
                so_o_que_mudou: bool = True) -> int:
     """Devolve ao mapa os POIs absorvidos, para que TUDO volte a ser comparado.
@@ -789,6 +817,14 @@ def cruzar(cidade: str, empresa: str, aplicar_de_fato: bool, usar_ia: bool,
         print(f"  {antes:,} pares na caixa folgada · {len(pares):,} tocam a area")
     print(f"  {len(pares):,} pares vizinhos a comparar")
     if not pares:
+        # A MARCA AINDA PRECISA SER GRAVADA. Sem par para comparar nao ha fusao,
+        # mas o conjunto de POIs pode ter mudado — e a marca e derivada dele.
+        if aplicar_de_fato:
+            n_multi = _gravar_multiloja(cur, pois)
+            con.commit()
+            print(f"  {n_multi:,} POIs em endereço de multiloja "
+                  f"(mais de {ev.TETO_MULTILOJA} nomes na mesma porta) — "
+                  f"é marca, não decide fusão")
         con.close()
         return
 
@@ -859,23 +895,11 @@ def cruzar(cidade: str, empresa: str, aplicar_de_fato: bool, usar_ia: bool,
         print(f"  {cur.rowcount:,} POIs marcados como cruzados "
               f"(a próxima rodada só compara os novos)")
 
-        # A MARCA DE MULTILOJA VAI PARA O BANCO — como DADO, não como decisão.
-        #
-        # Ela já foi um corte na `evidencia`, e o corte errava 32% das vezes
-        # (ver a migração 0037). Hoje quem decide o par é a IA; a marca fica
-        # porque saber que um ponto está num prédio de várias lojas vale na
-        # tela e na revisão humana.
-        #
-        # É DERIVADA e recalculada a cada passada: o número de nomes numa porta
-        # muda quando POIs entram, saem ou se fundem. Gravar os dois lados
-        # (true E false) é o que impede a marca de envelhecer — só escrever os
-        # `true` deixaria para trás quem deixou de ser multiloja.
-        marcados = [p["id"] for p in pois if p.get("multiloja")]
-        cur.execute("update pois set multiloja = (id = any(%s)) where id = any(%s)",
-                    (marcados, ids))
-        print(f"  {len(marcados):,} deles em endereço de multiloja "
-              f"(mais de {ev.TETO_MULTILOJA} nomes na mesma porta) — é marca, "
-              f"não decide fusão")
+    n_multi = _gravar_multiloja(cur, pois)
+    print(f"  {n_multi:,} POIs em endereço de multiloja "
+          f"(mais de {ev.TETO_MULTILOJA} nomes na mesma porta) — é marca, "
+          f"não decide fusão")
+
 
     con.commit()
     print(f"\n  GRAVADO: {n:,} POIs absorvidos — marcados 'fundido', NÃO apagados, "
