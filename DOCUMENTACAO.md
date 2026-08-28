@@ -4147,3 +4147,45 @@ antiga (veredito, estrela, losango da IA de fachada) continuam no `style.css`.
 Antes de escrever uma tela nova sobre um domínio que já tem tela, ler a antiga.
 Cada comentário longo naquele arquivo é um defeito que alguém já pagou para
 descobrir. Reescrever do zero é assinar embaixo de todos eles de novo.
+
+### As três coisas que voltaram ao mapa (28/08/2026)
+
+Junto com a máquina, eu havia apagado três comportamentos que existiam e que
+ninguém pediu para sair.
+
+**1. Clicar no polígono abre a ficha da área.** A pergunta é "quantos POIs há
+aqui dentro", e a quebra é por FONTE — foi ela que faltou quando 42 POIs do
+Overture apareceram como "Outros" e ninguém sabia de onde tinham vindo. Vale
+para os três polígonos: o desenho à mão, o contorno do município escolhido na
+lista e a área lida do banco no boot. O conteúdo é recalculado **a cada
+abertura** (a mineração em tempo real muda a contagem) e o botão é pego por
+**delegação** — passar `options` no `bindPopup` faz o Leaflet construir uma
+Popup nova a cada clique, e a referência direta some da segunda em diante.
+
+**2. As divisas voltaram a ser clicáveis.** Eu as havia posto com
+`interactive: false` achando que a lista lateral bastava. Não basta: quem está
+olhando o mapa clica no que vê. O clique cai no **mesmo** `escolherMunicipio` da
+lista — dois caminhos divergiriam. Duas armadilhas fechadas junto: desenhando, o
+clique na divisa vira vértice em vez de trocar de município; e o rótulo fecha no
+`mouseleave` do mapa, senão fica preso na tela ao sair pela borda.
+
+**3. O ícone por categoria voltou ao marcador.** Eu o tinha tirado junto com a
+cor, e errei: o pedido era trocar o **eixo da cor**. São duas perguntas e cada
+uma tem seu canal — o ícone diz o **ramo** ("tem uma farmácia nesta esquina" se
+lê num relance, e num popup não), a cor diz **o que fazer**. A tabela de ramos é
+literalmente a mesma nas duas telas; duplicá-la com outras palavras faria as
+duas classificarem o mesmo POI de formas diferentes.
+
+**Um defeito achado na medição, e ele já existia na tela antiga.** O losango da
+IA de fachada gira a cabeça do pino 45°, e a regra que desentorta o ícone mira
+`.pin-head > *` — emoji solto é **nó de texto**, não elemento: o seletor nunca
+casava e o ícone aparecia deitado. Agora o ícone tem elemento próprio, nas duas
+telas.
+
+**Um teste que ancorava em posição e reprovou código correto.** O
+`test_o_html_escapa_o_que_vem_do_banco` olhava os 400 caracteres após o
+*primeiro* `bindPopup(` do arquivo. Quando a ficha da área entrou — e ela faz
+`bindPopup("")`, sem interpolar nada — o teste reprovou. Foi reescrito para
+varrer **toda** interpolação de campo do banco em HTML, que é a propriedade que
+importa, e conferido com o defeito injetado de propósito: reprova com `p.nome`
+cru, passa com `escapar(p.nome)`.

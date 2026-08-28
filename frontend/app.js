@@ -201,7 +201,7 @@ function makeIcon(poi, novo) {
   return L.divIcon({
     className: "pin-wrap",
     html: `<div class="pin ${novo ? "novo" : ""} ${ver}${rec}${iaf}" style="--c:${k.cor}">
-             <div class="pin-head">${k.emo}</div><div class="pin-tail"></div>
+             <div class="pin-head"><i>${k.emo}</i></div><div class="pin-tail"></div>
              ${poi.recomendar_visita ? '<div class="pin-star">★</div>' : ""}
            </div>`,
     iconSize: [34, 43], iconAnchor: [17, 43],
@@ -1042,7 +1042,7 @@ function htmlResumoArea() {
         ? r.ha.toLocaleString("pt-BR", { maximumFractionDigits: 1 })
         : nf(Math.round(r.ha))} ha · ${r.anel ? r.anel.length : 0} vértices</div>
     ${corpo}
-    <button class="btn sm danger area-pop-del" type="button">Apagar esta área</button>
+    <button class="area-pop-del" type="button">Apagar esta área</button>
   </div>`;
 }
 

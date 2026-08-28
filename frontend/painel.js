@@ -60,6 +60,42 @@
     }
   }
 
+  // O ÍCONE DIZ O RAMO, A COR DIZ O QUE FAZER. São duas perguntas diferentes e
+  // cada uma tem seu canal.
+  //
+  // Eu havia tirado o ícone por categoria junto com a cor, e errei: o pedido
+  // era trocar o EIXO DA COR, que passou a ser o cruzamento com o cadastro. O
+  // ramo continua sendo a identificação imediata de quem varre o mapa — "tem
+  // uma farmácia nesta esquina" se lê num relance, e num popup não.
+  //
+  // A tabela é a MESMA do `app.js`. Duplicá-la com outras palavras faria as
+  // duas telas classificarem o mesmo POI de formas diferentes.
+  const CATS = [
+    { re: /restaurante|lanchonete|pizzari|hamburg|churrasc|comida|alimenta|café|cafeteria|padaria|sorveter|açai|acai|bar\b|petiscaria|self service|marmita/i, emo: "🍽️" },
+    { re: /supermercado|mercado|mercearia|mercadinho|atacad|hortifruti|conveni|frios|distribuidora de bebidas|bebidas/i, emo: "🛒" },
+    { re: /farm[aá]cia|drogaria|hospital|cl[ií]nica|laborat[oó]rio|dentista|odonto|m[eé]dic|sa[uú]de|fisioter|psicol|veterin|pet/i, emo: "💊" },
+    { re: /escola|col[eé]gio|creche|faculdade|universi|curso|educa/i, emo: "🎓" },
+    { re: /hotel|pousada|hostel|motel|hospedagem/i, emo: "🛏️" },
+    { re: /banco|caixa eletr|lot[eé]rica|financ|cr[eé]dito|seguros/i, emo: "🏦" },
+    { re: /oficina|mec[aâ]nica|auto ?pe[cç]as|autope[cç]as|borracharia|lava.?jato|concession|moto|el[eé]trica automotiva|posto de (comb|gas)/i, emo: "🔧" },
+    { re: /sal[aã]o|barbearia|beleza|est[eé]tica|manicure|cabele/i, emo: "✂️" },
+    { re: /academia|gym|crossfit|esporte|fitness/i, emo: "💪" },
+    { re: /igreja|templo|par[oó]quia|assembleia/i, emo: "⛪" },
+    { re: /constru|madeirei|ferragem|material|tinta|vidra[cç]|serralheria|marmoraria/i, emo: "🧱" },
+    { re: /loja|boutique|magazine|variedade|utilidade|presente|papelaria|livraria|cal[cç]ado|roupa|confec|m[oó]veis|eletro|celular|inform[aá]tica|[oó]tica|joalheria|relojoaria|shopping/i, emo: "🛍️" },
+  ];
+
+  // O ACHADO DA IA VEM ANTES DA CATEGORIA: a coordenada dele é APROXIMADA,
+  // deslocada pelo lado em que o comércio apareceu no quadro. O losango diz
+  // isso sem legenda.
+  function ramoDoPoi(poi) {
+    if (poi.fonte === "ia_fachada") return { emo: "🔎", ia: true };
+    const c = (poi.categoria || "").toString();
+    for (const k of CATS) if (k.re.test(c)) return k;
+    if (poi.status === "descoberto") return { emo: "✨" };
+    return { emo: "📍" };
+  }
+
   // A COR DO PONTO DIZ O QUE FAZER COM ELE, e vem do cruzamento com o cadastro.
   //
   // Regra do dono do produto, 28/08/2026: comercial na base do cliente fica
@@ -169,6 +205,12 @@
     mapa.on("click", cliqueNoMapa);
     mapa.on("dblclick", concluirDesenho);
     mapa.on("moveend", malhaSegueMapa);
+    // Sair pela borda, ir para o painel ou trocar de janela não dispara
+    // `mouseout` no polígono sob o cursor, e o rótulo do município fica preso
+    // na tela. Fechar na saída do container cobre todos esses casos.
+    const fechar = () => mapa.eachLayer((l) => { if (l.closeTooltip) l.closeTooltip(); });
+    mapa.getContainer().addEventListener("mouseleave", fechar);
+    window.addEventListener("blur", fechar);
     setTimeout(() => mapa.invalidateSize(), 200);
     carregarGoogle();
   }
@@ -289,11 +331,61 @@
     const sig = gj.uf || "?";
     if (malhaUFs.has(sig)) return;                // já desenhada
     const camada = L.geoJSON(gj, {
-      style: MALHA_ESTILO, pane: "paneMalha", interactive: false,
+      style: MALHA_ESTILO, pane: "paneMalha",
+      onEachFeature: (f, l) => {
+        const nome = (f.properties || {}).nome || "";
+        const cod = (f.properties || {}).codarea || "";
+        l._dono = null;                        // preenchido logo abaixo
+        l.bindTooltip(nome, { sticky: true, direction: "top", className: "muni-tip" });
+        l.on("mouseover", () => {
+          if (l !== malhaSelecionada) l.setStyle({ weight: 2.4, color: "#334155", fillOpacity: 0.08 });
+        });
+        l.on("mouseout", () => { if (l !== malhaSelecionada) estiloPadraoMalha(l); });
+        l.on("click", (e) => {
+          L.DomEvent.stopPropagation(e);
+          // DESENHANDO, O CLIQUE É DO DESENHO. Sem isto, marcar um vértice
+          // dentro de um município selecionaria o município e jogaria fora o
+          // traçado em andamento.
+          if (estado.desenhando) { cliqueNoMapa(e); return; }
+          escolherMunicipio({ nome, cod, uf: sig });
+        });
+      },
     });
+    camada.eachLayer((l) => { l._dono = camada; });
     malhaUFs.set(sig, camada);
     malhaGrupo.addLayer(camada);
     if (malhaVisivel && !mapa.hasLayer(malhaGrupo)) malhaGrupo.addTo(mapa);
+  }
+
+  // A MALHA É CLICÁVEL, e é assim que se escolhe município no mapa.
+  //
+  // Eu a havia posto com `interactive: false` achando que a lista lateral
+  // bastava. Não basta: quem está olhando o mapa quer clicar no que vê. O
+  // clique cai no mesmo `escolherMunicipio` da lista — um caminho só, senão as
+  // duas formas de escolher divergem.
+  //
+  // O andar dela é o 410, abaixo da área (415) e dos marcadores (630): clicar
+  // num POI dentro do município abre o POI, não seleciona o município. Foi
+  // exatamente esse o defeito que a escada de panes existe para impedir.
+  const MALHA_SEL = { color: "#0e7490", weight: 3, opacity: 1,
+                      fillColor: "#0e7490", fillOpacity: 0.07 };
+  let malhaSelecionada = null;
+
+  function estiloPadraoMalha(l) {
+    if (l && l._dono) l._dono.resetStyle(l);
+    else if (l && l.setStyle) l.setStyle(MALHA_ESTILO);
+  }
+
+  function realcarMalha(cod) {
+    if (malhaSelecionada) estiloPadraoMalha(malhaSelecionada);
+    malhaSelecionada = null;
+    if (!cod) return;
+    for (const camada of malhaUFs.values()) {
+      camada.eachLayer((l) => {
+        if (String((l.feature && l.feature.properties || {}).codarea || "") !== String(cod)) return;
+        l.setStyle(MALHA_SEL); l.bringToFront(); malhaSelecionada = l;
+      });
+    }
   }
 
   function cliqueNoMapa(e) {
@@ -313,10 +405,11 @@
     camadaDesenho.clearLayers();
     const pts = estado.pts;
     if (pts.length >= 2) {
-      L.polyline(pts, { pane: "paneArea", color: INDIGO, weight: 2, dashArray: "6 5" }).addTo(camadaDesenho);
+      L.polyline(pts, { pane: "paneArea", interactive: false,
+                        color: INDIGO, weight: 2, dashArray: "6 5" }).addTo(camadaDesenho);
     }
     pts.forEach((p) => L.circleMarker(p, {
-      pane: "paneArea", radius: 4, color: INDIGO, fillColor: "#fff", fillOpacity: 1, weight: 2,
+      pane: "paneArea", interactive: false, radius: 4, color: INDIGO, fillColor: "#fff", fillOpacity: 1, weight: 2,
     }).addTo(camadaDesenho));
   }
 
@@ -324,10 +417,10 @@
     if (estado.pts.length < 3) return;
     const pts = estado.pts.slice();
     camadaDesenho.clearLayers();
-    const poly = L.polygon(pts, {
-      pane: "paneArea",
+    const poly = ligarFichaDaArea(L.polygon(pts, {
+      pane: "paneArea", className: "area-poly",
       color: INDIGO, weight: 2, fillColor: INDIGO, fillOpacity: 0.12,
-    }).addTo(camadaDesenho);
+    })).addTo(camadaDesenho);
     mapa.fitBounds(poly.getBounds(), { padding: [40, 40] });
     if (mapa.doubleClickZoom) mapa.doubleClickZoom.enable();
 
@@ -348,6 +441,113 @@
     pintarEstado();
     await carregarTudo();
   }
+
+  // ── ficha da área desenhada ─────────────────────────────────────────────
+  //
+  // CLICAR NO POLÍGONO RESPONDE "quantos POIs há aqui dentro", e a quebra é por
+  // FONTE porque foi ela que faltou quando 42 POIs do Overture apareceram como
+  // "Outros" e ninguém sabia de onde tinham vindo. Vale para o desenho à mão e
+  // para o contorno do município — nos dois casos a pergunta é a mesma.
+
+  const FONTE_ROTULO = {
+    estadual: ["Bases públicas", "Overture + OpenStreetMap + Foursquare"],
+    pipeline: ["Captura + OCR", "Tiles do Maps lidos por visão computacional"],
+    ifood: ["iFood", "Cardápios e lojas do iFood"],
+    cadastur: ["Cadastur/MTur", "Prestadores registrados no Ministério do Turismo"],
+    ia_fachada: ["Lidos na parede", "Nomes que a IA leu na fachada do Street View"],
+    cliente: ["Base do cliente", "O cadastro que a concessionária entregou"],
+  };
+
+  // Área do anel em hectares, por projeção plana local: em polígono de bairro o
+  // erro é irrelevante, e trazer uma biblioteca de geodésia para escrever
+  // "3,5 ha" num popup seria peso sem retorno.
+  function areaHectares(anel) {
+    if (!anel || anel.length < 3) return 0;
+    const latMed = anel.reduce((s, p) => s + p[0], 0) / anel.length;
+    const mx = 111320 * Math.cos((latMed * Math.PI) / 180), my = 110540;
+    let s2 = 0;
+    for (let i = 0; i < anel.length; i++) {
+      const j = (i + 1) % anel.length;
+      s2 += (anel[j][1] * mx) * (anel[i][0] * my) - (anel[i][1] * mx) * (anel[j][0] * my);
+    }
+    return Math.abs(s2 / 2) / 10000;
+  }
+
+  function dentroDoAnel(anel, lat, lng) {
+    let dentro = false;
+    for (let i = 0, j = anel.length - 1; i < anel.length; j = i++) {
+      const ai = anel[i], aj = anel[j];
+      if ((ai[0] > lat) !== (aj[0] > lat) &&
+          lng < ((aj[1] - ai[1]) * (lat - ai[0])) / (aj[0] - ai[0]) + ai[1]) dentro = !dentro;
+    }
+    return dentro;
+  }
+
+  function htmlFichaArea(poly) {
+    const ll = (poly.getLatLngs() || [])[0] || [];
+    const anel = ll.map((p) => [p.lat, p.lng]);
+    // Recontado A CADA abertura: a mineração em tempo real muda `estado.pois`,
+    // e um HTML preso no bind mostraria o número de quando o polígono foi
+    // desenhado — justamente o engano que esta ficha existe para desfazer.
+    const dentro = estado.pois.filter(
+      (p) => p.lat != null && p.lng != null && dentroDoAnel(anel, p.lat, p.lng));
+    const porFonte = new Map();
+    for (const p of dentro) {
+      const f = p.fonte || "sem fonte";
+      porFonte.set(f, (porFonte.get(f) || 0) + 1);
+    }
+    const fontes = [...porFonte.entries()].sort((a, b) => b[1] - a[1]);
+    const multi = dentro.filter((p) => Number(p.n_fontes || 1) > 1).length;
+    const ha = areaHectares(anel);
+
+    const linhas = fontes.map(([f, n]) => {
+      const rot = FONTE_ROTULO[f] || [f, ""];
+      return `<tr><td title="${escapar(rot[1])}">${escapar(rot[0])}</td>` +
+             `<td class="num">${nf.format(n)}</td>` +
+             `<td class="pct">${Math.round((n / dentro.length) * 100)}%</td></tr>`;
+    }).join("");
+
+    const corpo = dentro.length
+      ? `<table class="area-pop-tab"><tbody>${linhas}</tbody></table>` +
+        (multi ? `<p class="area-pop-nota">${nf.format(multi)} são <b>multiorigem</b> —
+                  sustentados por mais de uma base. É onde a fusão pode ter errado.</p>` : "")
+      : `<p class="area-pop-nota">Nenhum POI do banco aqui dentro. Se acabou de
+         minerar, o mapa só mostra o que já foi gravado.</p>`;
+
+    return `<div class="area-pop">
+      <div class="area-pop-topo">
+        <span class="area-pop-num">${nf.format(dentro.length)}</span>
+        <span class="area-pop-cap">POIs do banco<br>dentro do desenho</span>
+      </div>
+      <div class="area-pop-sub">${ha < 10 ? ha.toLocaleString("pt-BR", { maximumFractionDigits: 1 })
+                                          : nf.format(Math.round(ha))} ha ·
+        ${anel.length} vértices${estado.cidade ? " · " + escapar(estado.cidade) : ""}</div>
+      ${corpo}
+      <button class="area-pop-del" type="button">Limpar a área</button>
+    </div>`;
+  }
+
+  // O popup é montado UMA vez e só troca de conteúdo, e o botão é pego por
+  // DELEGAÇÃO. As duas coisas vêm do mesmo defeito, medido em 25/08/2026 na
+  // tela antiga: passar `options` no `bindPopup` faz o Leaflet construir uma
+  // Popup NOVA a cada clique, e a partir da segunda abertura o `querySelector`
+  // devolvia nulo — o popup abria com os números certos e o botão não fazia
+  // nada. O pior tipo de defeito, porque a tela não acusa.
+  function ligarFichaDaArea(poly) {
+    poly.bindPopup("", { className: "area-pop-wrap", maxWidth: 340 });
+    poly.on("click", (e) => {
+      L.DomEvent.stopPropagation(e);
+      poly.setPopupContent(htmlFichaArea(poly));
+      poly.openPopup(e.latlng);
+    });
+    return poly;
+  }
+
+  document.addEventListener("click", (ev) => {
+    if (!ev.target.closest || !ev.target.closest(".area-pop-del")) return;
+    camadaDesenho.eachLayer((l) => { if (l.closePopup) l.closePopup(); });
+    $("btn-limpar").click();          // um caminho só para limpar a área
+  });
 
   // O MARCADOR É O PINO DE SEMPRE — mesma forma, mesma sombra, mesma cauda,
   // vindos do `mapa.css`. O que muda em relação à tela antiga é APENAS o eixo
@@ -371,12 +571,14 @@
       if (p.lat == null || p.lng == null) continue;
       const e = CORES[p.cruz_flag] || SEM_LIGACAO;
       const n = Number(p.n_fontes || 1);
+      const k = ramoDoPoi(p);
       const m = L.marker([p.lat, p.lng], {
         pane: "paneMarcadores",
         icon: L.divIcon({
           className: "pin-wrap",
-          html: `<div class="pin${e.destaque ? " achado" : ""}" style="--c:${e.cor}">` +
-                `<div class="pin-head"></div><div class="pin-tail"></div>` +
+          html: `<div class="pin${e.destaque ? " achado" : ""}${k.ia ? " m-ia-fachada" : ""}" ` +
+                `style="--c:${e.cor}">` +
+                `<div class="pin-head"><i>${k.emo}</i></div><div class="pin-tail"></div>` +
                 (n > 1 ? `<div class="pin-fontes">${n}</div>` : "") +
                 "</div>",
           iconSize: [34, 43], iconAnchor: [17, 43],
@@ -669,12 +871,13 @@
 
     const malha = await pegar("/api/malha?cod=" + encodeURIComponent(m.cod));
     if (malha && malha.polygon && malha.polygon.length) {
-      const poly = L.polygon(malha.polygon, {
-        pane: "paneArea",
+      const poly = ligarFichaDaArea(L.polygon(malha.polygon, {
+        pane: "paneArea", className: "area-poly",
         color: INDIGO, weight: 2, fillColor: INDIGO, fillOpacity: 0.1,
-      }).addTo(camadaDesenho);
+      })).addTo(camadaDesenho);
       mapa.fitBounds(poly.getBounds(), { padding: [30, 30] });
     }
+    realcarMalha(m.cod);
     pintarMunicipios();
     pintarEstado();
     await carregarTudo();
@@ -1052,6 +1255,7 @@
       estado.modo = null; estado.cidade = null; estado.cod = null;
       estado.temArea = false; estado.desenhando = false; estado.pts = [];
       camadaDesenho.clearLayers();
+      realcarMalha(null);
       abrirPainel(null);
       pintarEstado();
       await carregarTudo();
@@ -1168,10 +1372,10 @@
     const area = await pegar("/api/area");
     if (area && area.polygon && area.polygon.length >= 3) {
       estado.temArea = true;
-      const poly = L.polygon(area.polygon, {
-        pane: "paneArea",
+      const poly = ligarFichaDaArea(L.polygon(area.polygon, {
+        pane: "paneArea", className: "area-poly",
         color: INDIGO, weight: 2, fillColor: INDIGO, fillOpacity: 0.12,
-      }).addTo(camadaDesenho);
+      })).addTo(camadaDesenho);
       mapa.fitBounds(poly.getBounds(), { padding: [40, 40] });
       pintarEstado();
     }

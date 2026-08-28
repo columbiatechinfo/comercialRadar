@@ -26,6 +26,7 @@ zero e ícone desalinhado. O CSS não reclama de classe que não existe.
 """
 import io
 import os
+import re
 import sys
 
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -155,12 +156,34 @@ def test_o_websocket_recua_em_vez_de_insistir():
 
 def test_o_html_escapa_o_que_vem_do_banco():
     """Nome de POI vai para dentro de um popup do Leaflet, que aceita HTML. Um
-    ponto chamado `<img onerror=...>` executaria script na tela do operador."""
+    ponto chamado `<img onerror=...>` executaria script na tela do operador.
+
+    A versão anterior deste teste ancorava no PRIMEIRO `bindPopup(` do arquivo e
+    olhava os 400 caracteres seguintes. Ancorar em posição é frágil: quando a
+    ficha da área entrou — e ela faz `bindPopup("")`, sem interpolar nada — o
+    teste passou a reprovar código correto. Agora ele varre TODA interpolação de
+    campo do banco em HTML, que é a propriedade que de fato importa.
+    """
     js = _ler(JS)
     assert "function escapar(" in js, "a função de escape sumiu"
-    i = js.index("bindPopup(")
-    assert "escapar(" in js[i:i + 400], \
-        "o popup do mapa voltou a interpolar dado do banco sem escapar"
+
+    # Todo `${...}` que carregue campo do banco tem de passar por `escapar` ou
+    # ser número já formatado.
+    campos = ("nome", "endereco", "categoria", "veredito", "num_ligacao",
+              "cidade", "fonte", "rotulo")
+    cruas = []
+    for m in re.finditer(r"\$\{([^{}]+)\}", js):
+        expr = m.group(1)
+        if "escapar(" in expr or "nf.format(" in expr or "Math." in expr:
+            continue
+        if any(re.search(r"\b(p|poi|m|e|rot)\.%s\b" % c, expr) for c in campos):
+            cruas.append(expr.strip()[:60])
+    assert not cruas, "campo do banco interpolado em HTML sem escapar: %r" % (cruas,)
+
+    # e as duas fichas que montam HTML com dado do banco usam a função
+    for fn in ("function fichaDoPonto(", "function htmlFichaArea("):
+        i = js.index(fn)
+        assert "escapar(" in js[i:i + 2500], "%s monta HTML sem escapar" % fn
 
 
 def test_o_cartao_do_cadastro_tem_endpoint_e_le_sem_recruzar():
@@ -516,3 +539,120 @@ def test_o_unico_acrescimo_e_o_que_foi_pedido():
     # e o popup NÃO é montado de antemão para 32 mil pontos
     assert 'm.on("click", () => m.bindPopup(' in js, \
         "o popup voltou a ser montado para todos os pontos, e não no clique"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# AS TRÊS COISAS QUE EU TINHA TIRADO DO MAPA E VOLTARAM (28/08/2026)
+#
+# Eu havia reescrito a tela e, junto, apagado três comportamentos que existiam:
+# a ficha da área ao clicar no polígono, a seleção de município clicando na
+# divisa, e o ícone de ramo no marcador. Nenhum deles tinha sido pedido para
+# sair.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_clicar_no_poligono_abre_a_ficha_da_area():
+    """A pergunta é "quantos POIs há aqui dentro", e a quebra é por FONTE —
+    foi ela que faltou quando 42 POIs do Overture apareceram como "Outros" e
+    ninguém sabia de onde tinham vindo.
+
+    VERIFICADO NO NAVEGADOR: caixa de 12px de raio e 250px de largura mínima,
+    número em 30px azul com `tabular-nums`, as três colunas alinhadas à direita,
+    e o botão vermelho ocupando a largura toda.
+    """
+    js = _ler(JS)
+    assert "function ligarFichaDaArea(" in js and "function htmlFichaArea(" in js, \
+        "a ficha da área sumiu: clicar no polígono não responde mais nada"
+    assert "FONTE_ROTULO" in js, "a quebra por fonte sumiu da ficha"
+    assert "function areaHectares(" in js and "function dentroDoAnel(" in js, \
+        "a ficha perdeu a área em hectares ou a contagem do que está dentro"
+
+    # TODO polígono ganha a ficha — o desenho à mão, o contorno do município
+    # escolhido na lista, e a área recarregada do banco no boot.
+    assert js.count("ligarFichaDaArea(L.polygon(") == 3, (
+        "algum polígono deixou de abrir a ficha; são três os lugares que criam "
+        "um (desenho à mão, município escolhido, área lida do banco)"
+    )
+    # o conteúdo é recalculado A CADA abertura, senão mostra o número de quando
+    # o polígono foi desenhado — o engano que a ficha existe para desfazer
+    assert "poly.setPopupContent(htmlFichaArea(poly));" in js, \
+        "a ficha voltou a ter HTML preso no bind, e congela o número"
+    # e o botão é pego por DELEGAÇÃO: `options` no bindPopup faz o Leaflet
+    # construir uma Popup nova a cada clique, e a referência direta some
+    assert '.closest(".area-pop-del")' in js, (
+        "o botão da ficha voltou a ser pego por referência, e para de "
+        "funcionar a partir da segunda abertura")
+
+
+def test_as_divisas_sao_clicaveis_e_escolhem_o_municipio():
+    """VERIFICADO NO NAVEGADOR com dois municípios: parado #5b6b80, sob o cursor
+    #334155, selecionado #0e7490; o clique devolveu
+    `{nome: 'Canoas', cod: '4304606'}` — a forma exata que `escolherMunicipio`
+    espera; rótulo `muni-tip` branco com 8px de raio e sem seta.
+    """
+    js = _ler(JS)
+    assert "interactive: false" not in js.split("const camada = L.geoJSON")[1][:400], \
+        "a malha voltou a ser inerte: não dá para escolher município pelo mapa"
+    assert "escolherMunicipio({ nome, cod, uf: sig })" in js, \
+        "o clique na divisa deixou de cair no mesmo caminho da lista lateral"
+    assert 'className: "muni-tip"' in js, "o rótulo do município sumiu da divisa"
+    assert "function realcarMalha(" in js and "MALHA_SEL" in js, \
+        "a divisa do município escolhido deixou de ficar realçada"
+
+    # DESENHANDO, O CLIQUE É DO DESENHO: sem isto, marcar um vértice dentro de
+    # um município selecionaria o município e jogaria fora o traçado.
+    assert "if (estado.desenhando) { cliqueNoMapa(e); return; }" in js, \
+        "clicar dentro de um município enquanto desenha volta a perder o traçado"
+    # e o traçado provisório não pode comer o próprio clique seguinte
+    assert js.count("interactive: false") >= 2, \
+        "o traçado provisório voltou a ser clicável e engole o vértice seguinte"
+
+    # rótulo preso na tela quando o mouse sai pela borda
+    assert 'addEventListener("mouseleave", fechar)' in js, \
+        "o rótulo do município volta a ficar preso ao sair do mapa pela borda"
+
+
+def test_o_marcador_diz_o_ramo_e_o_que_fazer():
+    """DOIS EIXOS, DOIS CANAIS. O ícone diz o RAMO — "tem uma farmácia nesta
+    esquina" se lê num relance, e num popup não. A cor diz O QUE FAZER, e vem
+    do cruzamento com o cadastro.
+
+    Eu havia tirado o ícone junto com a cor, e errei: o pedido era trocar o
+    eixo da COR.
+
+    VERIFICADO NO NAVEGADOR: 🍽️ 💊 🔧 🛒 🔎 nos pinos, cada um com a cor do
+    cruzamento (#f59e0b, #16a34a, #22c55e, #6366f1, #b45309), contagem de
+    fontes só onde é maior que 1.
+    """
+    js = _ler(JS)
+    assert "const CATS = [" in js and "function ramoDoPoi(" in js, \
+        "o ícone por categoria sumiu do marcador"
+    assert '<div class="pin-head"><i>${k.emo}</i></div>' in js, \
+        "o pino voltou a nascer sem o ícone do ramo"
+    # a cor continua vindo do cruzamento — os dois eixos convivem
+    assert "CORES[p.cruz_flag]" in js, \
+        "a cor do marcador deixou de vir do cruzamento com o cadastro"
+
+    # a tabela de ramos é a MESMA das duas telas, senão elas classificam o
+    # mesmo POI de formas diferentes
+    app = _ler(os.path.join(RAIZ, "frontend", "app.js"))
+    for ramo in ("farm[aá]cia", "borracharia", "crossfit", "marmoraria"):
+        assert ramo in js and ramo in app, \
+            f"'{ramo}' saiu de uma das telas: as duas passam a classificar diferente"
+
+
+def test_o_icone_do_ramo_fica_em_pe_dentro_do_losango():
+    """DEFEITO ACHADO NA MEDIÇÃO, e ele já existia na tela antiga.
+
+    O losango da IA de fachada gira a cabeça do pino 45°. A regra que desentorta
+    o ícone mira `.pin-head > *` — e emoji solto é NÓ DE TEXTO, não elemento: o
+    seletor nunca casava e o ícone aparecia deitado. Agora o ícone tem elemento
+    próprio, nas duas telas.
+
+    VERIFICADO NO NAVEGADOR: cabeça `matrix(0.707, 0.707, ...)` = +45°, ícone
+    `matrix(0.707, -0.707, ...)` = -45°. Soma zero, emoji em pé.
+    """
+    css = _ler(os.path.join(RAIZ, "frontend", "mapa.css"))
+    assert ".pin-head > i" in css, "o ícone do ramo perdeu o elemento próprio"
+    for pag in ("painel.js", "app.js"):
+        assert "<i>${k.emo}</i>" in _ler(os.path.join(RAIZ, "frontend", pag)), \
+            f"{pag} voltou a pôr o emoji solto, e ele deita dentro do losango"

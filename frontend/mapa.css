@@ -24,6 +24,10 @@
   background: var(--c, #1a73e8); border: 2.5px solid #fff;
   display: flex; align-items: center; justify-content: center; font-size: 15px;
 }
+/* O ícone do ramo vive num elemento PRÓPRIO. Emoji solto é nó de texto, e o
+   seletor que o desentorta dentro do losango da IA de fachada (`> *`) nunca
+   casava: o ícone aparecia deitado 45°. */
+.pin-head > i { font-style: normal; line-height: 1; }
 .pin-tail {
   position: absolute; bottom: 1px; left: 50%; transform: translateX(-50%);
   width: 0; height: 0;
@@ -81,3 +85,74 @@
    atrás dos que já estão cadastrados. */
 .pin.achado .pin-head { border-color: #bbf7d0; box-shadow: 0 0 0 3px rgba(22,163,74,.45); }
 .pin.achado { filter: drop-shadow(0 0 6px rgba(22,163,74,.55)); }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   O LOSANGO DA IA DE FACHADA. Estes pontos não existiam em cadastro nenhum:
+   a IA os leu numa parede, e a coordenada é APROXIMADA. A forma diferente diz,
+   sem legenda, que aquilo é achado a confirmar.
+   ───────────────────────────────────────────────────────────────────────── */
+.pin.m-ia-fachada .pin-head { border-radius: 5px; transform: translateX(-50%) rotate(45deg); }
+.pin.m-ia-fachada .pin-head > * { transform: rotate(-45deg); }
+.pin.m-ia-fachada .pin-tail { opacity: .55; }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   DIVISAS MUNICIPAIS — o rótulo que segue o cursor sobre a malha do IBGE.
+   ───────────────────────────────────────────────────────────────────────── */
+.muni-tip {
+  font-family: 'Inter', sans-serif; font-size: 12px; font-weight: 700;
+  color: var(--ink, #1f2937);
+  background: rgba(255,255,255,.95); border: 0; border-radius: 8px;
+  box-shadow: var(--shadow, 0 4px 14px rgba(11,46,89,.16)); padding: 4px 10px;
+}
+.muni-tip::before { display: none; }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   FICHA DA ÁREA DESENHADA — clicar no polígono responde "quantos POIs há
+   aqui dentro". A quebra é por FONTE porque foi ela que faltou quando 42 POIs
+   do Overture apareceram como "Outros" e ninguém sabia de onde tinham vindo.
+
+   250px é onde os rótulos da tabela cabem em UMA linha cada. Sem isso o mais
+   longo quebrava em duas e a coluna de números perdia o alinhamento — a única
+   coisa que essa tabela precisa fazer bem.
+   ───────────────────────────────────────────────────────────────────────── */
+.area-pop-wrap .leaflet-popup-content-wrapper {
+  border-radius: 12px; box-shadow: 0 8px 28px rgba(11,46,89,.22);
+  border: 1px solid var(--linha, #e5e7eb);
+}
+.area-pop-wrap .leaflet-popup-content { margin: 0; width: auto !important; }
+.area-pop {
+  font-family: var(--f-c, 'Inter', sans-serif); color: var(--texto, #1f2937);
+  padding: 14px 15px 13px; min-width: 250px;
+}
+.area-pop-topo { display: flex; align-items: baseline; gap: 9px; }
+.area-pop-num {
+  font-family: var(--f-t, 'Inter', sans-serif); font-size: 30px; font-weight: 700;
+  line-height: 1; color: var(--azul-texto, #1d4ed8); font-variant-numeric: tabular-nums;
+}
+.area-pop-cap { font-size: 11.5px; line-height: 1.25; color: var(--texto-fraco, #6b7280); }
+.area-pop-sub {
+  margin-top: 5px; font-size: 11.5px; color: var(--texto-fraco, #6b7280);
+  font-variant-numeric: tabular-nums;
+}
+.area-pop-tab { width: 100%; margin: 11px 0 4px; border-collapse: collapse; font-size: 12.5px; }
+.area-pop-tab td { padding: 5px 0; border-top: 1px solid var(--linha, #e5e7eb); }
+.area-pop-tab td[title] { cursor: help; }
+.area-pop-tab tr:first-child td { border-top: 0; }
+.area-pop-tab .num {
+  text-align: right; font-variant-numeric: tabular-nums; font-weight: 600;
+  padding-left: 12px; white-space: nowrap;
+}
+.area-pop-tab .pct {
+  text-align: right; padding-left: 8px; width: 34px;
+  color: var(--texto-fraco, #6b7280); font-variant-numeric: tabular-nums;
+}
+.area-pop-nota { margin: 9px 0 0; font-size: 11.5px; line-height: 1.4; color: var(--texto-fraco, #6b7280); }
+/* O botão se veste sozinho: ele vive nas DUAS telas, e depender das classes de
+   botão de uma delas o deixaria cru na outra. */
+.area-pop-del {
+  width: 100%; margin-top: 12px; display: flex; justify-content: center;
+  align-items: center; gap: 6px; padding: 7px 12px; cursor: pointer;
+  font: 600 12.5px/1 'Inter', sans-serif;
+  border-radius: 8px; border: 1px solid #fecaca; background: #fef2f2; color: #b91c1c;
+}
+.area-pop-del:hover { background: #fee2e2; border-color: #fca5a5; }

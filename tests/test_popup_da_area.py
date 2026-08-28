@@ -15,7 +15,10 @@ import sys
 
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 APP = os.path.join(RAIZ, "frontend", "app.js")
-CSS = os.path.join(RAIZ, "frontend", "style.css")
+# O DESENHO DA FICHA MUDOU DE ARQUIVO em 28/08/2026: saiu do `style.css`,
+# que só esta tela carrega, para o `mapa.css`, que as DUAS carregam. A
+# ficha existe nas duas e tem de ser a mesma nas duas.
+CSS = os.path.join(RAIZ, "frontend", "mapa.css")
 
 
 def _app():
