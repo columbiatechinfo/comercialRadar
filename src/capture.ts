@@ -27,6 +27,13 @@ const EXTRA_WAIT_MS         = 2500;  // colchão adicional antes do screenshot
 const TILE_LOAD_TIMEOUT_MS  = 12000; // tempo máximo aguardando estabilidade visual
 const MAP_READY_TIMEOUT_MS  = 40000; // tempo máximo para o mapa inicializar
 
+// Quantos navegadores NOVOS um worker tenta antes de desistir do mapa.
+//
+// Três, e não infinitos: se três binários limpos não inicializaram, o que está
+// errado não é o binário — insistir só gastaria tempo da rodada. É o mesmo teto
+// da auto-cura do passo 5 (`descobrir_maps.MAX_CURAS`), pelo mesmo motivo.
+const MAX_TENTATIVAS_MAPA = 3;
+
 // HTML da página Maps JS — carrega UMA vez, navega por setCenter()
 function buildMapHtml(apiKey: string, mapId: string, zoom: number): string {
   return `<!DOCTYPE html>
@@ -289,9 +296,12 @@ async function runWorker(
   config: CaptureConfig,
   stats: { done: number; failed: number; t0: number },
   mapUrl: string,
+  tentativa = 0,
 ): Promise<void> {
   // Mantém 10 workers, mas abre de forma escalonada para reduzir estouro no início
-  await new Promise(r => setTimeout(r, workerId * 1500));
+  // (na REtentativa não se escalona: o worker já está atrasado em relação aos
+  // outros, e esperar mais só aumenta o que ele deixou de capturar)
+  if (tentativa === 0) await new Promise(r => setTimeout(r, workerId * 1500));
 
   // QUAL CHROMIUM, e por que isto precisa ser escolhível.
   //
@@ -365,8 +375,31 @@ async function runWorker(
     throw e;
   }
   if (!ready) {
-    console.log(`\n  [W${workerId}] ⚠️ Mapa não inicializou — encerrando worker`);
-    await browser.close();
+    // O WORKER SE CURA, em vez de desistir na primeira.
+    //
+    // Ate 28/08/2026 ele so encerrava, e a capacidade da rodada caia sem que
+    // nada acusasse: na mineracao das 08:19 daquele dia o W5 caiu e a captura
+    // seguiu com 9 de 10, dizendo apenas "encerrando worker" no meio do log.
+    //
+    // A falha e transitoria com frequencia — o `initMap` nao dispara `idle`
+    // porque o mapa vetorial demorou, e um browser NOVO no mesmo minuto
+    // responde `pronto: true` em 1,8 s. Foi assim que a causa do
+    // `--disable-http2` apareceu, e e o mesmo raciocinio da cura do passo 5 em
+    // `descobrir_maps.py`: jogar fora o processo podre custa segundos, perder
+    // o worker custa capacidade da rodada inteira.
+    //
+    // Tres tentativas, e nao infinitas: se tres navegadores novos nao abriram
+    // o mapa, o que esta errado nao e o navegador.
+    await browser.close().catch(() => {});
+    if (tentativa < MAX_TENTATIVAS_MAPA) {
+      console.log(`\n  [W${workerId}] ⚠️ Mapa não inicializou — refazendo o `
+        + `navegador (${tentativa + 1}/${MAX_TENTATIVAS_MAPA})`);
+      await new Promise(r => setTimeout(r, 2000));
+      return runWorker(workerId, queue, queueIndex, session, sessionFile, lock,
+                       config, stats, mapUrl, tentativa + 1);
+    }
+    console.log(`\n  [W${workerId}] ⚠️ Mapa não inicializou em `
+      + `${MAX_TENTATIVAS_MAPA} tentativas — encerrando worker`);
     return;
   }
 

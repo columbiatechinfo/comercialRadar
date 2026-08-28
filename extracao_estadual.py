@@ -108,6 +108,66 @@ def _endereco_por_coordenada(lat, lng, cod_municipio: str):
     return achado["endereco"] if achado else None
 
 
+def _sem_os_de_outro_municipio(linhas: list, cod_municipio: str) -> tuple:
+    """Tira as linhas cujo CEP pertence a outro município, ANTES de inserir.
+
+    POR QUE ISTO EXISTE — o ciclo importa-e-apaga
+
+    `conferir_municipio` roda no passo 7 e apaga quem tem CEP de fora; esta
+    etapa roda no passo 2 e os traz de volta. Toda mineração repetia o par:
+
+        28/08/2026    86 gravados no passo 2  ·  87 apagados no passo 7
+        27/08/2026    81 gravados             ·  81 apagados
+
+    O dado final ficava certo — o `conferir_municipio` cumpre a regra —, mas o
+    número do passo 2 parecia ganho quando era descarte, e o passo 8 ficava sem
+    nada novo para cruzar porque o que entrou já tinha saído.
+
+    A fonte do endereço é confiável: se o CEP é de Porto Alegre, o ponto é de
+    Porto Alegre, mesmo com a coordenada caindo dentro da divisa daqui. É a
+    mesma regra do passo 7, aplicada uma etapa antes.
+
+    CEP QUE O CNEFE NÃO CONHECE NÃO É PROVA — ele fica, como no passo 7. São
+    2.616 assim em Canoas, e recusá-los apagaria ponto legítimo por lacuna da
+    base de referência.
+    """
+    if not linhas or not cod_municipio:
+        return linhas, 0
+    try:
+        import conferir_municipio as cm
+    except ImportError:
+        return linhas, 0
+
+    # O endereço é o 9º campo da tupla — ver o `linhas.append` acima.
+    ceps = []
+    for t in linhas:
+        ceps.extend(cm.ceps_do_texto(t[8] or ""))
+    if not ceps:
+        return linhas, 0
+
+    try:
+        dono = cm.dono_dos_ceps(ceps)
+    except Exception as erro:
+        # Sem o banco de referência a etapa segue: o passo 7 ainda apaga. Não
+        # deixar a importação inteira depender de um serviço de consulta.
+        print(f"  ⚠️  não deu para conferir o CEP ({erro}) — o passo 7 confere")
+        return linhas, 0
+
+    fica, fora = [], 0
+    for t in linhas:
+        de_outro = False
+        for c in cm.ceps_do_texto(t[8] or ""):
+            d = dono.get(c)
+            if d and str(d[2]) != str(cod_municipio):
+                de_outro = True
+                break
+        if de_outro:
+            fora += 1
+        else:
+            fica.append(t)
+    return fica, fora
+
+
 def ingerir(saida: str, cod_municipio: str, limite: int = 0, aplicar: bool = False,
             empresa: str = ""):
     import pandas as pd          # o `val()` lá embaixo depende de `pd.isna`
@@ -248,6 +308,10 @@ def ingerir(saida: str, cod_municipio: str, limite: int = 0, aplicar: bool = Fal
     if sem_endereco:
         print(f"  {sem_endereco:,} sem endereço e sem porta do CNEFE por perto — "
               f"não entram (a regra exige endereço)")
+
+    linhas, de_fora = _sem_os_de_outro_municipio(linhas, cod_municipio)
+    if de_fora:
+        print(f"  {de_fora:,} com CEP de OUTRO município — não entram")
     print(f"  prontas para inserir: {len(linhas):,}")
     if not aplicar:
         con.rollback()

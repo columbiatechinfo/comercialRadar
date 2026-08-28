@@ -47,6 +47,45 @@ versionamento [SemVer](https://semver.org/lang/pt-BR/).
 
 ### Corrigido
 
+- **`--desfundir` girava em falso; agora converge** (`pois.fundido_por`,
+  migração `0038`). O alvo pergunta *"a regra de hoje refaria?"* — e para o par
+  que a **IA** decidiu a resposta é sempre não: a regra nunca o faria, e é
+  justamente por isso que a IA foi consultada. Ele era elegível toda passada,
+  desfeito, perguntado, refundido, elegível de novo.
+
+  Medido: a execução real desfez 2.483 e o cruzamento refez 1.913; a passada
+  seguinte encontraria mais **1.824**. Não era resto, era laço — e cada volta
+  custava uma passada inteira da Spark.
+
+  A fusão passou a gravar quem a decidiu, e o passado foi recuperado sem chute:
+  ela já escrevia `regra`/`ia` em `vinculo_poi.confianca_origem` do vínculo que
+  move. Distribuição: **regra 10.809 · ia 1.825 · sem 2.195**. Resultado: **94
+  na primeira passada, 0 na segunda**. `--desfundir-ia` reabre também as da IA,
+  para quando o que mudou foi o modelo ou o prompt.
+
+- **A base estadual reimportava, todo mês, quem o passo 7 acabara de apagar.**
+  `conferir_municipio` roda no passo 7 e apaga quem tem CEP de outro município;
+  a extração roda no passo 2 e os trazia de volta:
+
+  | run | passo 2 gravou | passo 7 apagou |
+  |---|---:|---:|
+  | 28/08 08:19 | 86 | 87 |
+  | 27/08 21:52 | 81 | 81 |
+
+  O dado final ficava certo, mas o número do passo 2 parecia ganho quando era
+  descarte — e o passo 8 ficava sem nada novo para cruzar, porque o que entrou
+  já tinha saído. A conferência passou a acontecer **antes** do INSERT, com a
+  mesma regra. CEP que o CNEFE não conhece continua não sendo prova (2.616 em
+  Canoas), e o banco de referência fora do ar não derruba a importação.
+
+- **O worker da captura desistia na primeira falha do mapa.** Na mineração das
+  08:19 o W5 caiu e a rodada seguiu com 9 de 10, dizendo só "encerrando worker"
+  no meio do log. A falha é transitória com frequência — medido na mesma
+  máquina e no mesmo minuto: `chromium-1217` não inicializou em 45,1 s e
+  `chromium-1234` ficou pronto em 1,8 s. Agora refaz o navegador até 3 vezes,
+  como a auto-cura do passo 5, e pelo mesmo motivo: jogar fora o processo podre
+  custa segundos, perder o worker custa capacidade da rodada.
+
 - **A saída do i9 não era ao vivo, e a docstring dizia que era.** O stdout do
   Python é *block-buffered* quando vai para um pipe — e vai: atravessa o SSH.
   Medido em 28/08/2026: `cruzar_fontes --desfundir` rodava havia **142 s** no

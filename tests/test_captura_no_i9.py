@@ -168,3 +168,42 @@ def test_a_sincronizacao_acontece_antes_de_rodar():
     i = s.index("i9.sincronizar")
     j = s.index("i9.rodar", i)
     assert i < j, "o código passou a ser enviado depois de a etapa rodar"
+
+
+def test_o_worker_da_captura_se_cura_antes_de_desistir():
+    """O DEFEITO QUE ESTE TESTE GUARDA, visto na mineração de 28/08/2026.
+
+    O worker que não conseguia inicializar o mapa apenas encerrava, e a
+    capacidade da rodada caía sem que nada acusasse: o W5 caiu, a captura seguiu
+    com 9 de 10 e o log disse só "encerrando worker" no meio de duzentas linhas.
+
+    A falha é transitória com frequência. Medido quando a causa do
+    `--disable-http2` apareceu, na MESMA máquina e no mesmo minuto:
+
+        chromium-1217  NÃO INICIALIZOU em 45,1 s
+        chromium-1234  PRONTO em 1,8 s
+
+    Jogar fora o navegador podre custa segundos; perder o worker custa a
+    capacidade da rodada. É o mesmo raciocínio da cura do passo 5 em
+    `descobrir_maps.py`, e o mesmo teto de 3: se três navegadores limpos não
+    abriram o mapa, o que está errado não é o navegador.
+    """
+    import io
+    import os
+    raiz = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    s = io.open(os.path.join(raiz, "src", "capture.ts"), encoding="utf-8").read()
+    codigo = "\n".join(l for l in s.splitlines()
+                       if not l.lstrip().startswith("//"))
+
+    assert "MAX_TENTATIVAS_MAPA" in codigo, "o teto de tentativas sumiu"
+    i = codigo.index("if (!ready) {")
+    bloco = codigo[i:i + 900]
+    assert "runWorker(" in bloco, \
+        "o worker voltou a desistir na primeira falha do mapa"
+    assert "tentativa + 1" in bloco, \
+        "a retentativa não incrementa o contador — laço infinito"
+    assert "browser.close()" in bloco, \
+        "a retentativa reaproveita o navegador que não abriu o mapa"
+
+    teto = int(codigo.split("MAX_TENTATIVAS_MAPA = ")[1].split(";")[0])
+    assert 2 <= teto <= 5, f"teto de tentativas fora do razoável: {teto}"

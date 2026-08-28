@@ -507,13 +507,21 @@ def aplicar(con, decisoes: list, log=print) -> int:
         # ORIGEM do ponto, aparece na ficha e e' contado no painel. Sobrescreve-lo
         # apagava esse dado para sempre e tornava a fusao IRREVERSIVEL -- ver a
         # migracao 0036.
+        # E QUEM DECIDIU VAI JUNTO -- e a unica hora em que se sabe.
+        #
+        # Uma fusao que a REGRA fez e que a regra nao faria mais esta obsoleta:
+        # desfaze-la e a correcao que o `--desfundir` existe para aplicar. Uma
+        # que a IA decidiu nao esta -- a regra nunca a faria, e por isso a IA
+        # foi consultada. Sem distinguir as duas, desfazer gira em falso: ver
+        # a migracao 0038.
         psycopg2.extras.execute_values(cur, """
             update pois p
-               set fundido_em = now(), fundido_para = f.vive
-              from (values %s) as f(morre, vive)
+               set fundido_em = now(), fundido_para = f.vive,
+                   fundido_por = f.quem
+              from (values %s) as f(morre, vive, quem)
              where p.id = f.morre""",
-            [(m, v) for m, v, *_ in bloco],
-            template="(%s::bigint, %s::bigint)")
+            [(m, v, o) for m, v, _, o, _ in bloco],
+            template="(%s::bigint, %s::bigint, %s::text)")
         if len(fusoes) > LOTE:
             log(f"    gravadas {min(i + LOTE, len(fusoes)):,} de {len(fusoes):,}")
     return len(fusoes)
@@ -548,7 +556,8 @@ def _gravar_multiloja(cur, pois: list) -> int:
 
 
 def _desfundir(cur, cidade: str, poligono=None,
-               so_o_que_mudou: bool = True) -> int:
+               so_o_que_mudou: bool = True,
+               incluir_ia: bool = False) -> int:
     """Devolve ao mapa os POIs absorvidos, para que TUDO volte a ser comparado.
 
     POR QUE ISTO PRECISOU EXISTIR
@@ -583,6 +592,21 @@ def _desfundir(cur, cidade: str, poligono=None,
     # Ponto absorvido é melhor que ponto oco. Quem não tem destino gravado fica
     # como está; `backfill_fundido_para.py` recupera o que for rastreável.
     onde, par = ["fundido_em is not null", "fundido_para is not null"], {}
+
+    # A DECISAO DA IA NAO REABRE SOZINHA, e sem isto o desfazer gira em falso.
+    #
+    # O alvo pergunta "a regra de hoje refaria?". Para o par que a IA decidiu a
+    # resposta e SEMPRE nao — a regra nunca o faria, e e exatamente por isso que
+    # a IA foi consultada. Entao ele e elegivel toda vez: desfeito, perguntado,
+    # refundido, elegivel de novo.
+    #
+    # MEDIDO em 28/08/2026: a execucao real desfez 2.483 e o cruzamento refez
+    # 1.913; a passada seguinte encontraria mais 1.824. Nao era resto, era laco.
+    #
+    # `--desfundir-ia` reabre tambem as dela, para quando o que mudou foi o
+    # modelo ou o prompt — ai a pergunta e outra e vale refaze-la.
+    if not incluir_ia:
+        onde.append("coalesce(fundido_por, '') <> 'ia'")
     if cidade:
         onde.append("upper(translate(coalesce(cidade, ''), %(ac)s, %(li)s)) "
                     "like upper(translate(%(cidade)s, %(ac)s, %(li)s)) || '%%'")
@@ -744,7 +768,8 @@ def _desfundir(cur, cidade: str, poligono=None,
 def cruzar(cidade: str, empresa: str, aplicar_de_fato: bool, usar_ia: bool,
            tudo_para_ia: bool = False, area: str = "",
            recruzar: bool = False, desfundir: bool = False,
-           so_o_que_mudou: bool = True) -> None:
+           so_o_que_mudou: bool = True,
+           incluir_ia: bool = False) -> None:
     con = bc.conectar()
     con.autocommit = False
     cur = con.cursor()
@@ -765,7 +790,7 @@ def cruzar(cidade: str, empresa: str, aplicar_de_fato: bool, usar_ia: bool,
         #
         # Deixando na mesma transação, desfazer e refazer viram um passo só:
         # ou o mapa fica com a fusão nova, ou continua com a antiga.
-        n = _desfundir(cur, cidade, poligono, so_o_que_mudou)
+        n = _desfundir(cur, cidade, poligono, so_o_que_mudou, incluir_ia)
         print(f"  {n:,} POIs devolvidos ao mapa — a fusão deles foi desfeita, "
               f"e agora TUDO volta a ser comparado")
         print("  (desfazer e refazer estão na MESMA transação: se o cruzamento "
@@ -917,6 +942,10 @@ def main(argv=None) -> int:
                    help="desfaz as fusoes que a regra de HOJE nao refaria, "
                         "antes de recruzar — o unico jeito de uma regra nova "
                         "alcancar o que ja foi fundido")
+    p.add_argument("--desfundir-ia", dest="desfundir_ia",
+                   action="store_true",
+                   help="reabre tambem as fusoes que a IA decidiu. So faz "
+                        "sentido quando o que mudou foi o modelo ou o prompt")
     p.add_argument("--desfundir-tudo", dest="desfundir_tudo",
                    action="store_true",
                    help="desfaz TODAS, inclusive as que serao refeitas "
@@ -936,8 +965,10 @@ def main(argv=None) -> int:
                         "(12x mais chamadas — veja `filtrar_para_ia`)")
     a = p.parse_args(argv)
     cruzar(a.cidade, a.empresa, a.aplicar, not a.sem_ia, a.tudo_para_ia,
-           a.area, a.recruzar or a.desfundir or a.desfundir_tudo,
-           a.desfundir or a.desfundir_tudo, not a.desfundir_tudo)
+           a.area,
+           a.recruzar or a.desfundir or a.desfundir_tudo or a.desfundir_ia,
+           a.desfundir or a.desfundir_tudo or a.desfundir_ia,
+           not a.desfundir_tudo, a.desfundir_ia)
     return 0
 
 

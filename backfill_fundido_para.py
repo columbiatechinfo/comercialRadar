@@ -48,36 +48,51 @@ def backfill(con, aplicar: bool) -> dict:
     # Os vínculos ATIVOS, agrupados pelo nome normalizado. O mesmo normalizador
     # da fusão — casar por texto cru separaria "ParkShoppingCanoas" de
     # "PARKSHOPPING CANOAS" e o destino se perderia por acento e espaço.
-    cur.execute("""select v.nome, v.poi_id
+    # O DECISOR VEM JUNTO, e sai do mesmo vinculo. A fusao grava `regra` ou
+    # `ia` em `confianca_origem` do vinculo que ela move; e esse o dado que
+    # `pois.fundido_por` passou a guardar (migracao 0038). Sem ele, `--desfundir`
+    # reabre as decisoes da IA toda passada e nunca converge.
+    cur.execute("""select v.nome, v.poi_id, v.confianca_origem
                      from vinculo_poi v join pois p on p.id = v.poi_id
                     where p.fundido_em is null and v.estado = 'vinculado'
                       and v.nome is not null and v.nome <> ''""")
     por_nome = defaultdict(set)
-    for nome, poi_id in cur.fetchall():
-        por_nome[ev.norm_nome(nome)].add(poi_id)
+    quem = {}
+    for nome, poi_id, origem in cur.fetchall():
+        n = ev.norm_nome(nome)
+        por_nome[n].add(poi_id)
+        if origem in ("regra", "ia"):
+            quem[(n, poi_id)] = origem
 
-    cur.execute("""select id, nome from pois
-                    where fundido_em is not null and fundido_para is null
+    cur.execute("""select id, nome, fundido_para from pois
+                    where fundido_em is not null
+                      and (fundido_para is null or fundido_por is null)
                       and nome is not null and nome <> ''""")
     alvos = cur.fetchall()
 
     achados, ambiguos, sem_alvo = [], 0, 0
-    for pid, nome in alvos:
-        destinos = por_nome.get(ev.norm_nome(nome), ())
-        if len(destinos) == 1:
-            achados.append((pid, next(iter(destinos))))
-        elif destinos:
-            ambiguos += 1
-        else:
-            sem_alvo += 1
+    for pid, nome, ja_tem in alvos:
+        n = ev.norm_nome(nome)
+        destinos = por_nome.get(n, ())
+        alvo = ja_tem if ja_tem else (next(iter(destinos))
+                                      if len(destinos) == 1 else None)
+        if alvo is None:
+            if destinos:
+                ambiguos += 1
+            else:
+                sem_alvo += 1
+            continue
+        achados.append((pid, alvo, quem.get((n, alvo))))
 
     if achados and aplicar:
         import psycopg2.extras
         psycopg2.extras.execute_values(cur, """
-            update pois p set fundido_para = f.vive
-              from (values %s) as f(morre, vive)
-             where p.id = f.morre and p.fundido_para is null""",
-            achados, template="(%s::bigint, %s::bigint)")
+            update pois p
+               set fundido_para = coalesce(p.fundido_para, f.vive),
+                   fundido_por  = coalesce(p.fundido_por, f.quem)
+              from (values %s) as f(morre, vive, quem)
+             where p.id = f.morre""",
+            achados, template="(%s::bigint, %s::bigint, %s::text)")
         con.commit()
 
     return {"sem_destino": len(alvos), "recuperados": len(achados),

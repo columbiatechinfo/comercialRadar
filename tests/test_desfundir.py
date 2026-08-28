@@ -232,3 +232,53 @@ def test_ninguem_mais_usa_status_para_saber_quem_e_ponto():
                            if not l.lstrip().startswith("#"))
         assert "status, '') <> 'fundido'" not in codigo.replace('"', "'"), \
             f"{arq} ainda decide quem é ponto pelo `status`"
+
+
+def test_desfazer_converge(banco):
+    """O DEFEITO QUE ESTE TESTE GUARDA: a operação girava em falso.
+
+    O alvo pergunta *"a regra de hoje refaria?"*. Para o par que a IA decidiu a
+    resposta é SEMPRE não — a regra nunca o faria, e é exatamente por isso que a
+    IA foi consultada. Então ele era elegível toda vez: desfeito, perguntado,
+    refundido, elegível de novo.
+
+    MEDIDO em 28/08/2026: a execução real desfez 2.483 e o cruzamento refez
+    1.913; a passada seguinte encontraria mais 1.824. Não era resto, era laço, e
+    cada volta custava uma passada inteira da Spark.
+
+    Com `fundido_por` (migração 0038) a decisão da IA não reabre sozinha: 94 na
+    primeira passada, 0 na segunda."""
+    cur = banco.cursor()
+    cf._empresa(cur, "Aegea - Corsan")
+    cf._desfundir(cur, "Canoas")
+    assert cf._desfundir(cur, "Canoas") == 0, \
+        "desfazer duas vezes seguidas ainda encontra trabalho — voltou a girar"
+
+
+def test_a_decisao_da_ia_nao_reabre_sozinha(banco):
+    """A regra em si, sem depender do estado do banco."""
+    cur = banco.cursor()
+    cf._empresa(cur, "Aegea - Corsan")
+    cur.execute("""select count(*) from pois
+                    where fundido_em is not null and fundido_por = 'ia'""")
+    if not cur.fetchone()[0]:
+        pytest.skip("nenhuma fusão decidida pela IA nesta base")
+
+    cf._desfundir(cur, "Canoas")
+    cur.execute("""select count(*) from pois
+                    where fundido_em is null and fundido_por = 'ia'""")
+    assert cur.fetchone()[0] == 0, \
+        "uma fusão decidida pela IA foi desfeita sem `--desfundir-ia`"
+
+
+def test_a_fusao_grava_quem_decidiu():
+    """Sem isto o passado não distingue regra de IA, e o alvo não tem como
+    parar de girar."""
+    import io
+    s = io.open(os.path.join(RAIZ, "cruzar_fontes.py"), encoding="utf-8").read()
+    codigo = "\n".join(l for l in s.splitlines()
+                       if not l.lstrip().startswith("#"))
+    i = codigo.index("def aplicar(")
+    corpo = codigo[i:codigo.index("\ndef ", i + 10)]
+    assert "fundido_por = f.quem" in corpo, \
+        "a fusão voltou a não gravar quem a decidiu"
