@@ -343,10 +343,12 @@ def aplicar(con, decisoes: list, log=print) -> int:
         um `UPDATE ... FROM (VALUES ...)` para reapontar os vínculos
         um `UPDATE ... WHERE id = ANY(...)` para marcar os absorvidos
 
-    A TRANSITIVIDADE CONTINUA TRATADA, e ela é o motivo de a decisão não poder
-    ser feita em SQL puro: se A absorve B e depois B absorveria C, C tem de ir
-    para A — não para B, que já é um POI fundido. `raiz()` resolve a cadeia
-    ANTES de qualquer escrita, então o lote já sai com o destino final.
+    A TRANSITIVIDADE TEM DOIS LADOS, e o lote só acertava um deles até
+    27/08/2026. Quem MORRE já era resolvido no laço: se A absorve B e depois B
+    absorveria C, C vai para A. Quem SOBREVIVE não era: se A absorve B e depois
+    C absorve A, o vínculo de B ficava apontando para A, que acabara de virar
+    `fundido`. Por isso o destino de cada fusão é resolvido OUTRA VEZ depois do
+    laço, com `destino` completo — veja o passo 1b.
 
     O TAMANHO DO LOTE É 1.000 de propósito. `execute_values` monta um comando
     com todos os valores embutidos; com 13 mil linhas o texto do comando passa
@@ -375,6 +377,31 @@ def aplicar(con, decisoes: list, log=print) -> int:
 
     if not fusoes:
         return 0
+
+    # 1b. O DESTINO TEM DE SER O FINAL, e nao o de quem sobrevivia na hora.
+    #
+    # DEFEITO INTRODUZIDO PELO PROPRIO LOTE, medido em 27/08/2026: 6 vinculos
+    # ativos apontando para POI ja marcado `fundido` -- ficha orfa na tela.
+    #
+    # A versao de antes gravava DENTRO do laco, uma fusao por vez. Quando uma
+    # fusao posterior movia os vinculos de `rv` para `X`, os que ja tinham sido
+    # movidos para `rv` estavam la e iam junto: a cadeia se resolvia pela ordem
+    # de execucao, sem ninguem ter escrito codigo para isso.
+    #
+    # No lote nao se resolve: `UPDATE ... FROM (VALUES)` casa cada linha contra
+    # o estado ANTERIOR ao comando. A linha movida de `rm` para `rv` nao e
+    # recasada com `f.morre = rv`, entao fica em `rv` -- que o comando seguinte
+    # marca como fundido.
+    #
+    #     A absorve B   ->  vinculo de B vai para A
+    #     C absorve A   ->  vinculo de B FICA em A, que morreu
+    #
+    # Aqui `destino` ja esta completo, entao `raiz(rv)` anda a cadeia inteira e
+    # todo vinculo vai direto para o sobrevivente final. E o unico ponto do
+    # arquivo em que isso pode ser feito: antes do laco terminar, a cadeia
+    # ainda nao existe.
+    fusoes = [(rm, raiz(rv), conf, origem, motivo)
+              for rm, rv, conf, origem, motivo in fusoes]
 
     # 2. ESCREVE EM LOTE. Dois comandos por bloco, não dois por fusão.
     LOTE = 1000

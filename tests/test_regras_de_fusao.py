@@ -391,7 +391,13 @@ def test_o_lote_tem_teto():
     import io
     s = io.open(os.path.join(RAIZ, "cruzar_fontes.py"), encoding="utf-8").read()
     i = s.index("def aplicar(")
-    assert "LOTE = 1000" in s[i:i + 3000], "o teto do bloco sumiu"
+    # A FUNCAO INTEIRA, e nao uma janela de N caracteres. A janela de 3.000
+    # quebrou em 27/08/2026 quando um comentario novo empurrou o `LOTE = 1000`
+    # para depois dela: o teste acusou "o teto do bloco sumiu" com o teto
+    # intacto duas linhas adiante. Teste que mede distancia em bytes mede a
+    # prosa, nao o codigo.
+    corpo = s[i:s.index("def cruzar(", i)]
+    assert "LOTE = 1000" in corpo, "o teto do bloco sumiu"
 
 
 def test_as_funcoes_de_texto_tem_memoria():
