@@ -275,6 +275,9 @@
           <svg viewBox="0 0 20 20" fill="currentColor" class="ml-1.5 size-5 shrink-0 text-gray-400"><path d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" clip-rule="evenodd" fill-rule="evenodd"></path></svg>
         </button>
         <div id="menu-perfil" class="absolute right-0 top-11 z-[600] hidden w-48 rounded-md bg-white py-2 shadow-lg ring-1 ring-gray-900/5">
+          <button type="button" id="btn-abrir-perfil" class="block w-full px-3 py-1 text-left text-sm/6 text-gray-900 hover:bg-gray-50">Meu perfil</button>
+          <button type="button" id="btn-abrir-org" class="block w-full px-3 py-1 text-left text-sm/6 text-gray-900 hover:bg-gray-50">Minha organização</button>
+          <div class="my-1 h-px bg-gray-100"></div>
           <a href="/" class="block w-full px-3 py-1 text-left text-sm/6 text-gray-900 hover:bg-gray-50">Voltar ao painel atual</a>
           <button type="button" id="btn-sair" class="block w-full px-3 py-1 text-left text-sm/6 text-red-600 hover:bg-red-50">Sair</button>
         </div>
@@ -365,6 +368,165 @@
             <div class="border-b border-gray-100 px-5 py-3 text-[10.5px] font-semibold uppercase tracking-[0.07em] text-gray-400">Status de aprovação IA</div>
             <dl id="m-ia" class="flex flex-col gap-y-4 px-5 py-4"></dl>
           </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- ───────────────────────── modal: meu perfil ───────────────────── -->
+  <div id="m-perfil" class="fixed inset-0 z-[900] hidden items-center justify-center bg-gray-900/40 p-6">
+    <div class="flex max-h-full w-full max-w-3xl flex-col overflow-hidden rounded-xl bg-white shadow-xl ring-1 ring-gray-900/5">
+      <div class="flex-1 overflow-y-auto px-8 py-7">
+        <div class="grid grid-cols-1 gap-x-10 gap-y-6 md:grid-cols-[190px_1fr]">
+          <div>
+            <h2 class="text-base font-semibold text-gray-900">Meu perfil</h2>
+            <p class="mt-1 text-[13px]/[19px] text-gray-500">Nome, foto e contato. É o que aparece para o resto da sua equipe.</p>
+          </div>
+          <div class="flex flex-col gap-y-5">
+            <div class="flex items-center gap-x-5">
+              <span id="pf-avatar" class="flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-full bg-indigo-600 text-lg font-semibold text-white ring-1 ring-black/5">··</span>
+              <div>
+                <button type="button" id="pf-trocar-foto" class="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-semibold text-gray-900 shadow-sm hover:bg-gray-50">Trocar foto</button>
+                <input id="pf-arquivo" type="file" accept="image/jpeg,image/png,image/webp" class="hidden">
+                <p class="mt-2 text-[11.5px] text-gray-400">JPEG, PNG ou WebP, até 4 MB</p>
+              </div>
+            </div>
+            <div>
+              <label for="pf-nome" class="mb-1.5 block text-[13px] font-medium text-gray-700">Nome</label>
+              <input id="pf-nome" type="text" class="block w-full rounded-lg border border-gray-300 bg-white p-2.5 text-sm text-gray-900 focus:border-indigo-500 focus:ring-indigo-500">
+            </div>
+            <div>
+              <label for="pf-cargo" class="mb-1.5 block text-[13px] font-medium text-gray-700">Cargo</label>
+              <input id="pf-cargo" type="text" class="block w-full rounded-lg border border-gray-300 bg-white p-2.5 text-sm text-gray-900 focus:border-indigo-500 focus:ring-indigo-500">
+            </div>
+            <div>
+              <label for="pf-telefone" class="mb-1.5 block text-[13px] font-medium text-gray-700">Telefone</label>
+              <input id="pf-telefone" type="text" class="block w-full rounded-lg border border-gray-300 bg-white p-2.5 text-sm text-gray-900 focus:border-indigo-500 focus:ring-indigo-500">
+            </div>
+          </div>
+        </div>
+
+        <div class="my-7 h-px bg-gray-100"></div>
+
+        <div class="grid grid-cols-1 gap-x-10 gap-y-6 md:grid-cols-[190px_1fr]">
+          <div>
+            <h2 class="text-base font-semibold text-gray-900">Conta</h2>
+            <!-- OS TRÊS SÃO SÓ LEITURA PORQUE O BANCO DIZ QUE SÃO. O
+                 `PATCH /api/eu` aceita nome, telefone e cargo — e mais nada:
+                 nível quem muda é o root, e e-mail é credencial, muda no Auth.
+                 Mostrar campo editável que o servidor recusa é prometer o que
+                 não se cumpre. -->
+            <p class="mt-1 text-[13px]/[19px] text-gray-500">Não se edita aqui: e-mail e credencial, empresa e nível — quem define é o root.</p>
+          </div>
+          <div class="flex flex-col gap-y-5">
+            <div>
+              <label for="pf-email" class="mb-1.5 block text-[13px] font-medium text-gray-700">E-mail</label>
+              <input id="pf-email" type="text" disabled class="block w-full cursor-not-allowed rounded-lg border border-gray-200 bg-gray-50 p-2.5 text-sm text-gray-400">
+            </div>
+            <div>
+              <label for="pf-empresa" class="mb-1.5 block text-[13px] font-medium text-gray-700">Empresa</label>
+              <input id="pf-empresa" type="text" disabled class="block w-full cursor-not-allowed rounded-lg border border-gray-200 bg-gray-50 p-2.5 text-sm text-gray-400">
+            </div>
+            <div>
+              <label for="pf-nivel" class="mb-1.5 block text-[13px] font-medium text-gray-700">Nível</label>
+              <input id="pf-nivel" type="text" disabled class="block w-full cursor-not-allowed rounded-lg border border-gray-200 bg-gray-50 p-2.5 text-sm text-gray-400">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="flex items-center justify-between gap-x-3 border-t border-gray-100 bg-gray-50/60 px-8 py-4">
+        <p id="pf-msg" class="text-[12.5px] text-gray-500" role="status" aria-live="polite"></p>
+        <div class="flex items-center gap-x-2.5">
+          <button type="button" data-fechar-modal class="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-900 shadow-sm hover:bg-gray-50">Fechar</button>
+          <button type="button" id="pf-salvar" class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">Salvar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ───────────────────────── modal: organização ──────────────────── -->
+  <div id="m-org" class="fixed inset-0 z-[900] hidden items-center justify-center bg-gray-900/40 p-6">
+    <div class="flex max-h-full w-full max-w-5xl flex-col overflow-hidden rounded-xl bg-white shadow-xl ring-1 ring-gray-900/5">
+      <div class="flex items-start justify-between gap-x-4 border-b border-gray-100 px-8 py-5">
+        <div>
+          <h2 class="text-base font-semibold text-gray-900">Minha organização</h2>
+          <p class="mt-0.5 text-[13px] text-gray-500">Dados cadastrais e equipe vinculada.</p>
+        </div>
+        <button type="button" data-fechar-modal class="rounded-md p-1 text-gray-400 hover:bg-gray-50 hover:text-gray-600">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" class="size-5"><path d="M18 6L6 18M6 6l12 12"></path></svg>
+        </button>
+      </div>
+
+      <div class="flex-1 overflow-y-auto px-8 py-6">
+        <div id="org-sem-permissao" class="hidden rounded-lg border border-gray-200 bg-gray-50 p-5 text-[13px]/[20px] text-gray-500">
+          A lista de usuários e os dados da empresa são visíveis para quem administra. Seu nível de acesso não os inclui — e é assim por política do banco, não por um <em>if</em> na tela.
+        </div>
+
+        <div id="org-conteudo" class="grid grid-cols-1 gap-8 lg:grid-cols-[minmax(0,1fr)_300px]">
+          <div class="flex flex-col gap-y-6">
+            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <label for="org-nome" class="mb-1.5 block text-[13px] font-medium text-gray-700">Razão social</label>
+                <input id="org-nome" type="text" class="block w-full rounded-lg border border-gray-300 bg-white p-2.5 text-sm text-gray-900 focus:border-indigo-500 focus:ring-indigo-500">
+              </div>
+              <div>
+                <label for="org-doc" class="mb-1.5 block text-[13px] font-medium text-gray-700">CNPJ</label>
+                <input id="org-doc" type="text" class="block w-full rounded-lg border border-gray-300 bg-white p-2.5 text-sm text-gray-900 focus:border-indigo-500 focus:ring-indigo-500">
+              </div>
+            </div>
+
+            <!-- SEM ORIGEM: `tenants` tem id, nome, documento, ativo,
+                 criado_em e logo_path. Telefone e e-mail da empresa, modelo de
+                 base primária e contagem de licenças não existem como campo. -->
+            <div data-sem-origem class="rounded-lg border border-dashed border-gray-300 p-4">
+              <div class="flex items-start justify-between gap-x-4">
+                <div>
+                  <h3 class="text-sm font-semibold text-gray-400">Modelo de base primária</h3>
+                  <p class="mt-0.5 text-[12.5px]/[18px] text-gray-400">Submeter ao root a criação de uma tabela nova no padrão que a empresa definir.</p>
+                </div>
+                <span class="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-gray-300">sem uso</span>
+              </div>
+              <p class="mt-2 text-[11.5px] text-gray-400">Não há endpoint nem tabela para submissão de modelo. Telefone e e-mail da empresa também não existem em <code>tenants</code>.</p>
+            </div>
+
+            <div>
+              <div class="flex items-center justify-between">
+                <div class="flex items-baseline gap-x-2">
+                  <h3 class="text-sm font-semibold text-gray-900">Funcionários vinculados</h3>
+                  <span id="org-n" class="text-[11.5px] font-medium text-gray-400"></span>
+                </div>
+              </div>
+              <ul id="org-usuarios" role="list" class="mt-2 divide-y divide-gray-100"></ul>
+            </div>
+          </div>
+
+          <div class="flex flex-col gap-y-5">
+            <div class="rounded-lg border border-gray-200 p-4">
+              <div class="text-[10.5px] font-semibold uppercase tracking-[0.07em] text-gray-400">Usuários vinculados</div>
+              <div class="mt-1 flex items-baseline gap-x-2">
+                <span id="org-total" class="text-2xl font-semibold tracking-tight text-gray-900">—</span>
+                <span class="text-[11.5px] font-medium text-gray-400">ativos na empresa</span>
+              </div>
+            </div>
+            <!-- SEM ORIGEM: não há registro de onde cada extração aconteceu ao
+                 longo do tempo — só a área corrente. Um mapa de calor exigiria
+                 histórico de áreas, que não é guardado. -->
+            <div data-sem-origem class="overflow-hidden rounded-lg border border-dashed border-gray-300">
+              <div class="flex items-center justify-between border-b border-gray-200 px-3.5 py-2.5">
+                <span class="text-[10.5px] font-semibold uppercase tracking-[0.07em] text-gray-400">Área de atuação</span>
+                <span class="text-[10px] font-semibold uppercase tracking-wide text-gray-300">sem uso</span>
+              </div>
+              <p class="px-3.5 py-4 text-[11.5px]/[17px] text-gray-400">O mapa de calor das extrações exige histórico de áreas trabalhadas. Hoje só a área corrente é guardada.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="flex items-center justify-between gap-x-3 border-t border-gray-100 bg-gray-50/60 px-8 py-4">
+        <p id="org-msg" class="text-[12.5px] text-gray-500" role="status" aria-live="polite"></p>
+        <div class="flex items-center gap-x-2.5">
+          <button type="button" data-fechar-modal class="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-900 shadow-sm hover:bg-gray-50">Fechar</button>
+          <button type="button" id="org-salvar" class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">Salvar</button>
         </div>
       </div>
     </div>

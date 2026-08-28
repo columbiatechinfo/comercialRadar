@@ -35,7 +35,7 @@
   const estado = {
     modo: null, painel: null, cidade: null, cod: null,
     desenhando: false, pts: [], temArea: false,
-    basemap: 0, pois: [], stats: null, cadastro: null,
+    basemap: 0, pois: [], stats: null, cadastro: null, eu: null, empresa: null,
     filtros: { origem: "", atributos: [], ia: [], construcao: [] },
   };
 
@@ -561,12 +561,186 @@
 
   async function carregarCracha() {
     const eu = await pegar("/api/eu");
+    estado.eu = eu;
     if (!eu) return;
     $("perfil-nome-topo").textContent = eu.nome || "";
     $("marca-empresa").textContent = eu.empresa || "";
     const ini = (eu.nome || "··").split(" ").filter(Boolean)
       .map((p) => p[0]).slice(0, 2).join("").toUpperCase();
     $("perfil-iniciais").textContent = ini || "··";
+  }
+
+  // ── modais de perfil e organização ──────────────────────────────────────
+
+  function abrirModal(id) {
+    const m = $(id);
+    m.classList.remove("hidden");
+    m.classList.add("flex");
+  }
+
+  function fecharModais() {
+    ["m-stats", "m-perfil", "m-org"].forEach((id) => {
+      const m = $(id);
+      m.classList.add("hidden");
+      m.classList.remove("flex");
+    });
+  }
+
+  function iniciais(nome) {
+    return (nome || "··").split(" ").filter(Boolean)
+      .map((p) => p[0]).slice(0, 2).join("").toUpperCase() || "··";
+  }
+
+  async function abrirPerfil() {
+    // O MODAL ABRE PRIMEIRO, E SÓ DEPOIS BUSCA. A primeira versão fazia o
+    // contrário e saía calada quando `/api/eu` falhava — o clique não produzia
+    // nada na tela, e um botão que não faz nada é indistinguível de um botão
+    // quebrado. Abrindo antes, a falha vira uma frase em vez de silêncio.
+    abrirModal("m-perfil");
+    $("pf-msg").textContent = "";
+    const eu = estado.eu || await pegar("/api/eu");
+    estado.eu = eu;
+    if (!eu) {
+      $("pf-msg").textContent = "não foi possível ler o seu cadastro agora";
+      return;
+    }
+    $("pf-nome").value = eu.nome || "";
+    $("pf-cargo").value = eu.cargo || "";
+    $("pf-telefone").value = eu.telefone || "";
+    $("pf-email").value = eu.email || "";
+    $("pf-empresa").value = eu.empresa || "";
+    $("pf-nivel").value = eu.nivel || "";
+    const av = $("pf-avatar");
+    if (eu.tem_foto) {
+      av.innerHTML = '<img alt="" class="size-full object-cover">';
+      av.querySelector("img").src = window.comToken
+        ? window.comToken("/api/eu/foto") : "/api/eu/foto";
+    } else {
+      av.textContent = iniciais(eu.nome);
+    }
+    abrirModal("m-perfil");
+  }
+
+  async function salvarPerfil() {
+    // SÓ OS TRÊS QUE O SERVIDOR ACEITA. O `PATCH /api/eu` ignora nível, empresa
+    // e e-mail de propósito — mandar mais campos não os alteraria e daria a
+    // impressão de que a tela pode o que não pode.
+    const corpo = {
+      nome: $("pf-nome").value.trim() || null,
+      cargo: $("pf-cargo").value.trim() || null,
+      telefone: $("pf-telefone").value.trim() || null,
+    };
+    $("pf-msg").textContent = "salvando…";
+    const r = await fetch("/api/eu", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(corpo),
+    }).catch(() => null);
+    if (!r || !r.ok) {
+      $("pf-msg").textContent = "não foi possível salvar — tente de novo";
+      return;
+    }
+    $("pf-msg").textContent = "salvo";
+    estado.eu = null;                       // relê no próximo abrir
+    await carregarCracha();
+  }
+
+  async function trocarFoto(arquivo) {
+    if (!arquivo) return;
+    if (arquivo.size > 4 * 1024 * 1024) {
+      $("pf-msg").textContent = "a imagem passa de 4 MB";
+      return;
+    }
+    const fd = new FormData();
+    fd.append("file", arquivo);
+    $("pf-msg").textContent = "enviando…";
+    const r = await fetch("/api/eu/foto", { method: "POST", body: fd })
+      .catch(() => null);
+    $("pf-msg").textContent = (r && r.ok) ? "foto trocada" : "não foi possível enviar";
+    if (r && r.ok) { estado.eu = null; await abrirPerfil(); }
+  }
+
+  async function abrirOrg() {
+    abrirModal("m-org");
+    $("org-msg").textContent = "";
+
+    // A LISTA É DE QUEM ADMINISTRA, e quem decide isso é a policy do banco —
+    // `/api/usuarios` exige nível admin. Em vez de esconder o item do menu,
+    // a tela abre e DIZ por que está vazia: o operador entende o limite em vez
+    // de achar que a página quebrou.
+    const us = await pegar("/api/usuarios");
+    const podeVer = !!(us && us.usuarios);
+    $("org-sem-permissao").classList.toggle("hidden", podeVer);
+    $("org-conteudo").classList.toggle("hidden", !podeVer);
+    if (!podeVer) return;
+
+    const eu = estado.eu || await pegar("/api/eu");
+    estado.eu = eu;
+    const minha = (eu && eu.empresa) || "";
+    const lista = us.usuarios.filter((u) => !minha || u.empresa === minha);
+
+    $("org-n").textContent = lista.length + (lista.length === 1 ? " usuário" : " usuários");
+    $("org-total").textContent = nf.format(lista.filter((u) => u.ativo).length);
+
+    const emp = await pegar("/api/empresas");
+    const daMinha = emp && emp.empresas
+      ? emp.empresas.find((e) => e.nome === minha) : null;
+    estado.empresa = daMinha || null;
+    $("org-nome").value = (daMinha && daMinha.nome) || minha;
+    $("org-doc").value = (daMinha && daMinha.documento) || "";
+
+    const alvo = $("org-usuarios");
+    alvo.innerHTML = "";
+    lista.forEach((u) => {
+      const li = document.createElement("li");
+      li.className = "flex items-center justify-between gap-x-6 py-3.5";
+      li.innerHTML =
+        '<div class="flex min-w-0 gap-x-3.5">' +
+        '<span class="flex size-10 shrink-0 items-center justify-center rounded-full bg-gray-100 text-[12.5px] font-semibold text-gray-600"></span>' +
+        '<div class="min-w-0 flex-auto">' +
+        '<p class="truncate text-sm/6 font-semibold text-gray-900"></p>' +
+        '<p class="truncate text-xs/5 text-gray-500"></p></div></div>' +
+        '<div class="flex shrink-0 flex-col items-end">' +
+        '<p class="text-sm/6 text-gray-900"></p>' +
+        '<div class="mt-0.5 flex items-center gap-x-1.5">' +
+        '<span class="flex-none rounded-full p-1"><span class="block size-1.5 rounded-full"></span></span>' +
+        '<p class="text-xs/5 text-gray-500"></p></div></div>';
+      const [av, nome, email] = [li.querySelector("span"),
+        li.querySelector("p"), li.querySelectorAll("p")[1]];
+      av.textContent = iniciais(u.nome);
+      nome.textContent = u.nome || "(sem nome)";
+      email.textContent = u.email || "";
+      li.querySelectorAll("p")[2].textContent = u.cargo || u.nivel || "";
+      const anel = li.querySelectorAll("span")[1];
+      const ponto = anel.querySelector("span");
+      anel.className = "flex-none rounded-full p-1 " +
+        (u.ativo ? "bg-emerald-500/20" : "bg-gray-300/40");
+      ponto.className = "block size-1.5 rounded-full " +
+        (u.ativo ? "bg-emerald-500" : "bg-gray-400");
+      li.querySelectorAll("p")[3].textContent = u.ativo ? "Ativo" : "Inativo";
+      alvo.appendChild(li);
+    });
+  }
+
+  async function salvarOrg() {
+    const e = estado.empresa;
+    if (!e) {
+      $("org-msg").textContent = "empresa não identificada — nada a salvar";
+      return;
+    }
+    $("org-msg").textContent = "salvando…";
+    const r = await fetch("/api/empresas/" + encodeURIComponent(e.id), {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        nome: $("org-nome").value.trim(),
+        documento: $("org-doc").value.trim() || null,
+      }),
+    }).catch(() => null);
+    $("org-msg").textContent = (r && r.ok)
+      ? "salvo"
+      : "não foi possível salvar — só quem administra pode alterar a empresa";
+    if (r && r.ok) { estado.eu = null; await carregarCracha(); }
   }
 
   // ── ligações da interface ───────────────────────────────────────────────
@@ -689,22 +863,28 @@
       location.reload();
     });
 
-    $("btn-expandir").addEventListener("click", () => {
-      const m = $("m-stats");
-      m.classList.remove("hidden"); m.classList.add("flex");
-    });
+    $("btn-expandir").addEventListener("click", () => abrirModal("m-stats"));
     document.querySelectorAll("[data-fechar-modal]").forEach((b) =>
-      b.addEventListener("click", () => {
-        const m = $("m-stats");
-        m.classList.add("hidden"); m.classList.remove("flex");
-      }));
+      b.addEventListener("click", fecharModais));
+
+    $("btn-abrir-perfil").addEventListener("click", () => {
+      $("menu-perfil").classList.add("hidden");
+      abrirPerfil();
+    });
+    $("btn-abrir-org").addEventListener("click", () => {
+      $("menu-perfil").classList.add("hidden");
+      abrirOrg();
+    });
+    $("pf-salvar").addEventListener("click", salvarPerfil);
+    $("org-salvar").addEventListener("click", salvarOrg);
+    $("pf-trocar-foto").addEventListener("click", () => $("pf-arquivo").click());
+    $("pf-arquivo").addEventListener("change", (e) => trocarFoto(e.target.files[0]));
 
     document.addEventListener("keydown", (e) => {
       if (e.key !== "Escape") return;
       $("menu-basemap").classList.add("hidden");
       $("menu-perfil").classList.add("hidden");
-      const m = $("m-stats");
-      m.classList.add("hidden"); m.classList.remove("flex");
+      fecharModais();
     });
   }
 

@@ -178,3 +178,65 @@ def test_o_poi_fundido_nao_conta_como_ponto_sem_ligacao():
     trecho = s[max(0, i - 500):i]
     assert "p.fundido_em IS NULL" in trecho, \
         "o resumo voltou a contar POI fundido como ponto sem ligação"
+
+
+# ── modais de perfil e organização ────────────────────────────────────────
+
+def test_o_perfil_so_edita_o_que_o_servidor_aceita():
+    """`PATCH /api/eu` aceita nome, telefone e cargo — e mais nada: nível quem
+    muda é o root, e e-mail é credencial, muda no Auth.
+
+    Mostrar campo editável que o servidor recusa é prometer o que não se cumpre.
+    Os três de conta ficam `disabled` na tela, e o corpo do PATCH manda só os
+    três permitidos."""
+    html, js = _ler(HTML), _ler(JS)
+    for campo in ("pf-email", "pf-empresa", "pf-nivel"):
+        i = html.index(f'id="{campo}"')
+        assert "disabled" in html[i:i + 220], \
+            f"{campo} virou editável, e o servidor não aceita alterá-lo"
+
+    i = js.index("async function salvarPerfil")
+    corpo = js[i:i + 900]
+    for proibido in ("nivel:", "email:", "empresa:"):
+        assert proibido not in corpo, \
+            f"o salvar do perfil passou a mandar {proibido} — o PATCH ignora"
+
+
+def test_o_modal_abre_antes_de_buscar():
+    """O DEFEITO QUE ESTE TESTE GUARDA.
+
+    A primeira versão buscava `/api/eu` e só abria o modal se a resposta viesse.
+    Quando ela falhava, o clique não produzia NADA na tela — e um botão que não
+    faz nada é indistinguível de um botão quebrado. Abrindo antes, a falha vira
+    uma frase em vez de silêncio.
+
+    Verificado no navegador: com a API recusando, o modal abre e mostra "não foi
+    possível ler o seu cadastro agora"."""
+    js = _ler(JS)
+    i = js.index("async function abrirPerfil")
+    corpo = js[i:i + 700]
+    assert corpo.index('abrirModal("m-perfil")') < corpo.index('pegar("/api/eu")'), \
+        "o modal de perfil voltou a depender da resposta para abrir"
+
+
+def test_a_organizacao_diz_por_que_esta_vazia():
+    """`/api/usuarios` exige nível admin — quem decide é a policy do banco. Em
+    vez de esconder o item do menu, a tela abre e explica: o operador entende o
+    limite em vez de achar que a página quebrou."""
+    html, js = _ler(HTML), _ler(JS)
+    assert 'id="org-sem-permissao"' in html, "a explicação de permissão sumiu"
+    assert "org-sem-permissao" in js, "a tela não decide mais quando mostrá-la"
+
+
+def test_o_que_nao_existe_em_tenants_esta_marcado():
+    """`tenants` tem id, nome, documento, ativo, criado_em e logo_path. Telefone
+    e e-mail da empresa, modelo de base primária e contagem de licenças não
+    existem como campo — e o mapa de calor exigiria histórico de áreas, que não
+    é guardado."""
+    html = _ler(HTML)
+    i = html.index('id="m-org"')
+    modal = html[i:]
+    assert modal.count("data-sem-origem") >= 2, \
+        "as lacunas da organização deixaram de ser declaradas na tela"
+    assert "Modelo de base primária" in modal and "Área de atuação" in modal, \
+        "os blocos sem origem sumiram em vez de ficarem declarados"
