@@ -3551,6 +3551,20 @@ def cadastur_resumo(municipio: str = "", uf: str = ""):
     }
 
 
+@app.get("/painel")
+def painel_novo():
+    """A tela principal do desenho de handoff, em rota PRÓPRIA.
+
+    Ela não substitui a `/` ainda, e isso é deliberado: as duas convivem
+    enquanto o dono do produto compara, e o que já funciona não para de
+    funcionar por causa de uma tela nova. Trocar a principal é decisão dele.
+    """
+    alvo = FRONT / "painel.html"
+    if not alvo.exists():
+        raise HTTPException(404, "painel.html não encontrada em frontend/")
+    return FileResponse(str(alvo), media_type="text/html")
+
+
 @app.get("/bancada")
 def bancada_pagina():
     """A tela. O HTML e servido como esta no modelo; os dados vem da rota acima."""

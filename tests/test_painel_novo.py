@@ -1,0 +1,145 @@
+# -*- coding: utf-8 -*-
+"""A tela principal nova — do desenho de handoff, ligada ao banco de verdade.
+
+POR QUE ELA VIVE EM ROTA PRÓPRIA
+
+`/painel` não substitui a `/` ainda, e isso é deliberado: as duas convivem
+enquanto o dono do produto compara, e o que já funciona não para de funcionar
+por causa de uma tela nova. Trocar a principal é decisão dele, não efeito
+colateral de um commit.
+
+A REGRA QUE ESTES TESTES GUARDAM
+
+*"apenas deixe sem uso aquilo que não temos ainda"* — 28/08/2026. Nada na tela
+inventa número. O que não tem origem no banco fica visível, desabilitado e DIZ
+que não tem origem, em vez de mostrar um zero que parece dado:
+
+    Importar bases ....... não há metadados de carga por base
+    Notificações ......... não há endpoint
+    Conservação aparente . `analise_ia` não guarda esse eixo
+
+VERIFICADO NO NAVEGADOR, e não só lido: sidebar 288 px, header 64 px, painel de
+filtros 340 px, de municípios 320 px, mapa com Leaflet montado, Inter carregada.
+Foi assim que apareceu o defeito das classes `nav-item` — eu as referenciei no
+HTML e no JS e nunca as defini, e os sete botões da lateral ficaram com padding
+zero e ícone desalinhado. O CSS não reclama de classe que não existe.
+"""
+import io
+import os
+import sys
+
+RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if RAIZ not in sys.path:
+    sys.path.insert(0, RAIZ)
+
+HTML = os.path.join(RAIZ, "frontend", "painel.html")
+JS = os.path.join(RAIZ, "frontend", "painel.js")
+
+
+def _ler(p):
+    return io.open(p, encoding="utf-8").read()
+
+
+def test_a_pagina_e_o_script_existem():
+    assert os.path.exists(HTML), "frontend/painel.html sumiu"
+    assert os.path.exists(JS), "frontend/painel.js sumiu"
+
+
+def test_a_rota_existe_e_nao_substitui_a_principal():
+    s = _ler(os.path.join(RAIZ, "server.py"))
+    assert '@app.get("/painel")' in s, "a rota /painel saiu do servidor"
+    assert '@app.get("/")' in s, "a tela principal atual deixou de ser servida"
+
+
+def test_toda_classe_usada_esta_definida():
+    """O DEFEITO QUE ESTE TESTE GUARDA.
+
+    `nav-item`, `nav-on`, `nav-pronto` e `nav-off` foram escritas no HTML e no
+    JS antes de existirem no CSS. O navegador não acusa classe inexistente: ele
+    simplesmente não aplica nada, e os sete botões da barra lateral ficaram com
+    `padding: 0` e `display: block` — ícone e texto empilhados.
+
+    Só apareceu porque abri a página e MEDI o `getComputedStyle`, em vez de
+    concluir pelo código que estava certo.
+    """
+    html, js = _ler(HTML), _ler(JS)
+    # SÓ A MARCAÇÃO E O CÓDIGO. O comentário no topo do HTML descreve a tela e
+    # cita nomes de classe; procurar nele faria o teste concordar com a prosa —
+    # que é exatamente o erro que este arquivo existe para não repetir.
+    marcacao = html[html.index("<body>"):]
+    codigo = "\n".join(l for l in js.splitlines()
+                       if not l.lstrip().startswith("//"))
+    for classe in ("nav-item", "nav-on", "nav-pronto", "nav-off"):
+        assert classe in marcacao or classe in codigo, \
+            f"{classe} deixou de ser usada — remover do CSS também"
+        assert f".{classe}" in html, \
+            f"a classe {classe} é usada mas não está definida no CSS da página"
+
+
+def test_o_que_nao_tem_origem_esta_marcado_e_desabilitado():
+    """Falta declarada não é falta escondida. Cada um destes tem `disabled` e
+    diz o motivo — em vez de um zero que passaria por medição."""
+    html = _ler(HTML)
+    marcacao = html[html.index("<body>"):]     # o comentário do topo fica fora
+    assert marcacao.count("data-sem-origem") >= 3, \
+        "algum item sem origem no banco deixou de ser marcado como tal"
+    i = marcacao.index("Importar bases")
+    assert "disabled" in marcacao[max(0, i - 600):i], \
+        "o botão de importar bases voltou a parecer disponível"
+
+
+def test_nenhum_numero_de_exemplo_sobrou_do_desenho():
+    """O protótipo vem cheio de números: 128.470 pontos, 342.905 no cadastro,
+    seis usuários fictícios, sete bases com "atualizada há N dias". Nenhum deles
+    pode ter atravessado para cá — número inventado numa tela de operação é pior
+    que campo vazio, porque ninguém desconfia dele."""
+    html, js = _ler(HTML), _ler(JS)
+    for n in ("128470", "128.470", "342905", "342.905", "104215", "104.215",
+              "Márcio Carvalho", "Ana Beatriz Lima", "Rodrigo Sanches",
+              "carteira_clientes_corsan", "41.882.550"):
+        assert n not in html and n not in js, \
+            f"{n!r} veio do protótipo e ficou na tela"
+
+
+def test_a_pagina_le_o_banco_e_nao_uma_lista_escrita_a_mao():
+    """As fontes, os vereditos e os tipos de construção saem do que `/api/pois`
+    devolve. O desenho traz "Deliverys" e "SaaS de hospedagem" — oferecer filtro
+    para fonte que não existe é pior que não oferecer."""
+    js = _ler(JS)
+    for rota in ("/api/pois", "/api/stats", "/api/area", "/api/ufs",
+                 "/api/municipios", "/api/jobs", "/api/eu"):
+        assert rota in js, f"a tela deixou de consumir {rota}"
+    assert "estado.pois.map((p) => p.fonte)" in js, \
+        "a lista de origens voltou a ser escrita à mão"
+
+
+def test_a_area_desenhada_vai_para_o_banco():
+    """Desenhar sem gravar produziria uma extração da área ANTERIOR, sem nada
+    dizer — o `minerar_tudo` lê a área do banco, não da tela."""
+    js = _ler(JS)
+    i = js.index("async function concluirDesenho")
+    corpo = js[i:i + 1400]
+    assert '"/api/area"' in corpo and 'method: "POST"' in corpo, \
+        "a área desenhada deixou de ser gravada antes de a extração poder usá-la"
+
+
+def test_o_websocket_recua_em_vez_de_insistir():
+    """A primeira versão reabria a cada 4 s para sempre. Sem sessão o handshake
+    é recusado sempre, e isso vira uma tentativa a cada 4 segundos pela vida
+    inteira da aba — console cheio, servidor com pedido inútil, e nada indicando
+    que o problema é a falta de token."""
+    js = _ler(JS)
+    i = js.index("function ligarWebsocket")
+    corpo = js[i:i + 1500]
+    assert "espera * 2" in corpo, "o WebSocket voltou a reconectar em ritmo fixo"
+    assert "60000" in corpo, "o recuo do WebSocket ficou sem teto"
+
+
+def test_o_html_escapa_o_que_vem_do_banco():
+    """Nome de POI vai para dentro de um popup do Leaflet, que aceita HTML. Um
+    ponto chamado `<img onerror=...>` executaria script na tela do operador."""
+    js = _ler(JS)
+    assert "function escapar(" in js, "a função de escape sumiu"
+    i = js.index("bindPopup(")
+    assert "escapar(" in js[i:i + 400], \
+        "o popup do mapa voltou a interpolar dado do banco sem escapar"
