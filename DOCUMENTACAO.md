@@ -4416,3 +4416,68 @@ não conseguir se curar.
 4 s. A conclusão vem do encaixe das evidências, não de uma reprodução — e a cura
 vale de qualquer forma, porque ela conserta qualquer problema de formato
 "perfil", não só este.
+
+### Monitor de proxies: plano, estado e consumo (28/08/2026)
+
+O plano passou de 100 para **500 IPs — 250 BR + 250 CO**. O código já paginava
+certo; os 100 que apareciam eram **cache de 1 h** de antes da troca.
+
+**O país virou o primeiro recorte.** Buscar endereço brasileiro por IP colombiano
+faz duas coisas ruins de uma vez: o Maps **localiza o resultado pelo IP** — outro
+conjunto, outra ordem, outro idioma — e um endereço de Canoas pedido de Bogotá é
+o padrão que um detector procura. O padrão vem do `config.PROXY_PAIS`, e não de
+cada chamador: são **doze** lugares que constroem o pool, e mudar os doze é
+garantir esquecer um. Os IPs de fora ficam **reservados**, não apagados.
+
+Uma defesa que entrou depois, cobrada por teste: **país desconhecido não barra**.
+Excluir quem não declara país faria o pool esvaziar em silêncio no dia em que a
+Webshare parasse de mandar o campo — 500 carregados, "0 livres", mineração
+parando sem uma linha que explique.
+
+**Duas tabelas, migração [`0041`](migrations/0041_consumo_de_proxy.sql):**
+
+| | responde |
+|---|---|
+| `proxy_ip` | o que se **paga** — o plano como a Webshare o descreve |
+| `proxy_evento` | o que se **usa** — uma linha por pegar/devolver/castigo |
+
+`proxy_ip` não tem `tenant_id` de propósito: o plano é infraestrutura
+compartilhada. O **evento** tem dono, e por isso `tenant_id` vem na primeira
+coluna do índice.
+
+**Monitoramento nunca derruba mineração.** Toda escrita é best-effort e em lote:
+se o banco estiver fora, perde-se a linha do gráfico, não a run. Um INSERT por
+`acquire` poria uma ida ao banco dentro do caminho quente de dez workers.
+
+**O estado é derivado, não guardado.** "De castigo" é o último castigo cuja
+duração ainda não venceu (`em + segundos > now()`). Guardar um booleano seria
+estado a expirar sozinho, sem ninguém para apagá-lo.
+
+**Um defeito meu, achado na medição:** os eventos vão ao banco em lote, num
+INSERT só, então o `now()` do default é o mesmo para todos e "o último evento
+deste IP" ficava ambíguo — um IP que tomou castigo e outro que foi devolvido
+apareceram **ambos** como "em uso". O `bigserial` desempata: `ORDER BY em DESC,
+id DESC`.
+
+**Dois defeitos meus achados pelos testes existentes**, e os dois de segurança:
+`proxy_evento` nasceu com `tenant_id` **sem RLS** e **sem o gatilho**
+`preencher_tenant`. Sem a política, o consumo de uma concessionária apareceria no
+monitor da outra; sem o gatilho, a linha nasce sem empresa e some para todos —
+inclusive para quem a gravou. Migração
+[`0042`](migrations/0042_rls_no_consumo_de_proxy.sql).
+
+**O modal** é quase tela cheia (medido: 1232×672 em 1280×720), com plano →
+estado → onde queima → lista IP a IP. O cartão de queimados mostra a **taxa**, não
+o número solto: "12 castigos" não diz nada sem saber de quantas pegadas. A tabela
+corta em 300 linhas e **diz** que cortou. Um crachá na lateral mostra quantos IPs
+estão prontos sem ninguém abrir o modal — um "0" ali separa "a extração está
+lenta" de "a extração não tem por onde sair".
+
+### iFood: o que caía em CAPTCHA já não está no processo
+
+Rodado isolado em 28/08/2026: **nenhum CAPTCHA**. O `extrair_ifood` — que abria o
+feed no navegador e morreu no Turnstile — foi substituído em 26/08 pelo
+`enriquecer_por_ifood`, que não abre o iFood. Com o pool novo: **1 de 7** ganhou
+CNPJ, contra 0 de 7 antes. **n=7: a diferença não é significativa.** O que é
+significativo é o gargalo: não é bloqueio, é **pareamento** — a busca web devolve
+a loja errada, e a distância denuncia (4.127 m, 2.348 m, 17.469 m).

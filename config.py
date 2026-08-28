@@ -72,6 +72,19 @@ WEBSHARE_LIST_ENDPOINT = "proxy/list/?mode=direct&page=1&page_size=100"
 WEBSHARE_REFRESH_ENDPOINT = "proxy/refresh/"
 PROXY_CACHE_TTL_SEC = 3600          # cacheia a lista por 1h (respeita rate limit)
 
+# O PAÍS DOS IPs QUE O RODÍZIO USA.
+#
+# Desde 28/08/2026 o plano tem 250 no Brasil e 250 na Colômbia. Buscar endereço
+# brasileiro por IP colombiano faz duas coisas ruins de uma vez: o Maps LOCALIZA
+# o resultado pelo IP — devolve outro conjunto, outra ordem, outro idioma — e um
+# endereço de Canoas pedido de Bogotá é o padrão que um detector procura.
+#
+# Vem daqui, e não de cada chamador, porque são doze lugares que constroem o
+# pool: mudar os doze é garantir esquecer um. Os IPs de fora do país ficam
+# RESERVADOS, não apagados — o monitor mostra o plano inteiro, e eles passam a
+# valer no dia em que houver cliente lá.
+PROXY_PAIS = os.environ.get("CR_PROXY_PAIS", "BR").strip().upper() or None
+
 # ──────────────────────────────────────────────────────────────────────────
 # Workers e lotes
 # ──────────────────────────────────────────────────────────────────────────

@@ -707,6 +707,182 @@
     alvo.appendChild(l);
   }
 
+  // ── monitor de proxies ──────────────────────────────────────────────────
+  //
+  // O ESTADO NÃO VEM DO POOL, e não tem como vir: ele vive dentro do processo
+  // de mineração, no i9. O `/api/proxies` DERIVA o estado dos eventos que o
+  // pool grava (migração 0041) — e é por isso que "de castigo" é o último
+  // castigo cuja duração ainda não venceu, e não um booleano guardado.
+
+  const PX_ESTADO = {
+    livre:         ["Livres", "bg-green-500", "text-green-700"],
+    em_uso:        ["Em uso", "bg-indigo-500", "text-indigo-700"],
+    castigo:       ["De castigo", "bg-red-500", "text-red-700"],
+    reservado:     ["Reservados (outro país)", "bg-gray-300", "text-gray-500"],
+    fora_do_plano: ["Fora do plano", "bg-amber-400", "text-amber-700"],
+  };
+
+  let pxDados = null;
+
+  function pxBytes(n) {
+    n = Number(n || 0);
+    if (!n) return "—";
+    const u = ["B", "KB", "MB", "GB", "TB"];
+    let i = 0;
+    while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+    return (i ? n.toFixed(1) : String(n)) + " " + u[i];
+  }
+
+  function pxQuando(iso) {
+    if (!iso) return "nunca";
+    const d = new Date(iso);
+    const min = Math.round((Date.now() - d.getTime()) / 60000);
+    if (min < 1) return "agora";
+    if (min < 60) return min + " min";
+    const h = Math.round(min / 60);
+    if (h < 48) return h + " h";
+    return Math.round(h / 24) + " d";
+  }
+
+  async function carregarProxies() {
+    const horas = Number($("px-janela").value || 24);
+    const d = await pegar("/api/proxies?horas=" + horas);
+    pxDados = d;
+    if (!d) {
+      $("px-sub").textContent = "Não consegui ler o consumo agora.";
+      return;
+    }
+    pintarProxies(d);
+  }
+
+  function pxCartao(rot, valor, nota) {
+    return `<div class="rounded-lg border border-gray-200 p-4">
+        <div class="text-[10.5px] font-semibold uppercase tracking-[0.07em] text-gray-400">${escapar(rot)}</div>
+        <div class="mt-1 text-2xl font-semibold tabular-nums tracking-tight text-gray-900">${escapar(valor)}</div>
+        <div class="mt-0.5 text-[11.5px] text-gray-400">${escapar(nota)}</div>
+      </div>`;
+  }
+
+  function pintarProxies(d) {
+    const plano = d.plano || {};
+    const est = d.por_estado || {};
+    const cons = d.consumo || {};
+    const pegou = (cons.pegou || {}).n || 0;
+    const castigo = (cons.castigo || {}).n || 0;
+    const bytes = Object.values(cons).reduce((s, v) => s + (v.bytes || 0), 0);
+    const janela = d.janela_horas >= 24
+      ? Math.round(d.janela_horas / 24) + (d.janela_horas >= 48 ? " dias" : " dia")
+      : d.janela_horas + " h";
+
+    $("px-sub").textContent =
+      `${nf.format(plano.total || 0)} IPs no plano · ` +
+      Object.entries(plano.por_pais || {}).map(([p, n]) => `${n} ${p}`).join(" · ") +
+      (d.pais_ativo ? ` · em uso hoje: ${d.pais_ativo}` : "");
+
+    $("px-cartoes").innerHTML =
+      pxCartao("No plano", nf.format(plano.total || 0),
+               `${nf.format(plano.ativos || 0)} ainda na última carga`) +
+      pxCartao("Disponíveis para " + (d.pais_ativo || "uso"),
+               nf.format(est.livre || 0), "prontos agora") +
+      // A TAXA É O NÚMERO QUE DECIDE. "12 castigos" não diz nada sem saber de
+      // quantas pegadas; 12 em 20 é um problema, 12 em 4.000 é rotina.
+      pxCartao("Queimados na janela", nf.format(castigo),
+               pegou ? `${(castigo / pegou * 100).toFixed(1)}% das ${nf.format(pegou)} pegadas`
+                     : "nenhuma pegada no período") +
+      pxCartao("Tráfego na janela", pxBytes(bytes), `últimos ${janela}`);
+
+    // barra de estados, na proporção real
+    const total = (d.itens || []).length || 1;
+    $("px-barra").innerHTML = Object.keys(PX_ESTADO)
+      .filter((k) => est[k])
+      .map((k) => `<span class="${PX_ESTADO[k][1]}" style="width:${est[k] / total * 100}%" title="${escapar(PX_ESTADO[k][0])}: ${est[k]}"></span>`)
+      .join("");
+
+    const dl = $("px-estados");
+    dl.innerHTML = "";
+    for (const [k, [rot, bg, cor]] of Object.entries(PX_ESTADO)) {
+      if (!est[k]) continue;
+      const d2 = document.createElement("div");
+      d2.className = "flex items-center gap-x-2";
+      d2.innerHTML = `<span class="size-2 rounded-full ${bg}"></span>` +
+        `<dt class="text-[12px] text-gray-500"></dt>` +
+        `<dd class="text-[12.5px] font-semibold tabular-nums ${cor}"></dd>`;
+      d2.querySelector("dt").textContent = rot;
+      d2.querySelector("dd").textContent = nf.format(est[k]);
+      dl.appendChild(d2);
+    }
+
+    pxRanking("px-motivos", d.motivos_de_castigo || [], "motivo", castigo);
+    pxRanking("px-etapas", d.castigo_por_etapa || [], "etapa", castigo);
+    pxLista();
+  }
+
+  function pxRanking(id, linhas, chave, total) {
+    const alvo = $(id);
+    alvo.innerHTML = "";
+    if (!linhas.length) {
+      alvo.innerHTML = '<p class="text-[12px] text-gray-400">Nenhum IP foi para castigo nesta janela.</p>';
+      return;
+    }
+    for (const l of linhas) {
+      const pct = total ? Math.round(l.n / total * 100) : 0;
+      const d = document.createElement("div");
+      d.innerHTML =
+        '<div class="flex items-baseline justify-between gap-x-3 text-[12.5px]">' +
+        '<dt class="min-w-0 truncate text-gray-600"></dt>' +
+        '<dd class="shrink-0 font-semibold tabular-nums text-gray-900"></dd></div>' +
+        `<div class="mt-1 h-1 w-full overflow-hidden rounded-full bg-gray-100">
+           <div class="h-1 rounded-full bg-red-400" style="width:${pct}%"></div></div>`;
+      d.querySelector("dt").textContent = l[chave];
+      d.querySelector("dd").textContent = nf.format(l.n);
+      alvo.appendChild(d);
+    }
+  }
+
+  function pxLista() {
+    if (!pxDados) return;
+    const q = ($("px-busca").value || "").trim().toLowerCase();
+    const f = $("px-filtro").value;
+    const linhas = (pxDados.itens || []).filter((i) => {
+      if (f && i.estado !== f) return false;
+      if (!q) return true;
+      return (i.endereco + " " + i.cidade + " " + i.pais).toLowerCase().includes(q);
+    });
+
+    const tb = $("px-linhas");
+    tb.innerHTML = "";
+    // AS PRIMEIRAS 300, e a contagem DIZ que cortou. São 500 linhas de <tr>,
+    // e a tabela existe para conferir um IP específico — quem precisa de um
+    // filtra. Cortar em silêncio faria a tela mentir sobre o tamanho do plano.
+    for (const i of linhas.slice(0, 300)) {
+      const [rot, bg, cor] = PX_ESTADO[i.estado] || ["?", "bg-gray-300", "text-gray-500"];
+      const tr = document.createElement("tr");
+      tr.innerHTML =
+        '<td class="px-5 py-1.5 font-mono text-[11.5px] text-gray-700"></td>' +
+        '<td class="px-3 py-1.5 text-gray-500"></td>' +
+        '<td class="px-3 py-1.5 text-gray-500"></td>' +
+        `<td class="px-3 py-1.5"><span class="inline-flex items-center gap-x-1.5 ${cor}">` +
+        `<span class="size-1.5 rounded-full ${bg}"></span><span class="rot"></span></span></td>` +
+        '<td class="px-3 py-1.5 text-right tabular-nums text-gray-700 usos"></td>' +
+        '<td class="px-3 py-1.5 text-right tabular-nums cast"></td>' +
+        '<td class="px-5 py-1.5 text-right tabular-nums text-gray-400 ult"></td>';
+      const td = tr.querySelectorAll("td");
+      td[0].textContent = i.endereco + ":" + i.porta;
+      td[1].textContent = i.pais || "—";
+      td[2].textContent = i.cidade || "—";
+      tr.querySelector(".rot").textContent = rot;
+      tr.querySelector(".usos").textContent = nf.format(i.usos || 0);
+      const c = tr.querySelector(".cast");
+      c.textContent = nf.format(i.castigos || 0);
+      c.className += i.castigos ? " text-red-600 font-semibold" : " text-gray-400";
+      tr.querySelector(".ult").textContent = pxQuando(i.ultimo);
+      tb.appendChild(tr);
+    }
+    $("px-conta").textContent = linhas.length > 300
+      ? `mostrando 300 de ${nf.format(linhas.length)} — filtre para ver os demais`
+      : `${nf.format(linhas.length)} de ${nf.format((pxDados.itens || []).length)} IPs`;
+  }
+
   // ── estatísticas ────────────────────────────────────────────────────────
 
   // "NOVOS PONTOS ÚNICOS" É O QUE O CADASTRO DO CLIENTE NÃO COBRE, e são dois
@@ -1256,6 +1432,24 @@
     await carregarStats();
   }
 
+  // O CRACHÁ DA LATERAL diz quantos IPs estão prontos sem ninguém abrir o
+  // modal. Um "0" ali é a diferença entre "a extração está lenta" e "a extração
+  // não tem por onde sair", e essa distinção não pode custar dois cliques.
+  async function carregarCrachaProxies() {
+    const d = await pegar("/api/proxies?horas=24");
+    const e = $("proxies-n");
+    if (!e) return;
+    if (!d) { e.textContent = "—"; return; }
+    const livres = (d.por_estado || {}).livre || 0;
+    e.textContent = nf.format(livres);
+    e.className = "ml-auto inline-flex min-w-5 items-center justify-center " +
+      "rounded-full px-2 text-[11px] font-semibold " +
+      (livres ? "bg-gray-100 text-gray-500" : "bg-red-50 text-red-600");
+    e.title = livres
+      ? `${nf.format(livres)} IPs prontos para uso`
+      : "Nenhum IP disponível: a extração vai parar esperando o pool";
+  }
+
   async function carregarCracha() {
     const eu = await pegar("/api/eu");
     estado.eu = eu;
@@ -1340,6 +1534,7 @@
     $("pf-msg").textContent = "salvo";
     estado.eu = null;                       // relê no próximo abrir
     await carregarCracha();
+    carregarCrachaProxies();
   }
 
   async function trocarFoto(arquivo) {
@@ -1481,6 +1676,15 @@
     $("btn-filtros").addEventListener("click", () => abrirPainel("filtros"));
     document.querySelectorAll("[data-fechar]").forEach((b) =>
       b.addEventListener("click", () => abrirPainel(null)));
+
+    // monitor de proxies
+    $("btn-proxies").addEventListener("click", () => {
+      abrirModal("m-proxies");
+      carregarProxies();          // abre primeiro, busca depois: rede lenta não
+    });                           // pode deixar o clique sem resposta
+    $("px-janela").addEventListener("change", carregarProxies);
+    $("px-busca").addEventListener("input", pxLista);
+    $("px-filtro").addEventListener("change", pxLista);
 
     $("busca-municipio").addEventListener("input", pintarMunicipios);
     $("busca").addEventListener("input", desenharPois);

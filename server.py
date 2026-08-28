@@ -1250,6 +1250,143 @@ def _escopo_do_cadastro(cur) -> str | None:
     return "id IN (SELECT id FROM _escopo_cadastro)"
 
 
+@app.get("/api/proxies")
+def proxies_monitor(horas: int = 24):
+    """O plano de proxies e o consumo dele — inventário, estado e histórico.
+
+    DE ONDE VEM CADA COISA, porque não é tudo do mesmo lugar:
+
+        plano     `proxy_ip`, escrita pelo pool a cada carga. É o que se PAGA.
+        estado    DERIVADO dos eventos, não lido do pool: ele vive dentro do
+                  processo de mineração no i9, e o servidor não o alcança.
+        consumo   `proxy_evento`, agregada na janela pedida.
+
+    "EM CASTIGO AGORA" É DERIVADO, e a conta é o evento mais recente de castigo
+    de cada IP somado à duração dele: `em + segundos` ainda no futuro. Guardar um
+    booleano "está de castigo" seria estado a expirar sozinho, e ninguém estaria
+    lá para apagá-lo quando o cooldown vencesse.
+
+    "EM USO" é o IP com um `pegou` sem `devolveu` depois, dentro da janela curta
+    — um worker que morreu sem devolver deixaria o IP marcado para sempre, então
+    a janela é o que impede o número de mentir para cima.
+
+    A JANELA É OBRIGATÓRIA em toda consulta. `proxy_evento` cresce por run, e
+    varrer a tabela inteira para pintar um cartão seria trocar leitura barata por
+    trabalho pesado a cada abertura do modal.
+    """
+    horas = max(1, min(int(horas or 24), 24 * 90))
+    conn = realtime_ingest.conectar()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""SELECT count(*), count(*) FILTER (WHERE ativo),
+                                  coalesce(max(visto_em), now())
+                             FROM proxy_ip""")
+            total, ativos, visto = cur.fetchone()
+
+            cur.execute("""SELECT coalesce(pais, '?'), count(*)
+                             FROM proxy_ip WHERE ativo GROUP BY 1 ORDER BY 2 DESC""")
+            por_pais = {p: n for p, n in cur.fetchall()}
+
+            # O ÚLTIMO EVENTO DE CADA IP decide o estado. `DISTINCT ON` com o
+            # índice `(proxy_id, em DESC)` faz isso sem varrer o histórico.
+            cur.execute("""
+                WITH ultimo AS (
+                    -- O `id` DESEMPATA, e isto é conserto de defeito. Os
+                    -- eventos vão ao banco EM LOTE, num INSERT só: o `now()`
+                    -- do default é o mesmo para todos, e "o último evento
+                    -- deste IP" ficava ambíguo. Medido: um IP que tinha tomado
+                    -- castigo e outro que fora devolvido apareceram os dois
+                    -- como "em uso", porque o `pegou` do mesmo lote empatou e
+                    -- venceu. O `bigserial` guarda a ordem real de inserção.
+                    SELECT DISTINCT ON (proxy_id) proxy_id, tipo, em, segundos
+                      FROM proxy_evento
+                     WHERE em > now() - interval '48 hours'
+                     ORDER BY proxy_id, em DESC, id DESC
+                )
+                SELECT proxy_id, tipo, em, segundos,
+                       (tipo = 'castigo' AND em + (segundos || ' seconds')::interval > now())
+                         AS castigo_ativo,
+                       (tipo = 'pegou' AND em > now() - interval '15 minutes')
+                         AS em_uso
+                  FROM ultimo""")
+            estados = {r[0]: {"tipo": r[1], "em": r[2], "castigo": r[4], "uso": r[5]}
+                       for r in cur.fetchall()}
+
+            cur.execute("""SELECT proxy_id,
+                                  count(*) FILTER (WHERE tipo = 'pegou'),
+                                  count(*) FILTER (WHERE tipo = 'castigo'),
+                                  coalesce(sum(bytes), 0)
+                             FROM proxy_evento
+                            WHERE em > now() - make_interval(hours => %s)
+                            GROUP BY 1""", (horas,))
+            uso = {r[0]: {"pegou": r[1], "castigo": r[2], "bytes": int(r[3] or 0)}
+                   for r in cur.fetchall()}
+
+            cur.execute("""SELECT tipo, count(*), coalesce(sum(bytes), 0)
+                             FROM proxy_evento
+                            WHERE em > now() - make_interval(hours => %s)
+                            GROUP BY 1""", (horas,))
+            consumo = {t: {"n": n, "bytes": int(b or 0)} for t, n, b in cur.fetchall()}
+
+            cur.execute("""SELECT coalesce(motivo, 'sem motivo'), count(*)
+                             FROM proxy_evento
+                            WHERE tipo = 'castigo'
+                              AND em > now() - make_interval(hours => %s)
+                            GROUP BY 1 ORDER BY 2 DESC LIMIT 8""", (horas,))
+            motivos = [{"motivo": m, "n": n} for m, n in cur.fetchall()]
+
+            cur.execute("""SELECT coalesce(etapa, 'sem etapa'), count(*)
+                             FROM proxy_evento
+                            WHERE tipo = 'castigo'
+                              AND em > now() - make_interval(hours => %s)
+                            GROUP BY 1 ORDER BY 2 DESC LIMIT 8""", (horas,))
+            etapas = [{"etapa": e, "n": n} for e, n in cur.fetchall()]
+
+            cur.execute("""SELECT id, endereco, porta, coalesce(pais, ''),
+                                  coalesce(cidade, ''), ativo
+                             FROM proxy_ip ORDER BY pais, endereco""")
+            itens = []
+            for pid, end, porta, pais, cidade, ativo in cur.fetchall():
+                e = estados.get(pid) or {}
+                u = uso.get(pid) or {}
+                if not ativo:
+                    estado = "fora_do_plano"
+                elif e.get("castigo"):
+                    estado = "castigo"
+                elif e.get("uso"):
+                    estado = "em_uso"
+                elif config.PROXY_PAIS and pais.upper() != config.PROXY_PAIS:
+                    estado = "reservado"
+                else:
+                    estado = "livre"
+                itens.append({
+                    "id": pid, "endereco": end, "porta": porta,
+                    "pais": pais, "cidade": cidade, "estado": estado,
+                    "usos": u.get("pegou", 0), "castigos": u.get("castigo", 0),
+                    "bytes": u.get("bytes", 0),
+                    "ultimo": e["em"].isoformat() if e.get("em") else None,
+                })
+
+            contagem = {}
+            for i in itens:
+                contagem[i["estado"]] = contagem.get(i["estado"], 0) + 1
+
+            return {
+                "janela_horas": horas,
+                "pais_ativo": config.PROXY_PAIS,
+                "plano": {"total": total, "ativos": ativos,
+                          "por_pais": por_pais,
+                          "visto_em": visto.isoformat() if visto else None},
+                "por_estado": contagem,
+                "consumo": consumo,
+                "motivos_de_castigo": motivos,
+                "castigo_por_etapa": etapas,
+                "itens": itens,
+            }
+    finally:
+        conn.close()
+
+
 @app.get("/api/stats")
 def stats(cidade: str = "", area: int = 0):
     """Estatísticas do banco.
