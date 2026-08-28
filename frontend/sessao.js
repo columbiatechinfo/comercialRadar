@@ -19,6 +19,26 @@
   const CHAVE_EXP = "cr_expira";
   const fetchOriginal = window.fetch.bind(window);
 
+  // O LOGIN TRAZ O PRÓPRIO ESTILO, e isto é conserto de 28/08/2026.
+  //
+  // Este arquivo monta a tela de acesso, e qualquer página do sistema pode
+  // incluí-lo. Só que o estilo dela morava no `style.css`, que apenas a tela
+  // ANTIGA carrega — então na tela nova o "Sair" funcionava, o login aparecia,
+  // e aparecia CRU: empilhado no rodapé, sem cobrir nada, com o painel ainda
+  // visível atrás. Quem monta a interface tem de garantir o que ela precisa
+  // para existir.
+  //
+  // `tokens.css` é escopado em `.cr` e `acesso.css` é todo prefixado `.cr-`:
+  // nada vaza para a página hospedeira, o que os deixa conviver com o Tailwind
+  // da tela nova sem briga de cascata.
+  for (const arq of ["tokens.css", "acesso.css"]) {
+    if (document.querySelector(`link[href*="${arq}"]`)) continue;
+    const l = document.createElement("link");
+    l.rel = "stylesheet";
+    l.href = "/static/" + arq;
+    document.head.appendChild(l);
+  }
+
   const token = () => sessionStorage.getItem(CHAVE) || "";
   /* O LOGIN JÁ DEVOLVIA `refresh_token` e `expira_em`, e nós jogávamos fora.
    *

@@ -348,3 +348,37 @@ def test_o_numero_de_fontes_chega_do_servidor():
 
     js = _ler(JS)
     assert "p.n_fontes" in js, "a tela deixou de ler o número de fontes"
+
+
+def test_o_login_traz_o_proprio_estilo():
+    """O DEFEITO: depois de sair, o login aparecia CRU.
+
+    O `sessao.js` monta a tela de acesso, e qualquer página pode incluí-lo — mas
+    o estilo dela morava no `style.css`, que só a tela ANTIGA carrega. Na nova o
+    "Sair" funcionava, o login aparecia empilhado no rodapé, sem cobrir nada,
+    com o painel ainda visível atrás.
+
+    Quem monta a interface tem de garantir o que ela precisa para existir: agora
+    o próprio `sessao.js` injeta `tokens.css` e `acesso.css`, e o login funciona
+    em qualquer página — presente ou futura.
+
+    VERIFICADO NO NAVEGADOR nas duas telas: `position: fixed`, `z-index: 9000`,
+    1280×720 cobrindo a viewport, e um só `acesso.css` na antiga, que já tinha o
+    `tokens.css`.
+    """
+    sess = _ler(os.path.join(RAIZ, "frontend", "sessao.js"))
+    assert '"acesso.css"' in sess or "acesso.css" in sess, \
+        "o login voltou a depender do estilo de outra página"
+    assert "tokens.css" in sess, "as variáveis do login deixaram de ser garantidas"
+    assert 'querySelector(`link[href*=' in sess or "querySelector(" in sess, \
+        "a injeção do estilo deixou de checar duplicata"
+
+    css = os.path.join(RAIZ, "frontend", "acesso.css")
+    assert os.path.exists(css), "acesso.css sumiu"
+    regras = _ler(css)
+    assert "position: fixed" in regras and "z-index: 9000" in regras, \
+        "o login deixou de cobrir a página — ele reaparece empilhado no rodapé"
+
+    # e a fonte é UMA só: as regras saíram do style.css quando vieram para cá
+    assert "cr-acesso" not in _ler(os.path.join(RAIZ, "frontend", "style.css")), \
+        "as regras do login voltaram a existir em dois arquivos, e vão divergir"
