@@ -382,11 +382,31 @@ def main() -> int:
     p.add_argument("--sem-proxy", dest="sem_proxy", action="store_true",
                    help="não usa o pool; as sessões saem pelo IP direto")
     p.add_argument("--simular", action="store_true")
-    # Visível por padrão: é assim que se vê o que o iFood mostrou quando algo
-    # falha. `--oculto` serve para rodada longa, desacompanhada.
+    # VISÍVEL SÓ ONDE HÁ TELA. Ver o que o iFood mostrou quando algo falha é
+    # ótimo no notebook e é uma armadilha no i9: lá não há `DISPLAY`, o
+    # Chromium headful pendura, e a etapa morria com `TimeoutError` genérico
+    # depois de 3,2 min — sem chegar a avaliar a página.
+    #
+    # MEDIDO em 28/08/2026, mesma área e mesmo IP:
+    #     headful (padrão antigo)  3,2 min  ->  "TimeoutError"
+    #     headless                 0,1 min  ->  "desafio na abertura"
+    #
+    # A mesma execução, com o mesmo bloqueio no fim — mas uma diz o que houve e
+    # a outra gasta três minutos e um IP para não dizer nada.
     p.add_argument("--oculto", dest="visivel", action="store_false",
-                   help="roda sem janela")
-    p.set_defaults(visivel=True)
+                   help="roda sem janela (padrão onde não há DISPLAY)")
+    p.add_argument("--visivel", dest="visivel", action="store_true",
+                   help="força a janela, mesmo sem DISPLAY detectado")
+    # O SINAL É O TERMINAL, NÃO O `DISPLAY`. Tentei `DISPLAY` primeiro e não
+    # serve: o WSLg do i9 exporta `DISPLAY=:0` e `WAYLAND_DISPLAY=wayland-0`
+    # mesmo numa sessão SSH sem tela nenhuma — a heurística dizia "tem tela" e
+    # o Chromium headful pendurava igual.
+    #
+    # `isatty` responde a pergunta certa: existe uma PESSOA num terminal do
+    # outro lado? Quem roda à mão no notebook vê a janela; quem é chamado por
+    # subprocess (o `minerar_tudo`) ou por `ssh ... bash -s` não vê, porque
+    # ninguém está lá para olhar.
+    p.set_defaults(visivel=sys.stdout.isatty())
     a = p.parse_args()
     # Escopo OBRIGATORIO e EXPLICITO. Antes o padrao era `--cidade canoas`: quem
     # esquecia o argumento varria Canoas achando que varria a propria cidade.

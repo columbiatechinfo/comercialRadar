@@ -4481,3 +4481,50 @@ feed no navegador e morreu no Turnstile — foi substituído em 26/08 pelo
 CNPJ, contra 0 de 7 antes. **n=7: a diferença não é significativa.** O que é
 significativo é o gargalo: não é bloqueio, é **pareamento** — a busca web devolve
 a loja errada, e a distância denuncia (4.127 m, 2.348 m, 17.469 m).
+
+### O `extrair_ifood` — o que descobre loja nova (28/08/2026)
+
+É o antigo, o que **gera registro novo**: abre o feed do iFood e colhe a lista.
+O `enriquecer_por_ifood` que o substituiu no processo só acrescenta CNPJ a POI
+que já existe — não descobre nada.
+
+**O bloqueio é Cloudflare Turnstile, e o plano novo de proxy não o resolve.**
+Diagnosticado com IP residencial brasileiro dos 500:
+
+```
+goto            OK em 0,9 s
+url final       https://www.ifood.com.br/
+título          "Um momento…"          ← o interstício do Cloudflare
+marcas          turnstile + cloudflare no HTML
+campo endereço  NENHUM — o app nunca montou
+```
+
+**Mas eram dois defeitos empilhados, e nenhum era o bloqueio:**
+
+1. **`tem_captcha` procurava a proteção do ano passado.** A única marca testada
+   era `px-captcha` — o PerimeterX, com o botão "Pressione e segure". O iFood
+   trocou para Turnstile, cujas marcas não têm nada a ver. O detector nunca
+   disparava, o fluxo seguia como se estivesse tudo bem, e a etapa morria com um
+   `TimeoutError` genérico minutos depois.
+2. **`--visivel` era o padrão.** Headful numa máquina sem sessão gráfica pendura
+   *antes* de qualquer avaliação da página.
+
+| | tempo | veredito |
+|---|---|---|
+| headful, detector velho | 3,2 min | `TimeoutError` |
+| headless, detector velho | 3,2 min | `TimeoutError` |
+| headless, detector novo | **0,1 min** | **"desafio na abertura"** |
+
+A mesma execução, com o mesmo bloqueio no fim — mas uma diz o que houve e
+devolve o IP, e a outra gasta três minutos e um IP para não dizer nada.
+
+**`DISPLAY` não serve como sinal**, e foi a minha primeira tentativa: o WSLg do
+i9 exporta `DISPLAY=:0` e `WAYLAND_DISPLAY=wayland-0` mesmo numa sessão SSH sem
+tela nenhuma. O sinal certo é `sys.stdout.isatty()` — há uma **pessoa** num
+terminal do outro lado?
+
+**Três tentativas até o teste ficar honesto**, e vale registrar porque é o vício
+que mais se repete aqui: cortar no primeiro `#` decapitava os próprios seletores
+que o teste cobra (`#px-captcha-modal`, `#cf-chl-widget`); juntar os tokens do
+`tokenize` com espaço quebrava toda asserção exata. O certo é o `tokenize` dizer
+**onde** o comentário está e apagar só aquele vão.

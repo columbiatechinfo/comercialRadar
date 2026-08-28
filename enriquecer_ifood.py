@@ -93,8 +93,38 @@ async def abrir_navegador(pw, visivel: bool, proxy: dict = None, perfil_path: st
 
 
 async def tem_captcha(page) -> bool:
+    """Há um muro de verificação na frente? Os DOIS muros, não só o antigo.
+
+    ELE PROCURAVA A PROTEÇÃO DO ANO PASSADO. A única marca testada era
+    `px-captcha` — o PerimeterX, com o botão "Pressione e segure". O iFood
+    trocou para **Cloudflare Turnstile** em algum momento antes de 26/08/2026, e
+    as marcas do Turnstile não têm nada a ver com aquelas.
+
+    O CUSTO DE NÃO DETECTAR não é falhar: é falhar SEM DIZER. Medido em
+    28/08/2026, com IP residencial brasileiro do plano novo:
+
+        goto          OK em 0,9 s
+        título        "Um momento…"        (o interstício do Cloudflare)
+        marcas        turnstile + cloudflare no HTML
+        campo endereço  NENHUM — o app nunca montou
+        tem_captcha() False   ← e por isso o fluxo seguiu como se estivesse ok
+
+    O resultado era `extrair_ifood` gastar 3,2 min e um IP para terminar com um
+    `TimeoutError` genérico, quando a resposta certa estava na tela desde o
+    primeiro segundo. Agora ele diz "desafio na abertura" e devolve o IP.
+
+    O TÍTULO ENTRA NA CONTA porque o interstício do Cloudflare troca o
+    documento inteiro: não há seletor do app para procurar, e "Um momento…" /
+    "Just a moment…" é o que sobra.
+    """
     try:
-        return await page.locator("#px-captcha-modal, [id*='px-captcha']").count() > 0
+        if await page.locator(
+                "#px-captcha-modal, [id*='px-captcha'], "
+                "[class*='cf-turnstile'], #cf-chl-widget, "
+                "iframe[src*='challenges.cloudflare.com']").count() > 0:
+            return True
+        titulo = (await page.title() or "").strip().lower()
+        return titulo.startswith("um momento") or titulo.startswith("just a moment")
     except Exception:
         return False
 
