@@ -179,18 +179,20 @@
       <p id="escopo" class="mx-2 mt-2 text-[10.5px] leading-snug text-gray-400">Sem área selecionada: exibindo o total disponível na base.</p>
 
       <div class="mx-2 mt-2 rounded-lg border border-gray-200 bg-white p-3.5 shadow-sm">
-        <div class="text-[10.5px] font-semibold uppercase tracking-[0.07em] text-gray-400">Novos pontos únicos</div>
-        <div class="mt-1 flex items-baseline gap-x-2">
+        <div class="text-[10.5px] font-semibold uppercase tracking-[0.07em] text-gray-400">Comércio que o cadastro não cobra</div>
+        <div class="mt-0.5 flex items-baseline gap-x-1.5">
           <span id="s-total" class="text-2xl font-semibold tracking-tight tabular-nums text-gray-900">—</span>
-          <span id="s-reclass" class="rounded-md bg-gray-100 px-1.5 py-0.5 text-[11px] font-semibold text-gray-500">—</span>
+          <span class="text-[11px] text-gray-400">estabelecimentos</span>
         </div>
-        <p id="s-novos-detalhe" class="mt-1 text-[10.5px] leading-snug text-gray-400"></p>
-        <div class="mt-1 flex items-baseline justify-between gap-x-2">
-          <span class="text-[11px] text-gray-400">Já comerciais no cadastro</span>
-          <span class="flex items-baseline gap-x-1.5">
-            <span id="s-cadastro" class="text-[11.5px] font-semibold tabular-nums text-gray-600">—</span>
-            <span id="s-cadastro-poi" class="rounded bg-gray-100 px-1 py-px text-[10px] font-semibold text-gray-500">—</span>
-          </span>
+        <dl id="s-novos-quebra" class="mt-1.5 flex flex-col gap-y-1"></dl>
+
+        <div class="mt-3 border-t border-gray-100 pt-2.5">
+          <div class="text-[10.5px] font-semibold uppercase tracking-[0.07em] text-gray-400">Já cobrado como comércio</div>
+          <div class="mt-0.5 flex items-baseline gap-x-1.5">
+            <span id="s-cadastro" class="text-lg font-semibold tabular-nums text-gray-900">—</span>
+            <span class="text-[11px] text-gray-400">ligações do cliente</span>
+          </div>
+          <dl id="s-cadastro-quebra" class="mt-1.5 flex flex-col gap-y-1"></dl>
         </div>
 
         <div class="mt-2.5">
@@ -374,25 +376,24 @@
       <div class="flex-1 overflow-y-auto px-8 py-6">
         <div class="grid grid-cols-1 gap-6 lg:grid-cols-3">
           <div class="rounded-lg border border-gray-200 p-5">
-            <div class="text-[10.5px] font-semibold uppercase tracking-[0.07em] text-gray-400">Novos pontos únicos</div>
-            <div class="mt-1 flex items-baseline gap-x-2.5">
+            <div class="text-[10.5px] font-semibold uppercase tracking-[0.07em] text-gray-400">Comércio que o cadastro não cobra</div>
+            <div class="mt-1 flex items-baseline gap-x-2">
               <span id="m-total" class="text-3xl font-semibold tracking-tight tabular-nums text-gray-900">—</span>
-              <span id="m-reclass" class="rounded-md bg-gray-100 px-2 py-0.5 text-[12px] font-semibold text-gray-500">—</span>
+              <span class="text-[12px] text-gray-400">estabelecimentos</span>
             </div>
-            <div id="m-novos-detalhe" class="mt-1.5 text-[11.5px] leading-snug text-gray-400"></div>
+            <dl id="m-novos-quebra" class="mt-3 flex flex-col gap-y-1.5"></dl>
           </div>
           <div class="rounded-lg border border-gray-200 p-5">
             <div class="text-[10.5px] font-semibold uppercase tracking-[0.07em] text-gray-400">Multifontes</div>
             <div id="m-multi" class="mt-1 text-3xl font-semibold tracking-tight text-gray-900">—</div>
           </div>
           <div class="rounded-lg border border-gray-200 p-5">
-            <div class="text-[10.5px] font-semibold uppercase tracking-[0.07em] text-gray-400">Já comerciais no cadastro</div>
-            <div class="mt-1 flex items-baseline gap-x-2.5">
+            <div class="text-[10.5px] font-semibold uppercase tracking-[0.07em] text-gray-400">Já cobrado como comércio</div>
+            <div class="mt-1 flex items-baseline gap-x-2">
               <span id="m-cadastro" class="text-3xl font-semibold tracking-tight tabular-nums text-gray-900">—</span>
-              <span id="m-cadastro-poi" class="rounded-md bg-gray-100 px-2 py-0.5 text-[12px] font-semibold text-gray-500">—</span>
+              <span class="text-[12px] text-gray-400">ligações do cliente</span>
             </div>
-            <div class="mt-1 text-[12px] text-gray-400">ligações que o cadastro já classifica como comerciais</div>
-            <div id="m-cadastro-detalhe" class="mt-1 text-[11.5px] text-gray-500"></div>
+            <dl id="m-cadastro-quebra" class="mt-3 flex flex-col gap-y-1.5"></dl>
           </div>
         </div>
         <div class="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">

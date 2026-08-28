@@ -4316,3 +4316,50 @@ teste conferindo a minha prosa ou uma medida fixa:
 Entraram dois ajudantes: `_codigo_py()` remove comentário **e** docstring pelo
 `ast`, e `_funcao()` recorta do `def` até o próximo `def` — nunca por contagem de
 bytes. Os dois foram conferidos com o defeito injetado de propósito.
+
+### Os cartões dizem o que cada número é (28/08/2026)
+
+O cartão mostrava `12  6` e `3  2 c/ POI`. Distintivo com número solto, sem
+rótulo; na lateral de 227px o "2 c/ POI" ainda quebrava em duas linhas. E falava
+em **POI**, que é vocabulário nosso — quem opera pensa em *estabelecimento* e em
+*ligação*.
+
+Ficou um número grande **com unidade** e as parcelas nomeadas embaixo:
+
+```
+COMÉRCIO QUE O CADASTRO NÃO COBRA
+12 estabelecimentos
+   Sem ligação no cadastro              6
+   Cobrado como outra coisa             6
+   │ destes, com CNPJ conferido         2
+
+JÁ COBRADO COMO COMÉRCIO
+3 ligações do cliente
+   Com estabelecimento encontrado       2
+   Sem estabelecimento encontrado       1
+```
+
+**Três regras que ficaram:**
+
+1. **Nada de sigla e nenhum número sem rótulo.** Se o leitor precisa de um
+   `title` para entender, o rótulo está faltando.
+2. **As parcelas somam o número grande.** Se não somam, é porque a parcela que
+   falta não tem nome — e é justamente essa que ninguém entende.
+3. **A linha subordinada recua de verdade**, com margem e filete. Espaço em
+   branco no texto o navegador colapsa, e ela ficava rente às outras, parecendo
+   mais uma parcela da soma.
+
+**"Sem estabelecimento encontrado" é derivado, e tem valor próprio:** ligação
+cobrada como comércio onde não achamos nada é um cadastro a conferir pelo outro
+lado — ponto fechado, endereço errado, ou falha nossa de varredura. Sem essa
+linha o número não existiria em lugar nenhum da tela.
+
+**Saiu a linha solta** "6 pontos sem ligação · 2 a reclassificar" do cartão do
+cadastro: eram números do OUTRO cartão, encostados embaixo deste. Cada um foi
+para onde pertence.
+
+**O mesmo erro de teste, pela terceira vez no dia.** A asserção que proíbe falar
+"POI" na tela reprovou o próprio comentário que explica por que não se fala em
+POI na tela. Entrou `_codigo_js()` neste arquivo, ao lado do `_codigo_py()` e do
+`_funcao()` que já haviam entrado por isso: **toda asserção que proíbe alguma
+coisa lê o código sem comentário**.

@@ -771,35 +771,58 @@
     return { semLigacao, reclassificar, total: semLigacao + reclassificar };
   }
 
+  // OS DOIS CARTÕES DIZEM A MESMA COISA DE DUAS FORMAS: um número grande e as
+  // parcelas que o compõem, cada uma com nome inteiro.
+  //
+  // Antes eram distintivos com número solto — "12  6", "3  2 c/ POI". Ninguém
+  // que lesse a tela sabia o que era o segundo número, e na lateral estreita o
+  // "2 c/ POI" ainda quebrava em duas linhas. Pior: falavam em POI, que é
+  // vocabulário nosso. Quem opera pensa em ESTABELECIMENTO e em LIGAÇÃO.
+  //
+  // A regra que ficou: nada de sigla, nada de número sem rótulo, e a soma das
+  // parcelas tem de bater com o número grande — se não bate, é porque a
+  // parcela que falta não tem nome, e aí ela precisa ganhar um.
+  function linhaQuebra(alvo, rotulo, valor, sub) {
+    const l = document.createElement("div");
+    l.className = "flex items-baseline justify-between gap-x-2" +
+      // A linha SUBORDINADA recua de verdade, com margem — espaço em branco no
+      // texto o navegador colapsa, e ela ficava rente às outras, parecendo mais
+      // uma parcela da soma em vez de um detalhe da parcela acima.
+      (sub ? " ml-2.5 border-l border-gray-200 pl-2" : "");
+    const forte = !sub;
+    l.innerHTML =
+      `<dt class="min-w-0 text-[11px] leading-snug ${forte ? "text-gray-500" : "text-gray-400"}"></dt>` +
+      `<dd class="shrink-0 text-[11.5px] font-semibold tabular-nums ${forte ? "text-gray-900" : "text-gray-500"}"></dd>`;
+    l.querySelector("dt").textContent = rotulo;
+    l.querySelector("dd").textContent = nf.format(valor);
+    alvo.appendChild(l);
+  }
+
+  function pintarQuebra(ids, linhas) {
+    for (const id of ids) {
+      const alvo = $(id);
+      if (!alvo) continue;
+      alvo.innerHTML = "";
+      linhas.forEach(([rot, v, sub]) => linhaQuebra(alvo, rot, v, sub));
+    }
+  }
+
   function pintarNovos() {
     const n = contarNovos();
-
     for (const id of ["s-total", "m-total"]) {
       const e = $(id);
       if (e) e.textContent = nf.format(n.total);
     }
-    // A CAIXINHA DIZ O QUE ELA CONTA. Ela nasceu como um número solto ao lado
-    // do número grande, e ninguém tinha como saber o que era — a explicação só
-    // existia num `title`, que não se lê. O rótulo entra no próprio distintivo.
-    for (const id of ["s-reclass", "m-reclass"]) {
-      const e = $(id);
-      if (!e) continue;
-      e.textContent = nf.format(n.reclassificar) + " a reclassificar";
-      e.title = "Já estavam no cadastro, com classificação diferente de comercial";
-      // Sem nenhum, a caixinha some: um "0" cinza ao lado do número grande
-      // parece defeito de carregamento, não ausência de achado.
-      e.classList.toggle("hidden", !n.reclassificar);
-    }
-    // E a linha embaixo mostra a conta inteira, para o número grande não ser
-    // uma soma que só eu sei de onde veio.
-    const detalhe = n.total
-      ? `${nf.format(n.semLigacao)} fora do cadastro + ` +
-        `${nf.format(n.reclassificar)} no cadastro sem ser comercial`
-      : "";
-    for (const id of ["s-novos-detalhe", "m-novos-detalhe"]) {
-      const e = $(id);
-      if (e) e.textContent = detalhe;
-    }
+    // AS PARCELAS SOMAM O NÚMERO GRANDE. São os dois motivos de um comércio
+    // achado não estar sendo cobrado como comércio, e eles pedem trabalhos
+    // diferentes: um vira cadastro novo, o outro vira reclassificação.
+    const alta = ((estado.cadastro || {}).por_flag || {}).reclassificar_alta || 0;
+    const linhas = [
+      ["Sem ligação no cadastro", n.semLigacao],
+      ["Cobrado como outra coisa", n.reclassificar],
+    ];
+    if (alta) linhas.push(["destes, com CNPJ conferido", alta, true]);
+    pintarQuebra(["s-novos-quebra", "m-novos-quebra"], linhas);
     return n;
   }
 
@@ -833,27 +856,26 @@
     barrasIa($("m-ia"), ia, total, false);
   }
 
-  // "JÁ COMERCIAIS NO CADASTRO" SÃO DOIS NÚMEROS, e eram três coisas trocadas.
+  // "JÁ COBRADO COMO COMÉRCIO" É O CONTRAPONTO do cartão de cima: quanto do
+  // comércio daqui o cliente JÁ fatura como tal.
   //
-  // O cartão mostrava `com_poi` — TODA ligação casada com um ponto nosso, de
-  // qualquer classificação, inclusive as de reclassificar, que por definição
-  // NÃO são comerciais no cadastro. Na base inteira: 14.959 sob um rótulo que
-  // descreve 11.749.
+  // O rótulo era "já comerciais no cadastro" e o número era `com_poi` — toda
+  // ligação casada com um ponto nosso, de qualquer classificação, inclusive as
+  // de reclassificar, que por definição NÃO são comerciais. Na base inteira:
+  // 14.959 sob um rótulo que descreve 11.749.
   //
-  // Regra do dono do produto, 28/08/2026: mostrar as comerciais TOTAIS do
-  // cadastro e, ao lado, quantas delas um POI de fonte diversa confirmou.
-  //
-  //     grande     `comerciais`          o que o cliente já fatura como comércio
-  //     caixinha   `comerciais_com_poi`  dessas, quantas nosso levantamento
-  //                                      encontrou também em campo
-  //
-  // O resto da conta continua no `title` e no detalhe do modal: são os dois
-  // lados que o cartão precisa, mas não são a manchete.
+  // A quebra tem valor próprio, e não é enfeite: a ligação cobrada como
+  // comércio onde NÃO achamos estabelecimento nenhum é um cadastro a conferir
+  // pelo outro lado — pode ser ponto fechado, endereço errado ou falha nossa de
+  // varredura. Sem a linha, esse número não existiria em lugar nenhum da tela.
   function pintarCadastro() {
     const c = estado.cadastro;
-    const vazio = ["s-cadastro", "m-cadastro", "s-cadastro-poi", "m-cadastro-poi"];
     if (!c) {
-      vazio.forEach((id) => { const e = $(id); if (e) e.textContent = "—"; });
+      ["s-cadastro", "m-cadastro"].forEach((id) => {
+        const e = $(id);
+        if (e) e.textContent = "—";
+      });
+      pintarQuebra(["s-cadastro-quebra", "m-cadastro-quebra"], []);
       return;
     }
     const com = c.comerciais || 0;
@@ -863,28 +885,10 @@
       const e = $(id);
       if (e) e.textContent = nf.format(com);
     }
-    for (const id of ["s-cadastro-poi", "m-cadastro-poi"]) {
-      const e = $(id);
-      if (!e) continue;
-      e.textContent = nf.format(conf) + (id[0] === "m" ? " confirmadas por POI" : " c/ POI");
-      e.title = "Dessas, quantas um ponto de fonte diversa confirmou em campo";
-      e.classList.toggle("hidden", !com);
-    }
-
-    const alta = (c.por_flag || {}).reclassificar_alta || 0;
-    const dica =
-      `${nf.format(com)} ligações que o cadastro já classifica como comerciais · ` +
-      `${nf.format(conf)} confirmadas por POI · ` +
-      `${nf.format(c.poi_sem_ligacao || 0)} pontos sem ligação · ` +
-      `${nf.format(alta)} para reclassificar com CNPJ conferido`;
-    const s = $("s-cadastro");
-    if (s) s.parentElement.title = dica;
-    const cx = $("m-cadastro-detalhe");
-    if (cx) {
-      cx.textContent =
-        `${nf.format(c.poi_sem_ligacao || 0)} pontos sem ligação · ` +
-        `${nf.format(alta)} a reclassificar (CNPJ conferido)`;
-    }
+    pintarQuebra(["s-cadastro-quebra", "m-cadastro-quebra"], [
+      ["Com estabelecimento encontrado", conf],
+      ["Sem estabelecimento encontrado", Math.max(0, com - conf)],
+    ]);
   }
 
   function barras(alvo, linhas, total, compacto) {

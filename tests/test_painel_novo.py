@@ -41,6 +41,18 @@ def _ler(p):
     return io.open(p, encoding="utf-8").read()
 
 
+def _codigo_js(caminho):
+    """O JavaScript SEM os comentários.
+
+    ASSERÇÃO QUE OLHA COMENTÁRIO CONCORDA COM A MINHA PROSA, e é o erro que mais
+    se repetiu neste repositório. A proibição de falar "POI" na tela chegou a
+    reprovar o próprio comentário que explica por que não se fala em POI na
+    tela. Toda asserção que PROÍBE alguma coisa tem de ler daqui.
+    """
+    return "\n".join(l for l in _ler(caminho).splitlines()
+                     if not l.lstrip().startswith("//"))
+
+
 def test_a_pagina_e_o_script_existem():
     assert os.path.exists(HTML), "frontend/painel.html sumiu"
     assert os.path.exists(JS), "frontend/painel.js sumiu"
@@ -721,27 +733,6 @@ def test_novos_pontos_conta_os_dois_grupos():
         "o denominador das barras de atributo saiu do total válido"
 
 
-def test_a_caixinha_cinza_fica_a_direita_do_numero_grande():
-    """VERIFICADO NO NAVEGADOR: número em 24px #111827, caixinha em 11px
-    #6b7280 sobre #f3f4f6, raio 6px, 8px à direita, mesma linha de base, mais
-    baixa que o número — e some quando é zero.
-    """
-    html = _ler(HTML)
-    for grande, chip in (("s-total", "s-reclass"), ("m-total", "m-reclass")):
-        i = html.index('id="%s"' % grande)
-        j = html.index('id="%s"' % chip)
-        assert j > i, "a caixinha de %s ficou à ESQUERDA do número grande" % grande
-        assert "text-gray-500" in html[j:j + 260] and "bg-gray-100" in html[j:j + 260], \
-            "a caixinha de %s deixou de ser cinza" % chip
-        assert "tabular-nums" in html[i:i + 200], \
-            "%s perdeu o alinhamento de dígitos" % grande
-
-    js = _ler(JS)
-    assert 'e.classList.toggle("hidden", !n.reclassificar);' in js, (
-        'a caixinha voltou a mostrar "0": um zero cinza ao lado do número '
-        "grande parece defeito de carregamento, não ausência de achado")
-
-
 def test_o_cartao_conta_so_o_municipio_escolhido():
     """DEFEITO ANTERIOR, corrigido de passagem.
 
@@ -771,58 +762,6 @@ def test_o_cartao_conta_so_o_municipio_escolhido():
 # ─────────────────────────────────────────────────────────────────────────────
 # OS DOIS CARTÕES DIZEM O QUE CONTAM, E CONTAM A ÁREA SELECIONADA (28/08/2026)
 # ─────────────────────────────────────────────────────────────────────────────
-
-def test_a_caixinha_diz_o_que_conta():
-    """Ela nasceu como um número solto ao lado do número grande — "12  6" — e
-    ninguém tinha como saber o que era: a explicação só existia num `title`, que
-    não se lê.
-
-    VERIFICADO NO NAVEGADOR: "12" em 24px e "6 a reclassificar" em 11px à
-    direita, mesma linha de base, e a linha "6 fora do cadastro + 6 no cadastro
-    sem ser comercial" logo abaixo. O cartão de 227px não estourou.
-    """
-    js = _ler(JS)
-    assert 'nf.format(n.reclassificar) + " a reclassificar"' in js, \
-        "a caixinha voltou a ser um número solto, sem dizer o que conta"
-    # e a conta inteira aparece, para o número grande não ser uma soma que só o
-    # código conhece
-    assert '" fora do cadastro + "' in js or "fora do cadastro +" in js, \
-        "a linha que explica a soma do número grande sumiu"
-    html = _ler(HTML)
-    assert 'id="s-novos-detalhe"' in html, "a linha da conta sumiu da lateral"
-
-
-def test_ja_comerciais_mostra_o_total_e_o_confirmado():
-    """ERAM TRÊS COISAS TROCADAS. O cartão mostrava `com_poi` — toda ligação
-    casada com um ponto nosso, de QUALQUER classificação, inclusive as de
-    reclassificar, que por definição NÃO são comerciais no cadastro. Na base
-    inteira: 14.959 sob um rótulo que descreve 11.749.
-
-    Decisão do dono do produto: as comerciais TOTAIS do cadastro, e ao lado
-    quantas delas um POI de fonte diversa confirmou.
-
-    MEDIDO: base inteira 11.749 com 6.243 confirmadas; na área do print, 3 com
-    2 confirmadas.
-    """
-    js = _ler(JS)
-    assert "c.comerciais || 0" in js, \
-        "o cartão voltou a mostrar `com_poi` sob o rótulo de comerciais"
-    assert "c.comerciais_com_poi || 0" in js, "a contagem confirmada por POI sumiu"
-    assert "com_poi" not in js.split("function pintarCadastro")[1][:1200] \
-        or "comerciais_com_poi" in js.split("function pintarCadastro")[1][:1200], \
-        "`com_poi` voltou a ser a manchete do cartão"
-
-    html = _ler(HTML)
-    for chip in ("s-cadastro-poi", "m-cadastro-poi"):
-        assert 'id="%s"' % chip in html, "a caixinha de confirmadas por POI sumiu"
-
-    # e o endpoint entrega os dois números
-    srv = _ler(os.path.join(RAIZ, "server.py"))
-    assert "count(*) FILTER (WHERE e_comercial)" in srv, \
-        "o endpoint parou de contar as comerciais do cadastro"
-    assert '"comerciais": comerciais' in srv and '"comerciais_com_poi"' in srv, \
-        "os dois números não chegam mais ao navegador"
-
 
 def test_o_resumo_do_cadastro_respeita_a_area():
     """Sem isto, o 14.959 do município inteiro aparecia encostado num número de
@@ -868,3 +807,104 @@ def test_a_migracao_do_indice_do_cadastro():
         "o índice antigo sem tenant_id ficou para trás"
     assert corpo.index("CREATE INDEX") < corpo.index("DROP INDEX"), \
         "o índice novo tem de nascer antes de o velho morrer"
+
+def test_os_cartoes_dizem_o_que_cada_numero_e():
+    """A CAIXINHA MORREU, e por um motivo.
+
+    O cartão mostrava "12  6" e "3  2 c/ POI": distintivos com número solto, sem
+    rótulo, e na lateral de 227px o "2 c/ POI" ainda quebrava em duas linhas.
+    Pior, falavam em POI — vocabulário nosso. Quem opera pensa em
+    ESTABELECIMENTO e em LIGAÇÃO.
+
+    Ficou um número grande com unidade e as parcelas nomeadas embaixo. A regra:
+    nada de sigla, nada de número sem rótulo, e a soma das parcelas bate com o
+    número grande — se não bate, a parcela que falta não tem nome, e precisa
+    ganhar um.
+
+    VERIFICADO NO NAVEGADOR: as cinco linhas cabem em UMA linha cada no cartão
+    de 227px, a subordinada recua 10px com filete à esquerda, e nada estoura.
+    """
+    js, html = _ler(JS), _ler(HTML)
+    codigo = _codigo_js(JS)
+
+    # os distintivos e as linhas soltas de texto saíram
+    for morto in ("s-reclass", "m-reclass", "s-cadastro-poi", "m-cadastro-poi",
+                  "s-novos-detalhe", "m-novos-detalhe", "m-cadastro-detalhe"):
+        assert morto not in html and morto not in codigo, \
+            "o distintivo %s voltou: número solto sem rótulo" % morto
+
+    # nenhum número da tela fica sem nome
+    for alvo in ("s-novos-quebra", "s-cadastro-quebra",
+                 "m-novos-quebra", "m-cadastro-quebra"):
+        assert 'id="%s"' % alvo in html, "a quebra %s sumiu" % alvo
+    assert "function linhaQuebra(" in js and "function pintarQuebra(" in js, \
+        "as parcelas voltaram a ser texto montado à mão"
+
+    # e o jargão interno não chega ao operador
+    for rotulo in ('"Sem ligação no cadastro"', '"Cobrado como outra coisa"',
+                   '"Com estabelecimento encontrado"',
+                   '"Sem estabelecimento encontrado"'):
+        assert rotulo in js, "o rótulo %s sumiu do cartão" % rotulo
+    assert "c/ POI" not in codigo and "confirmadas por POI" not in codigo, \
+        "voltou a falar em POI na tela: é vocabulário nosso, não do operador"
+
+
+def test_as_parcelas_somam_o_numero_grande():
+    """Se não somam, a parcela que falta não tem nome — e é justamente ela que o
+    leitor não entende.
+
+    Comércio não cobrado = sem ligação + cobrado como outra coisa.
+    Já cobrado = com estabelecimento encontrado + sem estabelecimento encontrado.
+    """
+    js = _ler(JS)
+
+    # o grande vem de `contarNovos`, que soma exatamente as duas parcelas
+    assert "total: semLigacao + reclassificar" in js, \
+        "o número grande deixou de ser a soma das parcelas nomeadas"
+    i = js.index("function pintarNovos(")
+    corpo = js[i:i + 1400]
+    assert "n.semLigacao" in corpo and "n.reclassificar" in corpo, \
+        "as parcelas do cartão pararam de sair da mesma conta do número grande"
+
+    # a subordinada NÃO entra na soma: é detalhe da parcela acima, e por isso
+    # recua de verdade — espaço em branco o navegador colapsa
+    assert "alta, true" in corpo, "a linha do CNPJ conferido virou parcela da soma"
+    assert "border-l border-gray-200 pl-2" in js, \
+        "a linha subordinada perdeu o recuo, e parece mais uma parcela"
+
+    # e o segundo cartão fecha com a subtração, não com um número solto
+    i = js.index("function pintarCadastro(")
+    corpo = js[i:i + 1600]
+    assert "Math.max(0, com - conf)" in corpo, (
+        "'sem estabelecimento encontrado' deixou de ser derivado: esse número "
+        "não existe em lugar nenhum da tela se não for calculado aqui")
+
+
+def test_o_cartao_do_cadastro_mostra_o_numero_certo():
+    """ERAM TRÊS COISAS TROCADAS. O cartão mostrava `com_poi` — toda ligação
+    casada com um ponto nosso, de QUALQUER classificação, inclusive as de
+    reclassificar, que por definição NÃO são comerciais no cadastro. Na base
+    inteira: 14.959 sob um rótulo que descreve 11.749.
+
+    MEDIDO: base inteira 11.749 com 6.243 confirmadas; na área do print, 3 com
+    2 confirmadas e 1 sem estabelecimento encontrado.
+    """
+    js = _ler(JS)
+    assert "c.comerciais || 0" in js, \
+        "o cartão voltou a mostrar `com_poi` sob o rótulo de comerciais"
+    assert "c.comerciais_com_poi || 0" in js, "a contagem confirmada sumiu"
+
+    # o endpoint entrega os dois números
+    srv = _ler(os.path.join(RAIZ, "server.py"))
+    assert "count(*) FILTER (WHERE e_comercial)" in srv, \
+        "o endpoint parou de contar as comerciais do cadastro"
+    assert '"comerciais": comerciais' in srv and '"comerciais_com_poi"' in srv, \
+        "os dois números não chegam mais ao navegador"
+
+    # e o título diz o que o número é, sem depender do subtítulo
+    html = _ler(HTML)
+    assert html.count("Já cobrado como comércio") == 2, \
+        "o cartão perdeu o título que diz o que o número significa"
+    assert "Já comerciais no cadastro" not in html, (
+        "voltou o rótulo antigo, que descrevia um número diferente do que "
+        "estava embaixo dele")
