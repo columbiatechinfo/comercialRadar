@@ -281,6 +281,26 @@ E o **número da porta decide** quando o nome se repete:
 | mesmo nome, mesma rua, **número diferente** | 48 | **não funde sozinho** — "Saque e Pague" 1011 × 1623 são caixas distintos |
 | sem número num dos lados | 51 | vale o teto de 1 km |
 
+**Mas no shopping o endereço não identifica ninguém.** No 4545 da Avenida
+Farroupilha há **181 nomes distintos** — endereço, domínio e coordenada são
+iguais para os 181. Por isso, quando um lugar reúne **mais de 2** nomes
+diferentes, ele é tratado como prédio de várias lojas e **nomes diferentes ali
+não fundem**:
+
+| nomes distintos na porta | portas em Canoas | leitura |
+|---|---:|---|
+| 1 | 12.945 | ponto único |
+| 2 | 2.244 | ainda é dúvida de nome (`Restaurante Tempero e Arte` × `Tempero & Arte`) |
+| 3 ou mais | **1.207** | galeria, shopping, centro clínico, campus |
+
+"Mesmo lugar" não é "mesma string de endereço": a loja de dentro costuma usar o
+**nome do prédio como logradouro e não ter número** — a `Pista de Patinação
+(Iceland)` tem logradouro `PARKSHOPPINGCANOAS`, enquanto o shopping tem
+`AVENIDA FARROUPILHA 4545`. A regra vale dentro de `RAIO_M`, e a marca contagia
+quem está a essa distância de uma porta-multiloja. Efeito medido: as perguntas
+à IA com nomes diferentes caíram de **83.683 para 6.109**.
+
+
 **Dado do Google Maps tem mais confiança** por ser verificável e recente: entre
 duas fontes, quem tem `place_id` sobrevive à fusão e empresta nome, endereço e
 coordenada ao ponto — mas obedece às mesmas regras, e um POI do Maps duplicado

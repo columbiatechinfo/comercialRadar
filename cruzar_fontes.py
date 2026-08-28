@@ -145,7 +145,80 @@ def carregar(cur, cidade: str, poligono=None) -> list:
             "logr_original": logr_o or "", "numero_canonico": num_c or "",
             "tier": tier or "", "cruzado_em": cruzado, "evid": int(evid or 0),
         })
+    _marcar_multiloja(pois)
     return pois
+
+
+_CELULA_MULTILOJA = 0.001      # ~110 m; a mesma ordem da grade de vizinhanca
+
+
+def _marcar_multiloja(pois: list) -> int:
+    """Marca quem esta numa porta com mais de `TETO_MULTILOJA` nomes distintos.
+
+    A regra e do par, mas o DADO nao e: saber que a Avenida Farroupilha 4545
+    abriga 91 estabelecimentos exige olhar a cidade inteira, e `evidencia.
+    avaliar` recebe so dois POIs. Entao a contagem acontece uma vez, aqui, e
+    viaja no proprio POI -- `avaliar` continua puro.
+
+    A CHAVE E A MESMA QUE A FUSAO USA. `logradouro_de` normaliza o logradouro e
+    tira tudo que nao e digito do numero; contar por `endereco` cru separaria
+    "Av. Farroupilha, 4545" de "AVENIDA FARROUPILHA, 4545 - LUC 3003" e o
+    shopping deixaria de parecer shopping.
+
+    So conta porta COM numero: "mesma rua" sem numero nao e o mesmo lugar, e
+    uma avenida inteira teria centenas de nomes sem ser galeria nenhuma.
+    """
+    from collections import defaultdict
+    nomes = defaultdict(set)
+    for p in pois:
+        rua, num = ev.logradouro_de(p)
+        if rua and num:
+            n = ev.norm_nome(p.get("nome") or "")
+            if n:
+                nomes[(rua, num)].add(n)
+    portas = {k for k, v in nomes.items() if len(v) > ev.TETO_MULTILOJA}
+
+    # A MARCA CONTAGIA O ENTORNO, e nao so quem tem a porta escrita certa.
+    #
+    # A loja de dentro do shopping costuma NAO ter o numero: o `Pista de
+    # Patinacao (Iceland)` tem logradouro "PARKSHOPPINGCANOAS" e numero vazio,
+    # enquanto o proprio shopping tem "AVENIDA FARROUPILHA 4545". Marcar so
+    # quem casa a porta deixaria de fora exatamente quem a regra existe para
+    # separar.
+    #
+    # Entao quem esta a menos de `RAIO_M` de um POI de porta-multiloja herda a
+    # marca. A grade e a mesma ideia da vizinhanca em `candidatos`: celula de
+    # ~0,001 grau, varre as 8 vizinhas.
+    from math import floor
+    grade = {}
+    for p in pois:
+        rua, num = ev.logradouro_de(p)
+        if rua and num and (rua, num) in portas:
+            c = (floor(p["lat"] / _CELULA_MULTILOJA),
+                 floor(p["lng"] / _CELULA_MULTILOJA))
+            grade.setdefault(c, []).append(p)
+
+    marcados = 0
+    for p in pois:
+        rua, num = ev.logradouro_de(p)
+        propria = bool(rua and num and (rua, num) in portas)
+        if not propria and grade:
+            cx = floor(p["lat"] / _CELULA_MULTILOJA)
+            cy = floor(p["lng"] / _CELULA_MULTILOJA)
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    for q in grade.get((cx + dx, cy + dy), ()):
+                        if ev.distancia_m(p["lat"], p["lng"],
+                                          q["lat"], q["lng"]) <= ev.RAIO_M:
+                            propria = True
+                            break
+                    if propria:
+                        break
+                if propria:
+                    break
+        p["multiloja"] = propria
+        marcados += propria
+    return marcados
 
 
 def candidatos(pois: list) -> list:

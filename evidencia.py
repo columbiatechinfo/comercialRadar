@@ -52,6 +52,32 @@ PESO = {
     "categoria": 1,        # mesmo ramo
 }
 
+# MAIS DE DOIS NOMES NA MESMA PORTA E UM PREDIO, NAO UMA DUVIDA DE NOME.
+#
+# Regra do dono do produto, 27/08/2026: "mais de 2 itens de nome diferente no
+# mesmo lugar ja nao e apenas ambiguidade de nome do mesmo estabelecimento
+# (...) mais de 2 significa um shopping ou multilojas, nesse caso cada um e um
+# estabelecimento mesmo".
+#
+# DOIS ainda pode ser o mesmo negocio escrito de duas formas -- "Restaurante
+# Tempero e Arte" e "Tempero & Arte" no mesmo numero. TRES ou mais nao: e
+# galeria, shopping, centro clinico, campus.
+#
+# O QUE ISSO CONSERTOU, medido em Canoas, 27/08/2026:
+#
+#     ParkShoppingCanoas   + Pista de Patinacao (Iceland)   -- o shopping
+#                            fundido com a pista dentro dele, pelo dominio
+#                            `parkshoppingcanoas.com.br`, que todas as lojas
+#                            compartilham
+#     UniRitter - Bloco C  + Predio B Uniritter             -- predios
+#                            diferentes do mesmo campus
+#
+# Nos dois casos a evidencia que fundia -- mesmo endereco, mesmo dominio, 12 m
+# -- e verdadeira e nao identifica ninguem: no 4545 da Farroupilha ha 91
+# estabelecimentos ativos, e todos tem esse endereco, esse dominio e essa
+# coordenada.
+TETO_MULTILOJA = 2         # ate 2 nomes na mesma porta ainda e duvida de nome
+
 RAIO_M = 20.0              # o raio que telefone e site exigem para valer
 MIN_PARA_IA = 4            # abaixo disto não se pergunta: não há o que julgar
 MIN_PARA_FUNDIR = 8        # daqui para cima funde sem IA
@@ -264,6 +290,36 @@ def avaliar(a: dict, b: dict) -> dict:
         motivos.append(f"nomes iguais ({sem:.0%})")
     elif sem >= 0.5:
         motivos.append(f"nomes parecidos ({sem:.0%})")
+
+    # O CORTE DA MULTILOJA. Ver `TETO_MULTILOJA`.
+    #
+    # Vale so quando os dois dizem a MESMA PORTA -- e ai o endereco deixa de
+    # distinguir quem e quem. Nome parecido continua fundindo: duas fontes
+    # gravando a mesma loja do shopping com grafias diferentes sao a mesma
+    # loja, e e para isso que o limiar de `sem` existe.
+    #
+    # Sai por `descartar` e nao por `perguntar`: "cada um e um estabelecimento
+    # mesmo" e uma afirmacao, nao uma duvida. Mandar para a IA seria pagar por
+    # uma pergunta cuja resposta ja se sabe -- e foi a IA que fundiu o shopping
+    # com a pista de patinacao, olhando exatamente essa evidencia.
+    # "MESMO LUGAR" NAO E "MESMA STRING DE ENDERECO", e a diferenca decidiu
+    # esta regra. Medido nos dois POIs que fundiram errado:
+    #
+    #     ParkShoppingCanoas    logradouro AVENIDA FARROUPILHA  numero 4545
+    #     Pista de Patinacao    logradouro PARKSHOPPINGCANOAS   numero (vazio)
+    #
+    # A loja de dentro tem o NOME DO SHOPPING como logradouro e nenhum numero.
+    # Uma versao anterior desta regra exigia `mesma_porta` e por isso nao teria
+    # bloqueado justamente o caso que a motivou. Dentro do raio ja e o mesmo
+    # predio -- e e o mesmo raio que o site e o telefone usam para valer.
+    mesma_porta = mesma_rua and num_a and num_a == num_b
+    if (mesma_porta or perto) and sem < 0.8 and (
+            a.get("multiloja") or b.get("multiloja")):
+        motivos.append("mais de 2 estabelecimentos nesta porta")
+        return {"confianca": 1, "pontos": pontos, "motivos": motivos,
+                "dist_m": d, "decisao": "descartar",
+                "porque": "endereço de multiloja: o número não identifica o "
+                          "estabelecimento, e os nomes são diferentes"}
 
     ca, cb = norm_nome(a.get("categoria", "")), norm_nome(b.get("categoria", ""))
     if ca and ca == cb:

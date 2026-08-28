@@ -7,6 +7,48 @@ versionamento [SemVer](https://semver.org/lang/pt-BR/).
 
 ### Adicionado
 
+- **Mais de dois nomes no mesmo lugar é um prédio, não uma dúvida de nome**
+  (`TETO_MULTILOJA`). Regra do dono do produto: *"mais de 2 itens de nome
+  diferente no mesmo lugar já não é apenas ambiguidade de nome do mesmo
+  estabelecimento (…) mais de 2 significa um shopping ou multilojas, nesse caso
+  cada um é um estabelecimento mesmo"*.
+
+  DOIS nomes ainda pode ser o mesmo negócio escrito de duas formas —
+  `Restaurante Tempero e Arte` e `Tempero & Arte` no mesmo número. TRÊS ou mais
+  não: é galeria, shopping, centro clínico, campus.
+
+  **O que ela conserta.** `ParkShoppingCanoas` tinha sido fundido com a
+  `Pista de Patinação (Iceland)` de dentro dele, e a IA decidiu por evidência
+  que é toda verdadeira: `mesmo domínio: parkshoppingcanoas.com.br · a 12 m`. O
+  domínio é do shopping, e todas as lojas o exibem. No 4545 da Avenida
+  Farroupilha há **181 nomes distintos** — endereço, domínio e coordenada são
+  idênticos para os 181, e nenhum deles identifica ninguém.
+
+  **A distribuição em Canoas** mostra que o limiar cai no lugar certo:
+
+  | nomes distintos na porta | portas |
+  |---|---|
+  | 1 | 12.945 |
+  | 2 | 2.244 |
+  | 3 ou mais | **1.207** |
+
+  **"Mesmo lugar" não é "mesma string de endereço"**, e a primeira versão desta
+  regra errou nisso. O shopping está em `AVENIDA FARROUPILHA 4545`; a pista
+  dentro dele tem logradouro `PARKSHOPPINGCANOAS` e **nenhum número** — a loja
+  de dentro usa o nome do prédio como rua. Exigir a mesma porta deixaria de fora
+  justamente o caso que motivou a regra. Vale, então, dentro de `RAIO_M`, o
+  mesmo raio que o site e o telefone já exigem para valer; e a marca contagia
+  quem está a essa distância de uma porta-multiloja.
+
+  **O efeito medido** em Canoas: as perguntas à IA com nomes diferentes caem de
+  **83.683 para 6.109 — 93% a menos**. São exatamente as perguntas em que a IA
+  vinha respondendo "MESMO" para o shopping. Nenhuma fusão automática mudou,
+  porque no estado atual não há nenhuma pendente: todas já aconteceram.
+
+  Sai por `descartar` e não por `perguntar` porque *"cada um é um
+  estabelecimento mesmo"* é uma afirmação, não uma dúvida — e foi a IA que
+  fundiu o shopping com a pista olhando essa mesma evidência.
+
 - **O que não é comparável não entra** (`trigger poi_comparavel`,
   `trigger vinculo_comparavel`). Um registro só é aceito se houver COMO
   compará-lo com outro — a regra não é "tem nome" nem "tem endereço", é ter,
