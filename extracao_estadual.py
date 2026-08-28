@@ -227,8 +227,19 @@ def ingerir(saida: str, cod_municipio: str, limite: int = 0, aplicar: bool = Fal
                 continue
             d["endereco"] = achado
 
+        # NOME NULO VIRA VAZIO, e a diferença não é cosmética.
+        #
+        # A base estadual traz POI sem nome: só categoria e endereço — "Posto de
+        # Combustível, Avenida Getúlio Vargas 7500". Pelo quadro do dono do
+        # produto isso é VÁLIDO ("sem nome + endereço com número aceita, a porta
+        # identifica sozinha"), mas `pois.nome` é `NOT NULL` desde antes e o
+        # `None` estourava a inserção — levando as outras 499 linhas do lote.
+        #
+        # Vazio satisfaz a coluna e o trigger `poi_comparavel` avalia o resto:
+        # com número na porta ele passa, sem número e sem coordenada ele é
+        # recusado. Quem decide continua sendo a regra, não o tipo da coluna.
         linhas.append((
-            d["nome"], "estadual", lat, lng, lat, lng, pid,
+            d["nome"] or "", "estadual", lat, lng, lat, lng, pid,
             d["categoria"], d["endereco"], d["telefone"], d["website"],
             d["instagram"], d["email"], d["cidade"], d["uf"],
             "estadual", True,

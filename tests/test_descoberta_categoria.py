@@ -21,6 +21,26 @@ import config  # noqa: F401,E402
 import descobrir_maps as dm  # noqa: E402
 
 
+def _codigo(nome):
+    """O arquivo SEM comentários e SEM docstrings.
+
+    Os dois testes abaixo falharam na primeira versão porque casaram com o
+    COMENTÁRIO que explica a mudança — o texto "curou = True" aparece na
+    justificativa de tê-lo removido. Teste que lê comentário testa a prosa, não
+    o comportamento.
+    """
+    import ast
+    s = io.open(os.path.join(RAIZ, nome), encoding="utf-8").read()
+    arvore = ast.parse(s)
+    for no in ast.walk(arvore):
+        if isinstance(no, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef,
+                           ast.Module)) and ast.get_docstring(no):
+            corpo = no.body[0]
+            s = s.replace(corpo.value.value, "")     # tira o texto da docstring
+    return chr(10).join(l for l in s.splitlines()
+                        if not l.lstrip().startswith("#"))
+
+
 def test_a_coordenada_vem_do_href_e_nao_do_centro():
     """O `!3d!4d` é o ponto REAL do lugar. Pegar o centro do mapa poria todos
     os resultados na mesma coordenada."""
@@ -226,3 +246,45 @@ def test_o_resumo_diz_o_que_nao_foi_buscado():
     assert "falhas: list = []" in s, "a lista de categorias não buscadas sumiu"
     assert "NÃO foram" in s and "não cobre a área toda" in s, \
         "o resumo voltou a omitir o que falhou"
+
+
+def test_a_cura_troca_o_IP_e_nao_so_o_perfil():
+    """A CURA FALHOU EM 27/08/2026 POR TROCAR SÓ METADE.
+
+    Ela refazia a sessão com o MESMO proxy. Se o problema era o IP — bloqueado,
+    morto, lento demais —, a segunda tentativa falhava idêntica. Foi o que
+    aconteceu com `tabacarias`: curou, tentou pelo mesmo IP e desistiu. Uma de
+    46 categorias ficou sem buscar.
+
+    E o IP que não abriu o Maps vai para o castigo: os próximos workers não
+    devem tropeçar nele também.
+    """
+    s = io.open(os.path.join(RAIZ, "descobrir_maps.py"), encoding="utf-8").read()
+    i = s.index("async def _worker(")
+    c = _codigo("descobrir_maps.py")
+    i = c.index("curas += 1")
+    bloco = c[i:i + 900]
+    assert "proxy = await pool.acquire_blocking()" in bloco, \
+        "a cura voltou a reaproveitar o mesmo proxy — se o IP é o problema, a " \
+        "segunda tentativa falha idêntica"
+    assert "mark_cooldown" in bloco, \
+        "o IP que não abriu o Maps deixou de ir para o castigo"
+
+
+def test_o_worker_pode_curar_mais_de_uma_vez():
+    """`curou = True` nunca voltava a False: depois da primeira cura, aquele
+    worker não se curava mais pelo resto da run. Perfil apodrece e IP cai a
+    qualquer momento, não só uma vez.
+
+    O teto existe para que um problema que a cura não resolve pare de consumir
+    proxy — se três IPs e três perfis não abriram, o errado não é nenhum deles.
+    """
+    s = _codigo("descobrir_maps.py")
+    assert "MAX_CURAS" in s, "o contador de curas sumiu"
+    assert "curou = True" not in s, \
+        "voltou a marca de uma cura só por worker"
+    assert "curas < MAX_CURAS" in s, \
+        "a condição de cura deixou de contar — ou cura sempre, ou nunca"
+    i = s.index("MAX_CURAS = ")
+    teto = int(s[i:i + 20].split("=")[1].split()[0])
+    assert 2 <= teto <= 5, f"teto de curas fora do razoável: {teto}"

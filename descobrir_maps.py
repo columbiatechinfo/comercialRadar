@@ -250,8 +250,23 @@ async def varrer(poligono, termos: list, workers: int = WORKERS_PADRAO,
             return await HumanSession.create(pw, proxy, perfil, layer="maps",
                                              tz_hint_lng=clng)
 
-        sess = await _abrir()
-        curou = False
+        # A CURA TROCA O IP TAMBEM, e nao so o perfil.
+        #
+        # A primeira versao refazia a sessao com o MESMO proxy. Se o problema
+        # fosse o IP -- bloqueado, morto, lento demais --, a segunda tentativa
+        # falhava identica. Foi o que aconteceu com `tabacarias` em 27/08/2026:
+        # curou, tentou de novo pelo mesmo IP e desistiu. Uma de 46 categorias
+        # ficou sem buscar, e o resumo teve de dizer que o numero nao cobria a
+        # area.
+        #
+        # E O CONTADOR SUBSTITUIU O `curou = True`, que nunca voltava a False:
+        # depois da primeira cura, aquele worker nao se curava mais pelo resto
+        # da run. Perfil apodrece e IP cai a qualquer momento, nao so uma vez.
+        # O teto de 3 existe para que um problema que a cura nao resolve pare de
+        # consumir proxy -- se tres IPs e tres perfis nao abriram, o que esta
+        # errado nao e nenhum deles.
+        MAX_CURAS = 3
+        curas = 0
         try:
             while True:
                 try:
@@ -260,16 +275,21 @@ async def varrer(poligono, termos: list, workers: int = WORKERS_PADRAO,
                     return
                 lista, motivo = await buscar_categoria(sess.page, termo, clat, clng)
 
-                if motivo and not curou and (
+                if motivo and curas < MAX_CURAS and (
                         "navegação" in motivo or "branco" in motivo):
-                    print(f"  [{termo}] {motivo} — descartando o perfil e "
-                          f"refazendo a sessão", flush=True)
-                    curou = True
+                    curas += 1
+                    print(f"  [{termo}] {motivo} — trocando perfil E IP "
+                          f"(cura {curas}/{MAX_CURAS})", flush=True)
                     try:
                         await sess.close()
                     except Exception:
                         pass
                     shutil.rmtree(perfil, ignore_errors=True)
+                    if pool and proxy:
+                        # 10 min de castigo: se ele nao abriu o Maps agora, os
+                        # proximos workers nao devem tropecar nele tambem.
+                        await pool.mark_cooldown(proxy, segundos=600)
+                        proxy = await pool.acquire_blocking()
                     sess = await _abrir()
                     lista, motivo = await buscar_categoria(sess.page, termo,
                                                            clat, clng)
