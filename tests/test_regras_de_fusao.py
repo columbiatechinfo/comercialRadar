@@ -437,3 +437,56 @@ def test_a_memoria_nao_muda_veredito():
         getattr(ev, nome).cache_clear()
     frio = ev.avaliar(a, b)
     assert com["decisao"] == frio["decisao"] and com["confianca"] == frio["confianca"]
+
+
+def test_o_par_ja_cruzado_nao_e_refeito():
+    """DOIS POIs JÁ COMPARADOS NÃO PRODUZEM RESULTADO NOVO.
+
+    O dono do produto perguntou, vendo a etapa 8 rodar numa área de 4 POIs:
+    *"por que tantos enviados pra IA num espaço de 4 POIs?"*. A resposta era
+    que o cruzamento compara a CIDADE inteira toda rodada — o que está certo,
+    é a regra dele — mas refazia também os pares antigos entre si.
+
+    MEDIDO em Canoas, numa rodada que trouxe UM POI novo:
+
+        todos contra todos ......... 1.698.100 pares
+        os que tocam o POI novo ........  304 pares      99,98% a menos
+
+    E não é só CPU: o que sobra do corte de vizinhança vira pergunta à IA. Numa
+    rodada com ZERO POI novo foram 3.236 chamadas à Spark, todas repetindo
+    veredito já dado.
+
+    O carimbo `cruzado_em` fecha o ciclo, e `--recruzar` existe porque quando as
+    REGRAS mudam o par antigo precisa ser reavaliado — hoje mesmo entraram a
+    regra do número da porta e o segundo caminho de candidatos.
+    """
+    import io
+    s = io.open(os.path.join(RAIZ, "cruzar_fontes.py"), encoding="utf-8").read()
+    assert "cruzado_em" in s, "o carimbo de já cruzado sumiu"
+    assert "if not recruzar:" in s, "o filtro de pares já cruzados sumiu"
+    assert "--recruzar" in s, \
+        "sem o escape, mudar uma regra deixaria os pares antigos com o veredito velho"
+
+    # o carimbo entra DEPOIS do aplicar e ANTES do commit
+    i_apl = s.index("n = aplicar(con, decisoes")
+    i_car = s.index("update pois set cruzado_em = now()")
+    i_com = s.index("con.commit()", i_apl)
+    assert i_apl < i_car < i_com, (
+        "o carimbo saiu de entre o aplicar e o commit — se a gravação falhar, "
+        "POIs ficariam marcados como cruzados sem terem sido")
+
+
+def test_a_varredura_por_categoria_usa_varios_IPs():
+    """Cada worker pega proxy e perfil próprios, então mais workers é mais IPs
+    consultando ao mesmo tempo — o Google vê clientes separados, não um cliente
+    insistente. Medido: 46 categorias em ~3,7 min com 3 workers."""
+    import io
+    s = io.open(os.path.join(RAIZ, "descobrir_maps.py"), encoding="utf-8").read()
+    i = s.index("WORKERS_PADRAO = ")
+    n = int(s[i:i + 24].split("=")[1].split()[0])
+    assert n >= 4, f"a varredura voltou a {n} workers — o dono do produto pediu ao menos 4"
+    assert n <= 10, "mais workers que a busca: cada um segura um IP do mesmo pool"
+    # e o proxy é POR WORKER, senão aumentar o número não aumenta os IPs
+    j = s.index("async def _worker(")
+    assert "pool.acquire_blocking()" in s[j:j + 400], \
+        "o worker deixou de pegar proxy próprio — mais workers não seriam mais IPs"

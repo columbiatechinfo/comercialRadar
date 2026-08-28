@@ -170,7 +170,24 @@ async def buscar_categoria(page, termo: str, lat: float, lng: float,
     return achados, ""
 
 
-async def varrer(poligono, termos: list, workers: int = 3, usar_proxy: bool = True,
+# SEIS WORKERS, e não três — cada um com seu IP e seu navegador.
+#
+# `_worker` pega um proxy próprio do pool (`acquire_blocking`) e um perfil
+# próprio (`cr_descobre_{wid}`), então subir o número é literalmente mais IPs
+# consultando o Maps ao mesmo tempo. O Google vê clientes separados, não um
+# cliente insistente.
+#
+# MEDIDO em 27/08/2026: 46 categorias em ~3,7 min com 3 workers — cerca de 14 s
+# por categoria. Com 6, a mesma varredura cai para perto de 1,8 min.
+#
+# Por que 6 e não 10 como a busca: a etapa 4 já usa 10, e as duas não rodam ao
+# mesmo tempo — mas cada worker segura um IP do pool durante a varredura
+# inteira, e o pool é o mesmo recurso que a etapa seguinte vai pedir.
+WORKERS_PADRAO = 6
+
+
+async def varrer(poligono, termos: list, workers: int = WORKERS_PADRAO,
+                 usar_proxy: bool = True,
                  visivel: bool = False) -> list:
     """Roda as categorias e devolve o que caiu DENTRO do polígono, sem repetir.
 
@@ -321,7 +338,7 @@ def main(argv=None) -> int:
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--area", required=True)
     p.add_argument("--empresa", default="Aegea - Corsan")
-    p.add_argument("--workers", type=int, default=3)
+    p.add_argument("--workers", type=int, default=WORKERS_PADRAO)
     p.add_argument("--sem-proxy", dest="sem_proxy", action="store_true",
                    help="RISCO: varre pelo seu IP; o Google pode pedir CAPTCHA "
                         "no seu navegador pessoal. O padrao usa proxy.")

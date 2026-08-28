@@ -92,6 +92,22 @@ def listar(saida: str):
               f"{r['UF']:<4}{r['n']:>9,}")
 
 
+def _endereco_por_coordenada(lat, lng, cod_municipio: str):
+    """A porta do CNEFE mais próxima, como texto. `None` quando não há.
+
+    A base estadual traz dezenas de milhares de POIs por município e muitos sem
+    endereço. Só o CNEFE entra aqui — local, 0,18 ms por ponto. O Maps, que
+    custa dezenas de segundos e navegador com proxy, ficaria de fora mesmo que
+    resolvesse mais: em 27 mil POIs seriam dias.
+    """
+    try:
+        import endereco_reverso as rev
+    except ImportError:
+        return None
+    achado = rev.por_cnefe(lat, lng, str(cod_municipio))
+    return achado["endereco"] if achado else None
+
+
 def ingerir(saida: str, cod_municipio: str, limite: int = 0, aplicar: bool = False,
             empresa: str = ""):
     import pandas as pd          # o `val()` lá embaixo depende de `pd.isna`
@@ -182,6 +198,7 @@ def ingerir(saida: str, cod_municipio: str, limite: int = 0, aplicar: bool = Fal
         return s or None
 
     linhas = []
+    sem_endereco = 0
     for _, r in df.iterrows():
         pid = f"estadual:{r['cluster_id']}"
         if pid in ja:
@@ -191,6 +208,25 @@ def ingerir(saida: str, cod_municipio: str, limite: int = 0, aplicar: bool = Fal
         except (TypeError, ValueError):
             continue
         d = {nosso: val(r, deles) for deles, nosso in DE_PARA.items()}
+
+        # SEM ENDEREÇO O POI NÃO ENTRA — e a base estadual traz muitos assim.
+        #
+        # O trigger `poi_comparavel` recusa desde 27/08/2026: registro sem nome
+        # nem endereço tem teto de 1 ponto de evidência e nunca funde com
+        # ninguém. Aqui isso derrubava a ETAPA INTEIRA, porque o
+        # `execute_values` manda 500 linhas por comando: uma sem endereço
+        # levava as outras 499 junto.
+        #
+        # A coordenada vira endereço pelo CNEFE (95% em 2 ms, medido). Sem Maps
+        # nesta etapa: são dezenas de milhares de POIs por município, e o
+        # navegador com proxy custaria dias.
+        if not (d["endereco"] or "").strip():
+            achado = _endereco_por_coordenada(lat, lng, cod_municipio)
+            if not achado:
+                sem_endereco += 1
+                continue
+            d["endereco"] = achado
+
         linhas.append((
             d["nome"], "estadual", lat, lng, lat, lng, pid,
             d["categoria"], d["endereco"], d["telefone"], d["website"],
@@ -198,6 +234,9 @@ def ingerir(saida: str, cod_municipio: str, limite: int = 0, aplicar: bool = Fal
             "estadual", True,
         ))
 
+    if sem_endereco:
+        print(f"  {sem_endereco:,} sem endereço e sem porta do CNEFE por perto — "
+              f"não entram (a regra exige endereço)")
     print(f"  prontas para inserir: {len(linhas):,}")
     if not aplicar:
         con.rollback()

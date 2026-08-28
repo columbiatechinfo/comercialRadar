@@ -60,6 +60,7 @@ select p.id, p.nome, p.fonte, p.categoria, p.endereco, p.telefone, p.website,
        coalesce(p.maps_lat, p.lat_origem), coalesce(p.maps_lng, p.lng_origem),
        p.place_id,
        la.logradouro_marcado, la.logradouro_original, la.numero_canonico, la.tier,
+       p.cruzado_em,
        (select count(*) from streetview_imgs s where s.poi_id = p.id)
      + (select count(*) from analise_ia a where a.poi_id = p.id) as evid
   from pois p
@@ -134,7 +135,7 @@ def carregar(cur, cidade: str, poligono=None) -> list:
     cur.execute(sql, par)
     pois = []
     for (pid, nome, fonte, cat, end, tel, site, cnpj, rz, nf, cnae,
-         la, lo, place, logr_m, logr_o, num_c, tier, evid) in cur.fetchall():
+         la, lo, place, logr_m, logr_o, num_c, tier, cruzado, evid) in cur.fetchall():
         pois.append({
             "id": pid, "nome": nome or "", "fonte": fonte or "", "categoria": cat or "",
             "endereco": end or "", "telefone": tel or "", "site": site or "",
@@ -142,7 +143,7 @@ def carregar(cur, cidade: str, poligono=None) -> list:
             "cnae": cnae or "", "lat": float(la), "lng": float(lo),
             "place_id": place or "", "logr_marcado": logr_m or "",
             "logr_original": logr_o or "", "numero_canonico": num_c or "",
-            "tier": tier or "", "evid": int(evid or 0),
+            "tier": tier or "", "cruzado_em": cruzado, "evid": int(evid or 0),
         })
     return pois
 
@@ -395,7 +396,8 @@ def aplicar(con, decisoes: list, log=print) -> int:
 
 
 def cruzar(cidade: str, empresa: str, aplicar_de_fato: bool, usar_ia: bool,
-           tudo_para_ia: bool = False, area: str = "") -> None:
+           tudo_para_ia: bool = False, area: str = "",
+           recruzar: bool = False) -> None:
     con = bc.conectar()
     con.autocommit = False
     cur = con.cursor()
@@ -413,6 +415,34 @@ def cruzar(cidade: str, empresa: str, aplicar_de_fato: bool, usar_ia: bool,
           f"({com_logr / max(1, len(pois)):.0%}) — é a chave de junção")
 
     pares = candidatos(pois)
+
+    # SÓ O PAR QUE TOCA ALGUÉM AINDA NÃO CRUZADO.
+    #
+    # Dois POIs que já foram comparados entre si na rodada passada não podem
+    # produzir resultado novo agora: as regras não mudaram e o dado deles
+    # também não. Refazer é pagar de novo pela mesma resposta.
+    #
+    # MEDIDO em Canoas, 27/08/2026, numa rodada que trouxe UM POI novo:
+    #
+    #     todos contra todos ............ 1.698.100 pares
+    #     os que tocam o POI novo ...........  304 pares      99,98% a menos
+    #
+    # E não é só tempo de CPU: os pares que sobram do corte de vizinhança viram
+    # pergunta para a IA. Naquela rodada foram 3.236 chamadas à Spark para zero
+    # POI novo em Canoas — todas repetindo veredito já dado.
+    #
+    # QUANDO AS REGRAS MUDAM, ISTO PRECISA SER DESLIGADO. Hoje mesmo a regra do
+    # número da porta e o segundo caminho de candidatos entraram: pares antigos
+    # que ninguém reavaliasse ficariam com o veredito velho para sempre. É o
+    # que `--recruzar` faz — limpa o carimbo e força a passada inteira.
+    if not recruzar:
+        antes = len(pares)
+        pares = [(a, b) for a, b in pares
+                 if not a.get("cruzado_em") or not b.get("cruzado_em")]
+        if antes != len(pares):
+            print(f"  {antes:,} pares no total · {len(pares):,} tocam POI ainda "
+                  f"não cruzado  (--recruzar refaz tudo)")
+
     # SO INTERESSA O PAR QUE TOCA A AREA. A margem trouxe o entorno para que o
     # duplicado da borda fosse visto; par com os DOIS lados fora e vizinhanca de
     # fora do pedido, e julga-la seria pagar pelo que o operador nao desenhou.
@@ -476,6 +506,23 @@ def cruzar(cidade: str, empresa: str, aplicar_de_fato: bool, usar_ia: bool,
         return
 
     n = aplicar(con, decisoes, print)
+
+    # O CARIMBO, e ele é o que fecha o ciclo.
+    #
+    # Sem gravar quem já foi cruzado, o filtro lá em cima nunca teria o que
+    # filtrar e a rodada seguinte refaria os mesmos 1,7 milhão de pares. Ele
+    # entra DEPOIS do `aplicar` e ANTES do commit: se a gravação falhar, a
+    # transação inteira volta e ninguém fica marcado como cruzado sem ter sido.
+    #
+    # Marca só quem ENTROU nesta comparação. Um POI que a consulta não trouxe —
+    # de outra cidade, fora da caixa da área — não foi cruzado e não pode
+    # receber o carimbo.
+    ids = [p["id"] for p in pois]
+    if ids:
+        cur.execute("update pois set cruzado_em = now() where id = any(%s)", (ids,))
+        print(f"  {cur.rowcount:,} POIs marcados como cruzados "
+              f"(a próxima rodada só compara os novos)")
+
     con.commit()
     print(f"\n  GRAVADO: {n:,} POIs absorvidos — marcados 'fundido', NÃO apagados, "
           "com o vínculo transferido. Reversível pelo `x` da ficha.")
@@ -488,6 +535,10 @@ def main(argv=None) -> int:
     p.add_argument("--cidade", default="")
     p.add_argument("--empresa", required=True)
     p.add_argument("--aplicar", action="store_true")
+    p.add_argument("--recruzar", action="store_true",
+                   help="refaz TODOS os pares, inclusive os ja cruzados. Necessario "
+                        "quando as regras de fusao mudam — sem isto o par antigo "
+                        "fica com o veredito velho para sempre.")
     p.add_argument("--sem-ia", dest="sem_ia", action="store_true",
                    help="não chama a Spark; os duvidosos ficam como estão")
     p.add_argument("--area", default="",
@@ -497,7 +548,8 @@ def main(argv=None) -> int:
                    help="pergunta também sobre os pares que são só vizinhança "
                         "(12x mais chamadas — veja `filtrar_para_ia`)")
     a = p.parse_args(argv)
-    cruzar(a.cidade, a.empresa, a.aplicar, not a.sem_ia, a.tudo_para_ia, a.area)
+    cruzar(a.cidade, a.empresa, a.aplicar, not a.sem_ia, a.tudo_para_ia,
+           a.area, a.recruzar)
     return 0
 
 
