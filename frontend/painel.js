@@ -550,49 +550,42 @@
     $("btn-limpar").click();          // um caminho só para limpar a área
   });
 
-  // O MARCADOR É O PINO DE SEMPRE — mesma forma, mesma sombra, mesma cauda,
-  // vindos do `mapa.css`. O que muda em relação à tela antiga é APENAS o eixo
-  // da cor e um distintivo a mais, que foi o pedido de 27/08/2026:
-  //
-  //   a COR       deixa de ser a categoria e passa a ser o cruzamento com o
-  //               cadastro: AMARELO já é comercial na base do cliente, VERDE
-  //               em destaque é habitacional na base com comércio achado no
-  //               local — o achado que o produto existe para encontrar.
-  //   o NÚMERO    acima do pino, quantas bases sustentam o ponto. Só aparece
-  //               com mais de uma: "1" em 32 mil marcadores seria ruído.
-  //
-  // O popup é montado NO CLIQUE. Montar 32 mil de antemão era construir texto
-  // que ninguém ia ler.
+  function marcadorDoPoi(p) {
+    if (p.lat == null || p.lng == null) return null;
+    const e = CORES[p.cruz_flag] || SEM_LIGACAO;
+    const n = Number(p.n_fontes || 1);
+    const k = ramoDoPoi(p);
+    const m = L.marker([p.lat, p.lng], {
+      pane: "paneMarcadores",
+      icon: L.divIcon({
+        className: "pin-wrap",
+        html: `<div class="pin${e.destaque ? " achado" : ""}${k.ia ? " m-ia-fachada" : ""}" ` +
+              `style="--c:${e.cor}">` +
+              `<div class="pin-head"><i>${k.emo}</i></div><div class="pin-tail"></div>` +
+              (n > 1 ? `<div class="pin-fontes">${n}</div>` : "") +
+              "</div>",
+        iconSize: [34, 43], iconAnchor: [17, 43],
+      }),
+      // O ACHADO FICA POR CIMA. Numa rua densa o ponto que interessa some
+      // atrás dos que já estão no cadastro.
+      zIndexOffset: e.destaque ? 1000 : 0,
+      keyboard: false,
+    });
+    m.on("click", () => m.bindPopup(fichaDoPonto(p, e, n)).openPopup());
+    return m;
+  }
+
   function desenharPois() {
     if (!camadaPois) return;
     camadaPois.clearLayers();
     const lista = poisFiltrados();
     const marcadores = [];
     for (const p of lista) {
-      if (p.lat == null || p.lng == null) continue;
-      const e = CORES[p.cruz_flag] || SEM_LIGACAO;
-      const n = Number(p.n_fontes || 1);
-      const k = ramoDoPoi(p);
-      const m = L.marker([p.lat, p.lng], {
-        pane: "paneMarcadores",
-        icon: L.divIcon({
-          className: "pin-wrap",
-          html: `<div class="pin${e.destaque ? " achado" : ""}${k.ia ? " m-ia-fachada" : ""}" ` +
-                `style="--c:${e.cor}">` +
-                `<div class="pin-head"><i>${k.emo}</i></div><div class="pin-tail"></div>` +
-                (n > 1 ? `<div class="pin-fontes">${n}</div>` : "") +
-                "</div>",
-          iconSize: [34, 43], iconAnchor: [17, 43],
-        }),
-        // O ACHADO FICA POR CIMA. Numa rua densa o ponto que interessa some
-        // atrás dos que já estão no cadastro.
-        zIndexOffset: e.destaque ? 1000 : 0,
-        keyboard: false,
-      });
-      m.on("click", () => m.bindPopup(fichaDoPonto(p, e, n)).openPopup());
-      marcadores.push(m);
+      const m = marcadorDoPoi(p);
+      if (m) marcadores.push(m);
     }
     camadaPois.addLayers(marcadores);         // um lote só: 32 mil `addLayer` não
+    marcadoresVivos.clear();                  // o registro do tempo real morre junto
     $("job-cap").dataset.pontos = lista.length;
   }
 
@@ -1075,45 +1068,157 @@
     log.scrollTop = log.scrollHeight;
   }
 
-  // O WEBSOCKET RECUA EM VEZ DE INSISTIR NO MESMO RITMO.
+  // O WEBSOCKET NÃO PASSA PELO `window.fetch`, ENTÃO NÃO HERDA A RENOVAÇÃO.
   //
-  // A primeira versão reabria a cada 4 s, para sempre. Sem sessão o handshake é
-  // recusado sempre, e o resultado era uma tentativa a cada 4 segundos pela
-  // vida inteira da aba — o console enche, o servidor leva um pedido inútil por
-  // tentativa, e nada disso indica o problema real, que é a falta de token.
+  // Medido no log do servidor durante a extração de 28/08/2026:
   //
-  // Agora o intervalo dobra a cada falha até 60 s, e volta a 2 s assim que uma
-  // conexão abre. Falha que se repete espaça; falha que passou não deixa
-  // rastro.
+  //     "WebSocket /ws" 403   connection rejected   (repetido, SEM ?token=)
+  //     "GET /api/jobs/atual" 401 Unauthorized
+  //
+  // Duas coisas ao mesmo tempo. A sessão vence em 1 h; o `fetch` embrulhado
+  // renova sozinho antes de sair, mas o soquete é aberto direto pelo
+  // `WebSocket`, que não tem esse embrulho. Quando a hora virava, o soquete
+  // caía e a reconexão reapresentava um token morto — ou nenhum, porque o
+  // `comToken` devolve a URL crua quando não há token guardado. O servidor
+  // recusava com 403 e o recuo exponencial só deixava o laço mais silencioso.
+  //
+  // As três defesas abaixo são as MESMAS da tela antiga, e ela não tinha esse
+  // problema. Eu escrevi este handler do zero e deixei todas de fora.
   function ligarWebsocket() {
     let espera = 2000;
-    const abrir = () => {
-      const proto = location.protocol === "https:" ? "wss" : "ws";
-      const t = (window.comToken ? window.comToken("/ws") : "/ws");
+
+    const abrir = async () => {
+      // 1. RENOVA ANTES DE ABRIR. Se o soquete caiu POR o token ter vencido,
+      //    reapresentar o mesmo não vai adiantar nunca.
+      try {
+        if (window.crVencendo && window.crVencendo() && window.crRenovar) {
+          await window.crRenovar();
+        }
+      } catch (e) { /* segue: sem sessão, o passo 2 barra */ }
+
+      // 2. SEM SESSÃO, NÃO TENTA. Tentar antes do login enche o servidor de 403
+      //    num laço que só pararia quando alguém entrasse — e o log fica
+      //    ilegível justamente na hora em que se quer ler o log. Em vez de
+      //    sondar, espera o aviso de que a sessão existe.
+      let tok = "";
+      try { tok = sessionStorage.getItem("cr_token") || ""; } catch (e) { tok = ""; }
+      if (!tok) {
+        document.addEventListener("cr:sessao", () => abrir(), { once: true });
+        return;
+      }
+
       let ws;
       try {
-        ws = new WebSocket(proto + "://" + location.host + t);
+        const proto = location.protocol === "https:" ? "wss" : "ws";
+        ws = new WebSocket(proto + "://" + location.host +
+                           "/ws?token=" + encodeURIComponent(tok));
       } catch (e) {
         setTimeout(abrir, espera = Math.min(espera * 2, 60000));
         return;
       }
-      ws.onopen = () => { espera = 2000; };
+
+      let ping = null;
+      ws.onopen = () => {
+        espera = 2000;
+        // MANTER A CONEXÃO VIVA. Sem tráfego, proxy e navegador fecham um
+        // WebSocket ocioso — e numa etapa longa e silenciosa (fusão, cadastro)
+        // a tela perdia a conexão justamente antes da próxima notícia.
+        clearInterval(ping);
+        ping = setInterval(() => {
+          if (ws.readyState === 1) ws.send("ping");
+        }, 25000);
+      };
       ws.onmessage = (ev) => {
         let m;
         try { m = JSON.parse(ev.data); } catch (e) { return; }
         if (m.tipo === "job") pintarJob(m.dados);
-        else if (m.tipo === "log" && m.dados) {
-          linhaLog(String(m.dados.texto || m.dados), m.dados.classe);
-        } else if (m.tipo === "poi") {
-          carregarPois();
-        }
+        else if (m.tipo === "progresso" && m.dados) pintarProgresso(m.dados);
+        else if (m.tipo === "log" && m.linha) linhaLog(m.linha);
+        else if (m.tipo === "poi" && m.poi) chegouPoi(m.poi);
+        else if (m.tipo === "reload") { carregarPois(); carregarStats(); }
       };
+      // 3. CAIU SEM TOKEN, ESPERA O LOGIN. Reagendar não devolve sessão
+      //    nenhuma; quem devolve o WebSocket é o próximo login.
       ws.onclose = () => {
+        clearInterval(ping);
+        let ainda = "";
+        try { ainda = sessionStorage.getItem("cr_token") || ""; } catch (e) { ainda = ""; }
+        if (!ainda) {
+          document.addEventListener("cr:sessao", () => abrir(), { once: true });
+          return;
+        }
         setTimeout(abrir, espera);
         espera = Math.min(espera * 2, 60000);
       };
     };
+
     abrir();
+  }
+
+  // A BARRA SEGUE O `progresso`, NÃO O `job`. O `job` chega em troca de etapa;
+  // o `progresso`, a cada lote — é ele que faz a tela parecer viva.
+  function pintarProgresso(d) {
+    const c = d.contadores || {};
+    const total = Number(d.total || 0);
+    const feitos = Number(c.processados || 0);
+    if (d.fase_rotulo) $("job-titulo").textContent = d.fase_rotulo;
+    if (total > 0) {
+      const pct = Math.max(0, Math.min(100, Math.round((feitos / total) * 100)));
+      $("job-pct").textContent = pct + "%";
+      $("job-bar").style.width = pct + "%";
+    }
+    // O RODAPÉ DIZ O QUE SAIU DE ÚTIL, e não só quantos passaram: numa fase de
+    // busca "180 de 200" não diz se achou alguma coisa.
+    const partes = [];
+    if (total) partes.push(`${nf.format(feitos)} de ${nf.format(total)}`);
+    const rot = d.rotulos || {};
+    for (const k of ["validos", "recuperados", "descobertos", "sem_match"]) {
+      if (c[k]) partes.push(`${nf.format(c[k])} ${rot[k] || k}`);
+    }
+    if (partes.length) $("job-cap").textContent = partes.join(" · ");
+  }
+
+  // O PONTO QUE CHEGA AO VIVO ENTRA SOZINHO. Recarregar `/api/pois` a cada POI
+  // era baixar a base inteira por ponto minerado.
+  //
+  // O ingestor faz delete+recreate por `place_id`, então o POI reingerido chega
+  // com id NOVO: sem tirar o antigo, o mapa fica com os dois marcadores lado a
+  // lado. O `substitui` vem justamente para isso.
+  let cartoesAgendados = null;
+  const marcadoresVivos = new Map();          // id do POI -> marcador no mapa
+
+  function chegouPoi(p) {
+    if (!p || p.id == null || p.lat == null || p.lng == null) return;
+
+    // O MESMO LUGAR VOLTA COM ID NOVO. O ingestor reingere por delete+recreate,
+    // e sem tirar a versão antiga o mapa acumula as duas: num job de 26 POIs o
+    // contador marcava 37, contando fantasmas de linhas que já não existem. A
+    // identidade estável é o `place_id`, não o `id`.
+    const iguais = [];
+    if (p.place_id) {
+      estado.pois.forEach((x) => {
+        if (x.id !== p.id && x.place_id === p.place_id) iguais.push(x.id);
+      });
+    }
+    iguais.push(p.id);                        // e a própria, se já estava lá
+    for (const id of iguais) {
+      const i = estado.pois.findIndex((x) => x.id === id);
+      if (i >= 0) estado.pois.splice(i, 1);
+      const m = marcadoresVivos.get(id);
+      if (m && camadaPois) { camadaPois.removeLayer(m); marcadoresVivos.delete(id); }
+    }
+    estado.pois.push(p);
+
+    // Só desenha o que o filtro atual deixaria ver — senão o ponto novo aparece
+    // por cima de um recorte que o operador escolheu.
+    if (poisFiltrados().some((x) => x.id === p.id)) {
+      const m = marcadorDoPoi(p);
+      if (m && camadaPois) { camadaPois.addLayer(m); marcadoresVivos.set(p.id, m); }
+    }
+    // OS CARTÕES ESPERAM MEIO SEGUNDO. Repintar a cada POI faria a tela
+    // recontar 36 mil pontos por ponto que chega.
+    clearTimeout(cartoesAgendados);
+    cartoesAgendados = setTimeout(() => { pintarNovos(); montarFiltros(); }, 500);
   }
 
   // ── carga ───────────────────────────────────────────────────────────────
