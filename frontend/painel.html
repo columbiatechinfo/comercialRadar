@@ -8,15 +8,17 @@
 <!--
   painel.html — a tela principal, do desenho de handoff (Claude Design).
 
-  POR QUE ESTA PÁGINA EXISTE, E POR QUE ELA NÃO SUBSTITUI A ANTIGA AINDA
+  ELA É A TELA PRINCIPAL desde 28/08/2026, por decisão do dono do produto: a
+  raiz `/` serve este arquivo, e a anterior passou para `/antigo`. `/painel`
+  continua respondendo, para quem tiver o endereço salvo.
 
-  O `index.html` atual tem 36 KB de marcação e um `app.js` de 182 KB que cresceu
-  por acréscimo. O desenho novo reorganiza a mesma operação em três zonas —
-  barra lateral, painéis deslizantes e mapa — e é ele que este arquivo recria.
+  A ANTERIOR CONTINUA INTEIRA, e não por cautela vaga — ela cobre o que esta
+  ainda não faz: importar planilha, cadastro do cliente, bancada e fila de
+  aprovação. Tirá-la do ar seria trocar uma tela por meia.
 
-  Fica numa ROTA PRÓPRIA (`/painel`) de propósito: as duas convivem enquanto o
-  dono do produto compara, e o que já funciona não para de funcionar por causa
-  de uma tela nova. Trocar a principal é decisão dele, não efeito colateral.
+  O `index.html` tem 36 KB de marcação e um `app.js` de 182 KB que cresceu por
+  acréscimo. O desenho novo reorganiza a mesma operação em três zonas — barra
+  lateral, painéis deslizantes e mapa — e é ele que este arquivo recria.
 
   O QUE É REAL E O QUE ESTÁ SEM USO
 
@@ -133,7 +135,7 @@
 
       <div class="mt-5 mb-1 px-2.5 text-[10.5px] font-semibold uppercase tracking-[0.07em] text-gray-400">Operação</div>
 
-      <a href="/#fila" class="nav-item">
+      <a href="/antigo#fila" class="nav-item">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="size-5 shrink-0"><path d="M9 11l3 3L22 4"></path><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>
         <span>Workflow de aprovação</span>
       </a>
@@ -278,7 +280,7 @@
           <button type="button" id="btn-abrir-perfil" class="block w-full px-3 py-1 text-left text-sm/6 text-gray-900 hover:bg-gray-50">Meu perfil</button>
           <button type="button" id="btn-abrir-org" class="block w-full px-3 py-1 text-left text-sm/6 text-gray-900 hover:bg-gray-50">Minha organização</button>
           <div class="my-1 h-px bg-gray-100"></div>
-          <a href="/" class="block w-full px-3 py-1 text-left text-sm/6 text-gray-900 hover:bg-gray-50">Voltar ao painel atual</a>
+          <a href="/antigo" class="block w-full px-3 py-1 text-left text-sm/6 text-gray-900 hover:bg-gray-50">Abrir o painel anterior</a>
           <button type="button" id="btn-sair" class="block w-full px-3 py-1 text-left text-sm/6 text-red-600 hover:bg-red-50">Sair</button>
         </div>
       </div>

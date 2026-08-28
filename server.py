@@ -2358,15 +2358,36 @@ def parar_job():
 # ──────────────────────────────────────────────────────────────────────────
 @app.get("/")
 def index():
-    """index.html com css/js versionados pelo mtime.
+    """A TELA PRINCIPAL É A NOVA desde 28/08/2026 — decisão do dono do produto.
 
-    O `?v=` troca a URL a cada edição do arquivo, então o navegador busca a versão
-    nova mesmo tendo uma cópia velha em cache — sem depender de hard reload."""
-    html = (FRONT / "index.html").read_text(encoding="utf-8")
-    for arq in ("style.css", "app.js"):
-        v = int((FRONT / arq).stat().st_mtime)
+    A anterior continua servida em `/antigo`, inteira e funcionando: ela cobre
+    coisas que a nova ainda não faz (importar planilha, cadastro do cliente,
+    bancada, fila de aprovação), e tirá-la do ar seria trocar uma tela por meia.
+
+    O `?v=` versiona css/js pelo mtime: a URL muda a cada edição, então o
+    navegador busca a versão nova mesmo tendo cópia velha em cache — sem
+    depender de hard reload. Sem isso, a troca da tela principal chegaria para
+    metade da equipe com o JavaScript antigo.
+    """
+    return _pagina("painel.html", ("painel.js",))
+
+
+@app.get("/antigo")
+def index_antigo():
+    """A tela anterior, que segue completa enquanto a nova não a cobre."""
+    return _pagina("index.html", ("style.css", "app.js"))
+
+
+def _pagina(nome: str, estaticos: tuple) -> Response:
+    html = (FRONT / nome).read_text(encoding="utf-8")
+    for arq in estaticos:
+        alvo = FRONT / arq
+        if not alvo.exists():
+            continue
+        v = int(alvo.stat().st_mtime)
         html = html.replace(f"/static/{arq}", f"/static/{arq}?v={v}")
-    return Response(html, media_type="text/html", headers={"Cache-Control": "no-cache"})
+    return Response(html, media_type="text/html",
+                    headers={"Cache-Control": "no-cache"})
 
 
 class _FrontSemCache(StaticFiles):

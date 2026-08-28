@@ -45,10 +45,28 @@ def test_a_pagina_e_o_script_existem():
     assert os.path.exists(JS), "frontend/painel.js sumiu"
 
 
-def test_a_rota_existe_e_nao_substitui_a_principal():
+def test_a_nova_e_a_principal_e_a_anterior_continua_servida():
+    """A TROCA ACONTECEU em 28/08/2026, por decisão do dono do produto: a raiz
+    passou a servir a tela nova, e a anterior foi para `/antigo`.
+
+    Ela NÃO saiu do ar, e não por cautela vaga: cobre importar planilha,
+    cadastro do cliente, bancada e fila de aprovação — coisas que a nova ainda
+    não faz. Tirá-la seria trocar uma tela por meia.
+
+    Este teste já se chamou `..._nao_substitui_a_principal` e continuou VERDE
+    depois da troca, porque só verificava que `@app.get("/")` existia. Nome que
+    descreve o passado e asserção que não olha o presente é teste cego.
+    """
     s = _ler(os.path.join(RAIZ, "server.py"))
     assert '@app.get("/painel")' in s, "a rota /painel saiu do servidor"
-    assert '@app.get("/")' in s, "a tela principal atual deixou de ser servida"
+    assert '@app.get("/antigo")' in s, "a tela anterior deixou de ser servida"
+
+    i = s.index('@app.get("/")')
+    corpo = s[i:s.index('@app.get("/antigo")')]
+    assert '"painel.html"' in corpo, "a raiz voltou a servir a tela anterior"
+
+    j = s.index('@app.get("/antigo")')
+    assert '"index.html"' in s[j:j + 500], "`/antigo` não serve mais a anterior"
 
 
 def test_toda_classe_usada_esta_definida():
