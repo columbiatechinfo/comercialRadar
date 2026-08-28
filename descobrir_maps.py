@@ -267,6 +267,7 @@ async def varrer(poligono, termos: list, workers: int = WORKERS_PADRAO,
         # errado nao e nenhum deles.
         MAX_CURAS = 3
         curas = 0
+        sess = await _abrir()
         try:
             while True:
                 try:

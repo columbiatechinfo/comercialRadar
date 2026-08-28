@@ -211,3 +211,4 @@ xmod==1.9.0
 yarl==1.23.0
 yaspin==3.4.0
 zipp==3.23.1
+pyflakes>=3.2         # tests/test_nome_indefinido.py — nome usado antes de existir
