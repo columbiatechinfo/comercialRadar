@@ -4269,3 +4269,50 @@ mesma área — há teste prendendo a fórmula nas duas linguagens.
 **ligações** do cliente, que não têm coordenada própria; recortá-las por polígono
 exigiria passar pelo POI de cada uma. O cartão diz "ligações", não "ligações
 nesta área".
+
+### A caixinha diz o que conta, e o cadastro respeita a área (28/08/2026)
+
+**A caixinha era um número solto.** O cartão mostrava `12  6` e ninguém tinha
+como saber o que era o 6 — a explicação só existia num `title`, que não se lê.
+Agora o distintivo carrega o rótulo (`6 a reclassificar`) e uma linha abaixo
+mostra a conta inteira: `6 fora do cadastro + 6 no cadastro sem ser comercial`.
+O número grande deixa de ser uma soma que só o código conhece.
+
+**"Já comerciais no cadastro" mostrava o número errado.** Era `com_poi` — TODA
+ligação casada com um ponto nosso, de qualquer classificação, **inclusive as de
+reclassificar**, que por definição não são comerciais no cadastro. Na base
+inteira: 14.959 sob um rótulo que descreve 11.749.
+
+Passou a mostrar dois números, como o cartão de cima:
+
+| | o que é | base inteira |
+|---|---|---|
+| grande | `comerciais` — o que o cliente já fatura como comércio | 11.749 |
+| caixinha | `comerciais_com_poi` — dessas, quantas um POI de fonte diversa confirmou | 6.243 |
+
+**O resumo do cadastro passou a respeitar a área.** Eu havia deixado isso de fora
+dizendo que ligação não tem coordenada. **Tem:** `lat`/`lng` próprias, 100%
+preenchidas nas 102.065 linhas. Sem o recorte, o 14.959 do município inteiro
+aparecia encostado num número de bairro. Medido: 102.065 ligações sem recorte,
+**26** com área; `com_poi` 14.959 → 6.
+
+O recorte **não** passa pelo POI, e é o certo: ligação sem POI continua contando
+na área onde ela está, e é justamente ela que forma a fila de vinculação humana.
+
+Migração [`0040`](migrations/0040_indice_do_cadastro_para_o_recorte_por_area.sql)
+troca o `ix_cad_geo` — que existia em `(lat, lng)` **sem `tenant_id` na frente**.
+Com um cliente por município isso passa despercebido; com vários, é a diferença
+entre um index scan e varrer a base inteira de todo mundo.
+
+**Três testes meus reprovaram código correto**, e os três pelo mesmo motivo — o
+teste conferindo a minha prosa ou uma medida fixa:
+
+- uma janela de `i + 2600` caracteres perdeu o `return` quando a rota ganhou
+  comentários, e o teste disse que o endpoint parou de devolver `com_poi`, com
+  `com_poi` sendo devolvido;
+- `_sem_comentario()` tirava `#` mas não **docstring**, e a proibição de
+  `carregar_area()` casou com a docstring que explica por que não se chama.
+
+Entraram dois ajudantes: `_codigo_py()` remove comentário **e** docstring pelo
+`ast`, e `_funcao()` recorta do `def` até o próximo `def` — nunca por contagem de
+bytes. Os dois foram conferidos com o defeito injetado de propósito.

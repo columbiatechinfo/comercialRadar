@@ -1150,6 +1150,49 @@ def _dentro_do_anel(anel, lat, lng) -> bool:
     return dentro
 
 
+def _anel_da_area(cur) -> list | None:
+    """Os vértices da área desenhada, pelo cursor da requisição.
+
+    `area_utils.carregar_area()` abre conexão própria, e medido aqui isso
+    custava 188 ms — mais que todo o resto do recorte somado. A requisição já
+    tem uma conexão com a identidade certa; abrir outra para ler seis vértices
+    é o gasto mais caro do cartão.
+    """
+    try:
+        cur.execute("SELECT polygon FROM area_trabalho WHERE nome = %s",
+                    (area_utils.AREA_PADRAO,))
+        r = cur.fetchone()
+    except Exception:
+        return None
+    if not r or not r[0] or len(r[0]) < 3:
+        return None
+    return [[float(a), float(b)] for a, b in r[0]]
+
+
+def _materializar_escopo(cur, temp, sql_pontos, anel, params=()) -> int:
+    """Roda o SQL da caixa envolvente, aplica o teste exato e grava os ids.
+
+    `sql_pontos` devolve `(id, lat, lng)` já recortado pelo retângulo. O teste
+    de raio roda aqui, sobre o que sobrou. Devolve quantos ficaram dentro.
+    """
+    cur.execute(sql_pontos, params)
+    dentro = [(i,) for i, la, ln in cur.fetchall()
+              if la is not None and ln is not None and _dentro_do_anel(anel, la, ln)]
+    cur.execute(f"CREATE TEMP TABLE IF NOT EXISTS {temp} (id bigint PRIMARY KEY) "
+                "ON COMMIT DROP")
+    cur.execute(f"TRUNCATE {temp}")
+    if dentro:
+        psycopg2.extras.execute_values(
+            cur, f"INSERT INTO {temp} (id) VALUES %s", dentro)
+    return len(dentro)
+
+
+def _caixa(anel):
+    lats = [p[0] for p in anel]
+    lngs = [p[1] for p in anel]
+    return (min(lats), max(lats), min(lngs), max(lngs))
+
+
 def _escopo_da_area(cur) -> tuple[str, str] | None:
     """Materializa numa TEMP TABLE os POIs dentro da área desenhada.
 
@@ -1171,39 +1214,40 @@ def _escopo_da_area(cur) -> tuple[str, str] | None:
 
     Devolve `(predicado_em_pois, predicado_em_p)` ou `None` se não há área.
     """
-    # A ÁREA VEM PELO CURSOR QUE JÁ EXISTE. `area_utils.carregar_area()` abre
-    # conexão própria, e medido aqui isso custava 188 ms — mais que todo o resto
-    # do recorte somado. A requisição já tem uma conexão com a identidade certa;
-    # abrir outra para ler seis vértices é o gasto mais caro do cartão.
-    try:
-        cur.execute("SELECT polygon FROM area_trabalho WHERE nome = %s",
-                    (area_utils.AREA_PADRAO,))
-        r = cur.fetchone()
-    except Exception:
+    anel = _anel_da_area(cur)
+    if not anel:
         return None
-    if not r or not r[0] or len(r[0]) < 3:
-        return None
-    anel = [[float(a), float(b)] for a, b in r[0]]
-
-    lats = [p[0] for p in anel]
-    lngs = [p[1] for p in anel]
-    cur.execute(
+    _materializar_escopo(
+        cur, "_escopo_area",
         """SELECT id, COALESCE(maps_lat, lat_origem), COALESCE(maps_lng, lng_origem)
              FROM pois
             WHERE fundido_em IS NULL
               AND COALESCE(maps_lat, lat_origem) BETWEEN %s AND %s
               AND COALESCE(maps_lng, lng_origem) BETWEEN %s AND %s""",
-        (min(lats), max(lats), min(lngs), max(lngs)))
-    dentro = [(i,) for i, la, ln in cur.fetchall() if _dentro_do_anel(anel, la, ln)]
-
-    cur.execute("CREATE TEMP TABLE IF NOT EXISTS _escopo_area (id bigint PRIMARY KEY) "
-                "ON COMMIT DROP")
-    cur.execute("TRUNCATE _escopo_area")
-    if dentro:
-        psycopg2.extras.execute_values(
-            cur, "INSERT INTO _escopo_area (id) VALUES %s", dentro)
+        anel, _caixa(anel))
     return ("id IN (SELECT id FROM _escopo_area)",
             "p.id IN (SELECT id FROM _escopo_area)")
+
+
+def _escopo_do_cadastro(cur) -> str | None:
+    """O mesmo recorte, do lado das LIGAÇÕES do cliente.
+
+    Elas têm coordenada própria (`lat`/`lng`, 100% preenchidas nas 102.065
+    linhas), então o recorte não precisa passar pelo POI — o que também é o
+    certo: uma ligação sem POI continua contando na área onde ela está, e é
+    justamente ela que forma a fila de vinculação humana.
+
+    Índice `ix_cad_geo_por_tenant`, migração 0040.
+    """
+    anel = _anel_da_area(cur)
+    if not anel:
+        return None
+    _materializar_escopo(
+        cur, "_escopo_cadastro",
+        """SELECT id, lat, lng FROM cadastro_cliente
+            WHERE lat BETWEEN %s AND %s AND lng BETWEEN %s AND %s""",
+        anel, _caixa(anel))
+    return "id IN (SELECT id FROM _escopo_cadastro)"
 
 
 @app.get("/api/stats")
@@ -1760,7 +1804,7 @@ def cadastro_cruzar(body: dict = Body(...)):
 
 
 @app.get("/api/cadastro/resumo")
-def cadastro_resumo(cidade: str = ""):
+def cadastro_resumo(cidade: str = "", area: int = 0):
     """O estado do cruzamento cadastro ↔ POI — SEM recruzar nada.
 
     O `POST /api/cadastro/cruzar` executa a etapa 9; este só LÊ o que ela
@@ -1784,13 +1828,31 @@ def cadastro_resumo(cidade: str = ""):
     conn = realtime_ingest.conectar()
     try:
         with conn.cursor() as cur:
+            # `?area=1` RECORTA PELA ÁREA DESENHADA, e este cartão precisa
+            # disso tanto quanto o de cima: "já comerciais no cadastro" ao lado
+            # de "12 pontos novos" só faz sentido se os dois falarem do mesmo
+            # pedaço do mapa. Sem isto, o 14.959 do município inteiro aparecia
+            # encostado num número de bairro.
+            #
+            # A ligação tem coordenada PRÓPRIA (100% preenchida), então o
+            # recorte não passa pelo POI — e é o certo: ligação sem POI continua
+            # contando na área onde ela está, e é justamente ela que forma a
+            # fila de vinculação humana.
+            wca = wc
+            if area:
+                rec = _escopo_do_cadastro(cur)
+                if rec:
+                    wca = f"({wc}) AND {rec}"
             cur.execute(f"""SELECT count(*),
-                                   count(*) FILTER (WHERE poi_id IS NOT NULL)
-                              FROM cadastro_cliente WHERE {wc}""", pc)
-            total, com_poi = cur.fetchone()
+                                   count(*) FILTER (WHERE poi_id IS NOT NULL),
+                                   count(*) FILTER (WHERE e_comercial),
+                                   count(*) FILTER (WHERE e_comercial
+                                                      AND poi_id IS NOT NULL)
+                              FROM cadastro_cliente WHERE {wca}""", pc)
+            total, com_poi, comerciais, comerciais_com_poi = cur.fetchone()
 
             cur.execute(f"""SELECT coalesce(cruz_flag, 'sem_flag'), count(*)
-                              FROM cadastro_cliente WHERE {wc}
+                              FROM cadastro_cliente WHERE {wca}
                              GROUP BY 1""", pc)
             por_flag = {f: n for f, n in cur.fetchall()}
 
@@ -1798,13 +1860,24 @@ def cadastro_resumo(cidade: str = ""):
             # vai em `pois` — e o fundido fica de fora, porque ele não é um
             # ponto: foi absorvido por outro.
             wp = "p.cidade ILIKE %s" if cidade else "TRUE"
+            if area:
+                recp = _escopo_da_area(cur)
+                if recp:
+                    wp = f"({wp}) AND {recp[1]}"
             cur.execute(f"""SELECT count(*) FROM pois p
                              WHERE p.fundido_em IS NULL AND {wp}
                                AND NOT EXISTS (SELECT 1 FROM cadastro_cliente c
                                                 WHERE c.poi_id = p.id)""", pc)
             poi_sem_ligacao = cur.fetchone()[0]
 
+            # `comerciais` é quantas ligações o CADASTRO já classifica como
+            # comercial; `com_poi` é quantas casaram com um ponto nosso, de
+            # QUALQUER classificação — inclusive as de reclassificar. O cartão
+            # mostrava `com_poi` sob o rótulo "já comerciais no cadastro", e
+            # eram coisas diferentes: 14.959 contra 11.749 na base inteira.
             return {"cidade": cidade or None, "ligacoes": total,
+                    "comerciais": comerciais,
+                    "comerciais_com_poi": comerciais_com_poi,
                     "com_poi": com_poi, "sem_poi": total - com_poi,
                     "poi_sem_ligacao": poi_sem_ligacao, "por_flag": por_flag}
     finally:

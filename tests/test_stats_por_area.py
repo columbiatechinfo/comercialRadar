@@ -39,19 +39,56 @@ def _ler(p):
 
 
 def _sem_comentario(txt, marca="#"):
-    """O TESTE OLHA CÓDIGO, NÃO PROSA.
+    """Tira comentário de linha. Para SQL, `marca="--"`.
 
-    Duas asserções deste arquivo falharam contra um código correto porque o
-    comentário logo acima explicava justamente o que elas proibiam — o
-    `ST_Contains` que NÃO se usa, a `carregar_area()` que NÃO se chama. É o
-    mesmo vício que já me pegou cinco vezes neste repositório: o teste passa a
-    conferir a minha prosa.
+    O TESTE OLHA CÓDIGO, NÃO PROSA. Asserções deste arquivo já reprovaram código
+    correto porque o comentário logo acima explicava justamente o que elas
+    proibiam — o `ST_Contains` que NÃO se usa, a `carregar_area()` que NÃO se
+    chama. É o vício que mais me pegou neste repositório.
     """
     fora = []
     for l in txt.splitlines():
         i = l.find(marca)
         fora.append(l if i < 0 else l[:i])
     return "\n".join(fora)
+
+
+def _codigo_py(caminho):
+    """O Python do arquivo SEM comentário e SEM docstring.
+
+    `_sem_comentario` não bastava: ela tira `#`, e a proibição casava com a
+    DOCSTRING, que é onde eu explico por que não faço aquilo. Aqui o `ast`
+    remove as duas coisas — sobra só o que executa.
+    """
+    import ast
+    fonte = _ler(caminho)
+    arv = ast.parse(fonte)
+    fora = set()
+    for no in ast.walk(arv):
+        if not isinstance(no, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef,
+                               ast.ClassDef)):
+            continue
+        corpo = getattr(no, "body", None)
+        if corpo and isinstance(corpo[0], ast.Expr) and \
+           isinstance(corpo[0].value, ast.Constant) and \
+           isinstance(corpo[0].value.value, str):
+            d = corpo[0]
+            fora.update(range(d.lineno, (d.end_lineno or d.lineno) + 1))
+    linhas = [("" if i + 1 in fora else l)
+              for i, l in enumerate(fonte.splitlines())]
+    return _sem_comentario("\n".join(linhas))
+
+
+def _funcao(py, nome):
+    """O corpo de uma função, do `def` até o próximo `def`/`@` na coluna zero.
+
+    Janela por CONTAGEM DE BYTES é falso negativo esperando o dia: `i + 1400`
+    reprovou código correto assim que a função ganhou uma docstring maior.
+    """
+    import re
+    i = py.index("def %s(" % nome)
+    m = re.search(r"^(def |@|class )", py[i + 10:], re.M)
+    return py[i:i + 10 + m.start()] if m else py[i:]
 
 
 def _quadrado():
@@ -93,29 +130,54 @@ def test_o_mesmo_algoritmo_nos_dois_lados():
 
 def test_o_recorte_corta_pela_caixa_antes_do_teste_exato():
     """Sem a caixa, o teste exato rodaria sobre a tabela inteira em Python —
-    trocar um seq scan por um laço no servidor de aplicação é piorar."""
-    py = _ler(SERVER)
-    i = py.index("def _escopo_da_area(")
-    corpo = py[i:i + 3000]
-    assert "BETWEEN %s AND %s" in corpo, "a caixa envolvente sumiu do SQL"
-    assert "min(lats), max(lats), min(lngs), max(lngs)" in corpo, \
+    trocar um seq scan por um laço no servidor de aplicação é piorar.
+
+    A caixa vive no `_caixa()`, o SQL de cada tabela no chamador, e quem junta
+    os dois é o `_materializar_escopo()`. Dois recortes usam a mesma máquina:
+    POIs e ligações do cadastro.
+    """
+    py = _codigo_py(SERVER)
+    assert "def _caixa(anel):" in py, "a caixa envolvente sumiu"
+    assert "min(lats), max(lats), min(lngs), max(lngs)" in py, \
         "a caixa deixou de vir dos extremos do anel"
-    assert "COALESCE(maps_lat, lat_origem)" in corpo, \
-        "o recorte parou de usar a coordenada efetiva, e o índice 0039 não casa"
-    assert "fundido_em IS NULL" in corpo, "POI fundido voltou a entrar na conta"
+    assert "def _materializar_escopo(" in py, \
+        "a montagem do recorte sumiu, e cada tabela vai reimplementá-la"
+
+    for fn, tabela, coord in (
+        ("_escopo_da_area", "FROM pois", "COALESCE(maps_lat, lat_origem)"),
+        ("_escopo_do_cadastro", "FROM cadastro_cliente", "lat BETWEEN %s AND %s"),
+    ):
+        corpo = _funcao(py, fn)
+        assert tabela in corpo, "%s deixou de recortar a tabela dele" % fn
+        assert coord in corpo, \
+            "%s parou de usar a coordenada indexada, e o índice não casa" % fn
+        assert "BETWEEN %s AND %s" in corpo, "%s perdeu a caixa envolvente" % fn
+
+    # POI fundido não é ponto: foi absorvido por outro
+    assert "fundido_em IS NULL" in _funcao(py, "_escopo_da_area"), \
+        "POI fundido voltou a entrar na conta"
+
+    # a ligação NÃO passa pelo POI: ela tem coordenada própria, e a que não tem
+    # POI é justamente a fila de vinculação humana
+    assert "poi_id" not in _funcao(py, "_escopo_do_cadastro"), \
+        "o recorte das ligações voltou a passar pelo POI, e perde a fila"
 
 
 def test_a_area_e_lida_pelo_cursor_da_requisicao():
     """`area_utils.carregar_area()` abre conexão própria: medido, 188 ms — mais
     que todo o resto do recorte somado. A requisição já tem conexão com a
-    identidade certa."""
-    py = _ler(SERVER)
-    i = py.index("def _escopo_da_area(")
-    corpo = _sem_comentario(py[i:i + 3000])
+    identidade certa, e um lugar só lê a área.
+    """
+    py = _codigo_py(SERVER)
+    corpo = _funcao(py, "_anel_da_area")
     assert "SELECT polygon FROM area_trabalho" in corpo, \
         "o recorte voltou a ler a área por fora do cursor da requisição"
-    assert "area_utils.carregar_area()" not in corpo, \
+    assert "carregar_area(" not in corpo, \
         "voltou a abrir uma segunda conexão só para ler seis vértices"
+
+    for fn in ("_escopo_da_area", "_escopo_do_cadastro"):
+        assert "_anel_da_area(cur)" in _funcao(py, fn), \
+            "%s parou de usar a leitura compartilhada da área" % fn
 
 
 def test_as_oito_consultas_compartilham_o_mesmo_recorte():

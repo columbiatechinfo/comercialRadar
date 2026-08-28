@@ -773,31 +773,32 @@
 
   function pintarNovos() {
     const n = contarNovos();
-    const dica =
-      `${nf.format(n.total)} pontos novos: ` +
-      `${nf.format(n.semLigacao)} que o cadastro não conhece + ` +
-      `${nf.format(n.reclassificar)} que estão no cadastro com classificação ` +
-      `diferente de comercial`;
 
     for (const id of ["s-total", "m-total"]) {
       const e = $(id);
-      if (e) { e.textContent = nf.format(n.total); e.title = dica; }
+      if (e) e.textContent = nf.format(n.total);
     }
+    // A CAIXINHA DIZ O QUE ELA CONTA. Ela nasceu como um número solto ao lado
+    // do número grande, e ninguém tinha como saber o que era — a explicação só
+    // existia num `title`, que não se lê. O rótulo entra no próprio distintivo.
     for (const id of ["s-reclass", "m-reclass"]) {
       const e = $(id);
       if (!e) continue;
-      e.textContent = nf.format(n.reclassificar);
+      e.textContent = nf.format(n.reclassificar) + " a reclassificar";
       e.title = "Já estavam no cadastro, com classificação diferente de comercial";
       // Sem nenhum, a caixinha some: um "0" cinza ao lado do número grande
       // parece defeito de carregamento, não ausência de achado.
       e.classList.toggle("hidden", !n.reclassificar);
     }
-    const cx = $("m-novos-detalhe");
-    if (cx) {
-      cx.textContent = n.total
-        ? `${nf.format(n.semLigacao)} fora do cadastro · ` +
-          `${nf.format(n.reclassificar)} no cadastro com outra classificação`
-        : "";
+    // E a linha embaixo mostra a conta inteira, para o número grande não ser
+    // uma soma que só eu sei de onde veio.
+    const detalhe = n.total
+      ? `${nf.format(n.semLigacao)} fora do cadastro + ` +
+        `${nf.format(n.reclassificar)} no cadastro sem ser comercial`
+      : "";
+    for (const id of ["s-novos-detalhe", "m-novos-detalhe"]) {
+      const e = $(id);
+      if (e) e.textContent = detalhe;
     }
     return n;
   }
@@ -832,28 +833,52 @@
     barrasIa($("m-ia"), ia, total, false);
   }
 
-  // "JÁ COMERCIAIS NO CADASTRO" É A ETAPA 9, e o número tem dois lados.
+  // "JÁ COMERCIAIS NO CADASTRO" SÃO DOIS NÚMEROS, e eram três coisas trocadas.
   //
-  // `com_poi` são as ligações do cliente que casaram com um ponto — o que o
-  // desenho chama de "já comerciais no cadastro". `poi_sem_ligacao` é o
-  // inverso: pontos que o cadastro não conhece, e que viram a fila de
-  // vinculação humana. Mostrar só o primeiro esconderia metade do trabalho.
+  // O cartão mostrava `com_poi` — TODA ligação casada com um ponto nosso, de
+  // qualquer classificação, inclusive as de reclassificar, que por definição
+  // NÃO são comerciais no cadastro. Na base inteira: 14.959 sob um rótulo que
+  // descreve 11.749.
   //
-  // O endpoint LÊ, não recruza: disparar um cruzamento de 102 mil linhas para
-  // pintar um cartão seria trocar leitura por trabalho pesado a cada F5.
+  // Regra do dono do produto, 28/08/2026: mostrar as comerciais TOTAIS do
+  // cadastro e, ao lado, quantas delas um POI de fonte diversa confirmou.
+  //
+  //     grande     `comerciais`          o que o cliente já fatura como comércio
+  //     caixinha   `comerciais_com_poi`  dessas, quantas nosso levantamento
+  //                                      encontrou também em campo
+  //
+  // O resto da conta continua no `title` e no detalhe do modal: são os dois
+  // lados que o cartão precisa, mas não são a manchete.
   function pintarCadastro() {
     const c = estado.cadastro;
-    const alvos = [$("s-cadastro"), $("m-cadastro")];
+    const vazio = ["s-cadastro", "m-cadastro", "s-cadastro-poi", "m-cadastro-poi"];
     if (!c) {
-      alvos.forEach((a) => { a.textContent = "—"; });
+      vazio.forEach((id) => { const e = $(id); if (e) e.textContent = "—"; });
       return;
     }
-    alvos.forEach((a) => { a.textContent = nf.format(c.com_poi || 0); });
+    const com = c.comerciais || 0;
+    const conf = c.comerciais_com_poi || 0;
+
+    for (const id of ["s-cadastro", "m-cadastro"]) {
+      const e = $(id);
+      if (e) e.textContent = nf.format(com);
+    }
+    for (const id of ["s-cadastro-poi", "m-cadastro-poi"]) {
+      const e = $(id);
+      if (!e) continue;
+      e.textContent = nf.format(conf) + (id[0] === "m" ? " confirmadas por POI" : " c/ POI");
+      e.title = "Dessas, quantas um ponto de fonte diversa confirmou em campo";
+      e.classList.toggle("hidden", !com);
+    }
+
     const alta = (c.por_flag || {}).reclassificar_alta || 0;
-    $("s-cadastro").title =
-      `${nf.format(c.com_poi || 0)} ligações com ponto associado · ` +
+    const dica =
+      `${nf.format(com)} ligações que o cadastro já classifica como comerciais · ` +
+      `${nf.format(conf)} confirmadas por POI · ` +
       `${nf.format(c.poi_sem_ligacao || 0)} pontos sem ligação · ` +
       `${nf.format(alta)} para reclassificar com CNPJ conferido`;
+    const s = $("s-cadastro");
+    if (s) s.parentElement.title = dica;
     const cx = $("m-cadastro-detalhe");
     if (cx) {
       cx.textContent =
@@ -1109,11 +1134,11 @@
     const q = p.length ? "?" + p.join("&") : "";
     const qa = estado.temArea ? (q ? q + "&area=1" : "?area=1") : q;
     estado.stats = await pegar("/api/stats" + qa);
-    // O `/api/cadastro/resumo` ainda não conhece área: ele conta LIGAÇÕES do
-    // cliente, que não têm coordenada própria — recortá-las por polígono
-    // exigiria passar pelo POI de cada uma. Fica como está, e o cartão diz
-    // "ligações", não "ligações nesta área".
-    estado.cadastro = await pegar("/api/cadastro/resumo" + q);
+    // O RESUMO DO CADASTRO RECORTA IGUAL. Eu havia deixado de fora achando que
+    // ligação não tem coordenada — tem: `lat`/`lng` próprias, 100% preenchidas
+    // nas 102.065 linhas. Sem isto o cartão encostava o 14.959 do município
+    // inteiro num número de bairro.
+    estado.cadastro = await pegar("/api/cadastro/resumo" + qa);
     pintarStats(estado.stats);
   }
 

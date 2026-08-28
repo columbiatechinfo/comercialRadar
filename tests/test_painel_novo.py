@@ -198,7 +198,12 @@ def test_o_cartao_do_cadastro_tem_endpoint_e_le_sem_recruzar():
     s = _ler(os.path.join(RAIZ, "server.py"))
     assert '@app.get("/api/cadastro/resumo")' in s, "a rota de leitura sumiu"
     i = s.index('@app.get("/api/cadastro/resumo")')
-    corpo = s[i:i + 2600]
+    # A JANELA ACOMPANHA A FUNÇÃO, e não um número de bytes. Ela era
+    # `i + 2600` e reprovou código correto quando a rota ganhou comentários:
+    # o `return` saiu da janela e o teste disse que o endpoint parou de
+    # devolver `com_poi` — com `com_poi` sendo devolvido. Medida fixa sobre
+    # arquivo que cresce é falso negativo esperando o dia.
+    corpo = s[i:s.index("\n@app.", i + 10)]
     assert "CC.cruzar" not in corpo and "cruzar(" not in corpo, \
         "a rota de LEITURA passou a executar o cruzamento"
     for campo in ("com_poi", "sem_poi", "poi_sem_ligacao", "por_flag"):
@@ -761,3 +766,105 @@ def test_o_cartao_conta_so_o_municipio_escolhido():
     i = js.index("async function carregarPois(")
     assert "pintarNovos();" in js[i:i + 500], \
         "o cartão voltou a depender do /api/stats: se ele falhar, vira travessão"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# OS DOIS CARTÕES DIZEM O QUE CONTAM, E CONTAM A ÁREA SELECIONADA (28/08/2026)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_a_caixinha_diz_o_que_conta():
+    """Ela nasceu como um número solto ao lado do número grande — "12  6" — e
+    ninguém tinha como saber o que era: a explicação só existia num `title`, que
+    não se lê.
+
+    VERIFICADO NO NAVEGADOR: "12" em 24px e "6 a reclassificar" em 11px à
+    direita, mesma linha de base, e a linha "6 fora do cadastro + 6 no cadastro
+    sem ser comercial" logo abaixo. O cartão de 227px não estourou.
+    """
+    js = _ler(JS)
+    assert 'nf.format(n.reclassificar) + " a reclassificar"' in js, \
+        "a caixinha voltou a ser um número solto, sem dizer o que conta"
+    # e a conta inteira aparece, para o número grande não ser uma soma que só o
+    # código conhece
+    assert '" fora do cadastro + "' in js or "fora do cadastro +" in js, \
+        "a linha que explica a soma do número grande sumiu"
+    html = _ler(HTML)
+    assert 'id="s-novos-detalhe"' in html, "a linha da conta sumiu da lateral"
+
+
+def test_ja_comerciais_mostra_o_total_e_o_confirmado():
+    """ERAM TRÊS COISAS TROCADAS. O cartão mostrava `com_poi` — toda ligação
+    casada com um ponto nosso, de QUALQUER classificação, inclusive as de
+    reclassificar, que por definição NÃO são comerciais no cadastro. Na base
+    inteira: 14.959 sob um rótulo que descreve 11.749.
+
+    Decisão do dono do produto: as comerciais TOTAIS do cadastro, e ao lado
+    quantas delas um POI de fonte diversa confirmou.
+
+    MEDIDO: base inteira 11.749 com 6.243 confirmadas; na área do print, 3 com
+    2 confirmadas.
+    """
+    js = _ler(JS)
+    assert "c.comerciais || 0" in js, \
+        "o cartão voltou a mostrar `com_poi` sob o rótulo de comerciais"
+    assert "c.comerciais_com_poi || 0" in js, "a contagem confirmada por POI sumiu"
+    assert "com_poi" not in js.split("function pintarCadastro")[1][:1200] \
+        or "comerciais_com_poi" in js.split("function pintarCadastro")[1][:1200], \
+        "`com_poi` voltou a ser a manchete do cartão"
+
+    html = _ler(HTML)
+    for chip in ("s-cadastro-poi", "m-cadastro-poi"):
+        assert 'id="%s"' % chip in html, "a caixinha de confirmadas por POI sumiu"
+
+    # e o endpoint entrega os dois números
+    srv = _ler(os.path.join(RAIZ, "server.py"))
+    assert "count(*) FILTER (WHERE e_comercial)" in srv, \
+        "o endpoint parou de contar as comerciais do cadastro"
+    assert '"comerciais": comerciais' in srv and '"comerciais_com_poi"' in srv, \
+        "os dois números não chegam mais ao navegador"
+
+
+def test_o_resumo_do_cadastro_respeita_a_area():
+    """Sem isto, o 14.959 do município inteiro aparecia encostado num número de
+    bairro. A ligação tem coordenada PRÓPRIA — `lat`/`lng`, 100% preenchidas nas
+    102.065 linhas — então o recorte não passa pelo POI, e é o certo: ligação sem
+    POI continua contando na área onde ela está, e é justamente ela que forma a
+    fila de vinculação humana.
+
+    MEDIDO: 102.065 ligações sem recorte, 26 com área; `com_poi` 14.959 → 6.
+    """
+    srv = _ler(os.path.join(RAIZ, "server.py"))
+    assert 'def cadastro_resumo(cidade: str = "", area: int = 0):' in srv, \
+        "o /api/cadastro/resumo não aceita mais a área"
+    assert "def _escopo_do_cadastro(" in srv, "o recorte do lado das ligações sumiu"
+    i = srv.index("def _escopo_do_cadastro(")
+    corpo = srv[i:i + 1200]
+    assert "FROM cadastro_cliente" in corpo and "lat BETWEEN %s AND %s" in corpo, \
+        "o recorte das ligações deixou de cortar pela caixa envolvente"
+    assert "poi_id" not in corpo, \
+        "o recorte das ligações voltou a passar pelo POI, e perde a fila de vinculação"
+
+    js = _ler(JS)
+    i = js.index("async function carregarStats")
+    corpo = js[i:i + 1200]
+    assert '"/api/cadastro/resumo" + qa' in corpo, \
+        "a tela parou de mandar a área para o resumo do cadastro"
+
+
+def test_a_migracao_do_indice_do_cadastro():
+    d = os.path.join(RAIZ, "migrations")
+    achou = [f for f in os.listdir(d) if f.startswith("0040_")]
+    assert achou, "a migração 0040 sumiu"
+    sql = _ler(os.path.join(d, achou[0]))
+    corpo = "\n".join(l.split("--")[0] for l in sql.splitlines())
+    assert "ix_cad_geo_por_tenant" in corpo, "o índice mudou de nome sem avisar"
+    assert "(tenant_id, lat, lng)" in corpo, (
+        "tenant_id deixou de ser a primeira coluna: a RLS filtra por empresa "
+        "antes de tudo, e um índice geográfico global varre as ligações das "
+        "outras empresas para depois descartá-las")
+    # o velho, sem tenant, tem de sair — dois índices para a mesma pergunta é
+    # escrita mais cara sem leitura melhor
+    assert "DROP INDEX IF EXISTS ix_cad_geo;" in corpo, \
+        "o índice antigo sem tenant_id ficou para trás"
+    assert corpo.index("CREATE INDEX") < corpo.index("DROP INDEX"), \
+        "o índice novo tem de nascer antes de o velho morrer"
