@@ -89,3 +89,36 @@ def test_a_analise_pega_o_defeito_que_motivou_o_arquivo():
                        errors="replace")
     assert any(f in (p.stdout or "") for f in FATAIS), \
         f"a análise deixou de ver o defeito do `sess`: {p.stdout!r}"
+
+
+def test_nenhum_escape_invalido_em_string():
+    r"""Escape invalido numa string comum funciona por acidente, e o acidente
+    tem prazo de validade.
+
+    Dois achados em 27/08/2026, calados atras de um `DeprecationWarning` que
+    ninguem le no fim da suite:
+
+        enriquecer_ifood.py:398    \D dentro do SQL de `regexp_replace`
+        ferramenta_instagram.py:90 \. e \/ dentro de uma regex de JS
+
+    Hoje o Python devolve os dois caracteres como estao, entao o Postgres e o
+    navegador recebem o que esperavam. Numa versao futura vira `SyntaxError` —
+    e o arquivo para de importar, longe daqui, sem que a linha tenha sido
+    tocada. O prefixo `r` na string diz o que se quer dizer.
+
+    Esta docstring e raw pelo mesmo motivo: sem o `r`, ela dispararia o
+    proprio aviso que o teste procura.
+    """
+    import warnings
+    mal = []
+    for arq in _arquivos():
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            try:
+                compile(io.open(arq, encoding="utf-8").read(), "<x>", "exec")
+            except SyntaxError:
+                continue
+            mal += [f"{os.path.basename(arq)}:{x.lineno}" for x in w
+                    if "escape" in str(x.message)]
+    assert not mal, ("escape invalido em string comum — prefixe a string com "
+                     "r: " + ", ".join(mal))

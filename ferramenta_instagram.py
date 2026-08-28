@@ -87,7 +87,7 @@ async def _uma(usuario: str, usar_proxy: bool) -> dict:
             # como se fossem da bio. O que interessa é o link QUE O DONO pôs —
             # e ele passa pelo redirecionador `l.instagram.com/?u=<destino>`.
             links = await sess.page.evaluate(
-                """() => {
+                r"""() => {
                   const meta = /(meta\.com|facebook\.com|threads\.|whatsapp\.com\/?$)/i;
                   return [...document.querySelectorAll('a[href]')]
                     .map(a => {

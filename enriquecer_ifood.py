@@ -395,7 +395,7 @@ def gravar(con, itens: list, cidade: str) -> tuple:
         for m in itens:
             poi, cnpj = None, m.get("cnpj")
             if cnpj:
-                cur.execute("""SELECT id FROM pois
+                cur.execute(r"""SELECT id FROM pois
                                 WHERE regexp_replace(COALESCE(cnpj,''),'\D','','g') = %s
                                 LIMIT 1""", (cnpj,))
                 r = cur.fetchone()
