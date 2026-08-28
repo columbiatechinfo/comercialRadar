@@ -967,7 +967,7 @@ def listar_pois():
                   -- continuavam desenhados, e a queixa "nao e pra ter mais que
                   -- 30 mil pontos" era sobre isto — o banco ja estava certo, o
                   -- mapa e que nao tinha sido avisado.
-                  AND COALESCE(p.status, '') <> 'fundido'
+                  AND p.fundido_em IS NULL
                   -- E o ponto sem NENHUMA ficha ativa nao tem o que mostrar: as
                   -- fontes que o sustentavam foram desvinculadas. Ele fica no
                   -- banco, auditavel, e some do mapa.

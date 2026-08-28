@@ -457,7 +457,7 @@ select p.id, p.nome, p.categoria, p.maps_lat, p.maps_lng, p.cidade, p.uf
  where p.maps_lat is not null and p.maps_lng is not null
    and coalesce(p.nome, '') <> ''
    and p.cnpj is null
-   and coalesce(p.status, '') <> 'fundido'
+   and p.fundido_em is null
    and p.tenant_id = (select nullif(current_setting('app.tenant_id', true), '')::uuid)
    and (%(cidade)s = '' or upper(translate(coalesce(p.cidade,''), %(ac)s, %(li)s))
                          = upper(translate(%(cidade)s, %(ac)s, %(li)s)))

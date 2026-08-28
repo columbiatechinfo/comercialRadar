@@ -190,7 +190,7 @@ def test_poi_fundido_nao_ganha_vinculo_novo():
     s = io.open(os.path.join(raiz, "povoar_vinculo.py"), encoding="utf-8").read()
     i = s.index("from pois p")
     corpo = s[i:i + 1600]
-    assert "coalesce(p.status, '') <> 'fundido'" in corpo, \
+    assert "p.fundido_em is null" in corpo, \
         "o povoar_vinculo voltou a criar vínculo para POI fundido"
 
 

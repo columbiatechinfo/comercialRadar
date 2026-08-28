@@ -82,7 +82,7 @@ def avaliar(con, cod_ibge: str, cidade: str) -> dict:
     cur = con.cursor()
     cur.execute("""select id, nome, endereco, fonte
                      from pois
-                    where cidade = %s and coalesce(status,'') <> 'fundido'
+                    where cidade = %s and fundido_em is null
                       and coalesce(trim(endereco), '') <> ''""", (cidade,))
     linhas = cur.fetchall()
 

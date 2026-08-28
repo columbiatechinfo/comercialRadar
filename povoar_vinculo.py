@@ -18,7 +18,8 @@ coordenada, vindos de fontes diferentes. São a mesma loja contada duas vezes, e
 
 O QUE ACONTECE COM O POI ABSORVIDO
 
-Ele **não é apagado**. Vira `status='fundido'`, mantém a linha e o `place_id`, e
+Ele **não é apagado**. Ganha `fundido_em` e `fundido_para`, mantém a linha e o
+`place_id`, e
 o vínculo dele passa para o sobrevivente como mais uma aba. Assim a junção é
 reversível pelo mesmo `x` da tela — desvincular devolve o registro a um POI
 próprio, que é exatamente o desenho da migração 0032.
@@ -116,7 +117,7 @@ def proprios(empresa: str, aplicar: bool) -> None:
            -- fusão poder ser desfeita pelo `x` da ficha. Desfazer devolve o
            -- vínculo ORIGINAL a ele; um vínculo inventado aqui atrapalharia
            -- justamente esse caminho de volta.
-           and coalesce(p.status, '') <> 'fundido'
+           and p.fundido_em is null
            -- SÓ OS POIs DESTA EMPRESA, e isto é conserto de um defeito real.
            --
            -- O gatilho `preencher_tenant` carimba o tenant da SESSÃO, não o do
@@ -181,7 +182,7 @@ def juntar(cidade: str, empresa: str, aplicar: bool) -> None:
             from pois
            where maps_lat is not null and coalesce(nome,'') <> ''
              and (%s = '' or cidade = %s)
-             and coalesce(status,'') <> 'fundido')
+             and fundido_em is null)
         select nm, la, lo,
                array_agg(id order by evid desc, id),
                array_agg(fonte order by evid desc, id),
@@ -214,7 +215,9 @@ def juntar(cidade: str, empresa: str, aplicar: bool) -> None:
                  where poi_id = %s and estado = 'vinculado'""",
                         (vive, f"juntado a #{vive}: mesmo nome na mesma coordenada",
                          outro))
-            cur.execute("""update pois set status = 'fundido' where id = %s""", (outro,))
+            # `fundido_em`/`fundido_para` e nao `status` -- ver migracao 0036.
+            cur.execute("""update pois set fundido_em = now(), fundido_para = %s
+                            where id = %s""", (vive, outro))
             absorvidos += 1
     con.commit()
     print(f"\n  GRAVADO: {absorvidos:,} POIs absorvidos — marcados 'fundido', "

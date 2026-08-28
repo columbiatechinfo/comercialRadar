@@ -7,6 +7,52 @@ versionamento [SemVer](https://semver.org/lang/pt-BR/).
 
 ### Adicionado
 
+- **Desfazer uma fusão passou a ser possível** (`migrations/0036`,
+  `--desfundir`). Até aqui não havia como uma regra nova alcançar o que já
+  tinha sido fundido: `--recruzar` reavalia os pares, mas só entre POIs
+  **ativos**, e quem foi absorvido está fora da consulta. O
+  `ParkShoppingCanoas` seguia dentro da `Pista de Patinação (Iceland)` mesmo
+  depois de escrita a regra que o teria impedido.
+
+  **A causa era de modelagem.** Absorver fazia `update pois set status =
+  'fundido'` — e `status` não é campo de fusão: ele guarda a **origem** do
+  ponto (`estadual`, `descoberto`, `ok`, `recuperado_web`, `cadastur`), aparece
+  na ficha e é contado no painel. Sobrescrevê-lo apagava esse dado para sempre.
+  A fusão ganhou colunas próprias:
+
+  | coluna | o que guarda |
+  |---|---|
+  | `fundido_em` | quando foi absorvido. NULO = é um ponto — passa a ser **este** o teste de "ativo" |
+  | `fundido_para` | em qual POI entrou, gravado enquanto a cadeia ainda existe |
+
+  **O `status` de 15.260 dos 15.399 foi restaurado.** Ele não estava gravado em
+  lugar nenhum, mas era dedutível: POIs da mesma origem (`fonte`, `fonte_dado`,
+  `sessao`) receberam o mesmo valor, e 99,1% caem em cohorte de valor único. Os
+  139 restantes ficam com a lacuna visível — inventar um valor plausível seria
+  pior.
+
+  **O destino de 13.263 fusões antigas foi recuperado** (`backfill_fundido_para.py`)
+  rastreando o vínculo que carrega o nome do absorvido. Os 1.806 cujo nome
+  aponta para mais de um POI ativo ficam sem destino, e **por isso não são
+  desfeitos**: sem saber o sobrevivente não há como devolver a evidência, e o
+  ponto voltaria oco — invisível no mapa, que exige vínculo ativo.
+
+  **Três defeitos meus foram medidos e consertados antes disto valer:**
+
+  | sintoma | causa |
+  |---|---|
+  | `duplicate key (IGREJA NOSSA SENHORA DO ROSÁRIO…)` | o índice único também testava `status`; e cópia literal não deve voltar |
+  | `duplicate key (LABORATÓRIO DE ANATOMIA, ULBRA…)` | dois absorvidos iguais entre si voltavam juntos |
+  | **10.690 sobreviventes ocos** | devolver *todos* os vínculos de nome igual tirava também o do sobrevivente |
+
+  O último é o que mais enganava: 13.252 fusões desfeitas produziam 11.314
+  pontos sem evidência, e a maioria era de quem **ficou**, não de quem voltou.
+  Hoje volta um vínculo por ressuscitado, e nunca o último do sobrevivente —
+  0 sobreviventes ocos, 46 ressuscitados aguardando o `povoar_vinculo`.
+
+  Desfazer e refazer estão na **mesma transação**: se o cruzamento falhar, o
+  mapa não fica com 13 mil duplicatas à mostra.
+
 - **Mais de dois nomes no mesmo lugar é um prédio, não uma dúvida de nome**
   (`TETO_MULTILOJA`). Regra do dono do produto: *"mais de 2 itens de nome
   diferente no mesmo lugar já não é apenas ambiguidade de nome do mesmo

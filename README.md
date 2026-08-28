@@ -306,6 +306,26 @@ duas fontes, quem tem `place_id` sobrevive à fusão e empresta nome, endereço 
 coordenada ao ponto — mas obedece às mesmas regras, e um POI do Maps duplicado
 é apagado como qualquer outro.
 
+**Uma fusão errada deixou de ser definitiva.** `--recruzar` reavalia os pares,
+mas só entre POIs ativos — quem foi absorvido está fora da consulta, e nenhuma
+regra escrita depois o alcançava. `--desfundir` devolve o ponto **e a evidência
+dele** ao mapa, e o cruzamento decide de novo:
+
+```bash
+python cruzar_fontes.py --cidade Canoas --empresa "Aegea - Corsan" --desfundir --aplicar
+```
+
+Isso só é possível porque a fusão parou de sobrescrever `pois.status` — que
+guarda a **origem** do ponto e é exibida na ficha — e passou a morar em
+`fundido_em` (NULO = é um ponto) e `fundido_para` (em quem entrou). Ver a
+migração [`0036`](migrations/0036_a_fusao_deixa_de_sobrescrever_o_status.sql).
+
+Duas coisas **não** são desfeitas, e as duas de propósito: cópia literal (mesmo
+nome e mesmo endereço, que o índice único proíbe ter duas vezes ativas) e fusão
+sem destino gravado — sem saber o sobrevivente, a evidência não tem como
+voltar, e o ponto ficaria oco.
+
+
 ---
 
 ## 🗄️ Banco de dados

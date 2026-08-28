@@ -119,7 +119,7 @@ def avaliar(con, cod_ibge: str, cidade: str) -> dict:
           join logradouro_ajustado la on la.fonte = 'pois'
                                      and la.record_id = p.id::text
                                      and la.scope_id = %s
-         where p.cidade = %s and coalesce(p.status,'') <> 'fundido'
+         where p.cidade = %s and p.fundido_em is null
            and coalesce(p.maps_lat, p.lat_origem) is not null
            and coalesce(trim(la.logradouro_marcado), '') <> ''
            and coalesce(trim(la.numero_canonico), '') <> ''""", (cod_ibge, cidade))

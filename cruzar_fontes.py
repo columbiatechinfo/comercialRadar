@@ -20,7 +20,8 @@ QUEM DECIDE O QUÊ
     julgar_par_banco   a IA da Spark decide os `perguntar`, com o dado completo
     aqui               escreve o resultado, com a confiança de 1 a 10
 
-O POI ABSORVIDO NÃO É APAGADO. Vira `status='fundido'`, mantém a linha e o
+O POI ABSORVIDO NÃO É APAGADO. Ganha `fundido_em` e `fundido_para`, mantém a
+linha e o
 `place_id`, e o vínculo dele passa para o sobrevivente como mais uma aba —
 reversível pelo `x` da ficha. Apagar seria mais simples e seria pior: uma junção
 errada viraria perda, e a medição do RS mostrou 66,2% de erro nas fusões
@@ -68,7 +69,7 @@ select p.id, p.nome, p.fonte, p.categoria, p.endereco, p.telefone, p.website,
          on la.fonte = 'pois' and la.record_id = p.id::text
  where coalesce(p.maps_lat, p.lat_origem) is not null
    and coalesce(p.maps_lng, p.lng_origem) is not null
-   and coalesce(p.status, '') <> 'fundido'
+   and p.fundido_em is null
    and p.tenant_id = (select nullif(current_setting('app.tenant_id', true), '')::uuid)
    and (%(cidade)s = '' or upper(translate(coalesce(p.cidade, ''), %(ac)s, %(li)s))
                          = upper(translate(%(cidade)s, %(ac)s, %(li)s)))
@@ -488,16 +489,193 @@ def aplicar(con, decisoes: list, log=print) -> int:
              where v.poi_id = f.morre and v.estado = 'vinculado'""",
             bloco, template="(%s::bigint, %s::bigint, %s::int, %s::text, %s::text)")
 
-        cur.execute("update pois set status = 'fundido' where id = any(%s)",
-                    ([m for m, *_ in bloco],))
+        # O DESTINO VAI JUNTO, e e' a unica hora em que ele existe.
+        #
+        # Ate 27/08/2026 a fusao so marcava o absorvido e a cadeia morria com o
+        # processo. Quando 6 vinculos ficaram apontando para POIs fundidos, nao
+        # havia como saber para onde cada um deveria ir -- foi preciso rastrear
+        # pelo nome, e 11,7% dos casos dariam mais de um destino.
+        #
+        # E `fundido_em` no lugar de `status = 'fundido'`: `status` guarda a
+        # ORIGEM do ponto, aparece na ficha e e' contado no painel. Sobrescreve-lo
+        # apagava esse dado para sempre e tornava a fusao IRREVERSIVEL -- ver a
+        # migracao 0036.
+        psycopg2.extras.execute_values(cur, """
+            update pois p
+               set fundido_em = now(), fundido_para = f.vive
+              from (values %s) as f(morre, vive)
+             where p.id = f.morre""",
+            [(m, v) for m, v, *_ in bloco],
+            template="(%s::bigint, %s::bigint)")
         if len(fusoes) > LOTE:
             log(f"    gravadas {min(i + LOTE, len(fusoes)):,} de {len(fusoes):,}")
     return len(fusoes)
 
 
+def _desfundir(cur, cidade: str, poligono=None) -> int:
+    """Devolve ao mapa os POIs absorvidos, para que TUDO volte a ser comparado.
+
+    POR QUE ISTO PRECISOU EXISTIR
+
+    `--recruzar` limpa o carimbo `cruzado_em` e refaz todos os pares — mas só
+    entre POIs ATIVOS. Quem já foi absorvido está fora do `carregar`, e por isso
+    uma fusão errada era definitiva: nenhuma regra nova a alcançava.
+
+    Foi o caso do `ParkShoppingCanoas`, absorvido pela `Pista de Patinação
+    (Iceland)` de dentro dele. A regra de multiloja, escrita depois, teria
+    impedido a fusão — e não tinha como desfazê-la.
+
+    ISTO SÓ É POSSÍVEL DESDE A MIGRAÇÃO 0036. Antes, absorver sobrescrevia
+    `pois.status` — que guarda a ORIGEM do ponto — com a palavra `fundido`, e o
+    valor anterior se perdia. Desfazer devolveria o POI ao mapa com a origem
+    errada. Hoje a fusão mora em `fundido_em`/`fundido_para` e o `status` não é
+    tocado, então desfazer não perde nada.
+
+    O VÍNCULO VOLTA JUNTO. O que a fusão fez foi mover os vínculos do absorvido
+    para o sobrevivente; desfazer sem devolvê-los deixaria um ponto no mapa sem
+    evidência nenhuma — pior que a fusão errada. `fundido_para` é o que torna
+    isso possível, e é por isso que ele passou a ser gravado.
+    """
+    # SEM DESTINO NÃO SE DESFAZ, e a medição obrigou esta regra.
+    #
+    # O primeiro ensaio devolveu 15.385 POIs ao mapa e **nenhum vínculo junto**:
+    # os absorvidos antes da migração 0036 têm `fundido_para` vazio, e sem saber
+    # em quem cada um entrou não há como recuperar a evidência dele. Eram 15.388
+    # pontos ativos sem vínculo — invisíveis no mapa, que exige vínculo ativo, e
+    # sem telefone, site ou endereço na ficha.
+    #
+    # Ponto absorvido é melhor que ponto oco. Quem não tem destino gravado fica
+    # como está; `backfill_fundido_para.py` recupera o que for rastreável.
+    onde, par = ["fundido_em is not null", "fundido_para is not null"], {}
+    if cidade:
+        onde.append("upper(translate(coalesce(cidade, ''), %(ac)s, %(li)s)) "
+                    "like upper(translate(%(cidade)s, %(ac)s, %(li)s)) || '%%'")
+        par.update({"cidade": cidade, "ac": _ACENTOS, "li": _LISOS})
+    if poligono:
+        s, n, o, l = au.bbox_com_margem(poligono)
+        onde.append("coalesce(maps_lat, lat_origem) between %(area_s)s and %(area_n)s")
+        onde.append("coalesce(maps_lng, lng_origem) between %(area_o)s and %(area_l)s")
+        par.update({"area_s": s, "area_n": n, "area_o": o, "area_l": l})
+
+    # DUPLICATA LITERAL NAO VOLTA, e o indice unico e quem manda nisso.
+    #
+    # `pois_sem_duplicata` proibe dois POIs ATIVOS com o mesmo nome e o mesmo
+    # endereco. Devolver ao mapa quem foi absorvido por ser exatamente o mesmo
+    # registro recria a duplicata que o indice existe para impedir -- e a
+    # primeira versao desta funcao morreu assim:
+    #
+    #     duplicate key ... (IGREJA NOSSA SENHORA DO ROSARIO, RUA DUQUE DE CAXIAS)
+    #
+    # A recusa esta certa, e delimita a regra: so ha o que reavaliar em quem
+    # NAO e' copia literal. Quem e' voltaria a fundir na mesma passada, pela
+    # mesma evidencia. Os casos que uma regra nova alcanca sao os outros --
+    # nome diferente, endereco diferente -- e e' o caso do
+    # `ParkShoppingCanoas`, absorvido pela `Pista de Patinacao` com nome E
+    # endereco distintos.
+    onde.append("""not exists (select 1 from pois q
+                                 where q.fundido_em is null
+                                   and upper(trim(q.nome)) = upper(trim(pois.nome))
+                                   and upper(trim(q.endereco)) = upper(trim(pois.endereco)))""")
+
+    # E O LOTE TAMBEM DESDUPLICA CONTRA SI MESMO.
+    #
+    # O `not exists` acima olha os POIs ATIVOS. Dois absorvidos que sejam copia
+    # um do outro passam os dois -- nenhum esta ativo -- e colidem entre si na
+    # hora de voltar. Foi o segundo `duplicate key` desta funcao:
+    #
+    #     (LABORATORIO DE ANATOMIA, ULBRA CAMPUS CANOAS, CANOAS, 92425-900)
+    #
+    # Volta um por chave. Os outros seguem absorvidos, que e' o que eles sao.
+    cur.execute(f"""
+        select id, fundido_para from (
+            select id, fundido_para,
+                   row_number() over (partition by upper(trim(nome)),
+                                                   upper(trim(endereco))
+                                          order by id) as ordem
+              from pois where {' and '.join(onde)}) t
+         where ordem = 1""", par)
+    voltam = cur.fetchall()
+    if not voltam:
+        return 0
+
+    # 1. O VÍNCULO VOLTA PARA CASA — e VOLTA O DELE, não um qualquer.
+    #
+    #    A primeira versão desta função movia `min(id)` dos vínculos do
+    #    sobrevivente. Isso é escolher por ordem de chegada: o ponto
+    #    ressuscitado podia receber a evidência de OUTRO POI que o sobrevivente
+    #    também tinha absorvido, e a ficha passaria a mostrar telefone, site e
+    #    endereço de um terceiro estabelecimento. Dado errado com aparência de
+    #    dado certo, que é o pior resultado possível aqui.
+    #
+    #    O vínculo do absorvido é reconhecível pelo NOME: foi o nome dele que a
+    #    fusão carregou para o sobrevivente. É o mesmo rastreio que reparou os
+    #    6 vínculos órfãos de 27/08/2026, e acertou os 4 casos que restavam.
+    #
+    #    Quem não casar pelo nome NÃO recebe vínculo nenhum. O ponto volta sem
+    #    evidência e fica fora do mapa até o `povoar_vinculo` lhe dar a dele —
+    #    uma ausência que se conserta sozinha, contra um erro que ninguém veria.
+    #    O PAREAMENTO ACONTECE NO PYTHON, com `norm_nome` — o mesmo
+    #    normalizador que gravou os destinos. Uma versão anterior comparava
+    #    `upper(trim())` no SQL, que é mais fraco: acento e pontuação separam o
+    #    que a normalização junta. Resultado medido: 13.252 fusões desfeitas e
+    #    só ~2.000 vínculos devolvidos — 11.190 pontos voltaram ocos. Duas
+    #    normalizações diferentes para a mesma pergunta sempre divergem; a
+    #    única defesa é usar uma só.
+    import psycopg2.extras
+    com_destino = [(m, v) for m, v in voltam if v]
+    if com_destino:
+        mortos = [m for m, _ in com_destino]
+        cur.execute("select id, nome from pois where id = any(%s)", (mortos,))
+        nome_do_morto = {i: ev.norm_nome(n or "") for i, n in cur.fetchall()}
+
+        vivos = sorted({v for _, v in com_destino})
+        cur.execute("""select id, poi_id, nome from vinculo_poi
+                        where poi_id = any(%s) and estado = 'vinculado'""",
+                    (vivos,))
+        do_vivo = {}
+        for vid, pid, nome in cur.fetchall():
+            do_vivo.setdefault((pid, ev.norm_nome(nome or "")), []).append(vid)
+
+        # UM VÍNCULO POR RESSUSCITADO, E NUNCA O ÚLTIMO DO SOBREVIVENTE.
+        #
+        # Quando os dois POIs tinham o mesmo nome — que é o caso comum, porque
+        # é o nome igual que os fez fundir — o sobrevivente fica com DOIS
+        # vínculos daquele nome: o dele e o que veio do absorvido. Devolver os
+        # dois deixa o sobrevivente sem evidência nenhuma.
+        #
+        # MEDIDO antes deste conserto: 13.252 fusões desfeitas e 11.314 pontos
+        # ocos — e 10.690 deles eram SOBREVIVENTES, não os ressuscitados. O
+        # desfazer estava esvaziando quem ficou.
+        cur.execute("""select poi_id, count(*) from vinculo_poi
+                        where poi_id = any(%s) and estado = 'vinculado'
+                        group by 1""", (vivos,))
+        restam = dict(cur.fetchall())
+
+        devolver = []
+        for morre, vive in com_destino:
+            fila = do_vivo.get((vive, nome_do_morto.get(morre, "")), [])
+            if fila and restam.get(vive, 0) > 1:
+                devolver.append((fila.pop(), morre))
+                restam[vive] -= 1
+        if devolver:
+            psycopg2.extras.execute_values(cur, """
+                update vinculo_poi w set poi_id = f.morre
+                  from (values %s) as f(vid, morre)
+                 where w.id = f.vid""",
+                devolver, template="(%s::bigint, %s::bigint)")
+
+    # 2. A MARCA SAI, e com ela o carimbo de cruzado dos dois lados: o par
+    #    precisa ser reavaliado, não pulado por já ter sido visto.
+    ids = [m for m, _ in voltam] + [v for _, v in voltam if v]
+    cur.execute("""update pois set fundido_em = null, fundido_para = null,
+                          cruzado_em = null
+                    where id = any(%s)""", (ids,))
+    return len(voltam)
+
+
 def cruzar(cidade: str, empresa: str, aplicar_de_fato: bool, usar_ia: bool,
            tudo_para_ia: bool = False, area: str = "",
-           recruzar: bool = False) -> None:
+           recruzar: bool = False, desfundir: bool = False) -> None:
     con = bc.conectar()
     con.autocommit = False
     cur = con.cursor()
@@ -506,6 +684,23 @@ def cruzar(cidade: str, empresa: str, aplicar_de_fato: bool, usar_ia: bool,
     poligono = au.carregar_area(area) if area else None
     if area and not poligono:
         raise SystemExit(f"nao ha area desenhada salva com a referencia {area!r}")
+
+    if desfundir:
+        # SEM COMMIT AQUI, e isso é deliberado.
+        #
+        # A primeira versão gravava o desfazer antes de cruzar. Se o
+        # cruzamento morresse depois — a IA fora do ar, o SSH caindo, um erro
+        # meu —, o banco ficaria com os 15.385 pontos absorvidos de volta no
+        # mapa e nada os reunindo: o operador abriria o painel e veria a
+        # duplicação que o sistema existe para eliminar.
+        #
+        # Deixando na mesma transação, desfazer e refazer viram um passo só:
+        # ou o mapa fica com a fusão nova, ou continua com a antiga.
+        n = _desfundir(cur, cidade, poligono)
+        print(f"  {n:,} POIs devolvidos ao mapa — a fusão deles foi desfeita, "
+              f"e agora TUDO volta a ser comparado")
+        print("  (desfazer e refazer estão na MESMA transação: se o cruzamento "
+              "falhar, nada disto é gravado)")
 
     pois = carregar(cur, cidade, poligono)
     escopo = f"area {area!r} + 150 m" if poligono else (cidade or "todas as cidades")
@@ -635,6 +830,9 @@ def main(argv=None) -> int:
     p.add_argument("--cidade", default="")
     p.add_argument("--empresa", required=True)
     p.add_argument("--aplicar", action="store_true")
+    p.add_argument("--desfundir", action="store_true",
+                   help="desfaz as fusoes antes de recruzar — o unico jeito de "
+                        "uma regra nova alcancar o que ja foi fundido")
     p.add_argument("--recruzar", action="store_true",
                    help="refaz TODOS os pares, inclusive os ja cruzados. Necessario "
                         "quando as regras de fusao mudam — sem isto o par antigo "
@@ -649,7 +847,7 @@ def main(argv=None) -> int:
                         "(12x mais chamadas — veja `filtrar_para_ia`)")
     a = p.parse_args(argv)
     cruzar(a.cidade, a.empresa, a.aplicar, not a.sem_ia, a.tudo_para_ia,
-           a.area, a.recruzar)
+           a.area, a.recruzar or a.desfundir, a.desfundir)
     return 0
 
 
