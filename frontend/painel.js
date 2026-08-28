@@ -15,12 +15,49 @@
   const nf = new Intl.NumberFormat("pt-BR");
   const INDIGO = "#4f46e5";
 
+  // O FUNDO É O GOOGLE DE VERDADE, pela Maps JavaScript API.
+  //
+  // A primeira versão usava tiles XYZ do OpenStreetMap — parecido, e não é a
+  // mesma coisa: o rótulo de estabelecimento, a densidade e o traçado que a
+  // operação usa para se localizar são os do Google. O `GoogleMutant` põe um
+  // `google.maps.Map` por baixo do Leaflet e sincroniza os dois.
+  //
+  // Sem chave, `_google()` devolve o Carto e o mapa continua utilizável — é o
+  // mesmo recuo da tela anterior.
   const BASEMAPS = [
-    ["Mapa padrão", "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"],
-    ["Mapa claro", "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png"],
-    ["Mapa escuro", "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"],
-    ["Satélite", "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
+    ["Mapa padrão", () => _google("roadmap")],
+    ["Satélite", () => _google("satellite")],
+    ["Híbrido", () => _google("hybrid")],
+    ["Mapa claro (sem Google)", () => _carto("light_all")],
   ];
+
+  const _google = (tipo) =>
+    (window.L && L.gridLayer && L.gridLayer.googleMutant)
+      ? L.gridLayer.googleMutant({ type: tipo, maxZoom: 22 })
+      : _carto("light_all");
+
+  const _carto = (estilo) => L.tileLayer(
+    `https://{s}.basemaps.cartocdn.com/${estilo}/{z}/{x}/{y}{r}.png`,
+    { maxZoom: 20, subdomains: "abcd" });
+
+  // A COR DO PONTO DIZ O QUE FAZER COM ELE, e vem do cruzamento com o cadastro.
+  //
+  // Regra do dono do produto, 28/08/2026: comercial na base do cliente fica
+  // AMARELO — já está lá, não há o que reclassificar. Habitacional na base e
+  // comércio achado no local fica VERDE e em destaque: é exatamente o achado
+  // que o produto existe para encontrar, e a confiança gradua pelo CNPJ.
+  const CORES = {
+    ja_cadastrado: { cor: "#f59e0b", anel: "#b45309", destaque: false,
+                     rotulo: "Comercial no cadastro" },
+    reclassificar_alta: { cor: "#16a34a", anel: "#14532d", destaque: true,
+                          rotulo: "Reclassificar — CNPJ conferido" },
+    reclassificar_media: { cor: "#22c55e", anel: "#166534", destaque: true,
+                           rotulo: "Reclassificar — CNPJ parcial" },
+    reclassificar_baixa: { cor: "#4ade80", anel: "#15803d", destaque: true,
+                           rotulo: "Reclassificar — sem CNPJ" },
+  };
+  const SEM_LIGACAO = { cor: "#6366f1", anel: "#3730a3", destaque: false,
+                        rotulo: "Sem ligação no cadastro" };
 
   // OS QUATRO VEREDITOS SÃO OS DA `analise_ia`, e as cores vêm do desenho.
   // Verde e lima aprovam, âmbar manda para o humano, vermelho reprova.
@@ -63,12 +100,63 @@
     if (!window.L || mapa) return;
     mapa = L.map("mapa", { zoomControl: true, attributionControl: false })
              .setView([-15.78, -47.93], 4.4);
-    tile = L.tileLayer(BASEMAPS[0][1], { maxZoom: 19, subdomains: "abc" }).addTo(mapa);
+    tile = BASEMAPS[0][1]().addTo(mapa);
     camadaPois = L.layerGroup().addTo(mapa);
     camadaDesenho = L.layerGroup().addTo(mapa);
     mapa.on("click", cliqueNoMapa);
     mapa.on("dblclick", concluirDesenho);
     setTimeout(() => mapa.invalidateSize(), 200);
+    carregarGoogle();
+  }
+
+  // A JS API DO GOOGLE ENTRA DEPOIS, e o fundo é TROCADO quando ela chega.
+  //
+  // Carregar o script antes de montar o mapa deixaria a tela em branco enquanto
+  // a rede responde. Assim o Leaflet sobe na hora com o Carto, e o Google
+  // substitui o fundo quando estiver pronto — sem chave, nada acontece e o
+  // Carto fica.
+  async function carregarGoogle() {
+    try {
+      const c = await pegar("/api/mapa/config");
+      if (!c || !c.key) return;
+      await new Promise((ok, falha) => {
+        const s = document.createElement("script");
+        const mid = c.mapId ? "&map_ids=" + encodeURIComponent(c.mapId) : "";
+        s.src = "https://maps.googleapis.com/maps/api/js?key="
+              + encodeURIComponent(c.key) + mid
+              + "&language=pt-BR&region=BR&loading=async";
+        s.async = true; s.onload = ok; s.onerror = falha;
+        document.head.appendChild(s);
+      });
+    } catch (e) {
+      return;                                 // segue com o Carto
+    }
+    trocarBase(estado.basemap, true);
+  }
+
+  function pintarMenuBase() {
+    const menu = $("menu-basemap");
+    if (!menu) return;
+    [...menu.children].forEach((c, k) => {
+      c.className = "flex w-full items-center justify-between px-3 py-1 text-left " +
+        "text-sm/6 hover:bg-gray-50 " +
+        (k === estado.basemap ? "bg-indigo-50 text-indigo-600" : "text-gray-900");
+      const marca = c.querySelector("span:last-child");
+      if (marca) marca.textContent = k === estado.basemap ? "✓" : "";
+    });
+  }
+
+  function trocarBase(i, forcar) {
+    if (!mapa) return;
+    if (i === estado.basemap && !forcar) return;
+    const nova = BASEMAPS[i][1]();
+    nova.addTo(mapa);
+    nova.bringToBack();
+    if (tile && mapa.hasLayer(tile)) mapa.removeLayer(tile);
+    tile = nova;
+    estado.basemap = i;
+    $("basemap-nome").textContent = BASEMAPS[i][0];
+    pintarMenuBase();
   }
 
   function cliqueNoMapa(e) {
@@ -123,19 +211,54 @@
     await carregarTudo();
   }
 
+  // CADA PONTO É UM PONTO — sem cluster, sem ícone por categoria.
+  //
+  // Regra do dono do produto, 28/08/2026. Cluster esconde densidade justamente
+  // onde ela é a informação: uma quadra com doze pontos e uma com um viram duas
+  // bolhas parecidas, e é a densidade que diz onde vale ir. Ícone por categoria
+  // gasta a única variável visual que sobra (a forma) com um dado que já está
+  // no popup, e disputa com o que decide a visita.
+  //
+  // O QUE O MARCADOR DIZ, e nada além disto:
+  //
+  //     a COR      o que fazer — amarelo já é comercial no cadastro, verde é
+  //                habitacional na base com comércio achado, índigo não tem
+  //                ligação nenhuma
+  //     o NÚMERO   quantas fontes sustentam o ponto, quando é mais de uma
+  //     o DESTAQUE anel mais grosso e halo nos que valem reclassificar
   function desenharPois() {
     if (!camadaPois) return;
     camadaPois.clearLayers();
     const lista = poisFiltrados();
     lista.forEach((p) => {
       if (p.lat == null || p.lng == null) return;
-      const cor = p.multiorigem ? "#f59e0b" : INDIGO;
-      L.circleMarker([p.lat, p.lng], {
-        radius: 4, color: cor, weight: 1.5,
-        fillColor: cor, fillOpacity: 0.55,
+      const e = CORES[p.cruz_flag] || SEM_LIGACAO;
+      const n = Number(p.n_fontes || 1);
+      const raio = e.destaque ? 9 : (n > 1 ? 8 : 6);
+
+      L.marker([p.lat, p.lng], {
+        icon: L.divIcon({
+          className: "cr-ponto",
+          iconSize: [raio * 2, raio * 2],
+          iconAnchor: [raio, raio],
+          html:
+            `<span class="cr-bola${e.destaque ? " cr-destaque" : ""}" ` +
+            `style="width:${raio * 2}px;height:${raio * 2}px;` +
+            `background:${e.cor};border-color:${e.anel}">` +
+            (n > 1 ? `<i>${n}</i>` : "") + "</span>",
+        }),
+        // O DESTAQUE FICA POR CIMA. Numa rua densa o ponto que interessa some
+        // atrás dos que já estão no cadastro, e o `zIndexOffset` é o que
+        // garante que o achado apareça.
+        zIndexOffset: e.destaque ? 1000 : 0,
+        keyboard: false,
       }).bindPopup(
         `<b>${escapar(p.nome || "(sem nome)")}</b><br>` +
         `<span style="color:#6b7280">${escapar(p.endereco || "sem endereço")}</span>` +
+        `<br><small style="color:${e.anel}">${escapar(e.rotulo)}` +
+        (p.num_ligacao ? ` · ligação ${escapar(p.num_ligacao)}` : "") + "</small>" +
+        `<br><small style="color:#6b7280">${n} ` +
+        (n === 1 ? "fonte" : "fontes") + "</small>" +
         (p.veredito ? `<br><small>${escapar(p.veredito)}</small>` : "")
       ).addTo(camadaPois);
     });
@@ -828,27 +951,22 @@
 
     // basemap
     const menu = $("menu-basemap");
-    BASEMAPS.forEach(([rot, url], i) => {
+    BASEMAPS.forEach(([rot], i) => {
       const b = document.createElement("button");
       b.type = "button";
-      b.className = "flex w-full items-center justify-between px-3 py-1 text-left text-sm/6 hover:bg-gray-50 " +
-        (i === 0 ? "bg-indigo-50 text-indigo-600" : "text-gray-900");
       b.innerHTML = '<span></span><span class="text-xs font-semibold text-indigo-600"></span>';
       b.querySelector("span").textContent = rot;
-      b.querySelector("span:last-child").textContent = i === 0 ? "✓" : "";
       b.addEventListener("click", () => {
-        estado.basemap = i;
-        tile.setUrl(url);
-        $("basemap-nome").textContent = rot;
+        // TROCAR A CAMADA, e não a URL dela. A versão anterior chamava
+        // `tile.setUrl()`, que só existe em `L.TileLayer` — o GoogleMutant não
+        // é um: trocar de base rebentaria com "setUrl is not a function", e o
+        // mapa ficaria no fundo anterior sem nada dizer.
+        trocarBase(i);
         menu.classList.add("hidden");
-        [...menu.children].forEach((c, k) => {
-          c.className = "flex w-full items-center justify-between px-3 py-1 text-left text-sm/6 hover:bg-gray-50 " +
-            (k === i ? "bg-indigo-50 text-indigo-600" : "text-gray-900");
-          c.querySelector("span:last-child").textContent = k === i ? "✓" : "";
-        });
       });
       menu.appendChild(b);
     });
+    pintarMenuBase();
     $("btn-basemap").addEventListener("click", () => {
       menu.classList.toggle("hidden");
       $("menu-perfil").classList.add("hidden");
@@ -858,9 +976,22 @@
       $("menu-perfil").classList.toggle("hidden");
       menu.classList.add("hidden");
     });
+    // SAIR APAGA AS TRÊS CHAVES CERTAS, e elas estão no `sessionStorage`.
+    //
+    // A primeira versão removia `localStorage.cr_sessao` — uma chave que não
+    // existe. O clique recarregava a página, o token continuava lá, e o
+    // operador voltava logado: o botão parecia funcionar e não fazia nada.
+    //
+    // O `sessao.js` guarda `cr_token`, `cr_refresh` e `cr_expira` no
+    // `sessionStorage` de propósito (fechou a aba, acabou a sessão). Deixar o
+    // refresh para trás seria pior que não limpar nada: a próxima carga o
+    // usaria para renovar sozinha.
     $("btn-sair").addEventListener("click", () => {
-      try { localStorage.removeItem("cr_sessao"); } catch (e) {}
-      location.reload();
+      try {
+        ["cr_token", "cr_refresh", "cr_expira"]
+          .forEach((k) => sessionStorage.removeItem(k));
+      } catch (e) { /* aba sem storage: o reload devolve ao login mesmo assim */ }
+      location.href = "/";
     });
 
     $("btn-expandir").addEventListener("click", () => abrirModal("m-stats"));

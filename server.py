@@ -948,11 +948,33 @@ def listar_pois():
                        -- E o ponto.
                        (SELECT count(*) > 1 FROM vinculo_poi v
                          WHERE v.poi_id = p.id AND v.estado = 'vinculado') AS multiorigem,
+
+                       -- QUANTAS FONTES, e não só "mais de uma". O mapa novo
+                       -- desenha o número em cima do ponto: dois pontos
+                       -- multiorigem não valem o mesmo se um tem duas fontes e
+                       -- o outro tem cinco, e o booleano apagava essa
+                       -- diferença justamente onde ela decide a confiança.
+                       (SELECT count(*) FROM vinculo_poi v
+                         WHERE v.poi_id = p.id AND v.estado = 'vinculado') AS n_fontes,
+
+                       -- A FLAG DO CADASTRO, que é o que pinta o ponto.
+                       --
+                       -- `ja_cadastrado`  o cliente já o tem como comercial —
+                       --                  não há o que reclassificar
+                       -- `reclassificar_*` está como habitacional na base e o
+                       --                  POI diz comércio: é o achado que o
+                       --                  produto existe para encontrar
+                       --
+                       -- Vem por LEFT JOIN porque a maioria dos pontos não tem
+                       -- ligação nenhuma (17.470 em Canoas), e exigir a junção
+                       -- os tiraria do mapa.
+                       c.cruz_flag, c.num_ligacao,
                        a.veredito, a.motivo, a.recomendar_visita, a.tipo_construcao,
                        COALESCE(p.revisar_manual, false) AS revisar_manual, p.cidade,
                        p.place_id
                 FROM pois p
                 LEFT JOIN analise_ia a ON a.poi_id = p.id
+                LEFT JOIN cadastro_cliente c ON c.poi_id = p.id
                 WHERE p.match_valido IS NOT FALSE
                   AND COALESCE(p.maps_lat, p.lat_origem) IS NOT NULL
                   -- O PONTO FUNDIDO NAO EXISTE MAIS COMO PONTO.
@@ -976,7 +998,7 @@ def listar_pois():
             cols = ["id", "nome", "categoria", "endereco", "telefone", "avaliacao",
                     "total_avaliacoes", "fonte", "fonte_dado", "status", "lat", "lng",
                     "tem_cnpj", "situacao_cadastral", "endereco_fonte", "tem_tel", "tem_sv", "tem_foto",
-                    "multiorigem",
+                    "multiorigem", "n_fontes", "cruz_flag", "num_ligacao",
                     "veredito", "motivo", "recomendar_visita", "tipo_construcao", "revisar_manual",
                     "cidade", "place_id"]
             return {"pois": [dict(zip(cols, row)) for row in cur.fetchall()]}

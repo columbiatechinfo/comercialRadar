@@ -258,3 +258,93 @@ def test_o_que_nao_existe_em_tenants_esta_marcado():
         "as lacunas da organização deixaram de ser declaradas na tela"
     assert "Modelo de base primária" in modal and "Área de atuação" in modal, \
         "os blocos sem origem sumiram em vez de ficarem declarados"
+
+
+# ── os três ajustes de 28/08/2026 ─────────────────────────────────────────
+
+def test_sair_apaga_as_chaves_certas():
+    """O DEFEITO: o botão não saía.
+
+    A primeira versão removia `localStorage.cr_sessao` — uma chave que não
+    existe. O clique recarregava, o token continuava lá, e o operador voltava
+    logado: o botão parecia funcionar e não fazia nada.
+
+    O `sessao.js` guarda `cr_token`, `cr_refresh` e `cr_expira` no
+    `sessionStorage`. Deixar o refresh para trás seria pior que não limpar nada:
+    a próxima carga o usaria para renovar sozinha."""
+    js = _ler(JS)
+    i = js.index('$("btn-sair")')
+    corpo = js[i:i + 600]
+    assert "localStorage" not in corpo, \
+        "o sair voltou a mexer no localStorage, onde o token não vive"
+    for k in ("cr_token", "cr_refresh", "cr_expira"):
+        assert k in corpo, f"o sair deixou de apagar {k}"
+    assert "sessionStorage.removeItem" in corpo
+
+
+def test_o_fundo_e_o_google_de_verdade():
+    """Não é tile XYZ parecido: o `GoogleMutant` põe um `google.maps.Map` por
+    baixo do Leaflet. Sem chave, cai para o Carto e o mapa segue utilizável."""
+    html, js = _ler(HTML), _ler(JS)
+    assert "googlemutant" in html.lower(), "o plugin do Google saiu da página"
+    assert "L.gridLayer.googleMutant" in js, "o fundo voltou a ser tile comum"
+    assert "maps.googleapis.com/maps/api/js" in js, "a JS API não é mais carregada"
+    assert "/api/mapa/config" in js, "a chave deixou de vir do servidor"
+    assert "_carto(" in js, "o recuo sem chave sumiu — o mapa ficaria sem fundo"
+
+
+def test_a_troca_de_base_nao_usa_setUrl():
+    """`setUrl` só existe em `L.TileLayer`, e o GoogleMutant não é um. A versão
+    anterior trocava a URL da camada — mudar de base rebentaria com "setUrl is
+    not a function" e o mapa ficaria no fundo anterior sem nada dizer."""
+    js = _ler(JS)
+    codigo = "\n".join(l for l in js.splitlines()
+                       if not l.lstrip().startswith("//"))
+    assert "tile.setUrl(" not in codigo, "a troca de base voltou a usar setUrl"
+    assert "function trocarBase(" in codigo, "a troca de camada sumiu"
+
+
+def test_sem_cluster_e_sem_icone_por_categoria():
+    """Regra do dono do produto. Cluster esconde densidade justamente onde ela é
+    a informação; ícone por categoria gasta a forma com um dado que já está no
+    popup e disputa com o que decide a visita."""
+    html, js = _ler(HTML), _ler(JS)
+    assert "markercluster" not in html.lower(), "o cluster voltou para a página"
+    assert "markerClusterGroup" not in js, "o cluster voltou para o código"
+    codigo = "\n".join(l for l in js.splitlines()
+                       if not l.lstrip().startswith("//"))
+    assert "p.categoria" not in codigo.split("function desenharPois")[1][:1800], \
+        "o marcador voltou a se estilizar por categoria"
+
+
+def test_a_cor_do_ponto_vem_do_cruzamento_com_o_cadastro():
+    """Amarelo = já comercial no cadastro, não há o que reclassificar.
+    Verde e em destaque = habitacional na base com comércio achado — o achado
+    que o produto existe para encontrar."""
+    js = _ler(JS)
+    assert "ja_cadastrado" in js and "reclassificar_alta" in js, \
+        "as flags do cadastro sumiram da pintura do mapa"
+    i = js.index("const CORES")
+    bloco = js[i:i + 900]
+    assert "#f59e0b" in bloco, "o amarelo do já-cadastrado sumiu"
+    assert "#16a34a" in bloco, "o verde do reclassificar sumiu"
+    assert "destaque: true" in bloco, "o destaque dos reclassificáveis sumiu"
+
+    # e o destaque fica POR CIMA: numa rua densa ele some atrás dos outros
+    assert "zIndexOffset" in js, \
+        "o ponto em destaque voltou a poder ficar atrás dos já cadastrados"
+
+
+def test_o_numero_de_fontes_chega_do_servidor():
+    """Dois pontos multiorigem não valem o mesmo se um tem duas fontes e o outro
+    tem cinco — o booleano apagava a diferença onde ela decide a confiança."""
+    s = _ler(os.path.join(RAIZ, "server.py"))
+    assert "AS n_fontes" in s, "a contagem de fontes saiu da consulta"
+    assert "c.cruz_flag" in s, "a flag do cadastro saiu da consulta do mapa"
+    i = s.index("AS n_fontes")
+    assert "LEFT JOIN cadastro_cliente" in s[i:i + 2000], \
+        "a junção com o cadastro precisa ser LEFT: a maioria dos pontos não " \
+        "tem ligação, e um INNER os tiraria do mapa"
+
+    js = _ler(JS)
+    assert "p.n_fontes" in js, "a tela deixou de ler o número de fontes"
