@@ -104,8 +104,13 @@ def test_a_api_manda_o_que_a_tela_espera():
         pytest.skip("banco indisponível")
     try:
         cur = con.cursor()
+        # `fundido_em is null` desde a migração 0036. Pelo critério antigo esta
+        # amostra podia cair num POI ABSORVIDO — `status` voltou a guardar a
+        # origem, e a maioria dos fundidos tem hoje `estadual` ou `descoberto`
+        # ali. Montar a bancada de um ponto que não existe mais no mapa testaria
+        # o contrário do que interessa.
         cur.execute("""select id from pois
-                        where coalesce(status,'') <> 'fundido'
+                        where fundido_em is null
                           and coalesce(maps_lat, lat_origem) is not null
                         order by id limit 1""")
         r = cur.fetchone()

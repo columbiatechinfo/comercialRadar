@@ -195,11 +195,20 @@ def test_o_corte_de_volume_pode_ser_desligado():
 # ─── a fusão não destrói ─────────────────────────────────────────────────────
 
 def test_o_poi_absorvido_nao_e_apagado():
-    """Uma junção errada viraria PERDA. Ele vira `status='fundido'`, mantém a
-    linha e o place_id, e o `x` da ficha desfaz."""
+    """Uma junção errada viraria PERDA. Ele ganha `fundido_em`/`fundido_para`,
+    mantém a linha e o place_id, e o `x` da ficha desfaz.
+
+    ESTE TESTE ESTAVA CEGO. Ele exigia `status = 'fundido'` no arquivo, e desde
+    a migração 0036 a fusão não escreve mais nisso — passava só porque a frase
+    sobrevive num COMENTÁRIO que explica a mudança. Um teste que casa com
+    comentário aprova qualquer coisa: a fusão poderia ter parado de marcar o
+    absorvido e ele seguiria verde."""
     import io
     s = io.open(os.path.join(RAIZ, "cruzar_fontes.py"), encoding="utf-8").read()
-    assert "status = 'fundido'" in s
+    codigo = "\n".join(l for l in s.splitlines()
+                       if not l.lstrip().startswith("#"))
+    assert "fundido_em = now()" in codigo and "fundido_para = f.vive" in codigo, \
+        "a fusão deixou de marcar o POI absorvido"
     assert "delete from pois" not in s.lower()
     assert "drop " not in s.lower()
 

@@ -45,8 +45,12 @@ class _CursorFalso:
         self.fundidos = set()
 
     def execute(self, sql, args=None):
-        if "status = 'fundido'" in sql:
-            self.fundidos.update(args[0])
+        # A MARCA DE FUSÃO NÃO VEM MAIS POR AQUI, e ignorar isso deixou este
+        # dublê cego. Ele reconhecia `status = 'fundido'` num `execute`; desde a
+        # migração 0036 a fusão escreve `fundido_em`/`fundido_para` por um
+        # `execute_values`, então `self.fundidos` ficava vazio e a asserção
+        # sobre vínculos órfãos passava sem olhar nada. Ver `_execute_values`.
+        pass
 
     def _values(self, blocos):
         antes = dict(self.vinculos)         # o estado do INÍCIO do comando
@@ -57,7 +61,14 @@ class _CursorFalso:
 
 
 def _execute_values_falso(cur, sql, blocos, template=None, page_size=None):
-    cur._values(blocos)
+    """A fusão escreve por DOIS `execute_values`: um move o vínculo, o outro
+    marca o absorvido. Distinguir pelo SQL é o que mantém este teste vendo
+    alguma coisa — a versão anterior só reconhecia `status = 'fundido'` num
+    `execute`, e depois da migração 0036 passou a aprovar sem olhar nada."""
+    if "update pois" in sql:
+        cur.fundidos.update(m for m, *_ in blocos)
+    else:
+        cur._values(blocos)
 
 
 def _poi(pid, place_id=None):
