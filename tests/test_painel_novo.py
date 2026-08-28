@@ -170,17 +170,31 @@ def test_o_html_escapa_o_que_vem_do_banco():
     """Nome de POI vai para dentro de um popup do Leaflet, que aceita HTML. Um
     ponto chamado `<img onerror=...>` executaria script na tela do operador.
 
-    A versão anterior deste teste ancorava no PRIMEIRO `bindPopup(` do arquivo e
-    olhava os 400 caracteres seguintes. Ancorar em posição é frágil: quando a
-    ficha da área entrou — e ela faz `bindPopup("")`, sem interpolar nada — o
-    teste passou a reprovar código correto. Agora ele varre TODA interpolação de
-    campo do banco em HTML, que é a propriedade que de fato importa.
+    DUAS CORREÇÕES NESTE TESTE, e as duas por ele ter reprovado código correto:
+
+    1. Ele ancorava no PRIMEIRO `bindPopup(` e olhava 400 caracteres. Quando a
+       ficha da área entrou — e ela faz `bindPopup("")`, sem interpolar nada —
+       passou a reprovar. Virou varredura de TODA interpolação.
+
+    2. A varredura não distinguia o DESTINO. `linhaLog` grava por
+       `textContent`, que não interpreta HTML: escapar ali não protege de nada
+       e ainda mostra `&amp;` ao operador. O teste reprovou um
+       `linhaLog(`...${m.nome}...`)` que estava certo.
+
+    A propriedade que importa não é "toda interpolação é escapada", é "toda
+    interpolação QUE VIRA HTML é escapada". Os destinos seguros ficam listados
+    aqui, e um destino novo entra nesta lista só com a prova de que é seguro.
     """
     js = _ler(JS)
     assert "function escapar(" in js, "a função de escape sumiu"
 
-    # Todo `${...}` que carregue campo do banco tem de passar por `escapar` ou
-    # ser número já formatado.
+    # `textContent` não interpreta HTML — quem escreve por ele está a salvo.
+    i = js.index("function linhaLog(")
+    assert "textContent = texto" in js[i:i + 700], (
+        "`linhaLog` deixou de escrever por textContent: agora ele É um destino "
+        "de HTML, e o que entra nele precisa de escape")
+    SEGUROS = ("linhaLog(",)
+
     campos = ("nome", "endereco", "categoria", "veredito", "num_ligacao",
               "cidade", "fonte", "rotulo")
     cruas = []
@@ -188,8 +202,14 @@ def test_o_html_escapa_o_que_vem_do_banco():
         expr = m.group(1)
         if "escapar(" in expr or "nf.format(" in expr or "Math." in expr:
             continue
-        if any(re.search(r"\b(p|poi|m|e|rot)\.%s\b" % c, expr) for c in campos):
-            cruas.append(expr.strip()[:60])
+        if not any(re.search(r"\b(p|poi|m|e|rot)\.%s\b" % c, expr) for c in campos):
+            continue
+        # o destino manda: olha o começo da linha em que a interpolação está
+        ini = js.rfind("\n", 0, m.start()) + 1
+        linha = js[ini:js.find("\n", m.start())]
+        if any(s in linha for s in SEGUROS):
+            continue
+        cruas.append(expr.strip()[:60])
     assert not cruas, "campo do banco interpolado em HTML sem escapar: %r" % (cruas,)
 
     # e as duas fichas que montam HTML com dado do banco usam a função

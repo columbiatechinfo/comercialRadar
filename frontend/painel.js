@@ -1146,11 +1146,31 @@
     // A ÁREA VIRA O MUNICÍPIO NO BANCO. O `minerar_tudo` lê a mesma área
     // desenhada — sem isto, escolher município na tela não mudaria o que a
     // extração faz.
-    await fetch("/api/area/municipio", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cod: m.cod }),
-    }).catch(() => {});
+    // O CÓDIGO VAI NA QUERY, e não no corpo. O endpoint declara `cod: str`,
+    // que no FastAPI é parâmetro de QUERY — ele não lê corpo nenhum.
+    //
+    // Eu mandava `body: JSON.stringify({cod})`, o servidor respondia 422 por
+    // não achar `cod`, e o `.catch(() => {})` ENGOLIA: `fetch` não rejeita em
+    // erro HTTP, só em falha de rede. A tela pintava o município escolhido, o
+    // banco continuava com a área anterior, e a mineração rodava a cidade
+    // errada sem uma linha em lugar nenhum.
+    //
+    // Custou uma run de Rio Grande que minerou Canoas, em 28/08/2026. A tela
+    // ANTIGA sempre chamou pela query — o defeito nasceu quando reescrevi esta.
+    const r = await fetch("/api/area/municipio?cod=" + encodeURIComponent(m.cod),
+                          { method: "POST" }).catch(() => null);
+    if (!r || !r.ok) {
+      // FALHA DE ÁREA É FALHA DE TUDO: sem ela a extração vai para o município
+      // anterior. Melhor parar aqui, em voz alta, do que deixar a tela dizer
+      // "Rio Grande" com Canoas no banco.
+      linhaLog(`Não consegui definir ${m.nome} como área` +
+               (r ? ` (HTTP ${r.status})` : " — sem resposta do servidor"),
+               "text-red-400");
+      estado.cidade = null;
+      estado.cod = null;
+      pintarEstado();
+      return;
+    }
 
     const malha = await pegar("/api/malha?cod=" + encodeURIComponent(m.cod));
     if (malha && malha.polygon && malha.polygon.length) {

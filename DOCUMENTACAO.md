@@ -4528,3 +4528,54 @@ que mais se repete aqui: cortar no primeiro `#` decapitava os próprios seletore
 que o teste cobra (`#px-captcha-modal`, `#cf-chl-widget`); juntar os tokens do
 `tokenize` com espaço quebrava toda asserção exata. O certo é o `tokenize` dizer
 **onde** o comentário está e apagar só aquele vão.
+
+### A tela dizia "Rio Grande" e o banco tinha Canoas (28/08/2026)
+
+O operador escolheu **Rio Grande** na lista de cidades. A mineração rodou
+**Canoas**, e nada em lugar nenhum avisou.
+
+**A causa.** O endpoint declara `cod: str` — que no FastAPI é parâmetro de
+**query**, não de corpo:
+
+```
+POST /api/area/municipio    query=['cod']    corpo=[]
+```
+
+A tela nova, que eu escrevi, mandava no corpo:
+
+```javascript
+fetch("/api/area/municipio", { method: "POST", body: JSON.stringify({cod}) })
+  .catch(() => {});          // ← só pega erro de REDE
+```
+
+O servidor respondia **422** por não achar `cod`. E `fetch` **não rejeita em erro
+HTTP** — só em falha de rede —, então o `.catch` vazio nunca disparava. A tela
+pintava o município escolhido, o `area_trabalho` continuava com a área anterior
+(`salvo_em` parado às 17:22), e a extração rodou a cidade errada.
+
+A tela **antiga** sempre chamou pela query. O defeito nasceu quando reescrevi
+esta.
+
+**Duas metades no conserto**, porque só a primeira deixaria o silêncio:
+
+1. o código vai na query;
+2. o status HTTP é conferido, e falhar a área **derruba a seleção** — a tela não
+   pode dizer "Rio Grande" com Canoas no banco.
+
+**A varredura, e não só a chamada que quebrou.**
+`test_front_bate_com_a_rota.py` lê as rotas do próprio `server.py` e cruza com
+toda chamada com corpo dos dois arquivos de front. O mesmo engano cabe em
+qualquer outra rota, e ninguém vai conferir à mão na próxima.
+
+**A área é POR EMPRESA**, e isso apareceu aqui: existem duas linhas `area_atual`,
+uma por `tenant_id`. Ao gravar Rio Grande pelo endpoint para conferir, escrevi no
+tenant do `CR_TENANT_ID` do servidor — que **não é** o da sessão do operador. A
+linha foi removida; o que vale é a seleção feita na tela, autenticada.
+
+**Um teste meu reprovou código correto**, e a correção vale registrar: o
+`test_o_html_escapa_o_que_vem_do_banco` acusou o `${m.nome}` da nova mensagem de
+erro. Só que ela vai para o `linhaLog`, que escreve por `textContent` — escapar
+ali não protege de nada e ainda mostraria `&amp;` ao operador. A propriedade
+certa não é "toda interpolação é escapada", é "toda interpolação **que vira
+HTML**". Os destinos seguros agora estão listados no teste, e um destino novo só
+entra na lista com a prova de que é seguro.
