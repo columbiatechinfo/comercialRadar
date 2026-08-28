@@ -4065,3 +4065,85 @@ Toda pergunta ao usuário vai na **caixa formal**, nunca solta no texto da
 resposta. Ele pediu isso duas vezes — em 27/08 e de novo em 28/08, depois de eu
 reincidir. Pergunta no meio de um relatório de números se perde: ele lê a
 medição, a dúvida fica no rodapé, e a resposta vem incompleta ou não vem.
+
+---
+
+## O mapa da tela nova usa a máquina que já existia (28/08/2026)
+
+### O defeito
+
+Construí o mapa da tela nova do zero. Não devia. O `app.js` já tinha uma máquina
+de mapa afinada por rodadas de uso, com defeitos caçados e documentados no
+próprio código — e eu reintroduzi todos eles em uma tarde.
+
+O dono do produto mediu e foi direto:
+
+> "usa a mesma logica de desenho em mapa, divisas, markers que ja existia, voce
+> destruiu o desempenho e a estetica com as mudanças que sem necessidade fez na
+> dinamica de mapa, era só adicionar o que pedi nao mudar o que ja funcionava"
+
+### A medição
+
+No navegador, com os **32.429 POIs de Canoas** e o mesmo ícone nos dois casos:
+
+| | desenhar | nós no DOM |
+|---|---|---|
+| `L.layerGroup` — o que eu fiz | **10.268 ms** | **32.429** |
+| `L.markerClusterGroup` — o que já existia | **477 ms** | **518** |
+
+**21× mais rápido, 63× menos DOM.** O cluster não é enfeite: é o que mantém no
+DOM só o que cabe na tela. Sem ele, cada POI do município é um `<div>` vivo.
+
+### O que mais eu tinha quebrado
+
+- **Camada base recriada a cada troca.** Cada base era uma fábrica chamada no
+  clique: escolher "Satélite" instanciava um `google.maps.Map` novo e largava o
+  anterior. O `app.js` cria uma vez e guarda em `.layer`.
+- **Recriar qualquer base quando a JS API do Google chega.** Defeito que a tela
+  antiga já havia caçado: o "Mapa claro (sem Google)" virava um mapa do Google, e
+  se a API não inicializasse ficava sem fundo nenhum. Só a base ativa **e do
+  Google** pode ser recriada.
+- **Sem panes.** A escada de z-index existe porque a malha é uma camada clicável
+  que cobre o mapa inteiro e rouba o clique de tudo por baixo. Sem andar próprio,
+  clicar num POI dentro do município selecionava o município.
+- **Escolha de fundo não persistia.** Quem trabalha em satélite reescolhia a cada
+  carregamento.
+- **Popup montado para todos os pontos.** 32 mil textos construídos para que
+  ninguém lesse. Agora é montado no clique.
+
+### As duas instruções que pareciam se contradizer
+
+Em 27/08 o pedido foi um mapa "sem delimitação de municípios, sem clusters". Em
+28/08, manter a lógica que já existia — divisas incluídas. Não são a mesma
+pergunta:
+
+- **Divisas** viraram um **liga/desliga no menu do mapa, nascendo desligadas**.
+  A máquina fica; o mapa abre limpo; quem precisa conferir onde um município
+  acaba liga. A malha entrou com `interactive: false` — ela não precisa mais
+  roubar clique, porque nesta tela a seleção de município é pelo painel.
+- **Cluster** voltou. O que estava proibido era eu trocar o motor; o cluster é o
+  motor. O que era para mudar — e mudou — é o **eixo da cor**: deixou de ser a
+  categoria e passou a ser o cruzamento com o cadastro.
+
+### O que de fato foi acrescentado
+
+Só isto, que era o pedido original:
+
+- **a cor** vem do cruzamento com o cadastro — amarelo já é comercial na base do
+  cliente, verde em destaque é habitacional na base com comércio achado no local;
+- **o distintivo acima do pino** conta quantas bases sustentam o ponto. Só
+  aparece com mais de uma: "1" em 32 mil marcadores seria ruído.
+
+### `mapa.css` — o desenho do marcador é um só
+
+As regras do pino moravam no `style.css`, que só a tela antiga carrega; por isso
+eu desenhei uma bolinha própria na tela nova. Saíram para `frontend/mapa.css`, e
+**as duas páginas carregam o mesmo arquivo**. Duas cópias divergem, e a que
+diverge é sempre a que ninguém está olhando. As decorações que são só da tela
+antiga (veredito, estrela, losango da IA de fachada) continuam no `style.css`.
+
+### A lição
+
+Antes de escrever uma tela nova sobre um domínio que já tem tela, ler a antiga.
+Cada comentário longo naquele arquivo é um defeito que alguém já pagou para
+descobrir. Reescrever do zero é assinar embaixo de todos eles de novo.

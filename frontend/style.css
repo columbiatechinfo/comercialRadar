@@ -468,48 +468,12 @@ button { font-family: inherit; }
 .bres-head { padding: 8px 15px 4px; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .5px; color: var(--texto-fraco); }
 
 /* ── Markers (padrão Google/Waze) ───────────────────────── */
-.pin-wrap { filter: drop-shadow(0 3px 3px rgba(0,0,0,.3)); }
-.pin { position: relative; width: 34px; height: 43px; cursor: pointer; transition: transform .12s ease; transform-origin: 50% 100%; }
-.pin:hover { transform: scale(1.14); }
-.pin-head {
-  position: absolute; top: 0; left: 50%; transform: translateX(-50%);
-  width: 32px; height: 32px; border-radius: 50%;
-  background: var(--c, var(--blue)); border: 2.5px solid #fff;
-  display: flex; align-items: center; justify-content: center; font-size: 15px;
-}
-.pin-tail {
-  position: absolute; bottom: 1px; left: 50%; transform: translateX(-50%);
-  width: 0; height: 0;
-  border-left: 7px solid transparent; border-right: 7px solid transparent;
-  border-top: 12px solid var(--c, var(--blue));
-}
-.pin.novo { animation: drop .5s cubic-bezier(.2,.9,.3,1.2); }
-@keyframes drop {
-  0% { transform: translateY(-42px) scale(.5); opacity: 0; }
-  70% { transform: translateY(3px) scale(1.03); opacity: 1; }
-  100% { transform: translateY(0) scale(1); }
-}
-.pin.novo::after {
-  content: ""; position: absolute; bottom: -4px; left: 50%; transform: translateX(-50%);
-  width: 12px; height: 12px; border-radius: 50%;
-  background: var(--c, var(--blue)); opacity: .5;
-  animation: pulse 1.6s ease-out 3;
-}
-@keyframes pulse {
-  0% { transform: translateX(-50%) scale(.6); opacity: .55; }
-  100% { transform: translateX(-50%) scale(4.2); opacity: 0; }
-}
-
-/* Clusters */
-.cluster {
-  background: #fff; border-radius: 50%;
-  display: flex; align-items: center; justify-content: center;
-  font-weight: 800; color: var(--ink); font-family: 'Inter', sans-serif;
-  box-shadow: 0 0 0 5px rgba(26,115,232,.25), 0 3px 8px rgba(0,0,0,.28);
-  border: 3px solid var(--blue);
-}
-.cluster.md { border-color: var(--orange); box-shadow: 0 0 0 5px rgba(232,113,10,.25), 0 3px 8px rgba(0,0,0,.28); }
-.cluster.lg { border-color: var(--red); box-shadow: 0 0 0 6px rgba(217,48,37,.25), 0 3px 8px rgba(0,0,0,.28); }
+/* O DESENHO DO MARCADOR MUDOU DE ENDEREÇO: está em `mapa.css`, que esta
+   página e o painel novo carregam. Ele saiu daqui porque eu havia
+   redesenhado o marcador do zero na tela nova e piorado o que já
+   funcionava; duas cópias divergem, e a que diverge é sempre a que
+   ninguém está olhando. As decorações abaixo (veredito, estrela, losango
+   da IA de fachada) continuam aqui: são desta tela. */
 
 /* Polígono da área */
 .area-poly { cursor: inherit; }

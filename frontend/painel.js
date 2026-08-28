@@ -15,30 +15,50 @@
   const nf = new Intl.NumberFormat("pt-BR");
   const INDIGO = "#4f46e5";
 
-  // O FUNDO É O GOOGLE DE VERDADE, pela Maps JavaScript API.
+  // O FUNDO É O GOOGLE DE VERDADE, pela Maps JavaScript API — e a máquina é a
+  // MESMA da tela anterior, DE PROPÓSITO.
   //
-  // A primeira versão usava tiles XYZ do OpenStreetMap — parecido, e não é a
-  // mesma coisa: o rótulo de estabelecimento, a densidade e o traçado que a
-  // operação usa para se localizar são os do Google. O `GoogleMutant` põe um
-  // `google.maps.Map` por baixo do Leaflet e sincroniza os dois.
+  // Eu havia reescrito esta parte do zero, e com isso reintroduzi defeitos que
+  // o `app.js` já tinha resolvido e documentado. O pior: cada base era uma
+  // FÁBRICA chamada a cada troca, então clicar em "Satélite" instanciava um
+  // `google.maps.Map` novo e largava o anterior. Aqui cada base sabe se criar
+  // UMA vez e guarda a camada pronta em `.layer`, como sempre foi.
   //
-  // Sem chave, `_google()` devolve o Carto e o mapa continua utilizável — é o
-  // mesmo recuo da tela anterior.
-  const BASEMAPS = [
-    ["Mapa padrão", () => _google("roadmap")],
-    ["Satélite", () => _google("satellite")],
-    ["Híbrido", () => _google("hybrid")],
-    ["Mapa claro (sem Google)", () => _carto("light_all")],
-  ];
-
-  const _google = (tipo) =>
-    (window.L && L.gridLayer && L.gridLayer.googleMutant)
-      ? L.gridLayer.googleMutant({ type: tipo, maxZoom: 22 })
-      : _carto("light_all");
-
+  // A escolha persiste no `localStorage`: o operador que trabalha em satélite
+  // não quer reescolher a cada carregamento.
+  //
+  // Sem chave, `_mut()` devolve o Carto e o mapa continua utilizável.
   const _carto = (estilo) => L.tileLayer(
     `https://{s}.basemaps.cartocdn.com/${estilo}/{z}/{x}/{y}{r}.png`,
     { maxZoom: 20, subdomains: "abcd" });
+
+  const _mut = (tipo) => (window.L && L.gridLayer && L.gridLayer.googleMutant)
+    ? L.gridLayer.googleMutant({ type: tipo, maxZoom: 22 })
+    : _carto("light_all");
+
+  const BASES = [
+    { chave: "limpo",    nome: "Mapa padrão",     google: true, criar: () => _mut("roadmap") },
+    { chave: "satelite", nome: "Satélite",        google: true, criar: () => _mut("satellite") },
+    { chave: "hibrido",  nome: "Satélite + ruas", google: true, criar: () => _mut("hybrid") },
+    { chave: "claro",    nome: "Mapa claro (sem Google)", criar: () => _carto("light_all") },
+    { chave: "escuro",   nome: "Escuro",                  criar: () => _carto("dark_all") },
+  ];
+
+  function camadaBase(i) {
+    const b = BASES[i];
+    if (!b.layer) b.layer = b.criar();
+    return b.layer;
+  }
+
+  function baseSalva() {
+    try {
+      const k = localStorage.getItem("cr_base");
+      const i = BASES.findIndex((b) => b.chave === k);
+      return i < 0 ? 0 : i;
+    } catch (e) {
+      return 0;                          // navegador sem storage: volta ao padrão
+    }
+  }
 
   // A COR DO PONTO DIZ O QUE FAZER COM ELE, e vem do cruzamento com o cadastro.
   //
@@ -98,23 +118,71 @@
 
   function iniciarMapa() {
     if (!window.L || mapa) return;
-    mapa = L.map("mapa", { zoomControl: true, attributionControl: false })
+    // `maxZoom` EXPLÍCITO: o cluster morre com "Map has no maxZoom specified"
+    // se a camada base ainda não entrou. Hoje ela entra antes, mas amarrar o
+    // mapa à ordem de duas linhas é deixar uma armadilha para o próximo.
+    mapa = L.map("mapa", { zoomControl: true, attributionControl: false, maxZoom: 22 })
              .setView([-15.78, -47.93], 4.4);
-    tile = BASEMAPS[0][1]().addTo(mapa);
-    camadaPois = L.layerGroup().addTo(mapa);
+
+    // PANES COM ANDAR PRÓPRIO — isto é conserto de defeito, não organização.
+    //
+    // A malha é uma camada clicável que cobre o mapa inteiro, e sem andar
+    // próprio ela rouba o clique de tudo o que está por baixo: clicar num POI
+    // dentro do município selecionava o município. Cada coisa no seu andar,
+    // marcadores no topo, sempre clicáveis. É a mesma escada da tela antiga.
+    mapa.createPane("paneMalha").style.zIndex = 410;
+    mapa.createPane("paneArea").style.zIndex = 415;
+    mapa.createPane("paneMarcadores").style.zIndex = 630;
+
+    estado.basemap = baseSalva();
+    camadaBase(estado.basemap).addTo(mapa);
+    camadaBase(estado.basemap).bringToBack();
+    tile = camadaBase(estado.basemap);
+
+    // O CLUSTER É O QUE TORNA 32 MIL PONTOS VIÁVEIS.
+    //
+    // A versão anterior desta tela punha cada POI num `L.layerGroup` como
+    // marcador próprio: 32.429 nós no DOM de uma vez, cada um com o popup já
+    // montado. O navegador engasgava em qualquer arrasto. O `markerClusterGroup`
+    // mantém no DOM só o que cabe na tela — é o que a tela antiga sempre fez, e
+    // eu não devia ter trocado.
+    camadaPois = L.markerClusterGroup({
+      showCoverageOnHover: false, maxClusterRadius: 54, spiderfyOnMaxZoom: true,
+      chunkedLoading: true,
+      iconCreateFunction(c) {
+        const n = c.getChildCount();
+        const sz = n < 50 ? 38 : n < 300 ? 46 : 54;
+        const cls = n < 50 ? "" : n < 300 ? "md" : "lg";
+        return L.divIcon({
+          html: `<div class="cluster ${cls}" style="width:${sz}px;height:${sz}px;` +
+                `font-size:${n < 50 ? 13 : 14}px">` +
+                `${n >= 1000 ? (n / 1000).toFixed(1) + "k" : n}</div>`,
+          className: "", iconSize: [sz, sz],
+        });
+      },
+    });
+    mapa.addLayer(camadaPois);
     camadaDesenho = L.layerGroup().addTo(mapa);
+    const rot = $("basemap-nome");
+    if (rot) rot.textContent = BASES[estado.basemap].nome;
+
     mapa.on("click", cliqueNoMapa);
     mapa.on("dblclick", concluirDesenho);
+    mapa.on("moveend", malhaSegueMapa);
     setTimeout(() => mapa.invalidateSize(), 200);
     carregarGoogle();
   }
 
-  // A JS API DO GOOGLE ENTRA DEPOIS, e o fundo é TROCADO quando ela chega.
+  // A JS API DO GOOGLE ENTRA DEPOIS, e só a base ATIVA é recriada.
   //
   // Carregar o script antes de montar o mapa deixaria a tela em branco enquanto
-  // a rede responde. Assim o Leaflet sobe na hora com o Carto, e o Google
-  // substitui o fundo quando estiver pronto — sem chave, nada acontece e o
-  // Carto fica.
+  // a rede responde. O Leaflet sobe na hora com o que tiver e o Google entra
+  // quando estiver pronto.
+  //
+  // Só as bases DO GOOGLE são recriadas aqui. Recriar uma do Carto a
+  // transformaria num mapa do Google — foi exatamente o defeito que a tela
+  // antiga já tinha caçado e documentado: o "Claro (sem Google)" virava Google,
+  // e se a API não inicializasse direito ficava sem fundo nenhum.
   async function carregarGoogle() {
     try {
       const c = await pegar("/api/mapa/config");
@@ -131,32 +199,101 @@
     } catch (e) {
       return;                                 // segue com o Carto
     }
-    trocarBase(estado.basemap, true);
+    if (!BASES[estado.basemap].google) return;
+    const antigo = BASES[estado.basemap].layer;
+    BASES[estado.basemap].layer = null;       // força recriar, agora com Google
+    const novo = camadaBase(estado.basemap);
+    if (novo === antigo) return;
+    novo.addTo(mapa);
+    novo.bringToBack();
+    if (antigo && mapa.hasLayer(antigo)) mapa.removeLayer(antigo);
+    tile = novo;
   }
 
   function pintarMenuBase() {
     const menu = $("menu-basemap");
     if (!menu) return;
-    [...menu.children].forEach((c, k) => {
+    [...menu.children].forEach((c) => {
+      const i = Number(c.dataset.base);
+      const ligado = Number.isInteger(i)
+        ? i === estado.basemap
+        : malhaVisivel;                       // a última linha é o liga/desliga das divisas
       c.className = "flex w-full items-center justify-between px-3 py-1 text-left " +
         "text-sm/6 hover:bg-gray-50 " +
-        (k === estado.basemap ? "bg-indigo-50 text-indigo-600" : "text-gray-900");
+        (ligado ? "bg-indigo-50 text-indigo-600" : "text-gray-900") +
+        (c.dataset.base === "malha" ? " border-t border-gray-100 mt-1 pt-2" : "");
       const marca = c.querySelector("span:last-child");
-      if (marca) marca.textContent = k === estado.basemap ? "✓" : "";
+      if (marca) marca.textContent = ligado ? "✓" : "";
     });
   }
 
-  function trocarBase(i, forcar) {
-    if (!mapa) return;
-    if (i === estado.basemap && !forcar) return;
-    const nova = BASEMAPS[i][1]();
+  // TROCAR A CAMADA, e não a URL dela: o GoogleMutant não é um `L.TileLayer`,
+  // e `setUrl` rebentaria. A camada nova vem do cache — criar uma por clique
+  // instanciava um `google.maps.Map` a cada troca.
+  function trocarBase(i) {
+    if (!mapa || i === estado.basemap) return;
+    const nova = camadaBase(i);
     nova.addTo(mapa);
     nova.bringToBack();
-    if (tile && mapa.hasLayer(tile)) mapa.removeLayer(tile);
+    if (tile && tile !== nova && mapa.hasLayer(tile)) mapa.removeLayer(tile);
     tile = nova;
     estado.basemap = i;
-    $("basemap-nome").textContent = BASEMAPS[i][0];
+    try { localStorage.setItem("cr_base", BASES[i].chave); } catch (e) { /* sem storage */ }
+    $("basemap-nome").textContent = BASES[i].nome;
     pintarMenuBase();
+  }
+
+  // ── divisas municipais (malha do IBGE) ──────────────────────────────────
+  //
+  // Desenhar a divisa de um município ponto a ponto é inviável, e a malha
+  // oficial já está no banco. Ela NASCE DESLIGADA nesta tela — o pedido de
+  // 27/08/2026 foi um mapa sem delimitação — mas a máquina continua aqui, com
+  // o liga/desliga no menu do mapa, porque quem confere um município precisa
+  // ver onde ele acaba.
+
+  const MALHA_ESTILO = { color: "#5b6b80", weight: 1.2, opacity: 0.9,
+                         fillColor: "#5b6b80", fillOpacity: 0.03 };
+  let malhaGrupo = null;
+  const malhaUFs = new Map();                 // sigla -> camada já baixada
+  let malhaVisivel = false;
+  let malhaTimer = null;
+
+  function alternarMalha() {
+    malhaVisivel = !malhaVisivel;
+    if (!mapa) return;
+    if (!malhaVisivel) {
+      if (malhaGrupo && mapa.hasLayer(malhaGrupo)) mapa.removeLayer(malhaGrupo);
+    } else {
+      if (malhaGrupo) malhaGrupo.addTo(mapa);
+      malhaSegueMapa(true);
+    }
+    pintarMenuBase();
+  }
+
+  // A malha SEGUE O MAPA e acumula as UFs visitadas: pedir só a UF do banco
+  // deixaria sem divisa quem navega para o estado vizinho.
+  function malhaSegueMapa(agora) {
+    if (!malhaVisivel || !mapa) return;
+    clearTimeout(malhaTimer);
+    malhaTimer = setTimeout(() => {
+      if (mapa.getZoom() < 6) return;         // no mundo inteiro não faz sentido
+      const c = mapa.getCenter();
+      carregarMalha(c.lat, c.lng);
+    }, agora ? 0 : 400);
+  }
+
+  async function carregarMalha(lat, lng) {
+    if (!malhaGrupo) malhaGrupo = L.layerGroup();
+    const gj = await pegar(`/api/malha?lat=${lat.toFixed(4)}&lng=${lng.toFixed(4)}`);
+    if (!gj || gj.erro || !gj.features) return;   // IBGE fora do ar: segue sem
+    const sig = gj.uf || "?";
+    if (malhaUFs.has(sig)) return;                // já desenhada
+    const camada = L.geoJSON(gj, {
+      style: MALHA_ESTILO, pane: "paneMalha", interactive: false,
+    });
+    malhaUFs.set(sig, camada);
+    malhaGrupo.addLayer(camada);
+    if (malhaVisivel && !mapa.hasLayer(malhaGrupo)) malhaGrupo.addTo(mapa);
   }
 
   function cliqueNoMapa(e) {
@@ -176,10 +313,10 @@
     camadaDesenho.clearLayers();
     const pts = estado.pts;
     if (pts.length >= 2) {
-      L.polyline(pts, { color: INDIGO, weight: 2, dashArray: "6 5" }).addTo(camadaDesenho);
+      L.polyline(pts, { pane: "paneArea", color: INDIGO, weight: 2, dashArray: "6 5" }).addTo(camadaDesenho);
     }
     pts.forEach((p) => L.circleMarker(p, {
-      radius: 4, color: INDIGO, fillColor: "#fff", fillOpacity: 1, weight: 2,
+      pane: "paneArea", radius: 4, color: INDIGO, fillColor: "#fff", fillOpacity: 1, weight: 2,
     }).addTo(camadaDesenho));
   }
 
@@ -188,6 +325,7 @@
     const pts = estado.pts.slice();
     camadaDesenho.clearLayers();
     const poly = L.polygon(pts, {
+      pane: "paneArea",
       color: INDIGO, weight: 2, fillColor: INDIGO, fillOpacity: 0.12,
     }).addTo(camadaDesenho);
     mapa.fitBounds(poly.getBounds(), { padding: [40, 40] });
@@ -211,58 +349,57 @@
     await carregarTudo();
   }
 
-  // CADA PONTO É UM PONTO — sem cluster, sem ícone por categoria.
+  // O MARCADOR É O PINO DE SEMPRE — mesma forma, mesma sombra, mesma cauda,
+  // vindos do `mapa.css`. O que muda em relação à tela antiga é APENAS o eixo
+  // da cor e um distintivo a mais, que foi o pedido de 27/08/2026:
   //
-  // Regra do dono do produto, 28/08/2026. Cluster esconde densidade justamente
-  // onde ela é a informação: uma quadra com doze pontos e uma com um viram duas
-  // bolhas parecidas, e é a densidade que diz onde vale ir. Ícone por categoria
-  // gasta a única variável visual que sobra (a forma) com um dado que já está
-  // no popup, e disputa com o que decide a visita.
+  //   a COR       deixa de ser a categoria e passa a ser o cruzamento com o
+  //               cadastro: AMARELO já é comercial na base do cliente, VERDE
+  //               em destaque é habitacional na base com comércio achado no
+  //               local — o achado que o produto existe para encontrar.
+  //   o NÚMERO    acima do pino, quantas bases sustentam o ponto. Só aparece
+  //               com mais de uma: "1" em 32 mil marcadores seria ruído.
   //
-  // O QUE O MARCADOR DIZ, e nada além disto:
-  //
-  //     a COR      o que fazer — amarelo já é comercial no cadastro, verde é
-  //                habitacional na base com comércio achado, índigo não tem
-  //                ligação nenhuma
-  //     o NÚMERO   quantas fontes sustentam o ponto, quando é mais de uma
-  //     o DESTAQUE anel mais grosso e halo nos que valem reclassificar
+  // O popup é montado NO CLIQUE. Montar 32 mil de antemão era construir texto
+  // que ninguém ia ler.
   function desenharPois() {
     if (!camadaPois) return;
     camadaPois.clearLayers();
     const lista = poisFiltrados();
-    lista.forEach((p) => {
-      if (p.lat == null || p.lng == null) return;
+    const marcadores = [];
+    for (const p of lista) {
+      if (p.lat == null || p.lng == null) continue;
       const e = CORES[p.cruz_flag] || SEM_LIGACAO;
       const n = Number(p.n_fontes || 1);
-      const raio = e.destaque ? 9 : (n > 1 ? 8 : 6);
-
-      L.marker([p.lat, p.lng], {
+      const m = L.marker([p.lat, p.lng], {
+        pane: "paneMarcadores",
         icon: L.divIcon({
-          className: "cr-ponto",
-          iconSize: [raio * 2, raio * 2],
-          iconAnchor: [raio, raio],
-          html:
-            `<span class="cr-bola${e.destaque ? " cr-destaque" : ""}" ` +
-            `style="width:${raio * 2}px;height:${raio * 2}px;` +
-            `background:${e.cor};border-color:${e.anel}">` +
-            (n > 1 ? `<i>${n}</i>` : "") + "</span>",
+          className: "pin-wrap",
+          html: `<div class="pin${e.destaque ? " achado" : ""}" style="--c:${e.cor}">` +
+                `<div class="pin-head"></div><div class="pin-tail"></div>` +
+                (n > 1 ? `<div class="pin-fontes">${n}</div>` : "") +
+                "</div>",
+          iconSize: [34, 43], iconAnchor: [17, 43],
         }),
-        // O DESTAQUE FICA POR CIMA. Numa rua densa o ponto que interessa some
-        // atrás dos que já estão no cadastro, e o `zIndexOffset` é o que
-        // garante que o achado apareça.
+        // O ACHADO FICA POR CIMA. Numa rua densa o ponto que interessa some
+        // atrás dos que já estão no cadastro.
         zIndexOffset: e.destaque ? 1000 : 0,
         keyboard: false,
-      }).bindPopup(
-        `<b>${escapar(p.nome || "(sem nome)")}</b><br>` +
-        `<span style="color:#6b7280">${escapar(p.endereco || "sem endereço")}</span>` +
-        `<br><small style="color:${e.anel}">${escapar(e.rotulo)}` +
-        (p.num_ligacao ? ` · ligação ${escapar(p.num_ligacao)}` : "") + "</small>" +
-        `<br><small style="color:#6b7280">${n} ` +
-        (n === 1 ? "fonte" : "fontes") + "</small>" +
-        (p.veredito ? `<br><small>${escapar(p.veredito)}</small>` : "")
-      ).addTo(camadaPois);
-    });
+      });
+      m.on("click", () => m.bindPopup(fichaDoPonto(p, e, n)).openPopup());
+      marcadores.push(m);
+    }
+    camadaPois.addLayers(marcadores);         // um lote só: 32 mil `addLayer` não
     $("job-cap").dataset.pontos = lista.length;
+  }
+
+  function fichaDoPonto(p, e, n) {
+    return `<b>${escapar(p.nome || "(sem nome)")}</b><br>` +
+      `<span style="color:#6b7280">${escapar(p.endereco || "sem endereço")}</span>` +
+      `<br><small style="color:${e.anel}">${escapar(e.rotulo)}` +
+      (p.num_ligacao ? ` · ligação ${escapar(p.num_ligacao)}` : "") + "</small>" +
+      `<br><small style="color:#6b7280">${n} ` + (n === 1 ? "fonte" : "fontes") + "</small>" +
+      (p.veredito ? `<br><small>${escapar(p.veredito)}</small>` : "");
   }
 
   function escapar(s) {
@@ -533,6 +670,7 @@
     const malha = await pegar("/api/malha?cod=" + encodeURIComponent(m.cod));
     if (malha && malha.polygon && malha.polygon.length) {
       const poly = L.polygon(malha.polygon, {
+        pane: "paneArea",
         color: INDIGO, weight: 2, fillColor: INDIGO, fillOpacity: 0.1,
       }).addTo(camadaDesenho);
       mapa.fitBounds(poly.getBounds(), { padding: [30, 30] });
@@ -951,21 +1089,20 @@
 
     // basemap
     const menu = $("menu-basemap");
-    BASEMAPS.forEach(([rot], i) => {
+    const linhaMenu = (rotulo, chave, aoClicar) => {
       const b = document.createElement("button");
       b.type = "button";
+      b.dataset.base = chave;
       b.innerHTML = '<span></span><span class="text-xs font-semibold text-indigo-600"></span>';
-      b.querySelector("span").textContent = rot;
-      b.addEventListener("click", () => {
-        // TROCAR A CAMADA, e não a URL dela. A versão anterior chamava
-        // `tile.setUrl()`, que só existe em `L.TileLayer` — o GoogleMutant não
-        // é um: trocar de base rebentaria com "setUrl is not a function", e o
-        // mapa ficaria no fundo anterior sem nada dizer.
-        trocarBase(i);
-        menu.classList.add("hidden");
-      });
+      b.querySelector("span").textContent = rotulo;
+      b.addEventListener("click", () => { aoClicar(); menu.classList.add("hidden"); });
       menu.appendChild(b);
-    });
+    };
+    BASES.forEach((b, i) => linhaMenu(b.nome, String(i), () => trocarBase(i)));
+    // AS DIVISAS SÃO UM LIGA/DESLIGA, e vivem no menu do mapa porque é ali que
+    // se decide o que se enxerga. Nascem desligadas — o pedido foi um mapa sem
+    // delimitação — e quem precisa conferir onde um município acaba liga.
+    linhaMenu("Divisas municipais", "malha", alternarMalha);
     pintarMenuBase();
     $("btn-basemap").addEventListener("click", () => {
       menu.classList.toggle("hidden");
@@ -1032,6 +1169,7 @@
     if (area && area.polygon && area.polygon.length >= 3) {
       estado.temArea = true;
       const poly = L.polygon(area.polygon, {
+        pane: "paneArea",
         color: INDIGO, weight: 2, fillColor: INDIGO, fillOpacity: 0.12,
       }).addTo(camadaDesenho);
       mapa.fitBounds(poly.getBounds(), { padding: [40, 40] });

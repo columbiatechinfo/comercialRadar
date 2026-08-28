@@ -1,0 +1,83 @@
+/* mapa.css — o DESENHO DO MARCADOR, e ele é um só para o sistema inteiro.
+ *
+ * DE ONDE VEIO. Estas regras moravam no `style.css`, que só a tela antiga
+ * carrega. Ao construir a tela nova eu desenhei um marcador do zero — bolinha
+ * chapada, sem sombra, sem cauda — e o resultado foi pior que o que já existia.
+ * O dono do produto foi direto: "usa a mesma lógica de desenho em mapa,
+ * divisas, markers que já existia... era só adicionar o que pedi".
+ *
+ * Então saiu do `style.css` e veio para cá, e AS DUAS TELAS carregam este
+ * arquivo. Duas cópias divergem, e a que diverge é sempre a que ninguém está
+ * olhando.
+ *
+ * Cores entram por `--c`, que o JS põe inline. Os literais abaixo são só o
+ * recuo: o marcador vive fora de qualquer elemento `.cr`, então não dá para
+ * depender de token herdado.
+ */
+
+.pin-wrap { filter: drop-shadow(0 3px 3px rgba(0,0,0,.3)); }
+.pin { position: relative; width: 34px; height: 43px; cursor: pointer; transition: transform .12s ease; transform-origin: 50% 100%; }
+.pin:hover { transform: scale(1.14); }
+.pin-head {
+  position: absolute; top: 0; left: 50%; transform: translateX(-50%);
+  width: 32px; height: 32px; border-radius: 50%;
+  background: var(--c, #1a73e8); border: 2.5px solid #fff;
+  display: flex; align-items: center; justify-content: center; font-size: 15px;
+}
+.pin-tail {
+  position: absolute; bottom: 1px; left: 50%; transform: translateX(-50%);
+  width: 0; height: 0;
+  border-left: 7px solid transparent; border-right: 7px solid transparent;
+  border-top: 12px solid var(--c, #1a73e8);
+}
+.pin.novo { animation: drop .5s cubic-bezier(.2,.9,.3,1.2); }
+@keyframes drop {
+  0% { transform: translateY(-42px) scale(.5); opacity: 0; }
+  70% { transform: translateY(3px) scale(1.03); opacity: 1; }
+  100% { transform: translateY(0) scale(1); }
+}
+.pin.novo::after {
+  content: ""; position: absolute; bottom: -4px; left: 50%; transform: translateX(-50%);
+  width: 12px; height: 12px; border-radius: 50%;
+  background: var(--c, #1a73e8); opacity: .5;
+  animation: pulse 1.6s ease-out 3;
+}
+@keyframes pulse {
+  0% { transform: translateX(-50%) scale(.6); opacity: .55; }
+  100% { transform: translateX(-50%) scale(4.2); opacity: 0; }
+}
+
+/* Clusters */
+.cluster {
+  background: #fff; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 800; color: var(--ink, #1f2937); font-family: 'Inter', sans-serif;
+  box-shadow: 0 0 0 5px rgba(26,115,232,.25), 0 3px 8px rgba(0,0,0,.28);
+  border: 3px solid var(--blue, #1a73e8);
+}
+.cluster.md { border-color: var(--orange, #e8710a); box-shadow: 0 0 0 5px rgba(232,113,10,.25), 0 3px 8px rgba(0,0,0,.28); }
+.cluster.lg { border-color: var(--red, #d93025); box-shadow: 0 0 0 6px rgba(217,48,37,.25), 0 3px 8px rgba(0,0,0,.28); }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   O QUE É NOVO, e só isto é novo: o distintivo ACIMA do marcador.
+   Pedido de 27/08/2026 — "novos visuais adicionais ACIMA dos markers que
+   dizem respeito a quantas fontes foram vinculadas e se tem ou não vínculo
+   no cadastro já".
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* Quantas bases sustentam este ponto. Só aparece com mais de uma: "1" em todo
+   marcador seria ruído em 32 mil pontos. */
+.pin-fontes {
+  position: absolute; top: -7px; right: -7px; z-index: 2;
+  min-width: 17px; height: 17px; padding: 0 3px;
+  border-radius: 9px; background: #111827; border: 2px solid #fff;
+  color: #fff; font: 700 10px/13px 'Inter', sans-serif;
+  display: flex; align-items: center; justify-content: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* O ACHADO fica em destaque: habitacional no cadastro, comércio no local.
+   É o ponto que o produto existe para encontrar, e numa rua densa ele sumia
+   atrás dos que já estão cadastrados. */
+.pin.achado .pin-head { border-color: #bbf7d0; box-shadow: 0 0 0 3px rgba(22,163,74,.45); }
+.pin.achado { filter: drop-shadow(0 0 6px rgba(22,163,74,.55)); }

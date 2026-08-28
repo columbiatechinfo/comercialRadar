@@ -304,17 +304,32 @@ def test_a_troca_de_base_nao_usa_setUrl():
     assert "function trocarBase(" in codigo, "a troca de camada sumiu"
 
 
-def test_sem_cluster_e_sem_icone_por_categoria():
-    """Regra do dono do produto. Cluster esconde densidade justamente onde ela é
-    a informação; ícone por categoria gasta a forma com um dado que já está no
-    popup e disputa com o que decide a visita."""
-    html, js = _ler(HTML), _ler(JS)
-    assert "markercluster" not in html.lower(), "o cluster voltou para a página"
-    assert "markerClusterGroup" not in js, "o cluster voltou para o código"
+def test_sem_icone_por_categoria():
+    """A COR DO MARCADOR NÃO É MAIS A CATEGORIA — e isto continua valendo.
+
+    Ícone por categoria gasta a forma com um dado que já está no popup e
+    disputa com o que decide a visita. O eixo passou a ser o cruzamento com o
+    cadastro.
+
+    O CLUSTER SAIU DESTE TESTE, e a história importa. Ele estava proibido junto
+    com isto (27/08/2026), eu obedeci ao pé da letra e desenhei o mapa do zero —
+    e o resultado foi 10.268 ms e 32.429 nós no DOM para desenhar Canoas, contra
+    477 ms e 518 nós da máquina que já existia. Em 28/08/2026 o dono do produto
+    mediu e reverteu: "usa a mesma logica de desenho em mapa, divisas, markers
+    que ja existia... era só adicionar o que pedi".
+
+    A regra que ficou: o cluster é o MOTOR, e o que estava proibido era eu
+    trocar o motor. O que era para mudar é o que este teste ainda prende — a
+    cor — e o acréscimo pedido, preso em
+    `test_o_unico_acrescimo_e_o_que_foi_pedido`.
+    """
+    js = _ler(JS)
     codigo = "\n".join(l for l in js.splitlines()
                        if not l.lstrip().startswith("//"))
     assert "p.categoria" not in codigo.split("function desenharPois")[1][:1800], \
         "o marcador voltou a se estilizar por categoria"
+    assert "catInfo" not in codigo, \
+        "a tabela de categorias da tela antiga voltou a pintar o marcador"
 
 
 def test_a_cor_do_ponto_vem_do_cruzamento_com_o_cadastro():
@@ -382,3 +397,122 @@ def test_o_login_traz_o_proprio_estilo():
     # e a fonte é UMA só: as regras saíram do style.css quando vieram para cá
     assert "cr-acesso" not in _ler(os.path.join(RAIZ, "frontend", "style.css")), \
         "as regras do login voltaram a existir em dois arquivos, e vão divergir"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# O MAPA USA A MÁQUINA QUE JÁ EXISTIA
+#
+# Eu havia reescrito o mapa da tela nova do zero. O dono do produto mediu o
+# resultado e foi direto: "voce destruiu o desempenho e a estetica com as
+# mudanças que sem necessidade fez na dinamica de mapa, era só adicionar o que
+# pedi nao mudar o que ja funcionava".
+#
+# MEDIDO NO NAVEGADOR com os 32.429 POIs de Canoas, mesmo ícone nos dois casos:
+#
+#     layerGroup (o que eu fiz)     10.268 ms    32.429 nós no DOM
+#     markerCluster (o que existia)    477 ms         518 nós no DOM
+#
+# 21× mais rápido, 63× menos DOM. Os testes abaixo prendem cada peça que eu
+# havia jogado fora.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_os_pontos_entram_por_cluster_e_em_lote():
+    js = _ler(JS)
+    assert "markerClusterGroup" in js, (
+        "o cluster saiu: 32.429 marcadores voltam de uma vez ao DOM, "
+        "10 s para desenhar contra 477 ms"
+    )
+    assert "camadaPois.addLayers(" in js, (
+        "os marcadores voltaram a entrar um a um; `addLayers` põe o lote inteiro"
+    )
+    assert "L.layerGroup()" not in js.split("camadaPois =")[1].split("\n")[0], \
+        "a camada de POIs voltou a ser um layerGroup solto"
+
+
+def test_a_camada_base_e_criada_uma_vez_e_persiste():
+    js = _ler(JS)
+    assert "function camadaBase(" in js and "if (!b.layer) b.layer = b.criar();" in js, (
+        "a base voltou a ser fabricada a cada troca — um `google.maps.Map` novo "
+        "por clique, o anterior largado"
+    )
+    assert 'localStorage.setItem("cr_base"' in js and "function baseSalva(" in js, \
+        "a escolha de fundo parou de persistir entre carregamentos"
+    # e o defeito que a tela antiga já havia caçado: recriar uma base do Carto
+    # como Google. Só a base ativa E do Google é recriada quando a API chega.
+    assert "if (!BASES[estado.basemap].google) return;" in js, (
+        "voltou a recriar qualquer base quando a JS API do Google chega: "
+        "o 'Mapa claro (sem Google)' virava Google"
+    )
+
+
+def test_o_mapa_tem_a_escada_de_panes():
+    js = _ler(JS)
+    for pane, z in (("paneMalha", "410"), ("paneArea", "415"), ("paneMarcadores", "630")):
+        assert f'createPane("{pane}").style.zIndex = {z}' in js, \
+            f"o andar {pane} ({z}) sumiu — a malha volta a roubar o clique dos POIs"
+    # a área desenhada precisa do andar dela em TODO desenho, não só num
+    assert js.count('pane: "paneArea"') >= 4, \
+        "algum desenho de área ficou no pane padrão, abaixo da malha"
+    assert "maxZoom: 22" in js, \
+        "sem maxZoom no mapa o cluster morre com 'Map has no maxZoom specified'"
+
+
+def test_as_divisas_existem_e_nascem_desligadas():
+    """AS DUAS COISAS SÃO VERDADE AO MESMO TEMPO.
+
+    O pedido de 27/08/2026 foi um mapa sem delimitação de município; o de
+    28/08/2026 foi manter a lógica de divisas que já existia. Um liga/desliga
+    no menu do mapa, começando desligado, atende os dois — e quem confere onde
+    um município acaba não fica sem.
+    """
+    js = _ler(JS)
+    assert "let malhaVisivel = false;" in js, \
+        "as divisas voltaram a nascer ligadas — o pedido era um mapa sem delimitação"
+    assert "function alternarMalha(" in js and '"Divisas municipais"' in js, \
+        "o liga/desliga das divisas sumiu do menu do mapa"
+    assert "function carregarMalha(" in js and "malhaSegueMapa" in js, \
+        "a malha parou de acompanhar o mapa: quem navega para a UF vizinha fica sem divisa"
+    assert "interactive: false" in js, \
+        "a malha voltou a ser clicável e rouba o clique dos POIs"
+
+
+def test_o_desenho_do_marcador_e_um_so_para_o_sistema():
+    css = os.path.join(RAIZ, "frontend", "mapa.css")
+    assert os.path.exists(css), "frontend/mapa.css sumiu"
+    regras = _ler(css)
+    for peca in (".pin-head", ".pin-tail", ".pin-wrap", ".cluster"):
+        assert peca in regras, f"{peca} sumiu do desenho compartilhado"
+
+    # a fonte é UMA: as regras saíram do style.css quando vieram para cá
+    style = _ler(os.path.join(RAIZ, "frontend", "style.css"))
+    assert ".pin-wrap {" not in style and ".pin-tail {" not in style, \
+        "o desenho do marcador voltou a existir em dois arquivos, e vão divergir"
+
+    # e AS DUAS páginas carregam
+    for pag in ("painel.html", "index.html"):
+        assert "/static/mapa.css" in _ler(os.path.join(RAIZ, "frontend", pag)), \
+            f"{pag} deixou de carregar o desenho do marcador"
+
+    js = _ler(JS)
+    assert 'className: "pin-wrap"' in js and '<div class="pin-tail">' in js, \
+        "a tela nova voltou a desenhar um marcador próprio em vez do pino do sistema"
+
+
+def test_o_unico_acrescimo_e_o_que_foi_pedido():
+    """O PEDIDO ERA ADICIONAR, e é só isto que o marcador ganhou:
+    a cor passa a vir do cruzamento com o cadastro, e um distintivo ACIMA do
+    pino conta quantas bases o sustentam.
+    """
+    regras = _ler(os.path.join(RAIZ, "frontend", "mapa.css"))
+    assert ".pin-fontes" in regras, "o distintivo de contagem de fontes sumiu"
+    assert ".pin.achado" in regras, \
+        "o destaque do achado sumiu: numa rua densa ele some atrás dos já cadastrados"
+
+    js = _ler(JS)
+    assert "pin-fontes" in js and "n > 1" in js, \
+        'o distintivo voltou a aparecer com "1", ruído em 32 mil marcadores'
+    assert "CORES[p.cruz_flag]" in js, \
+        "a cor do marcador deixou de vir do cruzamento com o cadastro"
+    # e o popup NÃO é montado de antemão para 32 mil pontos
+    assert 'm.on("click", () => m.bindPopup(' in js, \
+        "o popup voltou a ser montado para todos os pontos, e não no clique"

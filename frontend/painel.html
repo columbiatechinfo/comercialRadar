@@ -41,6 +41,8 @@
 
 <script src="https://cdn.tailwindcss.com"></script>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
+<link rel="stylesheet" href="/static/mapa.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <!-- O FUNDO É O GOOGLE DE VERDADE, pela Maps JavaScript API — e não um XYZ de
      tiles. O `GoogleMutant` instancia um `google.maps.Map` por baixo do Leaflet
@@ -53,6 +55,7 @@
 
      Sem chave, o mapa cai para o Carto claro e continua utilizável. -->
 <script src="https://unpkg.com/leaflet.gridlayer.googlemutant@0.14.1/dist/Leaflet.GoogleMutant.js"></script>
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -94,24 +97,10 @@
   .nav-off, .nav-item:disabled { color:#d1d5db; cursor:not-allowed; }
   .nav-off svg, .nav-item:disabled svg { color:#d1d5db; }
 
-  /* O MARCADOR DIZ DUAS COISAS E SÓ DUAS: a cor diz o que fazer com o ponto, o
-     número diz quantas fontes o sustentam. Sem cluster e sem ícone por
-     categoria — regra do dono do produto, 28/08/2026. */
-  .cr-ponto { background:none; border:0; }
-  .cr-bola {
-    display:flex; align-items:center; justify-content:center;
-    border-radius:9999px; border:1.5px solid; box-sizing:border-box;
-    color:#fff; font-size:9px; font-weight:700; line-height:1;
-    box-shadow:0 1px 2px rgba(0,0,0,.25);
-  }
-  .cr-bola i { font-style:normal; }
-  /* O DESTAQUE É UM HALO, e não uma cor a mais. Trocar a cor para destacar
-     gastaria a variável que já carrega o significado; o anel externo separa
-     "o que fazer" de "olhe para este primeiro". */
-  .cr-destaque {
-    border-width:2px;
-    box-shadow:0 0 0 3px rgba(22,163,74,.28), 0 1px 3px rgba(0,0,0,.3);
-  }
+  /* O DESENHO DO MARCADOR VEM DO `mapa.css`, o mesmo da tela antiga.
+     Eu havia desenhado uma bolinha própria aqui; ficou pior e não seguia
+     o resto do sistema. Ali também mora o único acréscimo pedido: o
+     distintivo de contagem de fontes ACIMA do pino. */
   .leaflet-popup-content { font-size:12.5px; line-height:1.45; }
 </style>
 </head>
