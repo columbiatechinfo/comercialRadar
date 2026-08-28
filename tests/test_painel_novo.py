@@ -656,3 +656,108 @@ def test_o_icone_do_ramo_fica_em_pe_dentro_do_losango():
     for pag in ("painel.js", "app.js"):
         assert "<i>${k.emo}</i>" in _ler(os.path.join(RAIZ, "frontend", pag)), \
             f"{pag} voltou a pôr o emoji solto, e ele deita dentro do losango"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# OS DOIS AJUSTES DE 28/08/2026 (fim do dia)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_origem_da_base_e_multiselecao():
+    """Rádio obrigava UMA base por vez, e a pergunta real do operador é
+    comparativa — "o que a captura e o iFood acharam e o cadastro não tem".
+    Nenhuma marcada = todas, o mesmo contrato dos outros três filtros.
+    """
+    js = _ler(JS)
+    assert 'filtros: { origem: [], ' in js, \
+        "o filtro de origem voltou a guardar uma string, e só cabe uma escolha"
+    assert 'alternar("origem", f)' in js, \
+        "a origem deixou de usar o mesmo alternador dos outros filtros"
+    assert "f.origem.length && !f.origem.includes(" in js, \
+        "o recorte por origem voltou a comparar com uma única fonte"
+    assert "return f.origem.length + f.atributos.length" in js, \
+        "a contagem de filtros ativos não conta mais as origens marcadas"
+
+    # e o botão de limpar zera a LISTA, não uma string
+    assert 'estado.filtros = { origem: [], atributos: [], ia: [], construcao: [] };' in js, \
+        "limpar filtros devolve uma string à origem, e `.length` quebra"
+
+    # nenhum filtro é rádio: se voltar um, voltou o comportamento exclusivo
+    assert 'type="radio"' not in js and "linhaRadio" not in js, \
+        "voltou um filtro de escolha única"
+    assert 'type="radio"' not in _ler(HTML), "voltou um rádio no HTML"
+
+
+def test_novos_pontos_conta_os_dois_grupos():
+    """"NOVOS" É O QUE O CADASTRO DO CLIENTE NÃO COBRE, e são dois grupos:
+
+        sem ligação      o cadastro não conhece o imóvel
+        reclassificar_*  o imóvel ESTÁ no cadastro, com tarifa que não é
+                         comercial, e achamos comércio no local
+
+    `ja_cadastrado` fica FORA dos dois: já é comercial na base, não há o que
+    fazer com ele. Somá-lo inflaria o número que decide quanta gente vai a
+    campo.
+
+    CONFERIDO NO NAVEGADOR com um conjunto conhecido — 17.470 sem ligação,
+    3.886 em reclassificação, 11.073 já comerciais: total de novos 21.356, com
+    os 11.073 fora da conta.
+    """
+    js = _ler(JS)
+    assert "function contarNovos(" in js, "a contagem de pontos novos sumiu"
+    assert 'if (!f) semLigacao++;' in js and 'else if (f !== "ja_cadastrado") reclassificar++;' in js, \
+        "a regra dos dois grupos mudou: `ja_cadastrado` não pode entrar em novos"
+    assert "total: semLigacao + reclassificar" in js, \
+        "o número grande deixou de somar os dois grupos"
+    # o numerão é a contagem de novos, não mais o total de válidos
+    assert '$("s-total").textContent = nf.format(total);' not in js, \
+        "o cartão voltou a mostrar o total de válidos em vez dos pontos novos"
+    # ...mas as barras continuam sobre o total válido, senão passam de 100%
+    assert "const total = s.validos || 0;" in js, \
+        "o denominador das barras de atributo saiu do total válido"
+
+
+def test_a_caixinha_cinza_fica_a_direita_do_numero_grande():
+    """VERIFICADO NO NAVEGADOR: número em 24px #111827, caixinha em 11px
+    #6b7280 sobre #f3f4f6, raio 6px, 8px à direita, mesma linha de base, mais
+    baixa que o número — e some quando é zero.
+    """
+    html = _ler(HTML)
+    for grande, chip in (("s-total", "s-reclass"), ("m-total", "m-reclass")):
+        i = html.index('id="%s"' % grande)
+        j = html.index('id="%s"' % chip)
+        assert j > i, "a caixinha de %s ficou à ESQUERDA do número grande" % grande
+        assert "text-gray-500" in html[j:j + 260] and "bg-gray-100" in html[j:j + 260], \
+            "a caixinha de %s deixou de ser cinza" % chip
+        assert "tabular-nums" in html[i:i + 200], \
+            "%s perdeu o alinhamento de dígitos" % grande
+
+    js = _ler(JS)
+    assert 'e.classList.toggle("hidden", !n.reclassificar);' in js, (
+        'a caixinha voltou a mostrar "0": um zero cinza ao lado do número '
+        "grande parece defeito de carregamento, não ausência de achado")
+
+
+def test_o_cartao_conta_so_o_municipio_escolhido():
+    """DEFEITO ANTERIOR, corrigido de passagem.
+
+    `/api/stats?cidade=` já vinha por município, mas `/api/pois` traz a base
+    inteira — com Canoas escolhida, "Multifontes" contava o Brasil todo ao lado
+    de um total que era só de Canoas. Um `poisDoEscopo()` decide, num lugar só,
+    quais pontos o cartão descreve.
+    """
+    js = _ler(JS)
+    assert "function poisDoEscopo(" in js, "o cartão voltou a contar a base inteira"
+    assert "const pois = poisDoEscopo();" in js, \
+        "a contagem de novos voltou a ignorar o município escolhido"
+    assert "const multi = poisDoEscopo().filter" in js, \
+        "Multifontes voltou a contar fora do município escolhido"
+    # os chips de filtro NÃO entram: eles recortam o mapa, não redefinem
+    # quantos pontos novos a cidade tem
+    i = js.index("function poisDoEscopo(")
+    assert "estado.filtros" not in js[i:i + 400], \
+        "o escopo do cartão passou a depender dos chips de filtro"
+
+    # e o cartão não espera o /api/stats para aparecer
+    i = js.index("async function carregarPois(")
+    assert "pintarNovos();" in js[i:i + 500], \
+        "o cartão voltou a depender do /api/stats: se ele falhar, vira travessão"

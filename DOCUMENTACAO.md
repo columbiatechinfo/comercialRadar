@@ -4189,3 +4189,42 @@ telas.
 varrer **toda** interpolação de campo do banco em HTML, que é a propriedade que
 importa, e conferido com o defeito injetado de propósito: reprova com `p.nome`
 cru, passa com `escapar(p.nome)`.
+
+### Origem multisseleção e o cartão de pontos novos (28/08/2026)
+
+**A origem da base virou multisseleção.** Era rádio: uma base por vez. A
+pergunta real do operador é comparativa — "o que a captura e o iFood acharam e
+o cadastro do cliente não tem" — e com rádio isso exige três leituras da tela.
+Nenhuma marcada = todas, o mesmo contrato dos outros três filtros. Nenhum filtro
+da tela usa escolha única agora.
+
+**"Novos pontos únicos" passou a contar o que o cadastro não cobre**, e são dois
+grupos, não um:
+
+| grupo | o que é | por que conta |
+|---|---|---|
+| sem ligação | o cadastro não conhece o imóvel | vira fila de vinculação humana |
+| `reclassificar_*` | o imóvel **está** no cadastro, com tarifa que não é comercial, e achamos comércio no local | é a reclassificação — a razão de o produto existir |
+
+`ja_cadastrado` fica de fora dos dois: já é comercial na base do cliente, não há
+o que fazer com ele. Somá-lo inflaria justamente o número que decide quanta
+gente vai a campo.
+
+O número grande é a soma; a **caixinha cinça à direita** traz o segundo grupo
+isolado — os que já estavam no cadastro com outra classificação. Ela **some**
+quando é zero: um "0" cinza ao lado do número grande parece defeito de
+carregamento, não ausência de achado.
+
+O denominador das barras de atributo continua sendo o total válido — "com CNPJ"
+é fatia de tudo o que foi minerado, não dos pontos novos; trocá-lo faria
+percentuais passarem de 100%.
+
+**Um defeito anterior corrigido de passagem.** `/api/stats?cidade=` já vinha por
+município, mas `/api/pois` traz a base inteira: com Canoas escolhida,
+"Multifontes" contava o Brasil todo ao lado de um total que era só de Canoas. Um
+`poisDoEscopo()` decide num lugar só quais pontos o cartão descreve. Os chips de
+filtro **não** entram nessa conta — quem marca "com CNPJ" está recortando o
+mapa, não redefinindo quantos pontos novos a cidade tem.
+
+O cartão também deixou de esperar o `/api/stats`: conta a partir dos POIs, que
+já chegaram, e sobrevive à queda daquela rota em vez de virar um travessão.

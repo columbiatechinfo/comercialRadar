@@ -129,7 +129,7 @@
     modo: null, painel: null, cidade: null, cod: null,
     desenhando: false, pts: [], temArea: false,
     basemap: 0, pois: [], stats: null, cadastro: null, eu: null, empresa: null,
-    filtros: { origem: "", atributos: [], ia: [], construcao: [] },
+    filtros: { origem: [], atributos: [], ia: [], construcao: [] },
   };
 
   let mapa, camadaDesenho, camadaPois, tile;
@@ -616,7 +616,7 @@
     const q = ($("busca").value || "").trim().toLowerCase();
     return estado.pois.filter((p) => {
       if (estado.cidade && (p.cidade || "").toLowerCase() !== estado.cidade.toLowerCase()) return false;
-      if (f.origem && (p.fonte || "") !== f.origem) return false;
+      if (f.origem.length && !f.origem.includes(p.fonte || "")) return false;
       if (f.ia.length && !f.ia.includes(p.veredito || "")) return false;
       if (f.construcao.length && !f.construcao.includes(p.tipo_construcao || "")) return false;
       for (const a of f.atributos) {
@@ -636,7 +636,7 @@
 
   function contarFiltros() {
     const f = estado.filtros;
-    return (f.origem ? 1 : 0) + f.atributos.length + f.ia.length + f.construcao.length;
+    return f.origem.length + f.atributos.length + f.ia.length + f.construcao.length;
   }
 
   function montarFiltros() {
@@ -644,16 +644,20 @@
     // "Deliverys" e "SaaS de hospedagem"; nós temos as fontes que temos, e
     // oferecer o que não existe é pior que não oferecer.
     const fontes = [...new Set(estado.pois.map((p) => p.fonte).filter(Boolean))].sort();
+    // ORIGEM É MULTISSELEÇÃO, como os outros três filtros. Rádio obrigava a
+    // escolher UMA base por vez, e a pergunta real do operador é comparativa —
+    // "o que a captura e o iFood acharam e o cadastro do cliente não tem".
+    // Nenhuma marcada = todas, que é o mesmo contrato dos demais.
     const alvoOrigem = $("f-origem");
     alvoOrigem.innerHTML = "";
-    linhaRadio(alvoOrigem, "origem", "", "Todas as origens", !estado.filtros.origem, () => {
-      estado.filtros.origem = ""; aposFiltro();
-    });
     fontes.forEach((f) => {
       const n = estado.pois.filter((p) => p.fonte === f).length;
-      linhaRadio(alvoOrigem, "origem", f, `${f} · ${nf.format(n)}`,
-        estado.filtros.origem === f, () => { estado.filtros.origem = f; aposFiltro(); });
+      linhaCheck(alvoOrigem, `${f} · ${nf.format(n)}`,
+        estado.filtros.origem.includes(f), () => alternar("origem", f));
     });
+    if (!fontes.length) {
+      alvoOrigem.innerHTML = '<p class="px-2 text-[11.5px] text-gray-400">Nenhuma origem nesta seleção.</p>';
+    }
 
     const attrs = [
       ["cnpj", "Com CNPJ"], ["tel", "Com telefone"], ["foto", "Com foto"],
@@ -699,15 +703,6 @@
     desenharPois();
   }
 
-  function linhaRadio(alvo, grupo, valor, rotulo, marcado, ao) {
-    const l = document.createElement("label");
-    l.className = "flex cursor-pointer items-center gap-x-2.5 rounded-md px-2 py-1.5 text-sm text-gray-700 hover:bg-gray-50";
-    l.innerHTML = `<input type="radio" name="${grupo}" class="size-4 border-gray-300 text-indigo-600 focus:ring-2 focus:ring-indigo-500"${marcado ? " checked" : ""}><span></span>`;
-    l.querySelector("span").textContent = rotulo;
-    l.querySelector("input").addEventListener("change", ao);
-    alvo.appendChild(l);
-  }
-
   function linhaCheck(alvo, rotulo, marcado, ao, cor) {
     const l = document.createElement("label");
     l.className = "flex cursor-pointer items-start gap-x-2.5 rounded-md px-2 py-1.5 text-[13px]/[18px] text-gray-700 hover:bg-gray-50";
@@ -720,13 +715,91 @@
 
   // ── estatísticas ────────────────────────────────────────────────────────
 
+  // "NOVOS PONTOS ÚNICOS" É O QUE O CADASTRO DO CLIENTE NÃO COBRE, e são dois
+  // grupos, não um.
+  //
+  // Regra do dono do produto, 28/08/2026: contar quantos pontos são novos —
+  // os que NÃO ESTAVAM no cadastro, mais os que estavam mas com classificação
+  // DIFERENTE DE COMERCIAL. O segundo grupo vai numa caixinha cinza à direita
+  // do número grande.
+  //
+  // Os dois são trabalho novo para a concessionária, e por motivos diferentes:
+  //
+  //   sem ligação      o cadastro não conhece este imóvel. Vira fila de
+  //                    vinculação humana.
+  //   reclassificar_*  o imóvel ESTÁ no cadastro, com tarifa que não é
+  //                    comercial, e nós achamos comércio no local. É a
+  //                    reclassificação — a razão de o produto existir.
+  //
+  // `ja_cadastrado` fica de fora dos dois: já é comercial na base do cliente,
+  // não há o que fazer com ele. Somá-lo aqui inflaria o número que decide
+  // quanta gente vai a campo.
+  //
+  // A contagem sai de `estado.pois`, e não de `s.validos`: é a mesma lista de
+  // onde já sai "Multifontes" neste cartão, e é a única que traz `cruz_flag`.
+  // O CARTÃO DESCREVE O ESCOPO, NÃO O FILTRO. `/api/stats?cidade=` já vinha
+  // por município, mas `/api/pois` traz a base inteira — com Canoas escolhida,
+  // "Multifontes" contava o Brasil todo ao lado de um total que era só de
+  // Canoas. Os chips de filtro NÃO entram aqui: quem marca "com CNPJ" está
+  // recortando o mapa, não redefinindo quantos pontos novos a cidade tem.
+  function poisDoEscopo() {
+    const pois = estado.pois || [];
+    if (!estado.cidade) return pois;
+    const c = estado.cidade.toLowerCase();
+    return pois.filter((p) => (p.cidade || "").toLowerCase() === c);
+  }
+
+  function contarNovos() {
+    const pois = poisDoEscopo();
+    let semLigacao = 0, reclassificar = 0;
+    for (const p of pois) {
+      const f = p.cruz_flag || "";
+      if (!f) semLigacao++;
+      else if (f !== "ja_cadastrado") reclassificar++;
+    }
+    return { semLigacao, reclassificar, total: semLigacao + reclassificar };
+  }
+
+  function pintarNovos() {
+    const n = contarNovos();
+    const dica =
+      `${nf.format(n.total)} pontos novos: ` +
+      `${nf.format(n.semLigacao)} que o cadastro não conhece + ` +
+      `${nf.format(n.reclassificar)} que estão no cadastro com classificação ` +
+      `diferente de comercial`;
+
+    for (const id of ["s-total", "m-total"]) {
+      const e = $(id);
+      if (e) { e.textContent = nf.format(n.total); e.title = dica; }
+    }
+    for (const id of ["s-reclass", "m-reclass"]) {
+      const e = $(id);
+      if (!e) continue;
+      e.textContent = nf.format(n.reclassificar);
+      e.title = "Já estavam no cadastro, com classificação diferente de comercial";
+      // Sem nenhum, a caixinha some: um "0" cinza ao lado do número grande
+      // parece defeito de carregamento, não ausência de achado.
+      e.classList.toggle("hidden", !n.reclassificar);
+    }
+    const cx = $("m-novos-detalhe");
+    if (cx) {
+      cx.textContent = n.total
+        ? `${nf.format(n.semLigacao)} fora do cadastro · ` +
+          `${nf.format(n.reclassificar)} no cadastro com outra classificação`
+        : "";
+    }
+    return n;
+  }
+
   function pintarStats(s) {
     if (!s) return;
+    // O DENOMINADOR DAS BARRAS CONTINUA SENDO O TOTAL VÁLIDO: "com CNPJ" é uma
+    // fatia de tudo o que foi minerado, não dos pontos novos. Trocá-lo faria
+    // percentuais passarem de 100%.
     const total = s.validos || 0;
-    $("s-total").textContent = nf.format(total);
-    $("m-total").textContent = nf.format(total);
+    pintarNovos();
 
-    const multi = (estado.pois || []).filter((p) => p.multiorigem).length;
+    const multi = poisDoEscopo().filter((p) => p.multiorigem).length;
     $("s-multi").textContent = nf.format(multi);
     $("m-multi").textContent = nf.format(multi);
     $("s-multi-bar").style.width = (total ? Math.round((multi / total) * 100) : 0) + "%";
@@ -1009,6 +1082,10 @@
     estado.pois = (d && d.pois) || [];
     desenharPois();
     montarFiltros();
+    // O CARTÃO NÃO ESPERA O `/api/stats`. Ele conta a partir dos POIs, que já
+    // chegaram — e se a rota de estatísticas falhar, o número de pontos novos
+    // continua na tela em vez de virar um travessão.
+    pintarNovos();
   }
 
   async function carregarStats() {
@@ -1262,7 +1339,7 @@
     });
 
     $("btn-limpar-filtros").addEventListener("click", () => {
-      estado.filtros = { origem: "", atributos: [], ia: [], construcao: [] };
+      estado.filtros = { origem: [], atributos: [], ia: [], construcao: [] };
       aposFiltro();
     });
 
