@@ -483,6 +483,34 @@ def _tolerante(cmd: list, nome: str) -> int:
     return rc
 
 
+def _tolerante_i9(argumentos: list, nome: str) -> int:
+    """O mesmo que `_tolerante`, mas a etapa roda NO i9.
+
+    É para a etapa que abre NAVEGADOR. O notebook do operador é onde ele está
+    olhando o painel; seis Chromium com proxy ali disputam a CPU da tela que
+    mostra a própria mineração acontecendo.
+
+    E há um efeito que só aparece na hora do incidente: com os navegadores no
+    notebook, "derrubar os navegadores da mineração" derruba o Chrome PESSOAL
+    junto — não há como separá-los pelo nome do processo. No i9 os dois deixam
+    de se confundir.
+
+    CAI DE VOLTA PARA O LOCAL se o i9 não responder. Perder a etapa por causa
+    do SSH seria trocar um problema de lugar por um problema de existência —
+    e o aviso diz que ela rodou aqui, para ninguém estranhar a máquina pesando.
+    """
+    try:
+        rc = i9.rodar([f"./{argumentos[0]}"] + argumentos[1:], _log)
+    except Exception as e:
+        _log(f"  i9 indisponível ({type(e).__name__}) — {nome} roda AQUI, "
+             f"e o notebook vai pesar")
+        return _tolerante([PYTHON] + argumentos, nome)
+    if rc != 0:
+        _log(f"⚠️  {nome} falhou no i9 (código {rc}). As demais etapas continuam;")
+        _log(f"   esta pode ser repetida sozinha depois.")
+    return rc
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -654,9 +682,20 @@ def main(argv=None) -> int:
     if a.pular_descoberta:
         _log("  pulado por --pular-descoberta")
     else:
-        _tolerante([PYTHON, "descobrir_maps.py", "--area", a.area,
-                    "--empresa", a.empresa, "--aplicar"],
-                   "descoberta por categoria")
+        # NO i9, COMO A CAPTURA — e isto é conserto de um defeito de lugar.
+        #
+        # Esta etapa abre um navegador com proxy POR WORKER. Rodando aqui, eram
+        # seis Chromium no notebook do operador, disputando CPU e memória com o
+        # painel que ele está olhando — exatamente o que a regra "trabalho
+        # pesado vai para o i9" existe para evitar. E o sintoma enganava: quem
+        # sentia a máquina pesar achava que era a captura, que já estava lá.
+        #
+        # Pior: quando alguém derrubava "os navegadores da mineração", derrubava
+        # o Chrome PESSOAL junto — não há como distinguir pelo nome do processo.
+        # Rodando no i9, os dois deixam de se confundir.
+        _tolerante_i9(["descobrir_maps.py", "--area", a.area,
+                       "--empresa", a.empresa, "--aplicar"],
+                      "descoberta por categoria")
 
     # ── 6 · iFood ─────────────────────────────────────────────────────────
     #
@@ -714,7 +753,7 @@ def main(argv=None) -> int:
         #
         # RODA AQUI, não no i9: ele usa o pool de busca (`SerpPool`), que é a
         # mesma infraestrutura do `minerar_web`, e não precisa de desktop.
-        rc = _tolerante([PYTHON, "enriquecer_por_ifood.py", "--area", a.area,
+        rc = _tolerante_i9(["enriquecer_por_ifood.py", "--area", a.area,
                          "--empresa", a.empresa, "--aplicar"],
                         "iFood — CNPJ pelo link da loja")
         if rc != 0:
@@ -772,16 +811,16 @@ def main(argv=None) -> int:
         #
         # É TOLERANTE: numa cidade sem CNEFE, ou se a skill abortar, a rodada
         # continua — perde-se qualidade de agrupamento, não a mineração.
-        _tolerante([PYTHON, "normalizar_bases.py", "--municipio", cod],
+        _tolerante_i9(["normalizar_bases.py", "--municipio", cod],
                    "normalização da base fixa do município")
 
-        _tolerante([PYTHON, "segmentar_endereco.py", "--municipio", cod,
+        _tolerante_i9(["segmentar_endereco.py", "--municipio", cod,
                     "--so-novos", "--aplicar"], "segmentação de endereço")
         # `--so-novos`, e NÃO `--area`. Regra do dono do produto: normaliza
         # todos os POIs ainda não normalizados da cidade foco, mesmo minerando
         # um pedaço — assim nenhum fica para trás. Na prática quase todos já
         # estão feitos, então só os que a mineração acabou de descobrir passam.
-        _tolerante([PYTHON, "ajuste_logradouro.py", "--municipio", cod,
+        _tolerante_i9(["ajuste_logradouro.py", "--municipio", cod,
                     "--so-novos", "--aplicar"], "ajuste de logradouro")
 
         # E SÓ AGORA A COORDENADA PODE SER CONFERIDA CONTRA O ENDEREÇO.
@@ -794,7 +833,7 @@ def main(argv=None) -> int:
         # o próprio endereço deles declara, sendo 351 a mais de 2 km. Todos os
         # piores vieram de `maps_painel` — a busca por nome casou com um
         # homônimo em outro bairro, e o `place_id` não protege disso.
-        _tolerante([PYTHON, "corrigir_coordenada.py", "--cidade", cidade,
+        _tolerante_i9(["corrigir_coordenada.py", "--cidade", cidade,
                     "--municipio", cod, "--aplicar"],
                    "coordenada conferida contra o endereço")
 
@@ -813,7 +852,7 @@ def main(argv=None) -> int:
         # MEDIDO em Canoas: 229 POIs com CEP de outro município — e todos os 348
         # da primeira contagem tinham coordenada DENTRO da divisa. Se a
         # coordenada mandasse, nenhum seria pego.
-        _tolerante([PYTHON, "conferir_municipio.py", "--cidade", cidade,
+        _tolerante_i9(["conferir_municipio.py", "--cidade", cidade,
                     "--municipio", cod, "--aplicar"],
                    "POIs de outro município")
     else:
@@ -822,7 +861,7 @@ def main(argv=None) -> int:
     # ── 8 · cruzamento ────────────────────────────────────────────────────
     _etapa(8, "cruzamento — quem é o mesmo ponto vira UM, com várias abas")
     if a.empresa:
-        _tolerante([PYTHON, "povoar_vinculo.py", "--proprios",
+        _tolerante_i9(["povoar_vinculo.py", "--proprios",
                     "--empresa", a.empresa, "--aplicar"], "vínculo próprio")
         if cidade:
             # `cruzar_fontes`, e nao mais o `--juntar` do `povoar_vinculo`.
@@ -848,7 +887,7 @@ def main(argv=None) -> int:
             # O que sustenta essa mudança é a fusão ser incremental por
             # natureza: o POI já fundido sai da consulta (`status='fundido'`),
             # então a cada rodada só o que ainda não foi resolvido é comparado.
-            _tolerante([PYTHON, "cruzar_fontes.py",
+            _tolerante_i9(["cruzar_fontes.py",
                         "--cidade", cidade, "--empresa", a.empresa,
                         "--aplicar"], "cruzamento entre as fontes")
     else:

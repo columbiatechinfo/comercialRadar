@@ -153,3 +153,55 @@ def test_a_bancada_e_corrigida_no_instalador():
     assert "_TROCAS" in s and "_esvaziar_dataset" in s
     assert "nao_casaram" in s, \
         "o instalador voltou a silenciar correção que deixou de casar"
+
+
+def test_toda_etapa_com_navegador_roda_no_i9():
+    """REGRA DO DONO DO PRODUTO, 27/08/2026: "todos esses passos devem rodar no i9".
+
+    Só a captura ia para lá. A descoberta por categoria e o iFood abriam
+    navegador com proxy NO NOTEBOOK do operador — e depois que a varredura subiu
+    para 6 workers, eram seis Chromium disputando a CPU do painel que ele estava
+    olhando.
+
+    E havia um efeito que só aparecia no incidente: com os navegadores aqui,
+    "derrubar os navegadores da mineração" derrubava o Chrome PESSOAL junto —
+    não há como separá-los pelo nome do processo.
+    """
+    s = _ler("minerar_tudo.py")
+    for etapa in ("descobrir_maps.py", "enriquecer_por_ifood.py",
+                  "normalizar_bases.py", "segmentar_endereco.py",
+                  "ajuste_logradouro.py", "corrigir_coordenada.py",
+                  "conferir_municipio.py", "povoar_vinculo.py",
+                  "cruzar_fontes.py"):
+        assert f'_tolerante_i9(["{etapa}"' in s, \
+            f"{etapa} voltou a rodar no notebook do operador"
+        assert f'[PYTHON, "{etapa}"' not in s, \
+            f"{etapa} tem uma chamada local sobrando"
+
+
+def test_o_i9_tem_todos_os_arquivos_dessas_etapas():
+    """Etapa que roda lá e não está na lista de sincronização é defeito
+    corrigido que volta. Três já estavam nessa situação sem ninguém saber:
+    `segmentar_endereco`, `ajuste_logradouro` e `povoar_vinculo` EXISTIAM no i9
+    fora da lista — cópias antigas que nenhuma sincronização atualizava."""
+    import i9
+    for etapa in ("descobrir_maps.py", "enriquecer_por_ifood.py",
+                  "normalizar_bases.py", "segmentar_endereco.py",
+                  "ajuste_logradouro.py", "corrigir_coordenada.py",
+                  "conferir_municipio.py", "povoar_vinculo.py",
+                  "cruzar_fontes.py", "julgar_par_banco.py"):
+        assert etapa in i9.ARQUIVOS, \
+            f"{etapa} roda no i9 mas não é sincronizado — rodaria a versão velha"
+
+
+def test_a_etapa_no_i9_cai_de_volta_para_o_local():
+    """Perder a etapa por causa do SSH seria trocar um problema de lugar por um
+    problema de existência. E o aviso diz que ela rodou aqui, para ninguém
+    estranhar a máquina pesando."""
+    s = _ler("minerar_tudo.py")
+    i = s.index("def _tolerante_i9(")
+    corpo = s[i:i + 1600]
+    assert "except Exception" in corpo and "_tolerante([PYTHON]" in corpo, \
+        "a etapa no i9 deixou de cair de volta para o local quando o SSH falha"
+    assert "o notebook vai pesar" in corpo, \
+        "o aviso de que rodou localmente sumiu"

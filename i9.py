@@ -93,6 +93,27 @@ _PY = [
     # `endereco_reverso` mora DENTRO da funcao e e protegido — no i9 a cascata
     # resolve pelo CNEFE, que cobre 95%, e o residuo fica para quem tem a pilha.
     "endereco_reverso.py",
+
+    # ── AS ETAPAS 5 A 8 PASSARAM A RODAR NO i9 (27/08/2026) ─────────────────
+    #
+    # Regra do dono do produto: "todos esses passos devem rodar no i9". Só a
+    # captura ia para lá; a descoberta por categoria e o iFood abriam navegador
+    # com proxy NO NOTEBOOK do operador — seis Chromium disputando a CPU do
+    # painel que ele estava olhando —, e a normalização e o cruzamento comiam
+    # memória na mesma máquina.
+    #
+    # E havia um efeito que só aparecia no incidente: com os navegadores aqui,
+    # "derrubar os navegadores da mineração" derrubava o Chrome PESSOAL junto.
+    #
+    # ATENÇÃO AO QUE ESTA LISTA JÁ DEIXOU PASSAR: `segmentar_endereco`,
+    # `ajuste_logradouro` e `povoar_vinculo` EXISTIAM no i9 sem estar aqui —
+    # cópias antigas que ninguém atualizava. Arquivo que roda lá e não está
+    # nesta lista é defeito corrigido que volta, e o sintoma é o pior possível:
+    # "o conserto não funcionou".
+    "descobrir_maps.py", "enriquecer_por_ifood.py",
+    "normalizar_bases.py", "segmentar_endereco.py", "ajuste_logradouro.py",
+    "corrigir_coordenada.py", "conferir_municipio.py",
+    "povoar_vinculo.py", "cruzar_fontes.py", "julgar_par_banco.py",
 ]
 
 
