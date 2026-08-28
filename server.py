@@ -1649,6 +1649,58 @@ def cadastro_cruzar(body: dict = Body(...)):
     return {"cruzamento": CC.cruzar(cidade), "flags": CC.FLAGS}
 
 
+@app.get("/api/cadastro/resumo")
+def cadastro_resumo(cidade: str = ""):
+    """O estado do cruzamento cadastro ↔ POI — SEM recruzar nada.
+
+    O `POST /api/cadastro/cruzar` executa a etapa 9; este só LÊ o que ela
+    gravou. A distinção não é cosmética: a tela principal precisa do número a
+    cada carga, e disparar um cruzamento de 102 mil linhas para pintar um cartão
+    seria trocar leitura por trabalho pesado a cada F5.
+
+    OS DOIS LADOS DA CONTA, e é isso que a tela nova mostra:
+
+        `com_poi`   ligações do cliente que casaram com um ponto
+        `sem_poi`   ligações que nenhum ponto explica
+        `poi_sem_ligacao`  o inverso — pontos que o cadastro não conhece, e que
+                    viram a fila de vinculação humana
+
+    `por_flag` é a regra de negócio: `ja_cadastrado` não se visita,
+    `reclassificar_alta` é o CNPJ conferido e vai primeiro na fila.
+    """
+    cidade = (cidade or "").strip()
+    wc = "cidade ILIKE %s" if cidade else "TRUE"
+    pc = [cidade] if cidade else []
+    conn = realtime_ingest.conectar()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"""SELECT count(*),
+                                   count(*) FILTER (WHERE poi_id IS NOT NULL)
+                              FROM cadastro_cliente WHERE {wc}""", pc)
+            total, com_poi = cur.fetchone()
+
+            cur.execute(f"""SELECT coalesce(cruz_flag, 'sem_flag'), count(*)
+                              FROM cadastro_cliente WHERE {wc}
+                             GROUP BY 1""", pc)
+            por_flag = {f: n for f, n in cur.fetchall()}
+
+            # O POI sem ligação é do lado dos PONTOS, então o filtro de cidade
+            # vai em `pois` — e o fundido fica de fora, porque ele não é um
+            # ponto: foi absorvido por outro.
+            wp = "p.cidade ILIKE %s" if cidade else "TRUE"
+            cur.execute(f"""SELECT count(*) FROM pois p
+                             WHERE p.fundido_em IS NULL AND {wp}
+                               AND NOT EXISTS (SELECT 1 FROM cadastro_cliente c
+                                                WHERE c.poi_id = p.id)""", pc)
+            poi_sem_ligacao = cur.fetchone()[0]
+
+            return {"cidade": cidade or None, "ligacoes": total,
+                    "com_poi": com_poi, "sem_poi": total - com_poi,
+                    "poi_sem_ligacao": poi_sem_ligacao, "por_flag": por_flag}
+    finally:
+        conn.close()
+
+
 @app.post("/api/upload")
 async def upload(file: UploadFile = File(...)):
     nome = Path(file.filename or "planilha.xlsx").name

@@ -35,7 +35,7 @@
   const estado = {
     modo: null, painel: null, cidade: null, cod: null,
     desenhando: false, pts: [], temArea: false,
-    basemap: 0, pois: [], stats: null,
+    basemap: 0, pois: [], stats: null, cadastro: null,
     filtros: { origem: "", atributos: [], ia: [], construcao: [] },
   };
 
@@ -269,12 +269,7 @@
     $("m-multi").textContent = nf.format(multi);
     $("s-multi-bar").style.width = (total ? Math.round((multi / total) * 100) : 0) + "%";
 
-    // "Já comerciais no cadastro" = ligações do cliente com POI associado, que
-    // a etapa 9 grava em `cadastro_cliente.poi_id`. Enquanto o número não vier
-    // por endpoint, o cartão diz isso em vez de mostrar zero.
-    $("s-cadastro").textContent = "—";
-    $("s-cadastro").title = "Vem da etapa 9 (cruzamento com o cadastro). Ainda sem endpoint próprio.";
-    $("m-cadastro").textContent = "—";
+    pintarCadastro();
 
     const linhas = [
       ["Com CNPJ", s.com_cnpj], ["Com telefone", s.com_telefone],
@@ -289,6 +284,36 @@
       .filter((r) => r[1] > 0);
     barrasIa($("s-ia"), ia, total, true);
     barrasIa($("m-ia"), ia, total, false);
+  }
+
+  // "JÁ COMERCIAIS NO CADASTRO" É A ETAPA 9, e o número tem dois lados.
+  //
+  // `com_poi` são as ligações do cliente que casaram com um ponto — o que o
+  // desenho chama de "já comerciais no cadastro". `poi_sem_ligacao` é o
+  // inverso: pontos que o cadastro não conhece, e que viram a fila de
+  // vinculação humana. Mostrar só o primeiro esconderia metade do trabalho.
+  //
+  // O endpoint LÊ, não recruza: disparar um cruzamento de 102 mil linhas para
+  // pintar um cartão seria trocar leitura por trabalho pesado a cada F5.
+  function pintarCadastro() {
+    const c = estado.cadastro;
+    const alvos = [$("s-cadastro"), $("m-cadastro")];
+    if (!c) {
+      alvos.forEach((a) => { a.textContent = "—"; });
+      return;
+    }
+    alvos.forEach((a) => { a.textContent = nf.format(c.com_poi || 0); });
+    const alta = (c.por_flag || {}).reclassificar_alta || 0;
+    $("s-cadastro").title =
+      `${nf.format(c.com_poi || 0)} ligações com ponto associado · ` +
+      `${nf.format(c.poi_sem_ligacao || 0)} pontos sem ligação · ` +
+      `${nf.format(alta)} para reclassificar com CNPJ conferido`;
+    const cx = $("m-cadastro-detalhe");
+    if (cx) {
+      cx.textContent =
+        `${nf.format(c.poi_sem_ligacao || 0)} pontos sem ligação · ` +
+        `${nf.format(alta)} a reclassificar (CNPJ conferido)`;
+    }
   }
 
   function barras(alvo, linhas, total, compacto) {
@@ -523,8 +548,9 @@
   }
 
   async function carregarStats() {
-    const url = "/api/stats" + (estado.cidade ? "?cidade=" + encodeURIComponent(estado.cidade) : "");
-    estado.stats = await pegar(url);
+    const q = estado.cidade ? "?cidade=" + encodeURIComponent(estado.cidade) : "";
+    estado.stats = await pegar("/api/stats" + q);
+    estado.cadastro = await pegar("/api/cadastro/resumo" + q);
     pintarStats(estado.stats);
   }
 

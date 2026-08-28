@@ -143,3 +143,38 @@ def test_o_html_escapa_o_que_vem_do_banco():
     i = js.index("bindPopup(")
     assert "escapar(" in js[i:i + 400], \
         "o popup do mapa voltou a interpolar dado do banco sem escapar"
+
+
+def test_o_cartao_do_cadastro_tem_endpoint_e_le_sem_recruzar():
+    """"Já comerciais no cadastro" era o único cartão sem origem — mostrava
+    `—` porque o número da etapa 9 não tinha rota de leitura.
+
+    `GET /api/cadastro/resumo` LÊ o que a etapa gravou; quem executa o
+    cruzamento é o `POST /api/cadastro/cruzar`. A distinção não é cosmética:
+    disparar um cruzamento de 102 mil linhas para pintar um cartão seria trocar
+    leitura por trabalho pesado a cada F5.
+    """
+    s = _ler(os.path.join(RAIZ, "server.py"))
+    assert '@app.get("/api/cadastro/resumo")' in s, "a rota de leitura sumiu"
+    i = s.index('@app.get("/api/cadastro/resumo")')
+    corpo = s[i:i + 2600]
+    assert "CC.cruzar" not in corpo and "cruzar(" not in corpo, \
+        "a rota de LEITURA passou a executar o cruzamento"
+    for campo in ("com_poi", "sem_poi", "poi_sem_ligacao", "por_flag"):
+        assert f'"{campo}"' in corpo, f"o resumo deixou de devolver {campo}"
+
+    js = _ler(JS)
+    assert "/api/cadastro/resumo" in js, "a tela deixou de consumir o resumo"
+
+
+def test_o_poi_fundido_nao_conta_como_ponto_sem_ligacao():
+    """Fundido foi absorvido por outro: contá-lo inflaria a fila de vinculação
+    humana com pontos que não existem mais no mapa."""
+    s = _ler(os.path.join(RAIZ, "server.py"))
+    # ANCORADO NA ATRIBUIÇÃO, e não na primeira menção do nome: a primeira está
+    # na docstring da própria rota, e procurar por ela faria o teste conferir a
+    # explicação em vez da consulta.
+    i = s.index("poi_sem_ligacao = cur.fetchone()")
+    trecho = s[max(0, i - 500):i]
+    assert "p.fundido_em IS NULL" in trecho, \
+        "o resumo voltou a contar POI fundido como ponto sem ligação"
