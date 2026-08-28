@@ -4228,3 +4228,44 @@ mapa, não redefinindo quantos pontos novos a cidade tem.
 
 O cartão também deixou de esperar o `/api/stats`: conta a partir dos POIs, que
 já chegaram, e sobrevive à queda daquela rota em vez de virar um travessão.
+
+### O cartão passa a contar só a área desenhada (28/08/2026)
+
+Com área à mão, o cartão mostrava a base inteira ao lado de um mapa recortado: o
+número não descrevia nada do que estava na tela. `/api/stats` ganhou `?area=1`.
+
+**Por que não é `ST_Contains`.** Seria o natural, e não dá: o PostGIS deste banco
+vive no schema `extensions`, e o papel `comercialradar_worker` não tem USAGE nele
+— nem o tipo `geometry` resolve pela conexão do produto. `ST_Contains` só
+funciona contra o banco de REFERÊNCIA (5443), onde a `ibge_malha` mora. Liberar
+o schema exigiria superusuário no Postgres do produto, e a decisão foi não
+depender disso.
+
+**O desenho que ficou.** O SQL corta pela caixa envolvente (índice
+[`0039`](migrations/0039_indice_de_coordenada_para_o_recorte_por_area.sql)) e o
+teste exato do polígono roda em Python sobre o que sobrou — para uma área de
+bairro o retângulo já elimina quase tudo, e o custo restante é proporcional ao
+que o operador desenhou, não ao tamanho da base. O resultado vai para uma temp
+table `ON COMMIT DROP`, porque as 8 consultas do cartão precisam do mesmo
+recorte.
+
+| medição | antes | depois |
+|---|---|---|
+| caixa de bairro, 36.620 ativos | 20 ms (seq scan) | **9 ms** (índice 0039) |
+| montar o escopo | 77 ms | **20 ms** |
+| `/api/stats`, 51.447 válidos | 276 ms | **193 ms** com `area=1` (15 válidos) |
+
+**O gasto dominante era ler a área.** `area_utils.carregar_area()` abre conexão
+própria: 188 ms, mais que todo o resto do recorte somado. A requisição já tem
+conexão com a identidade certa — passou a ler os vértices pelo cursor que já
+existe.
+
+**O mesmo algoritmo dos dois lados.** O teste de raio existe em Python (servidor)
+e em JavaScript (ficha do polígono e cartão). Duas implementações do mesmo teste
+divergem, e no dia em que divergirem o cartão e a ficha vão discordar sobre a
+mesma área — há teste prendendo a fórmula nas duas linguagens.
+
+**O que ficou de fora:** `/api/cadastro/resumo` ainda não conhece área. Ele conta
+**ligações** do cliente, que não têm coordenada própria; recortá-las por polígono
+exigiria passar pelo POI de cada uma. O cartão diz "ligações", não "ligações
+nesta área".

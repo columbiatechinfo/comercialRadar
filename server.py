@@ -1131,10 +1131,93 @@ def sv_img(poi_id: int, angulo: str):
         conn.close()
 
 
+def _dentro_do_anel(anel, lat, lng) -> bool:
+    """Ponto dentro do polígono, por contagem de cruzamentos (ray casting).
+
+    É o MESMO algoritmo que a ficha do polígono usa no navegador. Duas
+    implementações do mesmo teste divergem, e o dia em que divergirem o cartão
+    lateral e a ficha vão discordar sobre a mesma área.
+    """
+    dentro = False
+    n = len(anel)
+    j = n - 1
+    for i in range(n):
+        ai, aj = anel[i], anel[j]
+        if (ai[0] > lat) != (aj[0] > lat) and \
+           lng < (aj[1] - ai[1]) * (lat - ai[0]) / (aj[0] - ai[0]) + ai[1]:
+            dentro = not dentro
+        j = i
+    return dentro
+
+
+def _escopo_da_area(cur) -> tuple[str, str] | None:
+    """Materializa numa TEMP TABLE os POIs dentro da área desenhada.
+
+    POR QUE EM DOIS PASSOS, e não num `ST_Contains`
+    ------------------------------------------------
+    O PostGIS deste banco vive no schema `extensions`, e o papel
+    `comercialradar_worker` não tem USAGE nele — nem o tipo `geometry` resolve
+    pela conexão do produto. `ST_Contains` só funciona contra o banco de
+    REFERÊNCIA (5443). Liberar o schema exigiria superusuário, e a decisão de
+    28/08/2026 foi não depender disso.
+
+    Então: o SQL corta pela CAIXA ENVOLVENTE (índice `pois_coord_por_tenant`,
+    migração 0039) e o teste exato do polígono roda aqui, sobre o que sobrou.
+    Para uma área de bairro o retângulo já elimina quase tudo, e o custo que
+    resta é proporcional ao que o operador desenhou, não ao tamanho da base.
+
+    A temp table existe porque as 8 consultas do cartão precisam do MESMO
+    recorte: refazer o teste em cada uma seria oito vezes o mesmo trabalho.
+
+    Devolve `(predicado_em_pois, predicado_em_p)` ou `None` se não há área.
+    """
+    # A ÁREA VEM PELO CURSOR QUE JÁ EXISTE. `area_utils.carregar_area()` abre
+    # conexão própria, e medido aqui isso custava 188 ms — mais que todo o resto
+    # do recorte somado. A requisição já tem uma conexão com a identidade certa;
+    # abrir outra para ler seis vértices é o gasto mais caro do cartão.
+    try:
+        cur.execute("SELECT polygon FROM area_trabalho WHERE nome = %s",
+                    (area_utils.AREA_PADRAO,))
+        r = cur.fetchone()
+    except Exception:
+        return None
+    if not r or not r[0] or len(r[0]) < 3:
+        return None
+    anel = [[float(a), float(b)] for a, b in r[0]]
+
+    lats = [p[0] for p in anel]
+    lngs = [p[1] for p in anel]
+    cur.execute(
+        """SELECT id, COALESCE(maps_lat, lat_origem), COALESCE(maps_lng, lng_origem)
+             FROM pois
+            WHERE fundido_em IS NULL
+              AND COALESCE(maps_lat, lat_origem) BETWEEN %s AND %s
+              AND COALESCE(maps_lng, lng_origem) BETWEEN %s AND %s""",
+        (min(lats), max(lats), min(lngs), max(lngs)))
+    dentro = [(i,) for i, la, ln in cur.fetchall() if _dentro_do_anel(anel, la, ln)]
+
+    cur.execute("CREATE TEMP TABLE IF NOT EXISTS _escopo_area (id bigint PRIMARY KEY) "
+                "ON COMMIT DROP")
+    cur.execute("TRUNCATE _escopo_area")
+    if dentro:
+        psycopg2.extras.execute_values(
+            cur, "INSERT INTO _escopo_area (id) VALUES %s", dentro)
+    return ("id IN (SELECT id FROM _escopo_area)",
+            "p.id IN (SELECT id FROM _escopo_area)")
+
+
 @app.get("/api/stats")
-def stats(cidade: str = ""):
-    """Estatísticas do banco. Com ?cidade= filtra por município (casa com pois.cidade,
-    case-insensitive) — o mapa seleciona um município por clique no polígono."""
+def stats(cidade: str = "", area: int = 0):
+    """Estatísticas do banco.
+
+    Com `?cidade=` filtra por município (casa com `pois.cidade`,
+    case-insensitive) — o mapa seleciona um município por clique na divisa.
+
+    Com `?area=1` filtra pela ÁREA DESENHADA à mão, que é o que o operador vê no
+    mapa. Sem isto o cartão mostrava a base inteira ao lado de um mapa recortado:
+    o número não descrevia nada do que estava na tela. Os dois se combinam; se a
+    área não existir mais no banco, o pedido cai de volta para o município.
+    """
     cidade = (cidade or "").strip()
     wp = "lower(cidade) = lower(%s)" if cidade else "TRUE"      # filtro em pois
     wj = "lower(p.cidade) = lower(%s)" if cidade else "TRUE"    # filtro em join com p
@@ -1142,6 +1225,11 @@ def stats(cidade: str = ""):
     conn = realtime_ingest.conectar()
     try:
         with conn.cursor() as cur:
+            if area:
+                rec = _escopo_da_area(cur)
+                if rec:
+                    wp = f"({wp}) AND {rec[0]}"
+                    wj = f"({wj}) AND {rec[1]}"
             cur.execute(f"SELECT status, COUNT(*) FROM pois WHERE {wp} GROUP BY status", pc)
             por_status = {s or "?": n for s, n in cur.fetchall()}
             cur.execute(f"SELECT fonte, COUNT(*) FROM pois WHERE {wp} GROUP BY fonte", pc)

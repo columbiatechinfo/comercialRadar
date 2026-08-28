@@ -127,7 +127,7 @@
   const NAV_BASE = "nav-item";
   const estado = {
     modo: null, painel: null, cidade: null, cod: null,
-    desenhando: false, pts: [], temArea: false,
+    desenhando: false, pts: [], temArea: false, anel: null,
     basemap: 0, pois: [], stats: null, cadastro: null, eu: null, empresa: null,
     filtros: { origem: [], atributos: [], ia: [], construcao: [] },
   };
@@ -435,6 +435,7 @@
 
     estado.desenhando = false;
     estado.temArea = true;
+    estado.anel = pts;
     estado.pts = [];
     $("faixa-desenho").classList.add("hidden");
     $("faixa-desenho").classList.remove("flex");
@@ -743,10 +744,20 @@
   // Canoas. Os chips de filtro NÃO entram aqui: quem marca "com CNPJ" está
   // recortando o mapa, não redefinindo quantos pontos novos a cidade tem.
   function poisDoEscopo() {
-    const pois = estado.pois || [];
-    if (!estado.cidade) return pois;
-    const c = estado.cidade.toLowerCase();
-    return pois.filter((p) => (p.cidade || "").toLowerCase() === c);
+    let pois = estado.pois || [];
+    if (estado.cidade) {
+      const c = estado.cidade.toLowerCase();
+      pois = pois.filter((p) => (p.cidade || "").toLowerCase() === c);
+    }
+    // A ÁREA DESENHADA RECORTA IGUAL AO SERVIDOR. O `/api/stats?area=1` aplica
+    // o MESMO teste de raio sobre a mesma área; se só um dos dois recortasse, o
+    // número grande e as barras do cartão discordariam entre si.
+    const anel = estado.anel;
+    if (anel && anel.length >= 3) {
+      pois = pois.filter((p) => p.lat != null && p.lng != null &&
+                                dentroDoAnel(anel, p.lat, p.lng));
+    }
+    return pois;
   }
 
   function contarNovos() {
@@ -931,6 +942,7 @@
     estado.cidade = m.nome;
     estado.cod = m.cod;
     estado.temArea = false;
+    estado.anel = null;
     camadaDesenho.clearLayers();
 
     // A ÁREA VIRA O MUNICÍPIO NO BANCO. O `minerar_tudo` lê a mesma área
@@ -1089,8 +1101,18 @@
   }
 
   async function carregarStats() {
-    const q = estado.cidade ? "?cidade=" + encodeURIComponent(estado.cidade) : "";
-    estado.stats = await pegar("/api/stats" + q);
+    // A ÁREA VAI COMO SINALIZADOR, e não como polígono na URL: ela já está
+    // gravada no banco (`/api/area`), e mandar centenas de vértices numa query
+    // string seria repetir o que o servidor já tem.
+    const p = [];
+    if (estado.cidade) p.push("cidade=" + encodeURIComponent(estado.cidade));
+    const q = p.length ? "?" + p.join("&") : "";
+    const qa = estado.temArea ? (q ? q + "&area=1" : "?area=1") : q;
+    estado.stats = await pegar("/api/stats" + qa);
+    // O `/api/cadastro/resumo` ainda não conhece área: ele conta LIGAÇÕES do
+    // cliente, que não têm coordenada própria — recortá-las por polígono
+    // exigiria passar pelo POI de cada uma. Fica como está, e o cartão diz
+    // "ligações", não "ligações nesta área".
     estado.cadastro = await pegar("/api/cadastro/resumo" + q);
     pintarStats(estado.stats);
   }
@@ -1292,6 +1314,7 @@
       estado.painel = null;
       estado.cidade = null; estado.cod = null;
       estado.temArea = false; estado.pts = [];
+      estado.anel = null;
       estado.desenhando = true;
       camadaDesenho.clearLayers();
       if (mapa.doubleClickZoom) mapa.doubleClickZoom.disable();
@@ -1331,6 +1354,7 @@
     $("btn-limpar").addEventListener("click", async () => {
       estado.modo = null; estado.cidade = null; estado.cod = null;
       estado.temArea = false; estado.desenhando = false; estado.pts = [];
+      estado.anel = null;
       camadaDesenho.clearLayers();
       realcarMalha(null);
       abrirPainel(null);
@@ -1449,6 +1473,7 @@
     const area = await pegar("/api/area");
     if (area && area.polygon && area.polygon.length >= 3) {
       estado.temArea = true;
+      estado.anel = area.polygon;
       const poly = ligarFichaDaArea(L.polygon(area.polygon, {
         pane: "paneArea", className: "area-poly",
         color: INDIGO, weight: 2, fillColor: INDIGO, fillOpacity: 0.12,

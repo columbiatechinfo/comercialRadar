@@ -4,7 +4,7 @@
   "perfil": "saas-multi-cliente",
   "versao": "0.1.0",
   "ambiente": "wsl-dev",
-  "atualizado_em": "2026-08-24T15:55:00-03:00",
+  "atualizado_em": "2026-08-28",
   "atualizado_por": "(analise de estado)",
   "commit": "daeba39",
   "seguranca": {
@@ -516,6 +516,13 @@
       "nivel": "atencao",
       "evento": "O arquivo estava no .gitignore E rastreado ao mesmo tempo",
       "detalhe": "Webshare_100_proxies.txt aparecia nas duas listas: no .gitignore com o comentario 'contem credenciais', e em `git ls-files`. Nao e contradicao do git — o .gitignore nao desrastreia o que ja entrou. Ele foi commitado no 1c7f081 (versao inicial), a regra veio depois, e desde entao seguia sendo versionado, com a regra dando a impressao contraria a quem lesse o arquivo. Sao 100 linhas ip:porta:usuario:senha, com 100 usuarios distintos. O gitleaks nao pega o formato: sem prefixo, sem entropia alta, sem palavra-chave. A versao em disco estava MODIFICADA, com senhas novas — commita-la publicaria 100 credenciais que ainda nao estavam no historico. Desrastreado com git rm --cached: o arquivo fica em disco e a regra do ignore finalmente vale. O que isso NAO resolve: as credenciais do 1c7f081 seguem no historico ja enviado, e reescrever commit nao apaga credencial exposta. Rotacionar no painel da Webshare e a unica correcao real."
+    },
+    {
+      "data": "2026-08-28",
+      "skill": "(objetividade)",
+      "nivel": "info",
+      "evento": "Modo objetivo adotado a partir de 28/08/2026",
+      "detalhe": "Duvida sobe na caixa de pergunta formal; resposta traz resultado, numero medido e o que ficou em aberto. Nao autoriza omitir erro, risco, custo nem o que nao foi verificado."
     }
   ],
   "caminho_dados": "psycopg",
