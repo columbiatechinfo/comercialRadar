@@ -5,6 +5,46 @@ versionamento [SemVer](https://semver.org/lang/pt-BR/).
 
 ## [Não lançado]
 
+### Validado em campo
+
+Duas minerações completas em Canoas, **09:19** e **09:35** de 28/08/2026, com
+**zero erros no log** das duas. Os consertos do dia deixaram de ser afirmação
+sobre o código e passaram a ter número:
+
+| conserto | run 09:19 | run 09:35 | antes |
+|---|---|---|---|
+| CEP conferido antes do INSERT | 86 barrados · **0 gravados** | 86 barrados · **0 gravados** | 86 gravados |
+| apagados por outro município (passo 7) | **1** | **1** | 87 |
+| auto-cura do passo 5 | 6 curas · **46/46** | 4 curas · **46/46** | 1 categoria perdida |
+| marca `multiloja` sem par a comparar | **12.080** | **12.080** | linha ausente do log |
+
+**O ciclo importa-e-apaga acabou.** Os 86 registros da base estadual com CEP de
+outro município eram importados no passo 2 e apagados no passo 7 a cada
+mineração — e o número do passo 2 parecia ganho quando era descarte. Agora
+param na porta, e o `GRAVADO: 0` é a verdade.
+
+**O "1 apagado" que se repete nas duas runs não é resíduo do ciclo.** Conferido
+depois da segunda: são **0 de outro município** no banco. Ele entra por outro
+caminho — o Cadastur, no passo 3 — e o passo 7 continua sendo a rede que o pega.
+A conferência na porta não substitui a do fim; evita o trabalho ida e volta.
+
+**A marca `multiloja` gravada com zero pares comparados** é a prova do último
+conserto: era exatamente esse o caso em que ela envelhecia, porque a gravação
+morava depois do `if not pares: return`.
+
+**O que NÃO teve prova de campo**, e é honesto separar:
+
+- A **auto-cura do passo 4** não disparou em três runs seguidas — os 10 workers
+  subiram limpos todas as vezes. A mecânica tem teste; a ocorrência não apareceu.
+- O `corrigir_coordenada` devolveu **0 movidos** nas duas, que é o número certo:
+  os 125 foram aplicados minutos antes. A regra nova não inventa candidatos numa
+  passada seguinte — que era o risco de uma regra mal calibrada.
+
+**Uma observação para depois:** a busca do passo 4 rendeu 1 em 7 na run das
+09:35, contra 2 em 3 na anterior. `0 IPs queimados` e `0 CAPTCHA` — a infra está
+limpa e o que falha é o casamento de nome. Três dos não encontrados são igrejas
+(fora do alvo comercial) e um é `Branca`, truncado pelo OCR.
+
 ### Adicionado
 
 - **`--desfundir` desfaz só o que o processo não refaria.** Desfazer para
