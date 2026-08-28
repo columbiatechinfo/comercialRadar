@@ -73,7 +73,7 @@ limpa e o que falha é o casamento de nome. Três dos não encontrados são igre
   |---:|---|---|
   | 3 | logradouro normalizado + número | **nenhum** |
   | 2 | CEP + número | 250 m |
-  | 1 | só geografia | `RAIO_SO_GEO_M` |
+  | 1 | só geografia | **8 m** — a testada média de um lote |
 
   A força 3 não tem raio de propósito: se as duas fontes dizem a mesma via e a
   mesma porta, quem erra é a coordenada. É a mesma razão pela qual a fusão une
@@ -84,15 +84,21 @@ limpa e o que falha é o casamento de nome. Três dos não encontrados são igre
 
   | | antes | agora |
   |---|---:|---:|
-  | ligações com POI | 12.040 | **16.328** |
+  | ligações com POI | 12.040 | **14.959** |
   | └ por logradouro normalizado | — | 11.532 |
   | └ por CEP + número | — | 910 |
-  | └ só por geografia | — | 3.886 |
+  | └ só por geografia | — | 2.517 |
   | ligações apontando para POI fundido | 255 | **0** |
-  | POIs sem ligação nenhuma | — | 16.101 |
+  | POIs sem ligação nenhuma | — | 17.470 |
 
-  Os 16.101 são o outro lado do número e a segunda lista da tela nova: POIs que
+  Os 17.470 são o outro lado do número e a segunda lista da tela nova: POIs que
   o cadastro não conhece, para vinculação humana.
+
+  **O raio só-geográfico é 8 m — a testada média de um lote.** Dois pontos a
+  menos que uma frente de lote de distância estão no MESMO lote; a partir dela,
+  já é o vizinho. Os 12 m anteriores não vinham de medida nenhuma. Apertar
+  derrubou 1.369 casamentos, e são justamente os mais fracos: sem endereço em
+  comum e a mais de uma testada de distância.
 
   A etapa entra **depois do passo 8**: o cadastro cruza com POIs já fundidos e
   já com a coordenada corrigida — o dado mais maduro que a rodada produz. Antes

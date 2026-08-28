@@ -19,10 +19,11 @@ máximo de confiança"*:
 
     3  logradouro normalizado + número      sem teto de distância
     2  CEP + número                         até 250 m
-    1  só geografia                         até `RAIO_SO_GEO_M`
+    1  só geografia                         8 m — a testada de um lote
 
-Efeito da mudança, medido na mesma cidade: 12.040 → **16.328** ligações com POI,
-sendo 11.532 pelo logradouro normalizado.
+Efeito da mudança, medido na mesma cidade: 12.040 → **14.959** ligações com POI,
+sendo 11.532 pelo logradouro normalizado — e o raio só-geográfico apertado de
+12 para 8 m, a testada média de um lote.
 """
 import os
 import sys
@@ -165,3 +166,20 @@ def test_nenhuma_ligacao_aponta_para_poi_fundido():
     finally:
         con.close()
     assert n == 0, f"{n} ligações apontando para POI que foi absorvido"
+
+
+def test_o_raio_so_geografico_e_a_testada_de_um_lote():
+    """8 m, e o número tem significado — regra do dono do produto, 28/08/2026.
+
+    Dois pontos a menos que uma frente de lote de distância estão no MESMO lote;
+    a partir dela, já é o vizinho. Os 12 m anteriores não vinham de medida
+    nenhuma: eram um "bem menos que 35" escolhido a olho.
+
+    EFEITO MEDIDO em Canoas ao apertar de 12 para 8 m: os casamentos só por
+    geografia caem de 3.886 para 2.517, e as ligações com POI de 16.328 para
+    14.959. O que sai é justamente o mais fraco — sem endereço em comum e a mais
+    de uma testada de distância.
+    """
+    assert cc.RAIO_SO_GEO_M == 8.0, (
+        f"o raio só-geográfico virou {cc.RAIO_SO_GEO_M} — ele é a testada média "
+        f"de um lote, não um número solto")

@@ -160,7 +160,15 @@ def _flag_por_confianca(conf: str) -> str:
 RAIO_M = 35.0
 # Sem endereço em comum, a coincidência tem de ser muito mais apertada — é a
 # porta ao lado, não o quarteirão.
-RAIO_SO_GEO_M = 12.0
+#
+# 8 m É A TESTADA MÉDIA DE UM LOTE, e é essa a medida certa aqui: dois pontos a
+# menos que uma frente de lote de distância estão no MESMO lote; a partir dela,
+# já é o vizinho. Regra do dono do produto, 28/08/2026.
+#
+# Os 12 m anteriores não vinham de medida nenhuma — eram um "bem menos que 35"
+# escolhido a olho. Com testada de lote o número passa a ter significado, e é
+# defensável em campo: quem for conferir sabe o que 8 m querem dizer na rua.
+RAIO_SO_GEO_M = 8.0
 
 
 def _norm(s):

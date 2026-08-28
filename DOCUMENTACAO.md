@@ -4014,7 +4014,7 @@ Regra do dono do produto: *"o endereço normalizado é o máximo de confiança"*
 |---:|---|---|
 | 3 | logradouro normalizado + número | **nenhum** |
 | 2 | CEP + número | 250 m |
-| 1 | só geografia | `RAIO_SO_GEO_M` |
+| 1 | só geografia | **8 m** — a testada média de um lote |
 
 A força 3 não tem raio de propósito. Se as duas fontes dizem a mesma via e a
 mesma porta, quem erra é a coordenada — é a mesma razão pela qual a fusão une
@@ -4025,22 +4025,22 @@ deixaria o dado fraco vetar o forte.
 
 | | antes | agora |
 |---|---:|---:|
-| ligações com POI | 12.040 | **16.328** |
+| ligações com POI | 12.040 | **14.959** |
 | └ por logradouro normalizado | — | 11.532 |
 | └ por CEP + número | — | 910 |
-| └ só por geografia | — | 3.886 |
+| └ só por geografia | — | 2.517 |
 | ligações apontando para POI fundido | 255 | **0** |
-| POIs sem ligação nenhuma | — | 16.101 |
+| POIs sem ligação nenhuma | — | 17.470 |
 
 E as flags de negócio, que são o que o produto entrega:
 
 | flag | ligações |
 |---|---:|
-| `sem_poi` | 85.737 |
-| `ja_cadastrado` — comercial na base e com POI, não visitar | 6.538 |
-| `reclassificar_baixa` | 6.992 |
-| `reclassificar_media` | 1.617 |
-| `reclassificar_alta` — POI com CNPJ confirmado, visitar primeiro | 1.181 |
+| `sem_poi` | 87.106 |
+| `ja_cadastrado` — comercial na base e com POI, não visitar | 6.243 |
+| `reclassificar_baixa` | 6.123 |
+| `reclassificar_media` | 1.526 |
+| `reclassificar_alta` — POI com CNPJ confirmado, visitar primeiro | 1.067 |
 
 ### Onde a etapa entra
 
@@ -4056,8 +4056,8 @@ continuou dizendo "de 8" — inclusive o cabeçalho do próprio passo 9.
 
 A tela nova tem a **instalação como chave**, e agora os dois lados dela existem:
 
-- **16.328 ligações com POI** — a fila principal
-- **16.101 POIs sem ligação** — a lista secundária, para vinculação humana
+- **14.959 ligações com POI** — a fila principal
+- **17.470 POIs sem ligação** — a lista secundária, para vinculação humana
 
 ### Uma regra de trabalho que ficou registrada no mesmo dia
 
