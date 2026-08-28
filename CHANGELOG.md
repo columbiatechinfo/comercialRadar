@@ -62,6 +62,23 @@ versionamento [SemVer](https://semver.org/lang/pt-BR/).
 
 ### Corrigido
 
+- **O POI sem nome derrubava a extração estadual.** A base do estado traz ponto
+  com categoria e endereço, sem nome — `Posto de Combustível, AVENIDA GETULIO
+  VARGAS, 7500`. Pela matriz acima ele é *comparável* (sem nome, mas com número
+  da porta); quem recusava era a coluna `pois.nome`, `NOT NULL`, com
+  `NotNullViolation` que matava o passo 2 inteiro. Agora grava `""` e o trigger
+  `poi_comparavel` volta a ser o único juiz de quem entra. Provado rodando no
+  i9: saída 0, **4.191 POIs gravados**, 925 pulados por não terem endereço nem
+  porta do CNEFE a 50 m.
+
+- **A auto-cura do worker trocava o perfil e ficava com o mesmo IP.** Uma
+  categoria de 46 (`tabacarias`) terminou `NÃO BUSCADO`. Eram dois defeitos
+  somados: a cura descartava o perfil do Chromium mas reaproveitava o proxy — se
+  o IP é o problema, a segunda tentativa falha idêntica — e a marca `curou`
+  nunca voltava a `False`, o que dava **uma cura só por worker na run inteira**.
+  Agora são até 3 curas por worker, cada uma manda o IP para o castigo
+  (`mark_cooldown`, 600 s) e pega outro do pool.
+
 - **A fusão nunca via a duplicata longe, e o número da porta decide.** Dos 266
   pares que a regra fundiria, 167 tinham o **mesmo número** ("Posto Ipiranga,
   Guilherme Schell 1046" contra o mesmo endereço a 7,7 km — a coordenada de uma
