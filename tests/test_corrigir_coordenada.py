@@ -128,3 +128,80 @@ def test_roda_de_novo_sem_refazer():
     assert plano["mover"] == [], (
         f"{len(plano['mover'])} POIs voltaram a aparecer como deslocados depois "
         f"da correção — a etapa repetiria o trabalho a cada mineração")
+
+
+# ── porta única é identificação, e CEP que discorda bloqueia ──────────────
+
+def test_cep_que_discorda_e_prova_CONTRARIA():
+    """Ausência de prova e prova contrária não são a mesma coisa.
+
+    Tratá-las igual escondeu três grupos dentro dos 560 que ficavam em revisão.
+    MEDIDO em Canoas, 28/08/2026: 346 dos 560 declaram um CEP que NÃO é o da
+    porta do CNEFE.
+
+        Clinica Vita   Rua Domingos Martins, nº 111, 92310-190
+        a porta do CNEFE nesse número tem CEP 92010170, bairro CENTRO
+
+    Ou o número está errado, ou o CEP está — e escolher qual é palpite."""
+    import corrigir_coordenada as cc
+    assert cc._contradiz("Rua Domingos Martins, nº 111, 92310-190", "92010170")
+    assert not cc._contradiz("Rua Domingos Martins, nº 111, 92010-170", "92010170")
+    assert not cc._contradiz("Rua Domingos Martins, nº 111", "92010170"), \
+        "endereço sem CEP passou a ser tratado como discordância"
+    assert not cc._contradiz("Rua X, 1, 92010-170", ""), \
+        "porta sem CEP no CNEFE passou a contradizer qualquer endereço"
+
+
+def test_a_porta_unica_vale_como_prova():
+    """Regra do dono do produto, 28/08/2026, depois de ver a amostra: quando o
+    logradouro e o número existem em UM só lugar do município, o endereço
+    identifica o ponto sozinho.
+
+    `Estofaria` declara AVENIDA GETULIO VARGAS 433 e está a 6.674 m da única
+    porta com esse nome e número em Canoas inteira."""
+    import io
+    import os
+    raiz = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    s = io.open(os.path.join(raiz, "corrigir_coordenada.py"), encoding="utf-8").read()
+    codigo = "\n".join(l for l in s.splitlines()
+                       if not l.lstrip().startswith("#"))
+    i = codigo.index("if not prova and len(pontos) == 1")
+    bloco = codigo[i:i + 200]
+    assert "_contradiz" in bloco, \
+        "a porta única passou a valer mesmo com o CEP discordando — os 346 " \
+        "com evidência contra entrariam junto"
+
+
+def test_a_porta_escolhida_nao_e_a_mais_perto_do_erro():
+    """O VIÉS QUE ESTE TESTE GUARDA.
+
+    Quando o logradouro e o número aparecem em mais de um lugar, a versão
+    anterior escolhia a porta mais próxima da coordenada ATUAL — que é
+    justamente a que se acredita errada. O critério puxava o POI para perto de
+    onde ele já estava, confirmando o erro que a etapa existe para desfazer.
+
+    Efeito medido ao corrigir: 4 POIs passaram a mover com prova de CEP, entre
+    eles dois a ~9,9 km da porta certa, que antes ficavam em revisão."""
+    import io
+    import os
+    raiz = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    s = io.open(os.path.join(raiz, "corrigir_coordenada.py"), encoding="utf-8").read()
+    codigo = "\n".join(l for l in s.splitlines()
+                       if not l.lstrip().startswith("#"))
+    assert "corroboradas = [" in codigo and "candidatas = corroboradas or pontos" in codigo, \
+        "a escolha da porta voltou a ser só pela distância"
+    assert codigo.index("corroboradas = [") < codigo.index("melhor = min("), \
+        "a corroboração passou a acontecer depois da escolha da porta"
+
+
+def test_a_coordenada_original_nunca_e_sobrescrita():
+    """Correção automática que não se desfaz é aposta, não conserto. O
+    `coalesce` garante que a segunda passada não guarde a coordenada já
+    corrigida no lugar da original."""
+    import io
+    import os
+    raiz = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    s = io.open(os.path.join(raiz, "corrigir_coordenada.py"), encoding="utf-8").read()
+    i = s.index("set coord_anterior_lat")
+    assert "coalesce(p.coord_anterior_lat" in s[i:i + 160], \
+        "a coordenada original voltou a ser sobrescrita a cada passada"

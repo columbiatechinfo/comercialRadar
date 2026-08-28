@@ -103,6 +103,30 @@ def _corrobora(endereco_poi: str, bairro_cnefe: str, cep_cnefe: str) -> str:
     return "+".join(achados)
 
 
+def _contradiz(endereco_poi: str, cep_cnefe: str) -> bool:
+    """O endereço traz CEP e NENHUM deles é o da porta do CNEFE.
+
+    Ausência de prova e prova contrária não são a mesma coisa, e tratá-las
+    igual foi o que escondeu os três grupos dentro dos 560 em revisão. Um POI
+    que não diz CEP apenas não confirma; um que diz OUTRO CEP está discordando,
+    e discordância não se resolve movendo o ponto.
+
+    MEDIDO em Canoas, 28/08/2026: 346 dos 560 estão neste caso.
+
+        Clinica Vita   Rua Domingos Martins, nº 111, 92310-190
+        a porta do CNEFE nesse número tem CEP 92010170, bairro CENTRO
+
+    Ou o número está errado, ou o CEP está. Escolher qual é palpite.
+    """
+    if not cep_cnefe:
+        return False
+    ceps = [re.sub(r"\D", "", c) for c in
+            re.findall(r"\d{5}-?\d{3}", endereco_poi or "")]
+    if not ceps:
+        return False                      # não diz CEP: não confirma nem nega
+    return re.sub(r"\D", "", cep_cnefe) not in ceps
+
+
 def avaliar(con, cod_ibge: str, cidade: str) -> dict:
     """Levanta quem está deslocado, sem gravar nada.
 
@@ -130,11 +154,48 @@ def avaliar(con, cod_ibge: str, cidade: str) -> dict:
         if not pontos:
             continue
         plat, plng = float(plat), float(plng)
-        melhor = min(pontos, key=lambda t: _metros(plat, plng, t[0], t[1]))
+
+        # A PORTA CERTA NÃO É A MAIS PERTO DA COORDENADA ERRADA.
+        #
+        # Quando o logradouro e o número aparecem em mais de um lugar do
+        # município, a versão anterior escolhia a porta mais próxima do ponto
+        # ATUAL — que é justamente o ponto que se acredita errado. O critério
+        # puxava o POI para perto de onde ele já estava, isto é, confirmava o
+        # erro que a etapa existe para desfazer.
+        #
+        # Quando o endereço traz CEP ou bairro, eles decidem qual das portas é
+        # a certa. Só na ausência dos dois a proximidade volta a valer — e aí
+        # ela não move ninguém, porque sem prova o ponto vai para revisão.
+        corroboradas = [t for t in pontos if _corrobora(endereco or "", t[2], t[3])]
+        candidatas = corroboradas or pontos
+        melhor = min(candidatas, key=lambda t: _metros(plat, plng, t[0], t[1]))
         d = _metros(plat, plng, melhor[0], melhor[1])
         if d <= LONGE_M:
             continue
         prova = _corrobora(endereco or "", melhor[2], melhor[3])
+
+        # PORTA ÚNICA É IDENTIFICAÇÃO, e vale como prova.
+        #
+        # Regra do dono do produto, 28/08/2026, depois de ver a amostra. Entre
+        # os 560 que ficavam em revisão por falta de prova havia três grupos
+        # bem diferentes, e tratá-los igual era o erro:
+        #
+        #   346  o CEP declarado DIVERGE do CNEFE — não é ausência de prova, é
+        #        prova CONTRÁRIA. `Clinica Vita` diz Domingos Martins 111 com
+        #        CEP 92310-190; a porta do CNEFE tem 92010170. Ou o número erra
+        #        ou o CEP erra, e mover seria escolher qual sem saber.
+        #   121  sem CEP, mas com UMA porta só em Canoas inteira. O endereço
+        #        identifica o ponto sozinho — `Estofaria`, AVENIDA GETULIO
+        #        VARGAS 433, a 6.674 m da porta que leva esse nome e número.
+        #    93  sem CEP e com várias portas. `Coordenação | Computação` na
+        #        Farroupilha 8001 tem 91 portas: é o campus da ULBRA, e ali o
+        #        endereço não identifica nada.
+        #
+        # O CEP QUE CONTRADIZ BLOQUEIA a porta única. Sem isso os 346 entrariam
+        # junto, e eles são o grupo com evidência contra.
+        if not prova and len(pontos) == 1 and not _contradiz(endereco or "",
+                                                             melhor[3]):
+            prova = "porta única no município"
         registro = {"id": pid, "nome": nome, "de": (plat, plng),
                     "para": (melhor[0], melhor[1]), "dist_m": round(d, 1),
                     "endereco": f"{via}, {num}", "prova": prova}

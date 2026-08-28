@@ -47,6 +47,37 @@ versionamento [SemVer](https://semver.org/lang/pt-BR/).
 
 ### Corrigido
 
+- **Porta única passou a valer como prova, e CEP que discorda passou a
+  bloquear.** Dos 560 POIs que ficavam em revisão por "falta de prova", havia
+  três grupos que a regra tratava igual — e tratá-los igual era o erro:
+
+  | | quantos | o que são |
+  |---|---:|---|
+  | CEP **diverge** do CNEFE | 346 | prova **contrária**, não ausência dela |
+  | sem CEP, **uma** porta no município | 121 | o endereço identifica o ponto sozinho |
+  | sem CEP, **várias** portas | 93 | o endereço não identifica nada |
+
+  `Clinica Vita` declara Domingos Martins 111 com CEP `92310-190`; a porta do
+  CNEFE nesse número tem `92010170`. Ou o número erra ou o CEP erra, e mover
+  seria escolher qual sem saber. Já `Estofaria` declara `AVENIDA GETULIO VARGAS
+  433` e está a **6.674 m** da única porta com esse nome e número em Canoas
+  inteira — ali o endereço basta.
+
+  No outro extremo, `Coordenação | Computação` na Farroupilha 8001 tem **91
+  portas**: é o campus da ULBRA, e nenhuma identificação é possível.
+
+- **A porta escolhida não é mais a mais perto da coordenada errada.** Quando o
+  logradouro e o número apareciam em vários lugares, a versão anterior pegava a
+  porta mais próxima do ponto **atual** — justamente o que se acredita errado.
+  O critério puxava o POI para perto de onde ele já estava, confirmando o erro
+  que a etapa existe para desfazer. Agora o CEP e o bairro decidem qual porta é
+  a certa, e só na ausência dos dois a proximidade volta a valer.
+
+  **Efeito medido em Canoas:** 125 POIs reposicionados (121 por porta única e 4
+  por CEP, dois deles a ~9,9 km da porta correta, que antes ficavam em revisão).
+  Total acumulado: **1.465 POIs** com a coordenada corrigida e a original
+  guardada em `coord_anterior_lat/lng`.
+
 - **`--desfundir` girava em falso; agora converge** (`pois.fundido_por`,
   migração `0038`). O alvo pergunta *"a regra de hoje refaria?"* — e para o par
   que a **IA** decidiu a resposta é sempre não: a regra nunca o faria, e é
