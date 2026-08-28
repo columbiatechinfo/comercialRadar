@@ -204,9 +204,20 @@ def test_nenhum_vinculo_ativo_em_poi_fundido():
         pytest.skip("banco indisponível")
     try:
         cur = con.cursor()
+        # `fundido_em` E NÃO `status`, desde a migração 0036 — e a troca
+        # importa: `status` voltou a guardar a ORIGEM, e hoje 89 POIs ATIVOS
+        # ainda o carregam com o valor `fundido` (a cohorte não determinou o
+        # original para 139 deles). Pelo critério antigo este teste acusava
+        # esses 89 como órfãos, e não são: têm vínculo porque SÃO pontos.
+        #
+        # A troca foi feita duas vezes, e a primeira NÃO PEGOU: o patch que a
+        # aplicaria abortou na substituição anterior do mesmo arquivo e nada
+        # foi gravado. O teste seguiu no critério velho até falhar em produção
+        # com esses 89 — que é como se descobre que um conserto não aconteceu.
         cur.execute("""select count(*) from vinculo_poi v
                          join pois p on p.id = v.poi_id
-                        where p.status = 'fundido' and v.estado = 'vinculado'""")
+                        where p.fundido_em is not null
+                          and v.estado = 'vinculado'""")
         n = cur.fetchone()[0]
     finally:
         con.close()
