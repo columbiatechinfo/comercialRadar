@@ -291,35 +291,41 @@ def avaliar(a: dict, b: dict) -> dict:
     elif sem >= 0.5:
         motivos.append(f"nomes parecidos ({sem:.0%})")
 
-    # O CORTE DA MULTILOJA. Ver `TETO_MULTILOJA`.
+    # A MULTILOJA VIRA MARCA, E NAO CORTE -- e este bloco ja foi um corte.
     #
-    # Vale so quando os dois dizem a MESMA PORTA -- e ai o endereco deixa de
-    # distinguir quem e quem. Nome parecido continua fundindo: duas fontes
-    # gravando a mesma loja do shopping com grafias diferentes sao a mesma
-    # loja, e e para isso que o limiar de `sem` existe.
+    # Em 27/08/2026 esta funcao passou a DESCARTAR o par quando os dois POIs
+    # estavam no mesmo lugar, o lugar tinha mais de dois nomes distintos e os
+    # nomes deles diferiam. A intencao era certa: no 4545 da Farroupilha ha 181
+    # estabelecimentos, e endereco, dominio e coordenada sao identicos para os
+    # 181 -- nenhum identifica ninguem.
     #
-    # Sai por `descartar` e nao por `perguntar`: "cada um e um estabelecimento
-    # mesmo" e uma afirmacao, nao uma duvida. Mandar para a IA seria pagar por
-    # uma pergunta cuja resposta ja se sabe -- e foi a IA que fundiu o shopping
-    # com a pista de patinacao, olhando exatamente essa evidencia.
-    # "MESMO LUGAR" NAO E "MESMA STRING DE ENDERECO", e a diferenca decidiu
-    # esta regra. Medido nos dois POIs que fundiram errado:
+    # O CORTE ERRAVA 32% DAS VEZES, medido sobre as recusas reais em Canoas:
     #
-    #     ParkShoppingCanoas    logradouro AVENIDA FARROUPILHA  numero 4545
-    #     Pista de Patinacao    logradouro PARKSHOPPINGCANOAS   numero (vazio)
+    #     Master Sonho Colchoes  + Master Sonho Colchoes | Canoas   0 m
+    #     Preciosa Boutique Ataca+ Preciosa Boutique Atacado        0 m
+    #     Crazy Som - Locacao    + Crazy Som                        7 m
     #
-    # A loja de dentro tem o NOME DO SHOPPING como logradouro e nenhum numero.
-    # Uma versao anterior desta regra exigia `mesma_porta` e por isso nao teria
-    # bloqueado justamente o caso que a motivou. Dentro do raio ja e o mesmo
-    # predio -- e e o mesmo raio que o site e o telefone usam para valer.
-    mesma_porta = mesma_rua and num_a and num_a == num_b
-    if (mesma_porta or perto) and sem < 0.8 and (
-            a.get("multiloja") or b.get("multiloja")):
-        motivos.append("mais de 2 estabelecimentos nesta porta")
-        return {"confianca": 1, "pontos": pontos, "motivos": motivos,
-                "dist_m": d, "decisao": "descartar",
-                "porque": "endereço de multiloja: o número não identifica o "
-                          "estabelecimento, e os nomes são diferentes"}
+    # Sao o MESMO negocio. `semelhanca_nome` e Jaccard sobre tokens, e um nome
+    # que e o outro MAIS UM SUFIXO cai para 0,75 -- abaixo do limiar de 0,8.
+    # Um numero fixo nao distingue "sufixo de filial" de "outra loja".
+    #
+    # A IA DISTINGUE. Perguntada sobre 120 desses pares:
+    #
+    #     Unimed Porto Alegre + Coloprocto ......... DIFERENTE   certo
+    #     Agah + Agencia Treehauss ................. DIFERENTE   certo
+    #     NGA Moveis Hospitalares + NGA Metalurgica  DIFERENTE   certo
+    #     Master Sonho Colchoes + ... | Canoas ..... MESMO       certo
+    #     Crazy Som - Locacao + Crazy Som .......... MESMO       certo
+    #
+    # Regra do dono do produto, 28/08/2026: e melhor que mais pares CHEGUEM a
+    # IA e ela resolva -- "mesmo o shopping tendo varios no mesmo endereco,
+    # cada um viraria um ponto individual porque seus nomes mostram que
+    # claramente sao pontos diferentes". O nome e a evidencia; ler nome e o que
+    # a IA faz melhor que um limiar.
+    #
+    # A marca continua existindo e vai para o banco (`pois.multiloja`), porque
+    # saber que um ponto esta num predio de varias lojas e util na tela e na
+    # revisao. Ela so nao decide mais nada sozinha.
 
     ca, cb = norm_nome(a.get("categoria", "")), norm_nome(b.get("categoria", ""))
     if ca and ca == cb:

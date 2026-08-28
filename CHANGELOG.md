@@ -53,43 +53,60 @@ versionamento [SemVer](https://semver.org/lang/pt-BR/).
   Desfazer e refazer estão na **mesma transação**: se o cruzamento falhar, o
   mapa não fica com 13 mil duplicatas à mostra.
 
-- **Mais de dois nomes no mesmo lugar é um prédio, não uma dúvida de nome**
-  (`TETO_MULTILOJA`). Regra do dono do produto: *"mais de 2 itens de nome
-  diferente no mesmo lugar já não é apenas ambiguidade de nome do mesmo
-  estabelecimento (…) mais de 2 significa um shopping ou multilojas, nesse caso
-  cada um é um estabelecimento mesmo"*.
+- **Multiloja virou marca no ponto, e não regra de fusão** (`pois.multiloja`,
+  migração `0037`). A observação continua valendo: no 4545 da Avenida
+  Farroupilha há **181 estabelecimentos**, e endereço, domínio e coordenada são
+  idênticos para os 181 — nenhum identifica ninguém. Foi por isso que o
+  `ParkShoppingCanoas` acabou fundido com a `Pista de Patinação (Iceland)` de
+  dentro dele.
 
-  DOIS nomes ainda pode ser o mesmo negócio escrito de duas formas —
-  `Restaurante Tempero e Arte` e `Tempero & Arte` no mesmo número. TRÊS ou mais
-  não: é galeria, shopping, centro clínico, campus.
+  **A primeira tentativa foi transformar isso em corte, e o corte errava 32%**
+  das vezes. Medido sobre as recusas reais em Canoas:
 
-  **O que ela conserta.** `ParkShoppingCanoas` tinha sido fundido com a
-  `Pista de Patinação (Iceland)` de dentro dele, e a IA decidiu por evidência
-  que é toda verdadeira: `mesmo domínio: parkshoppingcanoas.com.br · a 12 m`. O
-  domínio é do shopping, e todas as lojas o exibem. No 4545 da Avenida
-  Farroupilha há **181 nomes distintos** — endereço, domínio e coordenada são
-  idênticos para os 181, e nenhum deles identifica ninguém.
+  | par recusado | dist. | verdade |
+  |---|---:|---|
+  | `Master Sonho Colchões` + `Master Sonho Colchões \| Canoas` | 0 m | é o mesmo |
+  | `Preciosa Boutique Atacado` + `Preciosa Boutique Atacado \|\| Canoas` | 0 m | é o mesmo |
+  | `Crazy Som - Locação e Eventos` + `Crazy Som` | 7 m | é o mesmo |
 
-  **A distribuição em Canoas** mostra que o limiar cai no lugar certo:
+  `semelhanca_nome` é Jaccard sobre tokens, e um nome que é o outro **mais um
+  sufixo** cai para 0,75 — abaixo do limiar de 0,8 que o corte usava para dizer
+  "nomes diferentes". Um número fixo não distingue sufixo de filial de outra
+  loja.
 
-  | nomes distintos na porta | portas |
-  |---|---|
-  | 1 | 12.945 |
-  | 2 | 2.244 |
-  | 3 ou mais | **1.207** |
+  **A IA distingue, e foi verificada nos mesmos pares antes da decisão.**
+  De 120 perguntados:
 
-  **"Mesmo lugar" não é "mesma string de endereço"**, e a primeira versão desta
-  regra errou nisso. O shopping está em `AVENIDA FARROUPILHA 4545`; a pista
-  dentro dele tem logradouro `PARKSHOPPINGCANOAS` e **nenhum número** — a loja
-  de dentro usa o nome do prédio como rua. Exigir a mesma porta deixaria de fora
-  justamente o caso que motivou a regra. Vale, então, dentro de `RAIO_M`, o
-  mesmo raio que o site e o telefone já exigem para valer; e a marca contagia
-  quem está a essa distância de uma porta-multiloja.
+  | par | corte | IA |
+  |---|---|---|
+  | `Unimed Porto Alegre` + `Coloprocto` | descarta | **DIFERENTE** ✓ |
+  | `Agah` + `Agência Treehauss` | descarta | **DIFERENTE** ✓ |
+  | `NGA Móveis Hospitalares` + `NGA Metalúrgica` | descarta | **DIFERENTE** ✓ |
+  | `Master Sonho Colchões` + `… \| Canoas` | descarta ✗ | **MESMO** ✓ |
+  | `Crazy Som - Locação` + `Crazy Som` | descarta ✗ | **MESMO** ✓ |
 
-  **O efeito medido** em Canoas: as perguntas à IA com nomes diferentes caem de
-  **83.683 para 6.109 — 93% a menos**. São exatamente as perguntas em que a IA
-  vinha respondendo "MESMO" para o shopping. Nenhuma fusão automática mudou,
-  porque no estado atual não há nenhuma pendente: todas já aconteceram.
+  Decisão do dono do produto: é melhor que mais pares **cheguem** à IA e ela
+  resolva — *"mesmo o shopping tendo vários no mesmo endereço, cada um viraria
+  um ponto individual porque seus nomes mostram que claramente são pontos
+  diferentes"*. O nome é a evidência, e ler nome é o que a IA faz melhor que um
+  limiar.
+
+  **O custo do recuo é pequeno, porque o corte era em boa parte redundante.**
+  O `filtrar_para_ia`, que já existia, descarta o par sustentado apenas por
+  vizinhança — e a docstring dele já descrevia o fenômeno da galeria. Medido em
+  Canoas:
+
+  | | pares |
+  |---|---:|
+  | `perguntar` bruto | 83.820 |
+  | cortados por só vizinhança | 80.908 |
+  | **chegam à IA** | **2.912** |
+  | destes, em endereço de multiloja | 2.469 |
+
+  A marca sobreviveu à regra e vai para o banco, porque saber que um ponto está
+  num prédio de várias lojas vale na tela e na revisão humana. Ela é derivada e
+  recalculada a cada passada — o UPDATE escreve `true` **e** `false`, senão um
+  endereço que perdeu estabelecimentos ficaria marcado para sempre.
 
   Sai por `descartar` e não por `perguntar` porque *"cada um é um
   estabelecimento mesmo"* é uma afirmação, não uma dúvida — e foi a IA que

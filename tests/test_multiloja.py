@@ -1,34 +1,43 @@
 # -*- coding: utf-8 -*-
-"""Mais de dois nomes no mesmo lugar é um prédio, não uma dúvida de nome.
+"""Multiloja é MARCA no ponto, e não regra de fusão.
 
-REGRA DO DONO DO PRODUTO, 27/08/2026
+A HISTÓRIA DESTE ARQUIVO, PORQUE ELA É A LIÇÃO
 
-    "mais de 2 itens de nome diferente no mesmo lugar já não é apenas
-    ambiguidade de nome do mesmo estabelecimento igual o restaurante por
-    exemplo, mais de 2 significa um shopping ou multilojas, nesse caso, cada um
-    é um estabelecimento mesmo"
+Em 27/08/2026 nasceu aqui uma regra que DESCARTAVA o par quando os dois POIs
+estavam no mesmo lugar, o lugar reunia mais de dois nomes distintos e os nomes
+deles diferiam. A observação por trás continua verdadeira: no 4545 da Avenida
+Farroupilha há 181 estabelecimentos, e endereço, domínio e coordenada são
+idênticos para os 181 — nenhum identifica ninguém.
 
-DOIS nomes ainda pode ser o mesmo negócio escrito de duas formas — foi o caso
-do "Restaurante Tempero e Arte" e do "Tempero & Arte" no mesmo número. TRÊS ou
-mais não: é galeria, shopping, centro clínico, campus.
+O CORTE ERRAVA 32% DAS VEZES. Medido sobre as recusas reais em Canoas:
 
-O QUE A REGRA CONSERTA, medido em Canoas:
+    Master Sonho Colchões     + Master Sonho Colchões | Canoas    0 m
+    Preciosa Boutique Atacado + Preciosa Boutique Atacado         0 m
+    Crazy Som - Locação       + Crazy Som                         7 m
 
-    ParkShoppingCanoas + Pista de Patinação (Iceland) — o shopping fundido com
-    a pista dentro dele. A IA decidiu por `mesmo domínio:
-    parkshoppingcanoas.com.br · a 12 m`, e as duas evidências são VERDADEIRAS:
-    o domínio é do shopping e todas as lojas o exibem.
+São o mesmo negócio. `semelhanca_nome` é Jaccard sobre tokens, e um nome que é
+o outro MAIS UM SUFIXO cai para 0,75 — abaixo do limiar de 0,8. Um número fixo
+não distingue "sufixo de filial" de "outra loja".
 
-    No 4545 da Avenida Farroupilha há 181 nomes distintos. Endereço, domínio e
-    coordenada são iguais para todos os 181 — nenhum deles identifica ninguém.
+A IA DISTINGUE, e foi verificada nos mesmos pares antes da decisão. De 120:
 
-POR QUE O TESTE CONSTRÓI O CENÁRIO EM VEZ DE MEDIR O BANCO
+    Unimed Porto Alegre + Coloprocto ............ DIFERENTE   certo
+    Agah + Agência Treehauss .................... DIFERENTE   certo
+    NGA Móveis Hospitalares + NGA Metalúrgica ... DIFERENTE   certo
+    Master Sonho Colchões + ... | Canoas ........ MESMO       certo
+    Crazy Som - Locação + Crazy Som ............. MESMO       certo
 
-A fusão errada já aconteceu, e depois dela `corrigir_coordenada` moveu um dos
-pontos: hoje eles estão a ~98 m, não a 12. O par não se reproduz consultando o
-banco. Os números aqui são os do incidente — 12 m, o domínio real, os dois
-logradouros como estão gravados —, e é por isso que o cenário é escrito.
+Decisão do dono do produto, 28/08/2026: é melhor que mais pares CHEGUEM à IA e
+ela resolva — *"mesmo o shopping tendo vários no mesmo endereço, cada um
+viraria um ponto individual porque seus nomes mostram que claramente são pontos
+diferentes"*. O nome é a evidência, e ler nome é o que a IA faz melhor que um
+limiar.
+
+A marca sobreviveu à regra: ela vira `pois.multiloja` (migração 0037), porque
+saber que um ponto está num prédio de várias lojas vale na tela e na revisão.
+Ela só não decide mais nada sozinha.
 """
+import io
 import os
 import sys
 
@@ -47,81 +56,66 @@ def _poi(pid, nome, logr, num="", lat=-29.914949, lng=-51.165644, site="",
             "telefone": "", "categoria": cat, "endereco": "", "evid": 0}
 
 
-# ── o incidente ───────────────────────────────────────────────────────────
+# ── a marca NÃO decide ────────────────────────────────────────────────────
 
-def _o_par_do_shopping():
-    """Os dois POIs como estão no banco, e a 12 m como estavam na fusão."""
-    shopping = _poi(176532, "ParkShoppingCanoas", "AVENIDA FARROUPILHA", "4545",
-                    site="parkshoppingcanoas.com.br")
-    pista = _poi(216772, "Pista de Patinação (Iceland)", "PARKSHOPPINGCANOAS",
-                 lat=-29.914949 + 12 / 111320.0,
-                 site="https://www.parkshoppingcanoas.com.br/")
-    return shopping, pista
+def test_a_multiloja_nao_descarta_o_par():
+    """O recuo. O par do shopping tem de CHEGAR à IA, não morrer aqui.
 
-
-def test_sem_a_regra_o_shopping_funde_com_a_loja_de_dentro():
-    """A linha de base. Sem isto, o teste seguinte passaria por não haver nada
-    a impedir, e o arquivo viraria decoração."""
-    a, b = _o_par_do_shopping()
-    a["multiloja"] = b["multiloja"] = False
+    Os dois POIs do incidente: o shopping e a pista de patinação dentro dele,
+    a 12 m, com o mesmo domínio. A regra antiga os descartava; hoje a evidência
+    é apurada e a decisão é de quem sabe ler nome."""
+    a = _poi(176532, "ParkShoppingCanoas", "AVENIDA FARROUPILHA", "4545",
+             site="parkshoppingcanoas.com.br")
+    b = _poi(216772, "Pista de Patinação (Iceland)", "PARKSHOPPINGCANOAS",
+             lat=-29.914949 + 12 / 111320.0,
+             site="https://www.parkshoppingcanoas.com.br/")
+    a["multiloja"] = b["multiloja"] = True
     r = ev.avaliar(a, b)
     assert r["decisao"] != "descartar", \
-        "o par deixou de ser fundível por outro motivo — refazer o cenário"
-    assert "mesmo domínio" in " · ".join(r["motivos"]), \
-        "o domínio compartilhado sumiu da evidência"
+        f"o corte da multiloja voltou: {r['porque']}"
 
 
-def test_com_a_regra_o_shopping_nao_funde_com_a_loja_de_dentro():
-    """O conserto. Nomes diferentes, no mesmo lugar de mais de dois nomes."""
-    a, b = _o_par_do_shopping()
-    a["multiloja"] = b["multiloja"] = True
-    r = ev.avaliar(a, b)
-    assert r["decisao"] == "descartar", \
-        f"o shopping voltou a fundir com a loja de dentro: {r['porque']}"
-    assert "multiloja" in r["porque"]
+def test_a_marca_nao_muda_veredito_nenhum():
+    """Mais forte que o teste acima: ligar a marca não pode alterar NADA na
+    decisão. Se alterar, ela voltou a ser regra por algum caminho."""
+    casos = [
+        # o mesmo negócio com sufixo — o falso positivo que derrubou a regra
+        (_poi(1, "Master Sonho Colchões", "AVENIDA FARROUPILHA", "4545"),
+         _poi(2, "Master Sonho Colchões | Canoas", "AVENIDA FARROUPILHA", "4545")),
+        # dois negócios distintos na mesma porta
+        (_poi(3, "Unimed Porto Alegre", "AVENIDA INCONFIDENCIA", "650"),
+         _poi(4, "Coloprocto", "AVENIDA INCONFIDENCIA", "650",
+              lat=-29.914949 + 14 / 111320.0)),
+        # nomes iguais, mesma porta
+        (_poi(5, "Cobasi", "AVENIDA FARROUPILHA", "4545"),
+         _poi(6, "Cobasi", "AVENIDA FARROUPILHA", "4545")),
+    ]
+    for a, b in casos:
+        a["multiloja"] = b["multiloja"] = False
+        sem = ev.avaliar(a, b)
+        a["multiloja"] = b["multiloja"] = True
+        com = ev.avaliar(a, b)
+        assert sem["decisao"] == com["decisao"], (
+            f"a marca mudou o veredito de {a['nome']!r} + {b['nome']!r}: "
+            f"{sem['decisao']} → {com['decisao']}")
 
 
-def test_a_porta_nao_precisa_casar_para_o_lugar_ser_o_mesmo():
-    """A versão que EXIGIA a mesma porta não teria pego o incidente.
+def test_o_limiar_de_nome_deixaria_passar_o_mesmo_negocio():
+    """A medida que condenou a regra, guardada como número.
 
-    O shopping está em "AVENIDA FARROUPILHA 4545"; a pista dentro dele tem
-    logradouro "PARKSHOPPINGCANOAS" e NENHUM número. Casar string de endereço
-    deixaria de fora justamente quem a regra existe para separar."""
-    a, b = _o_par_do_shopping()
-    assert ev.logradouro_de(a) != ev.logradouro_de(b), \
-        "o cenário deixou de refletir o incidente: as portas casam"
-    a["multiloja"] = b["multiloja"] = True
-    assert ev.avaliar(a, b)["decisao"] == "descartar"
-
-
-# ── o que a regra NÃO pode quebrar ────────────────────────────────────────
-
-def test_a_mesma_loja_com_o_mesmo_nome_continua_fundindo():
-    """Duas fontes gravando a MESMA loja do shopping são a mesma loja. A regra
-    fala de nome DIFERENTE — se ela comesse isto, o shopping ficaria cheio de
-    duplicatas."""
-    a = _poi(1, "Cobasi", "AVENIDA FARROUPILHA", "4545")
-    b = _poi(2, "Cobasi", "AVENIDA FARROUPILHA", "4545",
-             lat=-29.914949 + 5 / 111320.0)
-    a["multiloja"] = b["multiloja"] = True
-    r = ev.avaliar(a, b)
-    assert r["decisao"] == "fundir", \
-        f"a mesma loja parou de fundir dentro do shopping: {r['porque']}"
+    "Master Sonho Colchões" e "Master Sonho Colchões | Canoas" são o mesmo
+    negócio, e a semelhança entre eles fica ABAIXO do limiar de 0,8 que a regra
+    usava para dizer "nomes diferentes". Enquanto isto for verdade, nenhum
+    corte pode se apoiar só nesse limiar."""
+    s = ev.semelhanca_nome("Master Sonho Colchões", "Master Sonho Colchões | Canoas")
+    assert s < 0.8, \
+        f"a semelhança mudou ({s:.2f}) — reavaliar se o corte volta a ser viável"
 
 
-def test_dois_nomes_na_mesma_porta_nao_e_multiloja():
-    """O caso que o dono do produto separou explicitamente: DOIS ainda é
-    ambiguidade de nome. "Restaurante Tempero e Arte" e "Tempero & Arte" no
-    mesmo número são o mesmo restaurante."""
-    pois = [_poi(1, "Restaurante Tempero e Arte", "RUA TIRADENTES", "310"),
-            _poi(2, "Tempero & Arte", "RUA TIRADENTES", "310")]
-    cf._marcar_multiloja(pois)
-    assert not any(p["multiloja"] for p in pois), \
-        "dois nomes na mesma porta viraram multiloja"
-
+# ── a marca continua existindo, como dado ─────────────────────────────────
 
 def test_tres_nomes_na_mesma_porta_e_multiloja():
-    """O limiar, do outro lado. `TETO_MULTILOJA` é 2, então 3 já é prédio."""
+    """`TETO_MULTILOJA` é 2, então 3 já é prédio."""
     pois = [_poi(i, n, "AVENIDA FARROUPILHA", "4545")
             for i, n in enumerate(("Spoleto", "Cobasi", "POA Parrilla"), 1)]
     cf._marcar_multiloja(pois)
@@ -129,11 +123,20 @@ def test_tres_nomes_na_mesma_porta_e_multiloja():
         f"3 nomes na mesma porta não viraram multiloja (teto={ev.TETO_MULTILOJA})"
 
 
-# ── a marcação ────────────────────────────────────────────────────────────
+def test_dois_nomes_na_mesma_porta_nao_e_multiloja():
+    """DOIS ainda é ambiguidade de nome: "Restaurante Tempero e Arte" e
+    "Tempero & Arte" no mesmo número são o mesmo restaurante."""
+    pois = [_poi(1, "Restaurante Tempero e Arte", "RUA TIRADENTES", "310"),
+            _poi(2, "Tempero & Arte", "RUA TIRADENTES", "310")]
+    cf._marcar_multiloja(pois)
+    assert not any(p["multiloja"] for p in pois)
+
 
 def test_a_marca_contagia_quem_esta_ao_lado_sem_numero():
-    """A loja de dentro costuma não ter número — é o caso da pista de
-    patinação. Marcar só quem casa a porta a deixaria de fora."""
+    """A loja de dentro do shopping costuma usar o NOME DO PRÉDIO como
+    logradouro e não ter número — é o caso da pista de patinação, cujo
+    logradouro é `PARKSHOPPINGCANOAS`. Marcar só quem casa a porta a deixaria
+    de fora."""
     pois = [_poi(i, n, "AVENIDA FARROUPILHA", "4545")
             for i, n in enumerate(("Spoleto", "Cobasi", "POA Parrilla"), 1)]
     dentro = _poi(9, "Pista de Patinação", "PARKSHOPPINGCANOAS",
@@ -145,8 +148,7 @@ def test_a_marca_contagia_quem_esta_ao_lado_sem_numero():
 
 
 def test_o_contagio_tem_alcance_e_nao_pega_a_cidade():
-    """`RAIO_M` e não "o bairro". Um ponto a 200 m do shopping é outro lugar —
-    marcar tudo faria a regra recusar fusão legítima pela cidade inteira."""
+    """`RAIO_M`, e não "o bairro"."""
     pois = [_poi(i, n, "AVENIDA FARROUPILHA", "4545")
             for i, n in enumerate(("Spoleto", "Cobasi", "POA Parrilla"), 1)]
     longe = _poi(9, "Padaria da Esquina", "RUA OUTRA",
@@ -154,20 +156,6 @@ def test_o_contagio_tem_alcance_e_nao_pega_a_cidade():
     pois.append(longe)
     cf._marcar_multiloja(pois)
     assert not longe["multiloja"], "a marca vazou para 200 m de distância"
-
-
-def test_a_contagem_usa_a_mesma_chave_que_a_fusao():
-    """Contar por `endereco` cru separaria "Av. Farroupilha, 4545" de "AVENIDA
-    FARROUPILHA, 4545 - LUC 3003", e o shopping deixaria de parecer shopping.
-    A contagem usa `logradouro_de`, a mesma função que decide `mesma_rua`."""
-    import io
-    s = io.open(os.path.join(RAIZ, "cruzar_fontes.py"), encoding="utf-8").read()
-    i = s.index("def _marcar_multiloja(")
-    corpo = s[i:s.index("\ndef ", i + 10)]
-    assert "ev.logradouro_de(p)" in corpo, \
-        "a contagem passou a usar outra chave de endereço que a fusão"
-    assert "ev.norm_nome(" in corpo, \
-        "os nomes deixaram de ser normalizados antes de contar distintos"
 
 
 def test_so_conta_porta_com_numero():
@@ -178,5 +166,45 @@ def test_so_conta_porta_com_numero():
     for k, p in enumerate(pois):
         p["lat"] = -29.9 + k * 700 / 111320.0
     cf._marcar_multiloja(pois)
-    assert not any(p["multiloja"] for p in pois), \
-        "uma avenida sem números virou multiloja"
+    assert not any(p["multiloja"] for p in pois)
+
+
+# ── a marca é gravada, e não envelhece ────────────────────────────────────
+
+def test_a_marca_vai_para_o_banco():
+    """Serve à tela e à revisão humana — é o que sobrou da regra."""
+    s = io.open(os.path.join(RAIZ, "cruzar_fontes.py"), encoding="utf-8").read()
+    codigo = "\n".join(l for l in s.splitlines()
+                       if not l.lstrip().startswith("#"))
+    assert "set multiloja =" in codigo, \
+        "o cruzamento deixou de gravar a marca de multiloja"
+
+
+def test_a_gravacao_apaga_a_marca_de_quem_deixou_de_ser():
+    """Gravar só os `true` deixaria a marca envelhecer: um endereço que perdeu
+    estabelecimentos continuaria marcado para sempre. O UPDATE escreve os dois
+    lados sobre todos os POIs comparados."""
+    s = io.open(os.path.join(RAIZ, "cruzar_fontes.py"), encoding="utf-8").read()
+    codigo = "\n".join(l for l in s.splitlines()
+                       if not l.lstrip().startswith("#"))
+    i = codigo.index("set multiloja =")
+    assert "(id = any(" in codigo[i:i + 120], \
+        "a marca voltou a ser gravada só para quem é multiloja, e envelhece"
+
+
+def test_a_coluna_existe_no_banco():
+    import base_comum as bc
+    try:
+        con = bc.conectar()
+    except Exception:
+        import pytest
+        pytest.skip("banco indisponível")
+    try:
+        cur = con.cursor()
+        cur.execute("""select data_type, is_nullable from information_schema.columns
+                        where table_name = 'pois' and column_name = 'multiloja'""")
+        r = cur.fetchone()
+    finally:
+        con.close()
+    assert r, "a coluna `multiloja` não existe — aplicar a migração 0037"
+    assert r[0] == "boolean" and r[1] == "NO", f"tipo inesperado: {r}"

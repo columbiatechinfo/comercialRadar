@@ -281,11 +281,9 @@ E o **número da porta decide** quando o nome se repete:
 | mesmo nome, mesma rua, **número diferente** | 48 | **não funde sozinho** — "Saque e Pague" 1011 × 1623 são caixas distintos |
 | sem número num dos lados | 51 | vale o teto de 1 km |
 
-**Mas no shopping o endereço não identifica ninguém.** No 4545 da Avenida
+**No shopping o endereço não identifica ninguém.** No 4545 da Avenida
 Farroupilha há **181 nomes distintos** — endereço, domínio e coordenada são
-iguais para os 181. Por isso, quando um lugar reúne **mais de 2** nomes
-diferentes, ele é tratado como prédio de várias lojas e **nomes diferentes ali
-não fundem**:
+iguais para os 181. O ponto ganha por isso a marca `multiloja`:
 
 | nomes distintos na porta | portas em Canoas | leitura |
 |---|---:|---|
@@ -296,9 +294,20 @@ não fundem**:
 "Mesmo lugar" não é "mesma string de endereço": a loja de dentro costuma usar o
 **nome do prédio como logradouro e não ter número** — a `Pista de Patinação
 (Iceland)` tem logradouro `PARKSHOPPINGCANOAS`, enquanto o shopping tem
-`AVENIDA FARROUPILHA 4545`. A regra vale dentro de `RAIO_M`, e a marca contagia
-quem está a essa distância de uma porta-multiloja. Efeito medido: as perguntas
-à IA com nomes diferentes caíram de **83.683 para 6.109**.
+`AVENIDA FARROUPILHA 4545`. Por isso a marca contagia quem está a `RAIO_M` de
+uma porta-multiloja.
+
+**A marca não decide a fusão — quem decide ali é a IA.** Ela já foi um corte,
+e o corte errava 32% das vezes: `Master Sonho Colchões` e `Master Sonho
+Colchões | Canoas` são o mesmo negócio, e a semelhança entre eles é 0,75,
+abaixo do limiar de 0,8. Um número fixo não distingue sufixo de filial de outra
+loja; a IA distingue, e acertou `Unimed Porto Alegre` × `Coloprocto`
+(DIFERENTE) e `Crazy Som - Locação` × `Crazy Som` (MESMO) nos mesmos pares em
+que o corte errava.
+
+O custo disso é pequeno porque o `filtrar_para_ia` já descarta o par sustentado
+só por vizinhança: de **83.820** pares em `perguntar`, **80.908** são cortados
+ali e **2.912** chegam à IA.
 
 
 **Dado do Google Maps tem mais confiança** por ser verificável e recente: entre
