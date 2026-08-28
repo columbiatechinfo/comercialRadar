@@ -101,6 +101,22 @@ def proprios(empresa: str, aplicar: bool) -> None:
           from pois p
          where not exists (select 1 from vinculo_poi v
                             where v.poi_id = p.id and v.estado = 'vinculado')
+           -- O POI FUNDIDO NÃO É UM PONTO, e dar-lhe vínculo o ressuscita.
+           --
+           -- Ele foi absorvido por outro e os vínculos dele passaram para o
+           -- sobrevivente — é exatamente por isso que fica "sem vínculo". Ver
+           -- essa ausência como buraco a preencher inverte o que a fusão fez:
+           -- cria evidência nova para um ponto que deixou de existir como ponto.
+           --
+           -- MEDIDO em 27/08/2026: 397 vínculos ativos em POI fundido, 286
+           -- deles criados numa única rodada. Eles não aparecem no mapa (a
+           -- consulta exclui `fundido`), o que é pior: sujeira que não se vê.
+           --
+           -- A linha do fundido continua no banco, com o `place_id`, para a
+           -- fusão poder ser desfeita pelo `x` da ficha. Desfazer devolve o
+           -- vínculo ORIGINAL a ele; um vínculo inventado aqui atrapalharia
+           -- justamente esse caminho de volta.
+           and coalesce(p.status, '') <> 'fundido'
            -- SÓ OS POIs DESTA EMPRESA, e isto é conserto de um defeito real.
            --
            -- O gatilho `preencher_tenant` carimba o tenant da SESSÃO, não o do

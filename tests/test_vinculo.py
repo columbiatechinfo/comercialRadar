@@ -167,3 +167,48 @@ def test_o_mesmo_registro_nao_compoe_dois_pois_ao_mesmo_tempo(cenario):
                    nome="Figurati Pizza Napolitana",
                    dados={"endereco": "Rua Teste, 102"})
     con.rollback()
+
+
+def test_poi_fundido_nao_ganha_vinculo_novo():
+    """O POI FUNDIDO NÃO É UM PONTO, e dar-lhe vínculo o ressuscita.
+
+    Ele foi absorvido e os vínculos dele passaram para o sobrevivente — é
+    exatamente por isso que fica "sem vínculo". `povoar_vinculo` via essa
+    ausência como buraco a preencher e criava um novo, invertendo o que a fusão
+    tinha feito.
+
+    MEDIDO em 27/08/2026: 397 vínculos ativos em POI fundido, 286 deles criados
+    numa única rodada. Eles não aparecem no mapa (a consulta exclui `fundido`),
+    o que é pior — sujeira que não se vê.
+
+    E atrapalha o caminho de volta: desfazer a fusão devolve ao POI o vínculo
+    ORIGINAL; um inventado por aqui competiria com ele.
+    """
+    import io
+    import os
+    raiz = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    s = io.open(os.path.join(raiz, "povoar_vinculo.py"), encoding="utf-8").read()
+    i = s.index("from pois p")
+    corpo = s[i:i + 1600]
+    assert "coalesce(p.status, '') <> 'fundido'" in corpo, \
+        "o povoar_vinculo voltou a criar vínculo para POI fundido"
+
+
+def test_nenhum_vinculo_ativo_em_poi_fundido():
+    """Contra o banco: o estado tem de estar limpo depois do conserto."""
+    import base_comum as bc
+    try:
+        con = bc.conectar()
+    except Exception:
+        import pytest
+        pytest.skip("banco indisponível")
+    try:
+        cur = con.cursor()
+        cur.execute("""select count(*) from vinculo_poi v
+                         join pois p on p.id = v.poi_id
+                        where p.status = 'fundido' and v.estado = 'vinculado'""")
+        n = cur.fetchone()[0]
+    finally:
+        con.close()
+    assert n == 0, f"{n} vínculos ativos em POI fundido — o ponto absorvido " \
+                   f"voltou a ter evidência própria"
