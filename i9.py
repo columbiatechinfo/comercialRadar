@@ -113,7 +113,7 @@ _PY = [
     "descobrir_maps.py", "enriquecer_por_ifood.py",
     "normalizar_bases.py", "segmentar_endereco.py", "ajuste_logradouro.py",
     "corrigir_coordenada.py", "conferir_municipio.py",
-    "povoar_vinculo.py", "cruzar_fontes.py", "julgar_par_banco.py",
+    "povoar_vinculo.py", "cruzar_fontes.py", "cadastro_cliente.py", "julgar_par_banco.py",
 ]
 
 

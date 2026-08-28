@@ -310,6 +310,8 @@ def _diagnostico(uf: str, cod: str, cidade: str, empresa: str,
          "" if cod else "precisa do codigo IBGE do municipio"),
         (8, "cruzamento entre as fontes", bool(empresa),
          "" if empresa else "informe --empresa: o vinculo carimba a dona do dado"),
+        (9, "cadastro do cliente — qual ligacao e cada ponto", bool(cidade),
+         "" if cidade else "sem cidade nao ha cadastro a cruzar"),
     ]
 
     _log("")
@@ -458,10 +460,16 @@ def _importar_no_i9(uf: str, cod: str, empresa: str) -> int:
     return p.returncode
 
 
+TOTAL_ETAPAS = 9
+
+
 def _etapa(n: int, titulo: str) -> None:
     _log("")
     _log("─" * 62)
-    _log(f"▶ {n}/8 {titulo}")
+    # O TOTAL SAI DA CONSTANTE, e nao chumbado no texto. Quando a etapa 9
+    # (cadastro do cliente) entrou, em 28/08/2026, todo o log continuou
+    # dizendo "de 8" — o cabecalho da rodada, o passo 9 inclusive.
+    _log(f"▶ {n}/{TOTAL_ETAPAS} {titulo}")
     _log("─" * 62)
 
 
@@ -893,6 +901,35 @@ def main(argv=None) -> int:
     else:
         _log("  pulado — o cruzamento carimba a empresa dona, e ela vem no")
         _log("  comando (--empresa), nunca do .env")
+
+    # ── 9 · o cadastro do cliente ─────────────────────────────────────────
+    _etapa(9, "cadastro do cliente — qual ligação é cada ponto")
+    if cidade:
+        # DEPOIS DO 8, E ISSO É DECISÃO DO DONO DO PRODUTO, 28/08/2026.
+        #
+        # O cadastro cruza com POIs que já foram fundidos e já tiveram a
+        # coordenada corrigida — o dado mais maduro que a rodada produz. Antes
+        # do 8, ele casaria com duplicatas que o 8 vai unir logo em seguida, e
+        # o vínculo apontaria para um ponto que deixa de existir.
+        #
+        # A ETAPA NÃO EXISTIA NO PROCESSO, e é o defeito que isto conserta. O
+        # `cadastro_cliente.cruzar()` existe desde antes e já havia rodado uma
+        # vez, à mão: 12.040 ligações com POI, de uma foto do banco que
+        # envelhecia a cada mineração. Foi assim que 255 delas acabaram
+        # apontando para POI fundido — o cruzamento ficou parado enquanto o
+        # passo 8 seguia unindo pontos.
+        #
+        # O QUE MUDA COM A NORMALIZAÇÃO NO TOPO, medido em Canoas:
+        #
+        #     antes .... 12.040 ligações com POI  (CEP+número e geografia)
+        #     agora .... 16.328                   (logradouro normalizado: 11.532)
+        #
+        # E o outro lado do número é a segunda lista da tela: 16.101 POIs sem
+        # ligação nenhuma, para vinculação humana.
+        _tolerante_i9(["cadastro_cliente.py", "--cruzar", "--cidade", cidade],
+                      "cadastro do cliente")
+    else:
+        _log("  pulado — sem cidade não há cadastro a cruzar")
 
     _log("─" * 62)
     _log("✅ Mineração completa. Filtre por 🔗 Multiorigem no mapa para revisar")

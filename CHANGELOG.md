@@ -47,6 +47,58 @@ limpa e o que falha é o casamento de nome. Três dos não encontrados são igre
 
 ### Adicionado
 
+- **O cadastro do cliente virou etapa da mineração** (passo 9), e cruza pelo
+  endereço **normalizado**. `cadastro_cliente.cruzar()` existia desde antes e já
+  havia rodado **uma vez, à mão** — 12.040 ligações com POI, uma foto do banco
+  que envelhecia a cada mineração. Foi assim que 255 delas acabaram apontando
+  para POI fundido: o cruzamento ficou parado enquanto o passo 8 seguia unindo
+  pontos.
+
+  **A chave é o nome da via, sem o tipo — e isso não é preferência.** O cadastro
+  não traz o tipo do logradouro na origem: o dado bruto do cliente é `INDIO
+  SEPE`, `HENRIQUE DIAS`, `DAS ANDORINHAS`, e não há coluna de tipo em nenhuma
+  das 84. Os POIs vêm com ele: `RUA DA BARCA`, `RUA TOBIAS BARRETO`. A
+  normalização dos dois lados é fiel à fonte — ela não aproxima o que a fonte
+  separou:
+
+  | casando logradouro + número | POIs |
+  |---|---:|
+  | com o tipo como veio | 297 |
+  | com o tipo removido dos dois lados | **17.712** |
+
+  **A hierarquia**, na ordem que o dono do produto declarou — *"o endereço
+  normalizado é o máximo de confiança"*:
+
+  | força | critério | teto de distância |
+  |---:|---|---|
+  | 3 | logradouro normalizado + número | **nenhum** |
+  | 2 | CEP + número | 250 m |
+  | 1 | só geografia | `RAIO_SO_GEO_M` |
+
+  A força 3 não tem raio de propósito: se as duas fontes dizem a mesma via e a
+  mesma porta, quem erra é a coordenada. É a mesma razão pela qual a fusão une
+  *"mesmo nome, mesma rua e mesmo número"* a qualquer distância — pôr um teto
+  aqui deixaria o dado fraco vetar o forte.
+
+  **Medido em Canoas:**
+
+  | | antes | agora |
+  |---|---:|---:|
+  | ligações com POI | 12.040 | **16.328** |
+  | └ por logradouro normalizado | — | 11.532 |
+  | └ por CEP + número | — | 910 |
+  | └ só por geografia | — | 3.886 |
+  | ligações apontando para POI fundido | 255 | **0** |
+  | POIs sem ligação nenhuma | — | 16.101 |
+
+  Os 16.101 são o outro lado do número e a segunda lista da tela nova: POIs que
+  o cadastro não conhece, para vinculação humana.
+
+  A etapa entra **depois do passo 8**: o cadastro cruza com POIs já fundidos e
+  já com a coordenada corrigida — o dado mais maduro que a rodada produz. Antes
+  do 8, casaria com duplicatas que o 8 uniria em seguida, e o vínculo apontaria
+  para um ponto que deixa de existir.
+
 - **`--desfundir` desfaz só o que o processo não refaria.** Desfazer para
   refundir na mesma passada é trabalho ida e volta, com o mapa duplicado no meio
   do caminho. Medido em Canoas: sem o corte, **13.252** pontos voltavam e o

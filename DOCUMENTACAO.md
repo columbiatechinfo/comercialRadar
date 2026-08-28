@@ -3965,3 +3965,103 @@ Ipiranga ×15, Shell ×15).
 | Suíte | 510 passando · 40 puladas |
 | Triggers ativos | `poi_comparavel`, `vinculo_comparavel` |
 
+---
+
+## 39. O cadastro do cliente entra no processo (28/08/2026)
+
+### O que estava errado
+
+Perguntei quantos POIs tinham vínculo com o cadastro e o banco respondeu
+**zero**. Concluí que faltava normalizar as bases fixas. Estava errado em dois
+pontos, e o dono do produto corrigiu os dois.
+
+**A normalização estava feita e salva**: 102.065 de 102.065 linhas do
+`cadastro_cliente` em `logradouro_ajustado`. Eu tinha medido vínculo em
+`vinculo_poi`, onde ele nunca esteve.
+
+**O cruzamento também existia.** `cadastro_cliente.cruzar()` liga cada imóvel ao
+POI e aplica a regra de negócio — `ja_cadastrado`, `reclassificar_alta/media/
+baixa`, `novo_comercial`, `sem_poi`. Ele mora em `cadastro_cliente.poi_id`, não
+em `vinculo_poi`.
+
+O defeito real era outro: **a etapa não estava no `minerar_tudo`**. Tinha rodado
+uma vez, à mão. A cada mineração o resultado ficava mais velho, e foi assim que
+**255 ligações acabaram apontando para POI fundido** — o cruzamento parado
+enquanto o passo 8 seguia unindo pontos.
+
+### Por que o casamento direto quase não achava nada
+
+Olhando os dois lados normalizados:
+
+| fonte | logradouro normalizado |
+|---|---|
+| cadastro | `BRASIL` · `TIRADENTES` · `DAS ANDORINHAS` |
+| POIs | `RUA DA BARCA` · `RUA TOBIAS BARRETO` |
+
+**O cadastro não traz o tipo do logradouro na origem.** O dado bruto do cliente
+é `INDIO SEPE`, `HENRIQUE DIAS` — sem `RUA`/`AVENIDA` —, e não há coluna de tipo
+em nenhuma das 84. A normalização dos dois lados é fiel à fonte: ela não pode
+inventar o que a fonte não tem, nem aproximar o que a fonte separou.
+
+Casando com o tipo presente de um lado e ausente do outro, **297 POIs**. Com o
+tipo removido dos dois, **17.712**.
+
+### A hierarquia
+
+Regra do dono do produto: *"o endereço normalizado é o máximo de confiança"*.
+
+| força | critério | teto de distância |
+|---:|---|---|
+| 3 | logradouro normalizado + número | **nenhum** |
+| 2 | CEP + número | 250 m |
+| 1 | só geografia | `RAIO_SO_GEO_M` |
+
+A força 3 não tem raio de propósito. Se as duas fontes dizem a mesma via e a
+mesma porta, quem erra é a coordenada — é a mesma razão pela qual a fusão une
+*"mesmo nome, mesma rua e mesmo número"* a qualquer distância. Pôr um teto aqui
+deixaria o dado fraco vetar o forte.
+
+### O resultado
+
+| | antes | agora |
+|---|---:|---:|
+| ligações com POI | 12.040 | **16.328** |
+| └ por logradouro normalizado | — | 11.532 |
+| └ por CEP + número | — | 910 |
+| └ só por geografia | — | 3.886 |
+| ligações apontando para POI fundido | 255 | **0** |
+| POIs sem ligação nenhuma | — | 16.101 |
+
+E as flags de negócio, que são o que o produto entrega:
+
+| flag | ligações |
+|---|---:|
+| `sem_poi` | 85.737 |
+| `ja_cadastrado` — comercial na base e com POI, não visitar | 6.538 |
+| `reclassificar_baixa` | 6.992 |
+| `reclassificar_media` | 1.617 |
+| `reclassificar_alta` — POI com CNPJ confirmado, visitar primeiro | 1.181 |
+
+### Onde a etapa entra
+
+**Passo 9, depois do 8.** O cadastro cruza com POIs já fundidos e já com a
+coordenada corrigida — o dado mais maduro que a rodada produz. Antes do 8, ele
+casaria com duplicatas que o 8 uniria em seguida, e o vínculo apontaria para um
+ponto que deixa de existir.
+
+O total de etapas virou `TOTAL_ETAPAS`, constante. Quando a 9 entrou, todo o log
+continuou dizendo "de 8" — inclusive o cabeçalho do próprio passo 9.
+
+### O que isto habilita
+
+A tela nova tem a **instalação como chave**, e agora os dois lados dela existem:
+
+- **16.328 ligações com POI** — a fila principal
+- **16.101 POIs sem ligação** — a lista secundária, para vinculação humana
+
+### Uma regra de trabalho que ficou registrada no mesmo dia
+
+Toda pergunta ao usuário vai na **caixa formal**, nunca solta no texto da
+resposta. Ele pediu isso duas vezes — em 27/08 e de novo em 28/08, depois de eu
+reincidir. Pergunta no meio de um relatório de números se perde: ele lê a
+medição, a dúvida fica no rodapé, e a resposta vem incompleta ou não vem.

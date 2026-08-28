@@ -37,6 +37,7 @@ import io
 import csv
 import sys
 import math
+import re
 import argparse
 import unicodedata
 from collections import defaultdict
@@ -189,6 +190,39 @@ def _conv(valor, tipo):
     except (ValueError, TypeError):
         return None
     return v[:500]
+
+
+# O CADASTRO NAO TRAZ O TIPO DO LOGRADOURO, e isso decide como se casa.
+#
+# O dado bruto do cliente e `INDIO SEPE`, `HENRIQUE DIAS`, `DAS ANDORINHAS` —
+# sem `RUA`/`AVENIDA`, e nao ha coluna de tipo em nenhuma das 84. Os POIs vem
+# com o tipo: `RUA DA BARCA`, `RUA TOBIAS BARRETO`. A normalizacao dos dois
+# lados e fiel a fonte, entao ela nao aproxima o que a fonte separou.
+#
+# MEDIDO em Canoas, 28/08/2026, casando logradouro + numero:
+#
+#     com o tipo como veio ......    297 POIs
+#     com o tipo removido ....... 17.712 POIs
+#
+# Por isso a chave tira o tipo dos DOIS lados. O que sobra e o nome da via, que
+# e o que as duas fontes tem em comum.
+_TIPO_LOGRADOURO = re.compile(
+    r"^(RUA|R|AVENIDA|AV|TRAVESSA|TV|ESTRADA|ESTR|RODOVIA|ROD|BECO|PRACA|PCA|"
+    r"ALAMEDA|AL|LARGO|LOTEAMENTO|VIA|LINHA|PARQUE|ACESSO|SERVIDAO|VILA)\.?\s+")
+
+
+def via_sem_tipo(logradouro: str) -> str:
+    """O nome da via, sem `RUA`/`AVENIDA` e sem acento — a chave que casa as
+    duas fontes. Ver o comentario de `_TIPO_LOGRADOURO`."""
+    s = unicodedata.normalize("NFD", (logradouro or "").upper().strip())
+    s = "".join(c for c in s if unicodedata.category(c) != "Mn")
+    s = re.sub(r"[^A-Z0-9 ]+", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    anterior = None
+    while anterior != s:                    # "ESTRADA VELHA DO ..." tira uma vez so
+        anterior = s
+        s = _TIPO_LOGRADOURO.sub("", s, count=1)
+    return s
 
 
 def _dist_m(la1, lo1, la2, lo2):
@@ -383,36 +417,76 @@ def cruzar(cidade: str, con=None) -> dict:
     con = con or bc.conectar()
     try:
         with con.cursor() as cur:
-            cur.execute("""SELECT id, lat, lng, e_comercial, cep, numero
-                             FROM cadastro_cliente
-                            WHERE cidade ILIKE %s AND lat IS NOT NULL""", (cidade,))
+            cur.execute("""SELECT c.id, c.lat, c.lng, c.e_comercial, c.cep, c.numero,
+                                  la.logradouro_marcado, la.numero_canonico
+                             FROM cadastro_cliente c
+                             LEFT JOIN logradouro_ajustado la
+                                    ON la.fonte = 'cadastro'
+                                   AND la.record_id = c.id::text
+                            WHERE c.cidade ILIKE %s AND c.lat IS NOT NULL""", (cidade,))
             cads = cur.fetchall()
+            # O LOGRADOURO NORMALIZADO VEM JUNTO, e o POI fundido fica de fora.
+            #
+            # Fundido nao e um ponto: ele foi absorvido e o que estava pendurado
+            # nele passou para o sobrevivente. Sem este filtro o cruzamento
+            # apontava para pontos que sumiram do mapa — MEDIDO em 28/08/2026:
+            # 255 ligacoes do cadastro apontando para POI fundido.
             cur.execute("""SELECT p.id, COALESCE(p.maps_lat, p.lat_origem),
                                   COALESCE(p.maps_lng, p.lng_origem), p.cnpj_conf,
-                                  p.nome, p.endereco
+                                  p.nome, p.endereco,
+                                  la.logradouro_marcado, la.numero_canonico
                              FROM pois p
+                             LEFT JOIN logradouro_ajustado la
+                                    ON la.fonte = 'pois'
+                                   AND la.record_id = p.id::text
                             WHERE p.cidade ILIKE %s
                               AND p.match_valido IS NOT FALSE
+                              AND p.fundido_em IS NULL
                               AND COALESCE(p.maps_lat, p.lat_origem) IS NOT NULL""",
                         (cidade,))
             pois = cur.fetchall()
 
-        # índice dos POIs por (cep, número) e por célula da grade
+        # índice dos POIs por logradouro normalizado, por (cep, número) e por célula
         CEL = 0.0005                                   # ~55 m
-        por_end, grade = defaultdict(list), defaultdict(list)
+        por_via, por_end, grade = (defaultdict(list), defaultdict(list),
+                                   defaultdict(list))
         for p in pois:
             grade[(round(p[1] / CEL), round(p[2] / CEL))].append(p)
             k = chave_endereco(p[5] or "")
             if k:
                 por_end[(k[0], k[1])].append(p)
+            via = via_sem_tipo(p[6] or "")
+            numc = "".join(c for c in str(p[7] or "") if c.isdigit())
+            if via and numc:
+                por_via[(via, numc)].append(p)
 
-        # 1ª passada: propõe (imóvel, POI, distância, força). Força 2 = endereço
-        # bateu; 1 = só geografia. Depois o POI fica com a melhor proposta.
+        # 1ª passada: propõe (imóvel, POI, distância, força). A força ordena, e a
+        # ordem é a que o dono do produto declarou em 28/08/2026:
+        #
+        #     3  logradouro NORMALIZADO + número     "o máximo de confiança"
+        #     2  CEP + número
+        #     1  só geografia
+        #
+        # A FORÇA 3 NÃO TEM TETO DE DISTÂNCIA, e é deliberado. Se as duas fontes
+        # dizem a mesma via e a mesma porta, quem erra é a coordenada — é a mesma
+        # razão pela qual a fusão une "mesmo nome, mesma rua e mesmo número" a
+        # qualquer distância. Pôr um raio aqui seria deixar a coordenada, que é o
+        # dado fraco, vetar o endereço, que é o forte.
         prop = []
-        for cid, la, lo, ecom, cep, num in cads:
+        for cid, la, lo, ecom, cep, num, via_c, numc_c in cads:
+            via = via_sem_tipo(via_c or "")
+            numc = "".join(c for c in str(numc_c or "") if c.isdigit())
+            achou = False
+            if via and numc:
+                for p in por_via.get((via, numc), ()):
+                    d = _dist_m(la, lo, p[1], p[2])
+                    prop.append((3, -d, cid, p, d, ecom))
+                    achou = True
+            if achou:
+                continue
+
             cep = "".join(c for c in str(cep or "") if c.isdigit())
             num = "".join(c for c in str(num or "") if c.isdigit())
-            achou = False
             for p in por_end.get((cep, num), ()):
                 d = _dist_m(la, lo, p[1], p[2])
                 if d <= 250:                # mesmo CEP+número: a folga é do geocode
@@ -441,14 +515,15 @@ def cruzar(cidade: str, con=None) -> dict:
             cad_par[cid] = (p, d, ecom, forca)
 
         updates = []
-        for cid, la, lo, ecom, _cep, _num in cads:
+        for cid, la, lo, ecom, _cep, _num, _via, _numc in cads:
             par = cad_par.get(cid)
             if par is None:
                 updates.append((cid, None, "sem_poi", FLAGS["sem_poi"], None, None))
                 continue
             p, d, _e, forca = par
             conf = p[3] or "sem confiança registrada"
-            como = "endereço" if forca == 2 else f"{d:.0f} m"
+            como = ("logradouro normalizado" if forca == 3 else
+                    ("CEP e número" if forca == 2 else f"{d:.0f} m"))
             flag = "ja_cadastrado" if ecom else _flag_por_confianca(p[3])
             updates.append((cid, p[0], flag,
                             f"{FLAGS[flag]} POI: {p[4][:60]} ({como})",
@@ -465,6 +540,7 @@ def cruzar(cidade: str, con=None) -> dict:
 
         res = {"cadastro": len(cads), "pois": len(pois),
                "novo_comercial": sum(1 for p in pois if p[0] not in poi_dono),
+               "por_logradouro": sum(1 for v in cad_par.values() if v[3] == 3),
                "por_endereco": sum(1 for v in cad_par.values() if v[3] == 2),
                "so_geo": sum(1 for v in cad_par.values() if v[3] == 1)}
         for f in ORDEM_FLAGS:
