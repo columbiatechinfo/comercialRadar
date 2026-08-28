@@ -7,6 +7,57 @@ versionamento [SemVer](https://semver.org/lang/pt-BR/).
 
 ### Adicionado
 
+- **`--desfundir` desfaz só o que o processo não refaria.** Desfazer para
+  refundir na mesma passada é trabalho ida e volta, com o mapa duplicado no meio
+  do caminho. Medido em Canoas: sem o corte, **13.252** pontos voltavam e o
+  cruzamento refundia **10.775** deles — 81%. Os exemplos dizem o que são:
+
+  | absorvido | sobrevivente | dist. |
+  |---|---|---|
+  | `Primos fratelli` — Avenida das Canoas, nº 264 | `Primos fratelli` — Avenida das Canoas, 264 - Canoas - RS | 0 m |
+  | `Imobiliária Solares` — Rua Frei Orlando, nº 33 | `Imobiliária Solares` — Rua Frei Orlando, 33 - Canoas | 0 m |
+
+  É o mesmo estabelecimento com o endereço escrito de duas formas; desfazer isso
+  não revê nada. O alvo passou a ser o que a regra de **hoje** não refaria — é
+  ali que uma regra nova alcança o passado. `--desfundir-tudo` mantém o
+  comportamento antigo.
+
+  **A primeira execução real, em Canoas:**
+
+  | | |
+  |---|---:|
+  | desfeitas | 2.483 |
+  | ficaram como estavam | 10.769 |
+  | pares à Spark | 6.705 |
+  | veredito | `DIFERENTE 4.884 · MESMO 1.787 · INCERTO 33` |
+  | fusões aplicadas | 1.913 |
+  | vínculos órfãos | **0** |
+
+  **O `ParkShoppingCanoas` voltou a ser ponto próprio** — a IA julgou o par
+  contra a `Pista de Patinação (Iceland)` e disse DIFERENTE. Foi o caso que
+  motivou toda esta linha de trabalho. O `UniRitter - Bloco C` foi desfeito e a
+  IA o **refundiu** em `Prédio B Uniritter`: discutível, mas é a decisão dela.
+
+  **LIMITE CONHECIDO — a operação não é idempotente.** Rodar de novo encontraria
+  mais 1.824 elegíveis, e não por sobra: o alvo filtra por *"a **regra** não
+  refaria"*, mas boa parte desses pares vai à IA e ela os refunde; no passo
+  seguinte eles voltam a ser elegíveis pela mesma conta. É um laço, não uma
+  convergência. Use `--desfundir` como correção pontual depois de uma mudança
+  de regra, e não como rotina.
+
+### Corrigido
+
+- **A saída do i9 não era ao vivo, e a docstring dizia que era.** O stdout do
+  Python é *block-buffered* quando vai para um pipe — e vai: atravessa o SSH.
+  Medido em 28/08/2026: `cruzar_fontes --desfundir` rodava havia **142 s** no
+  i9, vivo em `ps`, e o arquivo de saída aqui tinha **zero bytes**. Quem
+  acompanha não distingue isso de um processo pendurado, e duas partidas foram
+  derrubadas por parecerem travadas antes de a causa aparecer.
+
+  O buffer tem dois lados, e consertar um só não adianta: o Python **remoto**
+  (agora com `-u`) e o Python **local** que imprime o que chega (com
+  `PYTHONUNBUFFERED=1` em quem chama).
+
 - **Desfazer uma fusão passou a ser possível** (`migrations/0036`,
   `--desfundir`). Até aqui não havia como uma regra nova alcançar o que já
   tinha sido fundido: `--recruzar` reavalia os pares, mas só entre POIs

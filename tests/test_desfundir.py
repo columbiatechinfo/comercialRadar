@@ -139,16 +139,67 @@ def test_o_carimbo_de_cruzado_sai_dos_dois_lados(banco):
     ter sido visto — desfazer não teria servido para nada."""
     cur = banco.cursor()
     cf._empresa(cur, "Aegea - Corsan")
+    # QUEM DE FATO VOLTOU, e não um par qualquer. `_desfundir` passou a pular o
+    # que o processo refaria — 10.769 de 13.252 em Canoas —, e a versão anterior
+    # deste teste sorteava um par com `limit 1` e falhava quando calhava de ser
+    # um dos que ficam.
     cur.execute("""select id, fundido_para from pois
                     where fundido_em is not null and fundido_para is not null
-                      and cidade ilike 'canoas%' limit 1""")
-    r = cur.fetchone()
-    if not r:
+                      and cidade ilike 'canoas%'""")
+    candidatos = dict(cur.fetchall())
+    if not candidatos:
         pytest.skip("nenhuma fusão com destino gravado")
+
     cf._desfundir(cur, "Canoas")
-    cur.execute("select cruzado_em from pois where id = any(%s)", ([r[0], r[1]],))
-    assert all(c is None for (c,) in cur.fetchall()), \
-        "o carimbo `cruzado_em` sobreviveu ao desfazer"
+    cur.execute("select id from pois where id = any(%s) and fundido_em is null",
+                (list(candidatos),))
+    voltaram = [r[0] for r in cur.fetchall()]
+    if not voltaram:
+        pytest.skip("nenhuma fusão foi desfeita nesta base")
+
+    lados = voltaram + [candidatos[i] for i in voltaram]
+    cur.execute("select count(*) from pois where id = any(%s) and cruzado_em is not null",
+                (lados,))
+    assert cur.fetchone()[0] == 0, \
+        "o carimbo `cruzado_em` sobreviveu ao desfazer — o par voltaria ao mapa " \
+        "e seria PULADO na comparação seguinte, por já ter sido visto"
+
+
+def test_nao_desfaz_o_que_o_processo_refaria(banco):
+    """Desfazer para refundir na mesma passada é trabalho ida e volta, com o
+    mapa duplicado no meio do caminho.
+
+    MEDIDO em Canoas: sem este corte, 13.252 pontos voltavam e o cruzamento
+    refundia 10.775 deles — 81%. Os exemplos dizem o que são:
+
+        Primos fratelli   Avenida das Canoas, nº 264
+        Primos fratelli   Avenida das Canoas, 264 - Canoas - RS     0 m
+
+    É o mesmo estabelecimento com o endereço escrito de duas formas; desfazer
+    isso não revê nada. O que vale desfazer é o que a regra de HOJE não
+    refaria — é ali que uma regra nova alcança o passado."""
+    cur = banco.cursor()
+    cf._empresa(cur, "Aegea - Corsan")
+    cur.execute("""select id, fundido_para from pois
+                    where fundido_em is not null and fundido_para is not null
+                      and cidade ilike 'canoas%'""")
+    antes = dict(cur.fetchall())
+    if not antes:
+        pytest.skip("nenhuma fusão com destino gravado")
+
+    cf._desfundir(cur, "Canoas")
+    cur.execute("select id from pois where id = any(%s) and fundido_em is null",
+                (list(antes),))
+    voltaram = {r[0] for r in cur.fetchall()}
+
+    idx = {p["id"]: p for p in
+           cf.carregar(cur, "Canoas", None, com_fundidos=True)}
+    import evidencia as ev
+    refariam = [m for m in voltaram
+                if m in idx and antes[m] in idx
+                and ev.avaliar(idx[m], idx[antes[m]])["decisao"] == "fundir"]
+    assert not refariam, \
+        f"{len(refariam)} fusões foram desfeitas e seriam refeitas idênticas"
 
 
 def test_a_fusao_grava_o_destino():

@@ -324,6 +324,22 @@ dele** ao mapa, e o cruzamento decide de novo:
 python cruzar_fontes.py --cidade Canoas --empresa "Aegea - Corsan" --desfundir --aplicar
 ```
 
+Ele desfaz **só o que o processo não refaria**. Desfazer para refundir na mesma
+passada é trabalho ida e volta: medido em Canoas, sem esse corte 13.252 pontos
+voltavam e 10.775 eram refundidos idênticos — são o mesmo estabelecimento com o
+endereço escrito de duas formas (`Avenida das Canoas, nº 264` × `Avenida das
+Canoas, 264 - Canoas - RS`). `--desfundir-tudo` desliga o corte.
+
+Na primeira execução real: **2.483 desfeitas**, 6.705 pares à IA
+(`DIFERENTE 4.884 · MESMO 1.787`), **1.913 fusões** aplicadas e zero vínculos
+órfãos. O `ParkShoppingCanoas` voltou a ser ponto próprio — a IA disse
+DIFERENTE do que estava dentro dele.
+
+> **Não é idempotente.** O alvo filtra por *"a regra não refaria"*, mas boa
+> parte desses pares vai à IA e ela os refunde; no passo seguinte voltam a ser
+> elegíveis. Use como correção pontual depois de mudar uma regra, não como
+> rotina.
+
 Isso só é possível porque a fusão parou de sobrescrever `pois.status` — que
 guarda a **origem** do ponto e é exibida na ficha — e passou a morar em
 `fundido_em` (NULO = é um ponto) e `fundido_para` (em quem entrou). Ver a

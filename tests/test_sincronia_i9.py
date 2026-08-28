@@ -129,3 +129,31 @@ def test_os_ts_continuam_sendo_varridos():
     varrido, não digitado."""
     s = io.open(os.path.join(RAIZ, "i9.py"), encoding="utf-8").read()
     assert "rglob" in s, "os .ts voltaram a depender de lista digitada à mão"
+
+
+def test_a_etapa_no_i9_transmite_ao_vivo():
+    """A docstring do `rodar` diz "transmitindo a saída ao vivo", e por meses
+    ela não era verdade.
+
+    O stdout do Python é BLOCK-BUFFERED quando vai para um pipe — e é o que
+    acontece: a saída atravessa o SSH. Sem `-u`, nada chega até o buffer encher
+    ou o processo terminar.
+
+    MEDIDO em 28/08/2026: `cruzar_fontes --desfundir` rodava havia 142 s no i9,
+    vivo em `ps`, e o arquivo de saída aqui tinha ZERO bytes. Quem acompanha não
+    distingue isso de um processo pendurado — e a etapa que mais precisa de
+    acompanhamento é justamente a longa. Duas partidas foram derrubadas por
+    parecerem travadas antes de a causa aparecer.
+
+    O buffer tem DOIS lados: o Python remoto (resolvido aqui, com `-u`) e o
+    Python local que imprime o que chega (resolvido por `PYTHONUNBUFFERED=1` em
+    quem chama). Consertar só um não adianta — foi o que a segunda tentativa
+    mostrou.
+    """
+    s = io.open(os.path.join(RAIZ, "i9.py"), encoding="utf-8").read()
+    i = s.index("def rodar(")
+    corpo = s[i:s.index("\ndef ", i + 10)]
+    codigo = "\n".join(l for l in corpo.splitlines()
+                       if not l.lstrip().startswith("#"))
+    assert 'shlex.quote(py), "-u"' in codigo, \
+        "o Python do i9 voltou a bufferizar — a saída só apareceria no fim"

@@ -237,10 +237,20 @@ def sincronizar(log=print) -> int:
 def rodar(argumentos: list, log=print) -> int:
     """Roda um comando Python do projeto NO i9, transmitindo a saída ao vivo."""
     py = DIR + "/.venv/bin/python"
+    # `-u` NAO E OPCIONAL AQUI, e a falta dele desmentia a linha acima.
+    #
+    # O stdout do Python e' block-buffered quando vai para um PIPE — e e' o que
+    # acontece: a saida atravessa o SSH. Sem `-u`, nada chega ate o buffer
+    # encher ou o processo terminar.
+    #
+    # MEDIDO em 28/08/2026: `cruzar_fontes --desfundir` rodava ha 142 s no i9,
+    # vivo em `ps`, e o arquivo de saida aqui tinha ZERO bytes. Quem acompanha
+    # nao consegue distinguir isso de um processo pendurado — e a etapa que
+    # mais precisa de acompanhamento e' justamente a longa.
     roteiro = _script([
         f"cd {shlex.quote(DIR)} || exit 1",
         PREFIXO,
-        " ".join([shlex.quote(py)] + [shlex.quote(a) for a in argumentos]),
+        " ".join([shlex.quote(py), "-u"] + [shlex.quote(a) for a in argumentos]),
     ])
     p = subprocess.Popen(
         ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=20", SSH,

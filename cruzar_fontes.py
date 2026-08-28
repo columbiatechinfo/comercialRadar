@@ -126,9 +126,16 @@ def _empresa(cur, nome: str) -> str:
     return r[1]
 
 
-def carregar(cur, cidade: str, poligono=None) -> list:
+def carregar(cur, cidade: str, poligono=None,
+             com_fundidos: bool = False) -> list:
     par = {"cidade": cidade, "ac": _ACENTOS, "li": _LISOS}
     sql = SQL_POIS
+    if com_fundidos:
+        # SO O `--desfundir` PEDE ISTO, e precisa: para saber se a fusao
+        # ainda se sustenta e preciso comparar os dois lados dela, e um deles
+        # esta fundido — fora da consulta normal por definicao.
+        sql = sql.replace("and p.fundido_em is null",
+                          "and (p.fundido_em is null or p.fundido_para is not null)")
     if poligono:
         s, n, o, l = au.bbox_com_margem(poligono)
         sql += SQL_AREA
@@ -512,7 +519,8 @@ def aplicar(con, decisoes: list, log=print) -> int:
     return len(fusoes)
 
 
-def _desfundir(cur, cidade: str, poligono=None) -> int:
+def _desfundir(cur, cidade: str, poligono=None,
+               so_o_que_mudou: bool = True) -> int:
     """Devolve ao mapa os POIs absorvidos, para que TUDO volte a ser comparado.
 
     POR QUE ISTO PRECISOU EXISTIR
@@ -598,6 +606,38 @@ def _desfundir(cur, cidade: str, poligono=None) -> int:
     if not voltam:
         return 0
 
+    # NÃO SE DESFAZ O QUE O PROCESSO REFARIA NA MESMA PASSADA.
+    #
+    # Sem este corte, `--desfundir` devolvia 13.252 pontos ao mapa e o
+    # cruzamento em seguida refundia 10.775 deles — 81% de trabalho ida e
+    # volta, com o mapa duplicado no meio do caminho. Os exemplos dizem o que
+    # são:
+    #
+    #     Primos fratelli      Avenida das Canoas, nº 264
+    #     Primos fratelli      Avenida das Canoas, 264 - Canoas - RS      0 m
+    #
+    # É o MESMO estabelecimento com o endereço escrito de duas formas. Desfazer
+    # isso não revê nada.
+    #
+    # O que vale desfazer é o que a regra de HOJE não refaria — e é onde as
+    # regras novas alcançam o passado. Medido em Canoas, 28/08/2026:
+    #
+    #     refaria .............. 10.775   não se toca
+    #     a IA julgaria ......... 2.302   inclui o ParkShoppingCanoas
+    #     não fundiria ............ 145
+    #     separaria sem julgar ..... 41   o `filtrar_para_ia` corta o par
+    if so_o_que_mudou:
+        antes = len(voltam)
+        idx = {p["id"]: p for p in
+               carregar(cur, cidade, poligono, com_fundidos=True)}
+        voltam = [(m, v) for m, v in voltam
+                  if m in idx and v in idx
+                  and ev.avaliar(idx[m], idx[v])["decisao"] != "fundir"]
+        print(f"    {antes - len(voltam):,} fusões que o processo refaria ficam "
+              f"como estão; {len(voltam):,} vão à reavaliação")
+        if not voltam:
+            return 0
+
     # 1. O VÍNCULO VOLTA PARA CASA — e VOLTA O DELE, não um qualquer.
     #
     #    A primeira versão desta função movia `min(id)` dos vínculos do
@@ -675,7 +715,8 @@ def _desfundir(cur, cidade: str, poligono=None) -> int:
 
 def cruzar(cidade: str, empresa: str, aplicar_de_fato: bool, usar_ia: bool,
            tudo_para_ia: bool = False, area: str = "",
-           recruzar: bool = False, desfundir: bool = False) -> None:
+           recruzar: bool = False, desfundir: bool = False,
+           so_o_que_mudou: bool = True) -> None:
     con = bc.conectar()
     con.autocommit = False
     cur = con.cursor()
@@ -696,7 +737,7 @@ def cruzar(cidade: str, empresa: str, aplicar_de_fato: bool, usar_ia: bool,
         #
         # Deixando na mesma transação, desfazer e refazer viram um passo só:
         # ou o mapa fica com a fusão nova, ou continua com a antiga.
-        n = _desfundir(cur, cidade, poligono)
+        n = _desfundir(cur, cidade, poligono, so_o_que_mudou)
         print(f"  {n:,} POIs devolvidos ao mapa — a fusão deles foi desfeita, "
               f"e agora TUDO volta a ser comparado")
         print("  (desfazer e refazer estão na MESMA transação: se o cruzamento "
@@ -849,8 +890,14 @@ def main(argv=None) -> int:
     p.add_argument("--empresa", required=True)
     p.add_argument("--aplicar", action="store_true")
     p.add_argument("--desfundir", action="store_true",
-                   help="desfaz as fusoes antes de recruzar — o unico jeito de "
-                        "uma regra nova alcancar o que ja foi fundido")
+                   help="desfaz as fusoes que a regra de HOJE nao refaria, "
+                        "antes de recruzar — o unico jeito de uma regra nova "
+                        "alcancar o que ja foi fundido")
+    p.add_argument("--desfundir-tudo", dest="desfundir_tudo",
+                   action="store_true",
+                   help="desfaz TODAS, inclusive as que serao refeitas "
+                        "identicas. Custa a passada inteira e o mapa fica "
+                        "duplicado no meio do caminho")
     p.add_argument("--recruzar", action="store_true",
                    help="refaz TODOS os pares, inclusive os ja cruzados. Necessario "
                         "quando as regras de fusao mudam — sem isto o par antigo "
@@ -865,7 +912,8 @@ def main(argv=None) -> int:
                         "(12x mais chamadas — veja `filtrar_para_ia`)")
     a = p.parse_args(argv)
     cruzar(a.cidade, a.empresa, a.aplicar, not a.sem_ia, a.tudo_para_ia,
-           a.area, a.recruzar or a.desfundir, a.desfundir)
+           a.area, a.recruzar or a.desfundir or a.desfundir_tudo,
+           a.desfundir or a.desfundir_tudo, not a.desfundir_tudo)
     return 0
 
 
