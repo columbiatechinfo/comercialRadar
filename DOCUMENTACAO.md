@@ -4363,3 +4363,56 @@ para onde pertence.
 POI na tela. Entrou `_codigo_js()` neste arquivo, ao lado do `_codigo_py()` e do
 `_funcao()` que já haviam entrado por isso: **toda asserção que proíbe alguma
 coisa lê o código sem comentário**.
+
+### Por que o Chromium "não abre o Maps" — e por que não era o IP (28/08/2026)
+
+A run das 14:44 queimou **5 IPs no passo 4** e trouxe **0 de 14 POIs**, todos com
+`Page.goto: Timeout 35000ms exceeded`. O código concluiu sozinho que os proxies
+estavam mortos. Não estavam.
+
+**As medições, no mesmo host e nos mesmos IPs marcados como queimados:**
+
+| teste | resultado |
+|---|---|
+| `urllib` com credencial → `google.com/maps` | HTTP 200 em ~1 s (3 de 3) |
+| Chromium + proxy, sessão única, raiz do Maps | OK em 4,7 s |
+| Chromium + proxy, sessão única, URL profunda | OK em 2,0 s |
+| Chromium + proxy, **10 sessões paralelas** | **10 de 10**, 5,1 s de parede |
+
+Três hipóteses caíram no caminho, e todas eram minhas: IP queimado, URL da raiz,
+perfil apodrecido por idade. Também não era memória (94 GB, 57 livres) nem o
+número de workers.
+
+**O que sobrou, e explica cada fato.** A run anterior fora **cancelada com os dez
+navegadores vivos** — a pedido, para não queimar IP. Eles seguravam justamente os
+diretórios `.browser_profiles/wN` que o passo 4 reusa. Na mesma hora, o passo 5
+passou em 41 de 46 categorias: ele usa `/tmp/cr_descobre_N`, que a run cancelada
+nunca tocou.
+
+| | passo 4 | passo 5 |
+|---|---|---|
+| perfil | `.browser_profiles/wN` | `/tmp/cr_descobre_N` |
+| a run cancelada usou? | sim | não |
+| resultado às 14:47 | **0 de 14** | **41 de 46** |
+
+**O conserto já existia — no módulo irmão.** O `descobrir_maps` diagnosticou a
+mesma família em 26/08 (*"perfil velho → goto TIMEOUT, feed 0; perfil novo em
+branco → feed 1, 20 links"*) e ganhou a cura: joga o perfil fora, troca o IP,
+tenta de novo, no máximo três vezes. O `search_pois_v2` nunca a recebeu — só
+punia o IP e seguia, e por isso um problema de perfil consumia o pool inteiro sem
+nunca se resolver.
+
+Agora os dois curam igual: **o perfil é suspeito antes do IP**, e só depois de
+três perfis novos a culpa passa a ser dele.
+
+**Uma regra anterior foi refinada, não descartada.** O
+`test_o_perfil_nao_e_apagado` proibia `rmtree` no worker — e com isso proibia
+também a única saída para o caso em que o perfil É o problema. Virou
+`test_o_perfil_so_e_apagado_como_CURA`: o perfil atravessa a run inteira, e só é
+jogado fora quando o Maps não abre. Uma coisa é não apagar por higiene; outra é
+não conseguir se curar.
+
+**Não reproduzi a falha.** Com os navegadores órfãos já mortos, 10 de 10 abrem em
+4 s. A conclusão vem do encaixe das evidências, não de uma reprodução — e a cura
+vale de qualquer forma, porque ela conserta qualquer problema de formato
+"perfil", não só este.

@@ -495,6 +495,23 @@ async def worker(wid, queue: asyncio.Queue, state, pw, pool: ProxyPool,
     # passageira, é problema que insistir não resolve.
     MAX_FALHAS_ABRIR = 5
     falhas_seguidas = 0
+    # O PERFIL É SUSPEITO ANTES DO IP, e este contador é o que faltava aqui.
+    #
+    # MEDIDO em 28/08/2026: a run das 14:44 queimou 5 IPs e trouxe 0 de 14 POIs,
+    # todos com `Page.goto: Timeout 35000ms`. Nos mesmos IPs, no mesmo host,
+    # minutos depois: 10 de 10 sessões abriram o Maps em 4 s. Não era o IP.
+    #
+    # O que havia de diferente: a run anterior tinha sido CANCELADA com os dez
+    # navegadores vivos, e eles seguravam justamente estes diretórios
+    # `.browser_profiles/wN`. O passo 5 passou em 41 de 46 categorias na mesma
+    # hora — e ele usa `/tmp/cr_descobre_N`, que a run cancelada nunca tocou.
+    #
+    # O `descobrir_maps` já tinha essa cura desde 26/08, pelo mesmo sintoma
+    # ("perfil velho -> goto TIMEOUT; perfil novo em branco -> 20 links"). Este
+    # módulo nunca a ganhou: ele só punia o IP e seguia, e por isso um problema
+    # de perfil consumia o pool inteiro sem nunca se resolver.
+    MAX_CURAS_PERFIL = 3
+    curas_perfil = 0
     # PERFIL POR WORKER, e NÃO por lote — e ele não é apagado no fim.
     #
     # `w0`, `w1`… são dez pessoas diferentes que voltam ao Maps todo dia. Apagar
@@ -521,7 +538,7 @@ async def worker(wid, queue: asyncio.Queue, state, pw, pool: ProxyPool,
         de 8 KB do stdout — que, num processo que escreve pouco, pode levar
         minutos para descarregar. Mensagem que chega tarde demais não serve.
         """
-        nonlocal sess, proxy, ip_label
+        nonlocal sess, proxy, ip_label, curas_perfil
         if usar_proxy:
             proxy = await pool.acquire_blocking()
             if not proxy:
@@ -540,8 +557,20 @@ async def worker(wid, queue: asyncio.Queue, state, pw, pool: ProxyPool,
             await _derrubar()
             return False
         if not await abrir_maps(sess):
-            print(f"  🌐 [W{wid}] IP={ip_label} | Maps não abriu — IP de "
-                  f"castigo por 10 min", flush=True)
+            # TROCA PERFIL E IP, nesta ordem de suspeita. Só depois de três
+            # perfis novos é que a culpa passa a ser do IP — se três perfis e
+            # três IPs não abriram, o que está errado não é nenhum dos dois.
+            if curas_perfil < MAX_CURAS_PERFIL:
+                curas_perfil += 1
+                print(f"  🌐 [W{wid}] IP={ip_label} | Maps não abriu — trocando "
+                      f"PERFIL E IP (cura {curas_perfil}/{MAX_CURAS_PERFIL})",
+                      flush=True)
+                await _derrubar(cooldown=600)
+                shutil.rmtree(profile_dir, ignore_errors=True)
+                return False
+            print(f"  🌐 [W{wid}] IP={ip_label} | Maps não abriu depois de "
+                  f"{MAX_CURAS_PERFIL} perfis novos — IP de castigo por 10 min",
+                  flush=True)
             await _derrubar(cooldown=600)
             return False
         return True

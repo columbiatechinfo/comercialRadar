@@ -50,12 +50,30 @@ def test_a_sessao_nasce_fora_do_laco_de_lotes():
     assert i_cria < i_laco, "`HumanSession.create` está no caminho de cada lote"
 
 
-def test_o_perfil_nao_e_apagado():
-    """O perfil é a memória da sessão. Apagá-lo a cada lote era jogar fora a
-    prova de que aquele navegador já esteve ali antes."""
+def test_o_perfil_so_e_apagado_como_CURA():
+    """O perfil é a memória da sessão. Apagá-lo A CADA LOTE era jogar fora a
+    prova de que aquele navegador já esteve ali antes — e isso continua
+    proibido.
+
+    O QUE MUDOU EM 28/08/2026, e por quê. Este teste dizia "rmtree" nunca, e com
+    isso proibia também a única saída para o caso em que o PERFIL é o problema.
+    A run das 14:44 queimou 5 IPs e trouxe 0 de 14 POIs com
+    `Page.goto: Timeout 35000ms` — e nos mesmos IPs, minutos depois, 10 de 10
+    sessões abriram o Maps em 4 s. Não era o IP: era o diretório de perfil, que
+    uma run cancelada tinha deixado preso.
+
+    A regra que ficou: o perfil ATRAVESSA a run inteira, e só é jogado fora
+    quando o Maps NÃO ABRE — no máximo três vezes. Uma coisa é não apagar por
+    higiene; outra é não conseguir se curar.
+    """
     c = _worker()
-    assert "rmtree" not in c, "o perfil do worker voltou a ser apagado"
     assert 'f"w{wid}"' in c, "o perfil voltou a ser por LOTE em vez de por worker"
+
+    # apagar SÓ na cura: o único `rmtree` do worker está sob o teto de curas
+    assert c.count("rmtree") == 1,         "o perfil voltou a ser apagado em mais de um lugar"
+    assert "MAX_CURAS_PERFIL" in c and "curas_perfil <" in c,         "a troca de perfil perdeu o teto, e vira apagar por higiene de novo"
+    i = c.index("rmtree")
+    assert "Maps não abriu" in c[max(0, i - 700):i],         "o perfil passou a ser apagado fora da falha de abertura"
 
 
 def test_a_sessao_so_cai_por_captcha_ou_falha_de_abertura():
