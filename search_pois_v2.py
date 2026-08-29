@@ -334,6 +334,31 @@ async def nivel2(sess, lat, lng, nome_ocr, wid):
         return None, f"nivel2 falhou: {e}"
 
 
+# O NAVEGADOR MORREU, OU O LUGAR NÃO EXISTE? São coisas MUITO diferentes, e
+# gravá-las com o mesmo nome custou uma cidade.
+#
+# MEDIDO em Santa Maria, 29/08/2026: de 1.046 `nao_encontrado`, 1.033 (98,8%)
+# traziam `Target page, context or browser has been closed`. Não era ausência
+# no Maps — era o navegador do worker morto, e cada busca seguinte falhando em
+# milissegundos. POI legítimo — "Sala do Empreendedor", "Tabelionato de Notas",
+# "Desentupidora Flores e Trindade" — virou "não existe no Maps" e foi gravado
+# como resolvido, portanto pulado em qualquer retomada.
+#
+# A prova de que existiam: buscados um a um pelo MESMO caminho e IP, 6 de 6
+# apareceram, 4 deles com ficha direta.
+#
+# Agora quem morre vira `erro_sessao`, que NÃO é resultado: volta para a fila.
+_MORTE = ("target page, context or browser has been closed",
+          "target closed", "browser has been closed",
+          "connection closed", "page has been closed",
+          "execution context was destroyed")
+
+
+def _e_morte_de_sessao(msg: str) -> bool:
+    m = (msg or "").lower()
+    return any(s in m for s in _MORTE)
+
+
 async def search_one(sess, reg, max_dist, wid, full=False) -> dict:
     page = sess.page
     nome = reg.get("ocr_texto", "").strip()
@@ -371,6 +396,9 @@ async def search_one(sess, reg, max_dist, wid, full=False) -> dict:
         if motivo_coord != "ok":
             result["erros"].append(f"PREP_N2: {motivo_coord}")
             log_erro(wid, 2, "prep_n2", motivo_coord, nome)
+            # SESSÃO MORTA NÃO É VEREDITO SOBRE O LUGAR.
+            if _e_morte_de_sessao(motivo_coord):
+                result["status"] = "erro_sessao"
             return result
 
         poi2, motivo2 = await nivel2(sess, orig_lat, orig_lng, nome, wid)
@@ -487,6 +515,19 @@ async def worker(wid, queue: asyncio.Queue, state, pw, pool: ProxyPool,
 
     Fora isso ela atravessa a run inteira.
     """
+    # ARRANQUE ESCALONADO — meio segundo entre um worker e o seguinte.
+    #
+    # Dez contextos persistentes nascendo no mesmo instante é o que melhor
+    # explica a morte de oito deles em Santa Maria (29/08/2026): não faltou
+    # memória (65 GB livres, sem OOM), disco (580 GB) nem /dev/shm (48 GB) — e
+    # os dois que SOBREVIVERAM foram justamente os que subiram DEPOIS, ao serem
+    # refeitos pela cura.
+    #
+    # Custa 5 s no total de uma etapa de horas. É o conserto mais barato da
+    # lista, e o único que trata a causa provável em vez do sintoma.
+    if wid:
+        await asyncio.sleep(wid * 0.5)
+
     sess = None
     proxy = None
     ip_label = "direto"
@@ -641,6 +682,25 @@ async def worker(wid, queue: asyncio.Queue, state, pw, pool: ProxyPool,
 
                     res = await search_one(sess, reg, max_dist, wid, full=full)
 
+                    # O NAVEGADOR MORREU: refaz a sessão e devolve o resto do
+                    # lote à fila. Sem isto o worker seguia moendo o lote
+                    # inteiro contra uma página fechada — em Santa Maria, oito
+                    # dos dez workers passaram a run inteira assim, com ZERO
+                    # acerto e mais de mil POIs marcados como inexistentes.
+                    #
+                    # A cura já existia e funciona: os DOIS únicos workers que
+                    # a receberam (por falha ao abrir o Maps) foram os dois
+                    # únicos que produziram — 95% e 72% de acerto contra 0%.
+                    # O que faltava era disparar também neste caso.
+                    if res.get("status") == "erro_sessao":
+                        print(f"\n  💀 [W{wid}] navegador morreu no lote "
+                              f"{batch_idx} IP={ip_label} — refazendo sessão; "
+                              f"os {len(batch) - j} restantes voltam à fila",
+                              flush=True)
+                        await _derrubar()          # devolve o IP, sem castigo:
+                        queue.put_nowait((batch_idx, batch[j:]))   # não foi ele
+                        break
+
                     async with lock:
                         state["results"].append(res)
                         state["results"].sort(key=lambda x: x.get("idx", 0))
@@ -727,6 +787,16 @@ async def run(session_path: Path, n_workers: int, max_dist: float, full=False, i
     if out_json.exists():
         try:
             results_existentes = json.loads(out_json.read_text(encoding="utf-8"))
+            # `erro_sessao` NÃO é resultado: é infraestrutura que falhou, e
+            # tem de voltar à fila na retomada. Guardá-lo como processado
+            # transformaria uma queda de navegador em veredito permanente
+            # sobre o lugar.
+            antes = len(results_existentes)
+            results_existentes = [r for r in results_existentes
+                                  if r.get("status") != "erro_sessao"]
+            if antes != len(results_existentes):
+                print(f"   ♻️  {antes - len(results_existentes)} devolvidos à "
+                      f"fila (o navegador tinha morrido, não o lugar)")
             processados = {_chave(r) for r in results_existentes}
             print(f"\n♻️  Retomando: {len(processados)} itens já processados.")
         except Exception:
@@ -839,6 +909,14 @@ async def run(session_path: Path, n_workers: int, max_dist: float, full=False, i
 
     n_efetivo = min(n_workers, config.MAX_WORKERS, len(lotes))
     async with async_playwright() as pw:
+        # ESCALONA O ARRANQUE. Dez contextos persistentes nascendo no mesmo
+        # instante é o que melhor explica a morte de oito deles em Santa Maria:
+        # não faltou memória (65 GB livres, sem OOM), disco (580 GB) nem
+        # /dev/shm (48 GB) — e os dois que sobreviveram foram justamente os que
+        # subiram DEPOIS, ao serem refeitos pela cura.
+        #
+        # Meio segundo entre um e outro custa 5 s no total de uma etapa de
+        # horas. É o conserto mais barato desta lista.
         await asyncio.gather(*[
             worker(i, queue, state, pw, pool, counter, total, out_json, lock, max_dist, metrics, full, usar_proxy)
             for i in range(n_efetivo)

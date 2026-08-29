@@ -4615,3 +4615,66 @@ pai não mata o filho do outro lado do SSH.
 **toda** chamada a `i9.rodar` está sob alguma guarda — olhando a **função que a
 contém**, não a linha (a primeira versão do teste reprovou o `i9.rodar` de dentro
 do `_tolerante_i9`, que já era guardado no topo).
+
+### O navegador morreu, ou o lugar não existe? (29/08/2026)
+
+A busca de Santa Maria caiu de **89% para 2%** de acerto ao longo de cinco horas.
+Cinco hipóteses minhas foram derrubadas por medição antes de eu achar a causa —
+vale registrar todas, porque cada uma custou uma volta:
+
+| hipótese | como caiu |
+|---|---|
+| degradação de sessão | perfil novo não mudou nada — e o diretório é apagado ao fim de toda run |
+| IP queimado | 500 IPs no pool, 2 castigos |
+| periferia residencial | só 4% das falhas eram residenciais |
+| seletor quebrado pelo Maps | existe e está visível em todos os estágios |
+| falta de recurso | 65 GB livres, sem OOM, 580 GB de disco, 48 GB em `/dev/shm` |
+
+**A causa, com prova.** De 1.046 `nao_encontrado`, **1.033 (98,8%)** traziam:
+
+```
+Target page, context or browser has been closed
+```
+
+O navegador do worker estava morto, e cada busca seguinte falhava em
+milissegundos. POI legítimo — "Sala do Empreendedor Santa Maria", "Tabelionato
+de Notas", "Desentupidora Flores e Trindade" — virava "não existe no Maps" e era
+gravado como **resolvido**, portanto pulado em qualquer retomada.
+
+Buscados um a um pelo mesmo caminho, mesmo IP e mesmo perfil: **6 de 6
+apareceram**, 4 com ficha direta.
+
+**O diagnóstico por worker apontou o conserto:**
+
+```
+W7   18 ok /  1 falha     <- recebeu a cura de perfil
+W2   13 ok /  5 falhas    <- recebeu a cura de perfil
+outros oito      0 ok / 116-144 falhas cada
+```
+
+Os **dois** únicos workers cuja sessão foi reconstruída são os **dois** únicos
+que produziram. A cura já existia e funcionava — ela só não disparava quando o
+Maps **abria** e o navegador morria depois.
+
+**Os três consertos:**
+
+1. **Erro de infraestrutura ganhou status próprio** (`erro_sessao`), que **não é
+   resultado**: volta para a fila na retomada. Guardá-lo como processado
+   transformava uma queda de navegador em veredito permanente sobre o lugar.
+2. **O worker detecta a morte e se cura** — derruba a sessão, devolve o resto do
+   lote à fila e refaz. O IP **não** leva castigo: não foi ele que falhou.
+3. **Arranque escalonado**, meio segundo entre workers. Dez contextos
+   persistentes nascendo no mesmo instante é o que melhor explica a morte de
+   oito; os dois sobreviventes foram justamente os que subiram depois. Custa 5 s
+   numa etapa de horas.
+
+**Medido depois:**
+
+| | antes | depois |
+|---|---|---|
+| taxa de acerto | 2% | **76%** |
+| workers produzindo | 2 de 10 | **10 de 10** |
+| navegador morto | invisível | **8 detectados e curados** |
+
+Os navegadores ainda morrem. A diferença é que agora o sistema se recupera em vez
+de mentir no dado.
