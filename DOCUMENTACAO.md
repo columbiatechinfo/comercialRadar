@@ -4579,3 +4579,39 @@ ali não protege de nada e ainda mostraria `&amp;` ao operador. A propriedade
 certa não é "toda interpolação é escapada", é "toda interpolação **que vira
 HTML**". Os destinos seguros agora estão listados no teste, e um destino novo só
 entra na lista com a prova de que é seguro.
+
+### `--de-etapa`: retomar sem refazer a captura (29/08/2026)
+
+A rodada de Rio Grande caiu no passo 7 porque **o i9 reiniciou no meio** —
+`up 29 min`, boot às 10:00, última linha do log às 09:56. Captura, OCR e busca já
+estavam no banco: **2 h de trabalho**. Não havia como retomar do 7 sem refazer
+tudo.
+
+`--de-etapa N` pula o que já foi feito. As etapas são idempotentes por desenho:
+leem o banco e regravam. Pular a captura não é atalho, é reconhecer que ela já
+rodou — o próprio passo 4 diz *"Todos os tiles já foram capturados!"*.
+
+**Duas versões erradas antes da certa, e as duas ensinam a mesma coisa.**
+
+1. **Gate no cabeçalho.** Pus `if not _pular_etapa(n):` na frente de cada
+   `_etapa(n, ...)`. Aquilo protege a **linha do título** — as chamadas
+   seguintes continuam no mesmo recuo e rodam igual. Guardar o corpo exigiria
+   reindentar sete blocos, o que é convite a erro.
+
+2. **Gate por função, incompleto.** Protegi `_rodar`, `_tolerante` e
+   `_tolerante_i9`. O passo 4 escapou: ele chama `i9.rodar` **direto**. O
+   cabeçalho dizia "PULADA" e a captura rodava assim mesmo.
+
+**O escape custou caro, e a conta veio uma hora depois.** A captura órfã ficou no
+i9 segurando a porta **8766** — a porta em que a página do mapa é servida para o
+referrer bater com o autorizado no Google. A rodada seguinte, de Santa Maria,
+morreu com *"A porta 8766 já está em uso"*: **0 de 3.234 tiles**, e o processo
+seguiu para os passos 5 a 9 sem a etapa que traz painel e foto.
+
+A cadeia inteira: matei o `minerar_tudo` local, o processo REMOTO ficou. Matar o
+pai não mata o filho do outro lado do SSH.
+
+**O teste cobra as duas lições:** que as três portas de entrada guardam, e que
+**toda** chamada a `i9.rodar` está sob alguma guarda — olhando a **função que a
+contém**, não a linha (a primeira versão do teste reprovou o `i9.rodar` de dentro
+do `_tolerante_i9`, que já era guardado no topo).

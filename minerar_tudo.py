@@ -76,6 +76,8 @@ def _log(msg: str) -> None:
 
 
 def _rodar(cmd: list, cwd: Path | None = None) -> int:
+    if _etapa_pulada():
+        return 0
     """Roda repassando stdout LINHA A LINHA.
 
     `capture_output` juntaria tudo e só devolveria no fim — a captura leva horas
@@ -463,7 +465,43 @@ def _importar_no_i9(uf: str, cod: str, empresa: str) -> int:
 TOTAL_ETAPAS = 9
 
 
+# DE QUAL ETAPA COMEÇAR — e o gate fica no ATO, não no cabeçalho.
+#
+# Nasceu de duas rodadas perdidas no meio. Em 29/08/2026 a de Rio Grande caiu no
+# passo 7 porque o i9 REINICIOU (`up 29 min`, boot às 10:00, última linha do log
+# às 09:56). Captura, OCR e busca já estavam no banco — 2 h de trabalho — e não
+# havia como retomar do 7 sem refazer tudo.
+#
+# A PRIMEIRA VERSÃO DESTE GATE ESTAVA ERRADA, e vale registrar: eu pus um
+# `if not _pular_etapa(n):` na frente de cada `_etapa(n, ...)`. Aquilo protege a
+# LINHA DO CABEÇALHO, não o corpo — as chamadas seguintes continuam no mesmo
+# recuo e rodariam igual. Guardar o corpo exigiria reindentar sete blocos, o que
+# é convite a erro.
+#
+# Guardando o ATO em vez do bloco, três funções cobrem tudo: nada roda sem
+# passar por `_rodar`, `_tolerante` ou `_tolerante_i9`.
+#
+# As etapas são idempotentes por desenho — leem o banco e regravam. Pular a
+# captura não é atalho: é reconhecer que ela já rodou.
+_DE_ETAPA = 1
+_ETAPA_ATUAL = 1
+
+
+def _etapa_pulada() -> bool:
+    return _ETAPA_ATUAL < _DE_ETAPA
+
+
 def _etapa(n: int, titulo: str) -> None:
+    global _ETAPA_ATUAL
+    _ETAPA_ATUAL = n
+    if _etapa_pulada():
+        _log("")
+        _log(f"▶ {n}/{TOTAL_ETAPAS} {titulo} — PULADA (--de-etapa {_DE_ETAPA})")
+        return
+    return _etapa_cabecalho(n, titulo)
+
+
+def _etapa_cabecalho(n: int, titulo: str) -> None:
     _log("")
     _log("─" * 62)
     # O TOTAL SAI DA CONSTANTE, e nao chumbado no texto. Quando a etapa 9
@@ -474,6 +512,8 @@ def _etapa(n: int, titulo: str) -> None:
 
 
 def _tolerante(cmd: list, nome: str) -> int:
+    if _etapa_pulada():
+        return 0
     """Roda uma etapa que NÃO pode derrubar a rodada.
 
     A mineração é um processo longo e caro — horas de captura. Uma etapa que
@@ -492,6 +532,8 @@ def _tolerante(cmd: list, nome: str) -> int:
 
 
 def _tolerante_i9(argumentos: list, nome: str) -> int:
+    if _etapa_pulada():
+        return 0
     """O mesmo que `_tolerante`, mas a etapa roda NO i9.
 
     É para a etapa que abre NAVEGADOR. O notebook do operador é onde ele está
@@ -529,6 +571,10 @@ def main(argv=None) -> int:
     p.add_argument("--capture-workers", dest="capture_workers", type=int, default=10)
     p.add_argument("--no-proxy", dest="no_proxy", action="store_true")
     p.add_argument("--empresa", default="", help="nome da empresa dona do dado")
+    p.add_argument("--de-etapa", dest="de_etapa", type=int, default=1,
+                   metavar="N",
+                   help="começa da etapa N (1-9): retoma uma rodada que caiu "
+                        "no meio sem refazer a captura")
     p.add_argument("--pular-bases", dest="pular_bases", action="store_true",
                    help="só a captura. Existe para depurar a captura, não para "
                         "uso normal: as duas fontes são o processo.")
@@ -543,6 +589,8 @@ def main(argv=None) -> int:
                    help="produz o dataset da UF NESTA máquina. São horas e ela "
                         "disputa CPU com a captura — o lugar disso é o i9.")
     a = p.parse_args(argv)
+    global _DE_ETAPA
+    _DE_ETAPA = max(1, min(int(a.de_etapa or 1), TOTAL_ETAPAS))
 
     poly = area_utils.carregar_area(a.area)
     if not poly:
@@ -651,7 +699,11 @@ def main(argv=None) -> int:
     espelho = i9.Espelho(relativo, CAPTURAS / a.sessao / "crops" / f"{a.sessao}_db.json")
     espelho.start()
     try:
-        rc_captura = i9.rodar(cmd, _log)
+        # O GATE TAMBÉM AQUI. Esta etapa não usa `_rodar` nem `_tolerante`:
+        # ela chama `i9.rodar` direto, e por isso atravessou o `--de-etapa` na
+        # primeira versão — o cabeçalho dizia "PULADA" e a captura rodava
+        # assim mesmo. Gate por FUNÇÃO só cobre quem passa por ela.
+        rc_captura = 0 if _etapa_pulada() else i9.rodar(cmd, _log)
     finally:
         espelho.encerrar()
         _log(f"  (o resultado veio do i9 {espelho.trouxe}x durante a captura)")
