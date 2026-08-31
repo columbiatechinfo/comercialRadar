@@ -19,11 +19,6 @@
 
 set local search_path = resources_root, public;
 
-create table if not exists ibge_cnefe (
-  cep                        text,
-  cod_municipio              text
-);
-
 create table if not exists ibge_malha (
   cod_municipio              text,
   geom                       jsonb,

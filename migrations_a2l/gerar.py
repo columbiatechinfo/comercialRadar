@@ -65,7 +65,19 @@ SEM_ID = {"analise_ia": "poi_id", "fonte_arquivos": None}
 # Vai para `resources_root`: base publica e cache compartilhado, lido por todas
 # as ferramentas, escrito so por processo.
 REFERENCIA = [
-    "ibge_cnefe", "ibge_malha", "rf_empresas", "rf_estabelecimentos",
+    # `ibge_cnefe` NAO ENTRA AQUI, e isso custou uma carga inteira.
+    #
+    # As colunas dela vem do CABECALHO DO CSV do IBGE — `base_cnefe.py` le a
+    # primeira linha do zip e monta o DDL. Sao 34 colunas, e mudam entre censos.
+    #
+    # Minha primeira versao a criou pela migracao, com as DUAS colunas que o
+    # varredor de codigo tinha achado (`cep`, `cod_municipio`). Como o carregador
+    # usa `CREATE TABLE IF NOT EXISTS`, ele encontrou a tabela existente, nao
+    # mexeu nela, e as 27 UFs falharam no COPY com "column cod_unico_endereco
+    # does not exist" — depois de baixar cada uma.
+    #
+    # Tabela cuja forma vem do dado nao pertence a migracao.
+    "ibge_malha", "rf_empresas", "rf_estabelecimentos",
     "rf_socios", "rf_simples", "rf_cnaes", "rf_municipios", "rf_naturezas",
     "rf_paises", "rf_qualificacoes", "rf_motivos",
     # Cache de normalizacao, movido para ca em 31/08/2026 por decisao do dono do

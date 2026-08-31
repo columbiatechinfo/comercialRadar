@@ -74,6 +74,7 @@ def run(ufs, recriar, indices):
     else:
         alvos = disponiveis
     print(f"🏠 CNEFE (IBGE) | {len(alvos)} UF(s) | endereços/residências", flush=True)
+    falhas = []
 
     if recriar:
         with conn, conn.cursor() as cur:
@@ -102,6 +103,7 @@ def run(ufs, recriar, indices):
             bc.marcar(conn, "cnefe", nome, TABELA, n, tam)
             print(f"      ✓ {n:,} endereços".replace(",", "."), flush=True)
         except Exception as e:
+            falhas.append((nome, str(e)[:140]))
             print(f"      ✗ erro: {str(e)[:140]}", flush=True)
         finally:
             bc.limpar_tmp(destino)
@@ -116,7 +118,26 @@ def run(ufs, recriar, indices):
                     cur.execute(f"CREATE INDEX IF NOT EXISTS ix_cnefe_{col} ON {TABELA} ({col})")
         print("  ✓ índices criados")
     conn.close()
-    print("✅ CNEFE concluído.", flush=True)
+
+    # O CODIGO DE SAIDA DIZ A VERDADE.
+    #
+    # Ate 31/08/2026 esta funcao imprimia "concluido" e saia com 0 mesmo com
+    # todas as UFs falhando. Aconteceu: as 27 quebraram no COPY porque a tabela
+    # existia com a forma errada, cada uma depois de baixar seu zip, e o
+    # disparador registrou sucesso. Quem olhasse so o codigo de saida concluiria
+    # que a base publica estava carregada.
+    if falhas:
+        print("", flush=True)
+        print("❌ CNEFE: %d de %d UF(s) FALHARAM." % (len(falhas), len(alvos)),
+              flush=True)
+        for nome, erro in falhas[:5]:
+            print("   %-14s %s" % (nome, erro), flush=True)
+        if len(falhas) > 5:
+            print("   ... e mais %d" % (len(falhas) - 5), flush=True)
+        return 1
+
+    print("✅ CNEFE concluído: %d UF(s)." % len(alvos), flush=True)
+    return 0
 
 
 if __name__ == "__main__":
@@ -126,4 +147,4 @@ if __name__ == "__main__":
     p.add_argument("--indices", action="store_true")
     a = p.parse_args()
     ufs = [u.strip().upper() for u in a.uf.split(",") if u.strip()]
-    run(ufs, a.recriar, a.indices)
+    raise SystemExit(run(ufs, a.recriar, a.indices))
