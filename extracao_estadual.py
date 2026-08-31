@@ -191,23 +191,17 @@ def ingerir(saida: str, cod_municipio: str, limite: int = 0, aplicar: bool = Fal
     # execução deste script o padrão do .env teria despejado 17 mil POIs de
     # Canoas na empresa errada — sem erro nenhum, porque a trigger carimba o que
     # a sessão mandar.
-    if empresa:
-        eid, dono = bc.assumir_empresa(cur, empresa)
-        tenant = str(eid)
-    else:
-        # SEM --empresa, vale quem a conexao ja assumiu. `_opcoes()` declara
-        # `request.jwt.claim.sub` a partir de RADAR_USUARIO_SERVICO, entao
-        # `core.empresa_atual()` responde sem consultar mais nada.
-        cur.execute("select core.empresa_atual()")
-        tenant = cur.fetchone()[0]
-        if not tenant:
-            raise SystemExit(
-                "informe --empresa, ou defina RADAR_USUARIO_SERVICO no .env "
-                "com o uuid do usuario de servico da empresa.")
-        cur.execute("select name from core.tb_empresas where id = %s::uuid", (tenant,))
-        dono = (cur.fetchone() or ["?"])[0]
-        print(f"  [aviso] usando a empresa do .env: {dono}. "
-              f"Passe --empresa para escolher outra.")
+    # ESTA REGRA MUDOU DE LUGAR, e nao de conteudo. Ela nasceu aqui e era a
+    # unica correta dos tres scripts da fase 1: `povoar_vinculo` e
+    # `cruzar_fontes` exigiam `--empresa` e so aceitavam usuario `pipeline@...`.
+    # O teste de Canoas em 31/08/2026 mostrou o preco disso — a etapa 2 gravou
+    # 27.527 POIs e a etapa 8 parou dizendo que a empresa nao tinha usuario de
+    # servico, no mesmo banco e na mesma conexao.
+    #
+    # Agora os tres chamam `bc.empresa_da_sessao()`. O comportamento daqui e o
+    # que virou o padrao; o que sumiu foi a divergencia.
+    eid, dono = bc.empresa_da_sessao(cur, empresa)
+    tenant = str(eid)
     print(f"  {len(df):,} POIs de {df['NOME_MUNICIPIO'].iloc[0]}/{df['UF'].iloc[0]}"
           f" → empresa {dono}")
 

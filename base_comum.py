@@ -234,6 +234,51 @@ def limpar_tmp(*paths):
 def b64_token(token: str) -> str:
     return base64.b64encode(f"{token}:".encode()).decode()
 
+def empresa_da_sessao(cur, nome: str = "") -> tuple:
+    """A empresa dona do que este processo grava. Devolve `(id, nome)`.
+
+    UM SO JEITO DE PEDIR IDENTIDADE, e antes eram dois.
+
+    `extracao_estadual` aceitava `--empresa` OU, sem ele, a identidade que a
+    conexao ja tinha assumido a partir de `RADAR_USUARIO_SERVICO`. O
+    `povoar_vinculo` e o `cruzar_fontes` exigiam `--empresa` e so sabiam o
+    caminho do usuario `pipeline@...`.
+
+    A consequencia apareceu no teste da fase 1 em Canoas, 31/08/2026: a etapa 2
+    gravou 27.527 POIs usando o uuid do `.env`, e a etapa 8 parou dizendo que a
+    empresa nao tinha usuario de servico. O mesmo banco, a mesma empresa, a
+    mesma conexao — dois scripts discordando sobre o que e uma identidade
+    valida. Nenhum dos dois estava errado sozinho; errado era haver dois.
+
+    A ORDEM IMPORTA e e a que ja existia no `extracao_estadual`:
+
+      1. com `nome`, manda o NOME. Explicito ganha de implicito: o operador que
+         digita `--empresa` esta escolhendo, e o `.env` nao pode contradize-lo.
+         Sem isso, o padrao do `.env` despejaria o dado de um cliente na base de
+         outro — sem erro nenhum, porque a trigger carimba o que a sessao mandar.
+      2. sem `nome`, vale quem a conexao assumiu. `core.empresa_atual()` responde
+         a partir de `request.jwt.claim.sub`, que `_opcoes()` declarou com o
+         `RADAR_USUARIO_SERVICO`.
+      3. sem os dois, RECUSA. Seguir sem dono grava zero linha em silencio, que
+         e o pior desfecho possivel.
+    """
+    if nome:
+        return assumir_empresa(cur, nome)
+
+    cur.execute("select core.empresa_atual()")
+    linha = cur.fetchone()
+    tenant = linha[0] if linha else None
+    if not tenant:
+        raise SystemExit(
+            "sem empresa: informe --empresa, ou defina RADAR_USUARIO_SERVICO "
+            "no .env com o uuid do usuario de servico da empresa.")
+    cur.execute("select name from core.tb_empresas where id = %s::uuid", (tenant,))
+    dono = (cur.fetchone() or ["?"])[0]
+    print(f"  [aviso] usando a empresa do .env: {dono}. "
+          f"Passe --empresa para escolher outra.", flush=True)
+    return tenant, dono
+
+
 def assumir_empresa(cur, nome: str) -> tuple:
     """Declara na SESSAO de quem este processo grava. Devolve `(id, nome)`.
 

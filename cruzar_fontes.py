@@ -117,7 +117,9 @@ def _um_lado_dentro(par, poligono):
 def _empresa(cur, nome: str) -> str:
     cur.execute("select id, name from core.tb_empresas where lower(name)=lower(%s) and ativa",
                 (nome.strip(),))
-    return bc.assumir_empresa(cur, nome)[1]
+    # `empresa_da_sessao`, e nao `assumir_empresa`: sem `--empresa`,
+    # vale o RADAR_USUARIO_SERVICO do .env, igual ao extracao_estadual.
+    return bc.empresa_da_sessao(cur, nome)[1]
 
 
 def carregar(cur, cidade: str, poligono=None,
@@ -930,7 +932,8 @@ def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--cidade", default="")
-    p.add_argument("--empresa", required=True)
+    p.add_argument("--empresa", default="",
+                   help="nome da empresa dona do dado; sem ele, vale o RADAR_USUARIO_SERVICO do .env")
     p.add_argument("--aplicar", action="store_true")
     p.add_argument("--desfundir", action="store_true",
                    help="desfaz as fusoes que a regra de HOJE nao refaria, "

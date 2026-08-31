@@ -79,7 +79,9 @@ def _util(v):
 
 def _empresa(cur, nome: str) -> str:
     """Mantido como nome local; a logica vive em `bc.assumir_empresa`."""
-    return bc.assumir_empresa(cur, nome)[1]
+    # `empresa_da_sessao`, e nao `assumir_empresa`: sem `--empresa`,
+    # vale o RADAR_USUARIO_SERVICO do .env, igual ao extracao_estadual.
+    return bc.empresa_da_sessao(cur, nome)[1]
 
 
 def proprios(empresa: str, aplicar: bool) -> None:
@@ -224,7 +226,8 @@ def main() -> int:
     p.add_argument("--proprios", action="store_true")
     p.add_argument("--juntar", action="store_true")
     p.add_argument("--cidade", default="")
-    p.add_argument("--empresa", required=True)
+    p.add_argument("--empresa", default="",
+                   help="nome da empresa dona do dado; sem ele, vale o RADAR_USUARIO_SERVICO do .env")
     p.add_argument("--aplicar", action="store_true")
     a = p.parse_args()
     if a.proprios:
