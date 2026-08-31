@@ -250,11 +250,18 @@ for t in PRODUTO:
         cols.pop("id", None)
     elif "id" in cols:
         tp = normalizar(cols.pop("id"), "id")
-        # `uuid` como chave PRECISA do default: no original ele vinha DEPOIS do
-        # `primary key`, e o corte levava os dois. Sem ele, todo insert que nao
-        # informa o id falha com "null value in column id".
-        pk = ("bigint generated always as identity" if tp in ("integer", "bigint")
-              else "uuid default gen_random_uuid()" if tp == "uuid" else tp)
+        # SO O TIPO decide a forma da chave, e nao o resto da declaracao.
+        #
+        # Esta comparacao era contra `tp` INTEIRO, e quebrou no dia em que
+        # `normalizar` passou a preservar `not null` — que foi um conserto: sem
+        # ele, 112 not-nulls e 43 defaults se perdiam. So que `pois.id` vem do
+        # dump como `integer NOT NULL`, e "integer NOT NULL" nao e "integer":
+        # a chave deixou de virar `identity` e SEIS tabelas nasceram com `id`
+        # sem geracao nenhuma. O primeiro INSERT falhou com "null value in
+        # column id" — longe da causa, que estava neste `if`.
+        base = tp.split()[0].lower() if tp else ""
+        pk = ("bigint generated always as identity" if base in ("integer", "bigint")
+              else "uuid default gen_random_uuid()" if base == "uuid" else tp)
         linhas.append("  %-26s %s primary key" % ("id", pk))
     else:
         linhas.append("  %-26s bigint generated always as identity primary key" % "id")
@@ -444,11 +451,18 @@ for t in REFERENCIA:
     linhas = []
     if "id" in cols:
         tp = normalizar(cols.pop("id"), "id")
-        # `uuid` como chave PRECISA do default: no original ele vinha DEPOIS do
-        # `primary key`, e o corte levava os dois. Sem ele, todo insert que nao
-        # informa o id falha com "null value in column id".
-        pk = ("bigint generated always as identity" if tp in ("integer", "bigint")
-              else "uuid default gen_random_uuid()" if tp == "uuid" else tp)
+        # SO O TIPO decide a forma da chave, e nao o resto da declaracao.
+        #
+        # Esta comparacao era contra `tp` INTEIRO, e quebrou no dia em que
+        # `normalizar` passou a preservar `not null` — que foi um conserto: sem
+        # ele, 112 not-nulls e 43 defaults se perdiam. So que `pois.id` vem do
+        # dump como `integer NOT NULL`, e "integer NOT NULL" nao e "integer":
+        # a chave deixou de virar `identity` e SEIS tabelas nasceram com `id`
+        # sem geracao nenhuma. O primeiro INSERT falhou com "null value in
+        # column id" — longe da causa, que estava neste `if`.
+        base = tp.split()[0].lower() if tp else ""
+        pk = ("bigint generated always as identity" if base in ("integer", "bigint")
+              else "uuid default gen_random_uuid()" if base == "uuid" else tp)
         linhas.append("  %-26s %s primary key" % ("id", pk))
     for col in sorted(cols):
         linhas.append("  %-26s %s" % (col, normalizar(cols[col], col)))
