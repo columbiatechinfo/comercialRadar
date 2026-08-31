@@ -100,6 +100,22 @@ fi
 VENV="${VENV:-$RAIZ/.venv}"
 export PATH="$VENV/bin:$PATH"
 
+# O TOKEN DO HUGGING FACE, sob qualquer um dos dois nomes.
+#
+# A skill le `HF_TOKEN` do ambiente. O `.env` do servidor guarda o mesmo valor
+# como `huggingface`, em minusculas — e variavel de ambiente e sensivel a
+# maiuscula, entao uma nao enxerga a outra.
+#
+# A alternativa seria duplicar o segredo no `.env` sob os dois nomes, e segredo
+# em dois lugares e segredo que so e rotacionado num deles. Aqui a ponte custa
+# uma linha e o valor continua tendo um dono so.
+#
+# SEM ISTO A BASE SAI MENOR E NAO FALHA: as fontes caem para `overture,osm`, o
+# script avisa e continua, e o dataset fica sem o Foursquare — com o token
+# presente no arquivo o tempo todo. Foi o que aconteceu na primeira execucao do
+# RS em 31/08/2026.
+export HF_TOKEN="${HF_TOKEN:-${huggingface:-}}"
+
 FONTES="osm"
 command -v overturemaps >/dev/null && FONTES="overture,$FONTES" \
   || echo "  ⚠️  sem overture: CLI ausente mesmo com o venv no PATH"
