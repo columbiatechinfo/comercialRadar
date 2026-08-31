@@ -42,6 +42,11 @@ MAPA = {
     "Motivos":        ("rf_motivos", 2),
 }
 
+# Quantas colunas cada tabela DEVE ter, pelo layout da RFB. Sai do MAPA acima,
+# e serve de trava: DDL editado com uma coluna a mais para de carregar em vez de
+# embaralhar em silencio.
+MAPA_COLS = {tab: n for tab, n in MAPA.values()}
+
 DDL = """
 CREATE TABLE IF NOT EXISTS rf_empresas (
   cnpj_basico text, razao_social text, natureza_juridica text,
@@ -120,10 +125,48 @@ def tabela_de(nome_zip: str):
 
 
 def _cols(tab):
-    with bc.conectar_referencia() as c, c.cursor() as cur:
-        cur.execute("SELECT column_name FROM information_schema.columns "
-                    "WHERE table_name=%s ORDER BY ordinal_position", (tab,))
-        return [r[0] for r in cur.fetchall()]
+    """A ordem das colunas para o COPY, tirada do DDL ACIMA — nunca do banco.
+
+    ESTE ERA O DEFEITO, e ele custou 220 milhoes de linhas embaralhadas.
+    A versao anterior perguntava ao banco:
+
+        SELECT column_name FROM information_schema.columns
+         WHERE table_name = %s ORDER BY ordinal_position
+
+    Parece defensivo e e o contrario. O CSV da Receita vem numa ordem fixa, que
+    e a do DDL aqui em cima. Perguntar ao banco faz o carregador concordar com
+    a ordem que a tabela POR ACASO tem — e se ela foi criada por outra mao, o
+    COPY despeja o campo 1 do CSV na primeira coluna FISICA da tabela, seja ela
+    qual for.
+
+    Foi o que aconteceu em 31/08/2026. A `migrations_a2l/0002_resources_root.sql`
+    criou as tabelas com as colunas em ordem ALFABETICA (bairro, cep,
+    cidade_exterior, ...). O `CREATE TABLE IF NOT EXISTS` deste arquivo, que tem
+    a ordem certa, nao fez nada — a tabela ja existia. E o COPY carregou 45
+    minutos de dado com tudo no lugar errado:
+
+        motivo_situacao = 'CE'          (era para ser UF)
+        ddd2            = 'RUA'         (era tipo_logradouro)
+        logradouro      = 'ALDEOTA'     (era bairro)
+        bairro          = '59160166'    (era CEP)
+        uf              = ''            (vazio em 100% das linhas)
+
+    Nenhuma linha falhou, nenhum erro apareceu: todas as colunas sao `text`, e
+    text aceita qualquer coisa. A carga terminou com codigo 0.
+
+    Tirando a ordem do DDL, os dois nao podem mais discordar: se alguem mudar o
+    DDL, o COPY muda junto; se o banco tiver outra ordem, o COPY continua certo
+    porque nomeia cada coluna.
+    """
+    m = re.search(r"CREATE TABLE IF NOT EXISTS\s+%s\s*\((.*?)\);" % tab, DDL, re.S)
+    if not m:
+        raise RuntimeError("tabela %s nao esta no DDL deste arquivo" % tab)
+    cols = re.findall(r"([a-z_][a-z0-9_]*)\s+text", m.group(1))
+    esperado = MAPA_COLS.get(tab)
+    if esperado and len(cols) != esperado:
+        raise RuntimeError("DDL de %s tem %d colunas, o layout da RFB tem %d"
+                           % (tab, len(cols), esperado))
+    return cols
 
 
 def run(mes, recriar, so, indices):
