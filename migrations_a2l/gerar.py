@@ -100,7 +100,13 @@ UNICOS = [
     ("ux_cruzamento_par", "cruzamento",
      "id_empresa, base_a, id_a, base_b, id_b, chave", "",
      "Um par de registros so e cruzado uma vez por chave."),
-    ("ix_vinculo_poi_ativo", "vinculo_poi", "id_empresa, fonte, id_fonte",
+    # O NOME E `vinculo_sem_duplicata`, e nao `ix_vinculo_poi_ativo`.
+    #
+    # As migracoes antigas o chamavam `ix_vinculo_poi_ativo`, mas o codigo e os
+    # testes procuram por `vinculo_sem_duplicata` — que e o par de
+    # `pois_sem_duplicata` e diz o que ele faz, nao como foi feito. Criar os
+    # dois seria manter duas vezes o mesmo indice.
+    ("vinculo_sem_duplicata", "vinculo_poi", "id_empresa, fonte, id_fonte",
      "where estado = 'vinculado'",
      "Um registro de fonte compoe UM poi por vez. Desvinculado sai do indice e "
      "pode ser vinculado a outro."),

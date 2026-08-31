@@ -211,9 +211,29 @@ def assumir_empresa(cur, nome: str) -> tuple:
                 "where lower(name) = lower(%s) and ativa", (nome.strip(),))
     emp = cur.fetchone()
     if not emp:
+        # A LISTA VEM FILTRADA PELA RLS, e a mensagem precisa dizer isso.
+        #
+        # `core.tb_empresas` so mostra a empresa de quem esta declarado, ou todas
+        # se for suporte. Sem identidade na conexao, a consulta volta VAZIA — e a
+        # primeira versao desta mensagem escrevia "Ativas: " seguido de nada,
+        # que se le como "nao existe empresa ativa nenhuma". A causa era outra:
+        # ninguem declarado.
         cur.execute("select name from core.tb_empresas where ativa order by name")
-        raise SystemExit(f"empresa {nome!r} nao existe. Ativas: "
-                         + ", ".join(x[0] for x in cur.fetchall()))
+        visiveis = [x[0] for x in cur.fetchall()]
+        if visiveis:
+            raise SystemExit(f"empresa {nome!r} nao existe. Visiveis daqui: "
+                             + ", ".join(visiveis))
+        _n = chr(10)          # o escape nao sobrevive a um heredoc
+        raise SystemExit(
+            f"empresa {nome!r} nao existe — e NENHUMA empresa esta visivel "
+            f"desta conexao.{_n}{_n}"
+            f"  Quase sempre isso quer dizer que o processo nao declarou "
+            f"quem ele e: a RLS mostra so a empresa de quem esta{_n}"
+            f"  declarado. Confira RADAR_USUARIO_SERVICO no .env — e o{_n}"
+            f"  uuid do usuario de servico da empresa, e sem ele{_n}"
+            f"  `core.empresa_atual()` volta nulo.{_n}{_n}"
+            f"  Criar um:  python scripts/servidor/criar_usuario_servico.py "
+            f"--empresa {nome!r}")
 
     cur.execute("select id from core.tb_users "
                 "where id_empresa = %s and ativo and email like 'pipeline@%%' "

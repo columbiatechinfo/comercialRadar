@@ -1011,7 +1011,7 @@ create unique index if not exists ux_cruzamento_par
 
 -- Um registro de fonte compoe UM poi por vez.
 -- Desvinculado sai do indice e pode ser vinculado a outro.
-create unique index if not exists ix_vinculo_poi_ativo
+create unique index if not exists vinculo_sem_duplicata
   on vinculo_poi (id_empresa, fonte, id_fonte)
   where estado = 'vinculado';
 
