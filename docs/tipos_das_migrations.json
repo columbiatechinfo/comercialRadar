@@ -290,7 +290,7 @@
   "revisado_em": "timestamptz",
   "revisado_por": "text",
   "revisao_nota": "text",
-  "revisao_status": "text not null default 'pendente' check (revisao_status in ('pendente'",
+  "revisao_status": "text not null default 'pendente' check (revisao_status in ('pendente', 'corrigido', 'confirmado', 'descartado'))",
   "risco": "text",
   "run_id": "text",
   "scope_id": "text not null",

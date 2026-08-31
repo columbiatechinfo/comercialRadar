@@ -1,0 +1,611 @@
+{
+ "com_empresa": [
+  "analise_ia",
+  "area_trabalho",
+  "atribuicao",
+  "atribuicao_divergente",
+  "auditoria",
+  "cadastro_cliente",
+  "cadastur_prestador",
+  "cadastur_total_pf",
+  "campo_catalogo",
+  "chat_anexo",
+  "chat_conversa",
+  "chat_mensagem",
+  "cnefe_coletiva",
+  "cnpj_tratado",
+  "comentarios",
+  "cruzamento",
+  "fachada_anotacao",
+  "fachada_triagem",
+  "fonte_arquivos",
+  "foto_maps_triagem",
+  "horario_funcionamento",
+  "ifood_merchant",
+  "images_urls",
+  "memoria",
+  "pois",
+  "proxy_evento",
+  "streetview_imgs",
+  "tenants",
+  "usuarios",
+  "vinculo_poi"
+ ],
+ "indices": [
+  {
+   "unico": false,
+   "nome": "usuarios_tenant_idx",
+   "tabela": "usuarios",
+   "colunas": "tenant_id, nivel",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "pois_tenant_idx",
+   "tabela": "pois",
+   "colunas": "tenant_id, id",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "cadastro_cliente_tenant_idx",
+   "tabela": "cadastro_cliente",
+   "colunas": "tenant_id, id",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "area_trabalho_tenant_idx",
+   "tabela": "area_trabalho",
+   "colunas": "tenant_id, salvo_em desc",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "fachada_anotacao_tenant_idx",
+   "tabela": "fachada_anotacao",
+   "colunas": "tenant_id, poi_id",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "analise_ia_tenant_idx",
+   "tabela": "analise_ia",
+   "colunas": "tenant_id, poi_id",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "fonte_arquivos_tenant_idx",
+   "tabela": "fonte_arquivos",
+   "colunas": "tenant_id, carregado_em desc",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "comentarios_tenant_idx",
+   "tabela": "comentarios",
+   "colunas": "tenant_id, poi_id",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "horario_tenant_idx",
+   "tabela": "horario_funcionamento",
+   "colunas": "tenant_id, poi_id",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "images_urls_tenant_idx",
+   "tabela": "images_urls",
+   "colunas": "tenant_id, poi_id",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "streetview_tenant_idx",
+   "tabela": "streetview_imgs",
+   "colunas": "tenant_id, poi_id",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "cnefe_coletiva_tenant_idx",
+   "tabela": "cnefe_coletiva",
+   "colunas": "tenant_id, id",
+   "resto": ""
+  },
+  {
+   "unico": true,
+   "nome": "atribuicao_unica",
+   "tabela": "atribuicao",
+   "colunas": "poi_id, supervisor_id",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "atribuicao_tenant_idx",
+   "tabela": "atribuicao",
+   "colunas": "tenant_id, status",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "atribuicao_supervisor_idx",
+   "tabela": "atribuicao",
+   "colunas": "supervisor_id, poi_id",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "auditoria_tenant_idx",
+   "tabela": "auditoria",
+   "colunas": "tenant_id, em desc",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "auditoria_usuario_idx",
+   "tabela": "auditoria",
+   "colunas": "usuario_id, em desc",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "auditoria_tabela_idx",
+   "tabela": "auditoria",
+   "colunas": "tabela, em desc",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "cnpj_tratado_tenant_idx",
+   "tabela": "cnpj_tratado",
+   "colunas": "tenant_id, potencial",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "cnpj_tratado_cnpj_idx",
+   "tabela": "cnpj_tratado",
+   "colunas": "tenant_id, cnpj",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "cnpj_tratado_poi_idx",
+   "tabela": "cnpj_tratado",
+   "colunas": "tenant_id, poi_id",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "fachada_veredito_idx",
+   "tabela": "fachada_anotacao",
+   "colunas": "tenant_id, veredito_comercial, nota_comercial desc",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "fachada_tipo_cliente_idx",
+   "tabela": "fachada_anotacao",
+   "colunas": "tenant_id, tipo_cliente",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "ix_sv_com_camera",
+   "tabela": "streetview_imgs",
+   "colunas": "poi_id",
+   "resto": "WHERE cam_lat IS NOT NULL AND heading IS NOT NULL"
+  },
+  {
+   "unico": false,
+   "nome": "fachada_triagem_tenant_idx",
+   "tabela": "fachada_triagem",
+   "colunas": "tenant_id, veredito, nota_total desc",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "fachada_triagem_sv_idx",
+   "tabela": "fachada_triagem",
+   "colunas": "sv_id, id desc",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "fachada_triagem_poi_idx",
+   "tabela": "fachada_triagem",
+   "colunas": "poi_id, id desc",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "foto_maps_triagem_tenant_idx",
+   "tabela": "foto_maps_triagem",
+   "colunas": "tenant_id, veredito",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "foto_maps_triagem_img_idx",
+   "tabela": "foto_maps_triagem",
+   "colunas": "imagem_id, id desc",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "foto_maps_triagem_poi_idx",
+   "tabela": "foto_maps_triagem",
+   "colunas": "poi_id, id desc",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "fachada_acao_idx",
+   "tabela": "fachada_anotacao",
+   "colunas": "tenant_id, acao_recomendada, criado_em desc",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "fachada_alvo_idx",
+   "tabela": "fachada_anotacao",
+   "colunas": "tenant_id, alvo_encontrado",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "fachada_ultima_leitura_idx",
+   "tabela": "fachada_anotacao",
+   "colunas": "poi_id, criado_em desc, id desc",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "fachada_divergente_idx",
+   "tabela": "fachada_anotacao",
+   "colunas": "tenant_id, comercio_divergente",
+   "resto": "where comercio_divergente is not null"
+  },
+  {
+   "unico": false,
+   "nome": "atribuicao_div_fila_idx",
+   "tabela": "atribuicao_divergente",
+   "colunas": "tenant_id, status, atribuido_em desc",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "atribuicao_div_sup_idx",
+   "tabela": "atribuicao_divergente",
+   "colunas": "supervisor_id, status",
+   "resto": ""
+  },
+  {
+   "unico": true,
+   "nome": "atribuicao_div_pendente_unico",
+   "tabela": "atribuicao_divergente",
+   "colunas": "poi_id",
+   "resto": "where status = 'pendente'"
+  },
+  {
+   "unico": false,
+   "nome": "ifood_estado_idx",
+   "tabela": "ifood_merchant",
+   "colunas": "estado_detalhe",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "ifood_cnpj_idx",
+   "tabela": "ifood_merchant",
+   "colunas": "cnpj",
+   "resto": "where cnpj is not null and cnpj <> ''"
+  },
+  {
+   "unico": false,
+   "nome": "ifood_poi_idx",
+   "tabela": "ifood_merchant",
+   "colunas": "poi_id",
+   "resto": "where poi_id is not null"
+  },
+  {
+   "unico": false,
+   "nome": "ifood_geo_idx",
+   "tabela": "ifood_merchant",
+   "colunas": "lat, lng",
+   "resto": "where lat is not null"
+  },
+  {
+   "unico": true,
+   "nome": "ux_cruzamento_par",
+   "tabela": "cruzamento",
+   "colunas": "tenant_id, base_a, id_a, base_b, id_b, chave",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "ix_cruzamento_a",
+   "tabela": "cruzamento",
+   "colunas": "tenant_id, base_a, id_a",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "ix_cruzamento_b",
+   "tabela": "cruzamento",
+   "colunas": "tenant_id, base_b, id_b",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "ix_cruzamento_revisar",
+   "tabela": "cruzamento",
+   "colunas": "tenant_id, ambiguo",
+   "resto": "where ambiguo"
+  },
+  {
+   "unico": false,
+   "nome": "ix_pois_ifood",
+   "tabela": "pois",
+   "colunas": "tenant_id, presente_no_ifood",
+   "resto": "where presente_no_ifood"
+  },
+  {
+   "unico": false,
+   "nome": "ix_ifood_cidade",
+   "tabela": "ifood_merchant",
+   "colunas": "tenant_id, cidade",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "ix_chat_conversa_recente",
+   "tabela": "chat_conversa",
+   "colunas": "tenant_id, mexida_em desc",
+   "resto": "where not arquivada"
+  },
+  {
+   "unico": false,
+   "nome": "ix_chat_mensagem_conversa",
+   "tabela": "chat_mensagem",
+   "colunas": "tenant_id, conversa_id, id",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "ix_chat_anexo_conversa",
+   "tabela": "chat_anexo",
+   "colunas": "tenant_id, conversa_id, id",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "ix_memoria_recente",
+   "tabela": "memoria",
+   "colunas": "tenant_id, criado_em desc",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "ix_campo_catalogo_aba",
+   "tabela": "campo_catalogo",
+   "colunas": "tenant_id, fonte, ordem",
+   "resto": "where ativo"
+  },
+  {
+   "unico": false,
+   "nome": "ix_cadastur_municipio",
+   "tabela": "cadastur_prestador",
+   "colunas": "tenant_id, uf, municipio",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "ix_cadastur_cnpj",
+   "tabela": "cadastur_prestador",
+   "colunas": "tenant_id, cnpj",
+   "resto": "where cnpj is not null"
+  },
+  {
+   "unico": false,
+   "nome": "ix_cadastur_pendente",
+   "tabela": "cadastur_prestador",
+   "colunas": "tenant_id, uf, municipio",
+   "resto": "where poi_id is null and sem_poi_motivo is null"
+  },
+  {
+   "unico": false,
+   "nome": "ix_cadastur_poi",
+   "tabela": "cadastur_prestador",
+   "colunas": "tenant_id, poi_id",
+   "resto": "where poi_id is not null"
+  },
+  {
+   "unico": false,
+   "nome": "ix_cadastur_saiu",
+   "tabela": "cadastur_prestador",
+   "colunas": "tenant_id, saiu_em",
+   "resto": "where saiu_em is not null"
+  },
+  {
+   "unico": false,
+   "nome": "ix_cadastur_total_pf_lugar",
+   "tabela": "cadastur_total_pf",
+   "colunas": "tenant_id, uf, municipio, ref_periodo desc",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "ix_pois_coord_precisao",
+   "tabela": "pois",
+   "colunas": "tenant_id, coord_precisao",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "ix_pois_coord_a_buscar",
+   "tabela": "pois",
+   "colunas": "tenant_id, cidade",
+   "resto": "where coord_precisao in ('desconhecida', 'via', 'bairro', 'municipio')"
+  },
+  {
+   "unico": false,
+   "nome": "ix_atribuicao_div_tenant",
+   "tabela": "atribuicao_divergente",
+   "colunas": "tenant_id",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "ix_ifood_merchant_tenant",
+   "tabela": "ifood_merchant",
+   "colunas": "tenant_id, cidade",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "ix_endereco_segmentado_cidade",
+   "tabela": "endereco_segmentado",
+   "colunas": "cidade, uf",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "ix_endereco_segmentado_metodo",
+   "tabela": "endereco_segmentado",
+   "colunas": "metodo",
+   "resto": "where metodo <> 'ia'"
+  },
+  {
+   "unico": false,
+   "nome": "ix_logradouro_ajustado_marcado",
+   "tabela": "logradouro_ajustado",
+   "colunas": "scope_id, logradouro_marcado",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "ix_logradouro_ajustado_fila",
+   "tabela": "logradouro_ajustado",
+   "colunas": "scope_id, tier",
+   "resto": "where tier in ('REVISAR', 'HUMANO')"
+  },
+  {
+   "unico": true,
+   "nome": "ix_vinculo_poi_ativo",
+   "tabela": "vinculo_poi",
+   "colunas": "tenant_id, fonte, id_fonte",
+   "resto": "where estado = 'vinculado'"
+  },
+  {
+   "unico": false,
+   "nome": "ix_vinculo_poi_ficha",
+   "tabela": "vinculo_poi",
+   "colunas": "tenant_id, poi_id, estado",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "ix_vinculo_poi_duvidoso",
+   "tabela": "vinculo_poi",
+   "colunas": "tenant_id, confianca",
+   "resto": "where estado = 'vinculado' and confianca <= 5"
+  },
+  {
+   "unico": false,
+   "nome": "ix_logradouro_fila_humana",
+   "tabela": "logradouro_ajustado",
+   "colunas": "scope_id, revisao_status, tier",
+   "resto": "where tier in ('REVISAR', 'HUMANO')"
+  },
+  {
+   "unico": true,
+   "nome": "ux_pois_place_id",
+   "tabela": "pois",
+   "colunas": "place_id",
+   "resto": "where place_id is not null and place_id <> ''"
+  },
+  {
+   "unico": true,
+   "nome": "ux_streetview_poi_angulo",
+   "tabela": "streetview_imgs",
+   "colunas": "poi_id, angulo",
+   "resto": "where pano_id is not null and angulo is not null"
+  },
+  {
+   "unico": true,
+   "nome": "ux_pois_place_id_por_empresa",
+   "tabela": "pois",
+   "colunas": "tenant_id, place_id",
+   "resto": "where place_id is not null and place_id <> ''"
+  },
+  {
+   "unico": false,
+   "nome": "pois_ativos_por_tenant",
+   "tabela": "pois",
+   "colunas": "tenant_id, id",
+   "resto": "where fundido_em is null"
+  },
+  {
+   "unico": true,
+   "nome": "pois_sem_duplicata",
+   "tabela": "pois",
+   "colunas": "upper(trim(nome",
+   "resto": "), upper(trim(endereco))) where fundido_em is null"
+  },
+  {
+   "unico": false,
+   "nome": "pois_multiloja_por_tenant",
+   "tabela": "pois",
+   "colunas": "tenant_id, id",
+   "resto": "where multiloja"
+  },
+  {
+   "unico": false,
+   "nome": "pois_coord_por_tenant",
+   "tabela": "pois",
+   "colunas": "tenant_id, (COALESCE(maps_lat, lat_origem",
+   "resto": "), (COALESCE(maps_lng, lng_origem)) ) WHERE fundido_em IS NULL AND COALESCE(maps_lat, lat_origem) IS NOT NULL AND COALESCE(maps_lng, lng_origem) IS NOT NULL"
+  },
+  {
+   "unico": false,
+   "nome": "ix_cad_geo_por_tenant",
+   "tabela": "cadastro_cliente",
+   "colunas": "tenant_id, lat, lng",
+   "resto": "WHERE lat IS NOT NULL AND lng IS NOT NULL"
+  },
+  {
+   "unico": false,
+   "nome": "ix_proxy_ip_pais",
+   "tabela": "proxy_ip",
+   "colunas": "pais, ativo",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "ix_proxy_evento_tenant",
+   "tabela": "proxy_evento",
+   "colunas": "tenant_id, em DESC",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "ix_proxy_evento_proxy",
+   "tabela": "proxy_evento",
+   "colunas": "proxy_id, em DESC",
+   "resto": ""
+  },
+  {
+   "unico": false,
+   "nome": "ix_proxy_evento_castigo",
+   "tabela": "proxy_evento",
+   "colunas": "em DESC",
+   "resto": "WHERE tipo = 'castigo'"
+  }
+ ],
+ "on_conflict": {}
+}

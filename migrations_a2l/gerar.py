@@ -13,6 +13,35 @@ IMPRIME quem ficou de fora, em vez de gerar calado.
 """
 import io
 import json
+import re
+
+# Os tipos proprios. Nenhum extrator de TABELA os acharia, e sem eles a
+# validacao para na primeira coluna que usa um: `type "motivo_reprova" does not
+# exist`. Tirados das migrations com o texto que estava la.
+ENUMS = [
+    ("decisao_fila", "'pendente', 'aprovado', 'reprovado', 'devolvido'",
+     "Onde a triagem para: aprovado entra na base, reprovado sai, devolvido "
+     "volta para quem mandou."),
+    ("motivo_reprova",
+     "'fachada_residencial', 'endereco_divergente', 'comercio_encerrado', "
+     "'duplicado', 'evidencia_insuficiente', 'ja_e_comercial', 'outro'",
+     "Por que reprovou. E ENUM e nao texto livre porque estes sete sao "
+     "contados em relatorio — texto livre viraria sete grafias do mesmo motivo."),
+    ("fonte_aba",
+     "'poi', 'google', 'receita', 'redes_sociais', 'delivery', 'imagens'",
+     "As abas da ficha. Cada campo do catalogo pertence a uma."),
+    ("peso_evidencia", "'forte', 'media', 'neutra', 'contraria'",
+     "Quanto um campo pesa no veredito comercial."),
+    ("prioridade_campo", "'normal', 'alta'",
+     "Prioridade da visita de campo."),
+    ("pauta_campo",
+     "'confirmar_atividade', 'confirmar_numero', 'contar_unidades', "
+     "'fotografar_fachada', 'registrar_coordenada', 'confirmar_endereco'",
+     "O que o agente vai fazer na visita: a placa existe e o comercio opera; "
+     "o numero da porta bate com o cadastro; quantas lojas ha de fato no "
+     "imovel; nao ha imagem ou a que ha esta velha; a coordenada esta "
+     "imprecisa; mais de um endereco plausivel."),
+]
 
 FONTES = ["tipos_das_migrations", "tipos_do_backup", "tipos_do_python",
           "tipos_de_listas_python", "tipos_julgados"]
@@ -110,21 +139,43 @@ REFERENCIAM_POI = {"poi_id", "fundido_para", "descoberto_de", "poi_origem",
 
 
 def normalizar(tp: str, coluna: str = "") -> str:
+    """Tipo + as restricoes que sao SEMANTICA, sem as que a tabela ja resolve.
+
+    A primeira versao cortava `NOT NULL` e `DEFAULT` junto com `PRIMARY KEY`,
+    tratando os quatro como ruido. Nao sao: `arquivada boolean not null default
+    false` viraria `arquivada boolean`, e uma conversa sem valor passaria a
+    nascer NULA — que nao e nem arquivada nem ativa, e todo `where not
+    arquivada` deixaria de ve-la. Perdi 40 defaults e 30 not-nulls assim, em
+    silencio, ate um ENUM inexistente derrubar a validacao e me fazer olhar.
+
+    Sai fora so o que a propria DDL da tabela declara noutro lugar: chave
+    primaria, unicidade e referencia.
+    """
     t = " ".join(tp.split())
-    for lixo in ("PRIMARY KEY", "NOT NULL", "UNIQUE", "GENERATED", "DEFAULT"):
+    for lixo in ("PRIMARY KEY", "UNIQUE", "GENERATED", "REFERENCES"):
         i = t.upper().find(lixo)
         if i > 0:
             t = t[:i]
     t = t.strip().rstrip(",")
-    baixo = t.lower()
-    t = {"serial": "integer", "bigserial": "bigint",
-         "timestamp(3)": "timestamptz", "timestamp": "timestamptz",
-         "timestamp(3) without time zone": "timestamptz",
-         "timestamp without time zone": "timestamptz",
-         "timestamptz(3)": "timestamptz"}.get(baixo, t)
-    if coluna in REFERENCIAM_POI and t.lower() in ("integer", "int", "int4"):
-        return "bigint"
-    return t
+    # o schema mudou de nome: tipo proprio nao carrega o prefixo velho
+    t = t.replace("comercialradar.", "")
+
+    # separa o TIPO do resto (`not null`, `default ...`, `check (...)`): a
+    # traducao abaixo e sobre o tipo, e antes ela era feita sobre a linha
+    # inteira — entao `timestamp(3) without time zone not null` nunca casava.
+    m = re.match(r"^([a-z_][a-z0-9_]*(?:\s*\([^)]*\))?"
+                 r"(?:\s+with(?:out)?\s+time\s+zone)?(?:\[\])?)(.*)$",
+                 t, re.I)
+    tipo, resto = (m.group(1).strip(), m.group(2).strip()) if m else (t, "")
+
+    tipo = {"serial": "integer", "bigserial": "bigint",
+            "timestamp(3)": "timestamptz", "timestamp": "timestamptz",
+            "timestamp(3) without time zone": "timestamptz",
+            "timestamp without time zone": "timestamptz",
+            "timestamptz(3)": "timestamptz"}.get(tipo.lower(), tipo)
+    if coluna in REFERENCIAM_POI and tipo.lower() in ("integer", "int", "int4"):
+        tipo = "bigint"
+    return (tipo + " " + resto).strip()
 
 
 L = []
@@ -159,6 +210,24 @@ w("""-- 0001_radar_comercial.sql — o schema da ferramenta, no padrao A2L.
 set local search_path = radar_comercial, public;
 
 -- ─────────────────────────────────────────────────────────────────────
+-- Tipos proprios
+-- ─────────────────────────────────────────────────────────────────────
+--
+-- Vem antes das tabelas porque as tabelas os usam. `if not exists` nao existe
+-- para `create type`, entao o bloco `do $$ ... exception when duplicate_object`
+-- e o que torna esta migracao repetivel.
+""")
+for nome, valores, porque in ENUMS:
+    for linha in porque.split(". "):
+        if linha.strip():
+            w("-- " + linha.strip().rstrip(".") + ".")
+    w("do $$ begin")
+    w("  create type %s as enum (%s);" % (nome, valores))
+    w("exception when duplicate_object then null; end $$;")
+    w("")
+
+w("""
+-- ─────────────────────────────────────────────────────────────────────
 -- Tabelas
 -- ─────────────────────────────────────────────────────────────────────
 """)
@@ -181,7 +250,11 @@ for t in PRODUTO:
         cols.pop("id", None)
     elif "id" in cols:
         tp = normalizar(cols.pop("id"), "id")
-        pk = "bigint generated always as identity" if tp in ("integer", "bigint") else tp
+        # `uuid` como chave PRECISA do default: no original ele vinha DEPOIS do
+        # `primary key`, e o corte levava os dois. Sem ele, todo insert que nao
+        # informa o id falha com "null value in column id".
+        pk = ("bigint generated always as identity" if tp in ("integer", "bigint")
+              else "uuid default gen_random_uuid()" if tp == "uuid" else tp)
         linhas.append("  %-26s %s primary key" % ("id", pk))
     else:
         linhas.append("  %-26s bigint generated always as identity primary key" % "id")
@@ -298,7 +371,11 @@ for t in REFERENCIA:
     linhas = []
     if "id" in cols:
         tp = normalizar(cols.pop("id"), "id")
-        pk = "bigint generated always as identity" if tp in ("integer", "bigint") else tp
+        # `uuid` como chave PRECISA do default: no original ele vinha DEPOIS do
+        # `primary key`, e o corte levava os dois. Sem ele, todo insert que nao
+        # informa o id falha com "null value in column id".
+        pk = ("bigint generated always as identity" if tp in ("integer", "bigint")
+              else "uuid default gen_random_uuid()" if tp == "uuid" else tp)
         linhas.append("  %-26s %s primary key" % ("id", pk))
     for col in sorted(cols):
         linhas.append("  %-26s %s" % (col, normalizar(cols[col], col)))
