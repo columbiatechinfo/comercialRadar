@@ -71,8 +71,24 @@ schemas: auth  core  extensions  graphql  realtime  storage  vault
          orbis_grid  gerador_coords_rotas  a2l_gcp
 ```
 
-**Nenhum schema de ferramenta tem tabela ainda.** O `radar_comercial` existe e
-está vazio; o Radar Comercial é o primeiro a povoar.
+**O `radar_comercial` foi povoado em 31/08/2026** — 28 tabelas, 99 índices, 29
+gatilhos. `resources_root` ganhou 14. Era o primeiro schema de ferramenta a sair
+do vazio.
+
+### O isolamento, medido
+
+Não é leitura de política: foi exercitado contra o banco.
+
+| situação | resultado |
+|---|---|
+| sem identidade declarada | `core.empresa_atual()` nulo, **0 POIs visíveis** |
+| com o administrator | empresa correta, nível 4, `eh_suporte()` falso |
+| `insert` sem informar empresa | o gatilho carimbou a empresa do usuário, e a linha ficou visível |
+| após `rollback`, sem identidade | **0** de novo |
+
+O fail-closed vale: identidade ausente não devolve tudo, devolve nada. A única
+tabela sem `FORCE ROW LEVEL SECURITY` é `proxy_ip`, com o motivo escrito ao lado
+dela no arquivo.
 
 ### Papéis
 
