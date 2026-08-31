@@ -1,0 +1,207 @@
+{
+ "area_trabalho": {
+  "nome": "text PRIMARY KEY",
+  "polygon": "jsonb NOT NULL",
+  "salvo_em": "timestamp DEFAULT now()"
+ },
+ "bronze_prestador": {
+  "_extras": "jsonb",
+  "_linha_origem": "int NOT NULL",
+  "_recurso_id": "text NOT NULL",
+  "if": "NOT EXISTS"
+ },
+ "cadastro_cliente": {
+  "cliente": "text NOT NULL DEFAULT 'corsan'",
+  "cruz_conf": "text",
+  "cruz_dist_m": "double precision",
+  "cruz_flag": "text",
+  "cruz_motivo": "text",
+  "e_comercial": "boolean",
+  "endereco": "text",
+  "id": "bigserial PRIMARY KEY",
+  "importado_em": "timestamp DEFAULT now()",
+  "poi_id": "bigint",
+  "referencia": "date",
+  "uf": "text"
+ },
+ "cnefe_coletiva": {
+  "acuracia_m": "real",
+  "atividades": "text",
+  "cod_municipio": "text NOT NULL",
+  "coletiva_id": "text NOT NULL",
+  "com_atividade": "integer",
+  "economias_cnefe": "integer",
+  "forma": "text",
+  "id": "serial PRIMARY KEY",
+  "importado_em": "timestamp DEFAULT now()",
+  "lat": "double precision",
+  "lng": "double precision",
+  "localidade": "text",
+  "logradouro": "text",
+  "numero": "integer",
+  "poi_dist_m": "real",
+  "poi_id": "integer",
+  "qtd_blocos": "integer",
+  "qtd_inferida": "integer",
+  "qtd_observada": "integer",
+  "recomendacao": "text",
+  "unidades": "integer",
+  "uso": "text",
+  "veredito": "text"
+ },
+ "elo_geo": {
+  "_dataset": "text",
+  "_ref_periodo": "text",
+  "cnpj14": "char(14)",
+  "geom": "geometry(Point",
+  "lat": "double precision",
+  "lon": "double precision",
+  "municipio": "text",
+  "uf": "char(2)"
+ },
+ "execucao": {
+  "catalog_hash": "TEXT NOT NULL DEFAULT ''",
+  "erro": "TEXT",
+  "finalizado_em": "TEXT",
+  "iniciado_em": "TEXT NOT NULL",
+  "run_id": "TEXT PRIMARY KEY",
+  "scope_hash": "TEXT NOT NULL",
+  "status": "TEXT NOT NULL",
+  "versao": "TEXT NOT NULL"
+ },
+ "fachada_anotacao": {
+  "anotacao": "jsonb",
+  "apta": "boolean",
+  "atividade_no_alvo": "text",
+  "confianca": "real",
+  "criado_em": "timestamp DEFAULT now()",
+  "custo_usd": "numeric(10,6)",
+  "e_imovel": "boolean",
+  "economias_base": "integer",
+  "gap_uc_economias": "integer",
+  "hidrometros": "integer",
+  "id": "serial PRIMARY KEY",
+  "modelo": "text",
+  "numero_confere": "boolean",
+  "numero_lido": "text",
+  "oportunidades": "jsonb",
+  "poi_id": "integer NOT NULL",
+  "schema_versao": "text",
+  "status": "text",
+  "tipologia": "text",
+  "tokens_in": "integer",
+  "tokens_out": "integer",
+  "ucs_energia": "integer",
+  "unidades_fisicas": "integer",
+  "uso_observado": "text",
+  "validacao": "jsonb"
+ },
+ "fonte_arquivos": {
+  "bytes": "bigint",
+  "carregado_em": "timestamptz DEFAULT now()",
+  "fonte": "text NOT NULL",
+  "linhas": "bigint",
+  "referencia": "text NOT NULL",
+  "status": "text DEFAULT 'ok'",
+  "tabela": "text"
+ },
+ "recurso": {
+  "atualizado_em": "TEXT NOT NULL",
+  "erro": "TEXT",
+  "linhas_origem": "INTEGER",
+  "linhas_saida": "INTEGER",
+  "meta_json": "TEXT",
+  "recurso_id": "TEXT NOT NULL",
+  "run_id": "TEXT NOT NULL",
+  "sha256": "TEXT",
+  "shard": "TEXT",
+  "status": "TEXT NOT NULL"
+ },
+ "rf_cnaes": {
+  "codigo": "text",
+  "descricao": "text"
+ },
+ "rf_empresas": {
+  "capital_social": "text",
+  "cnpj_basico": "text",
+  "ente_federativo": "text",
+  "natureza_juridica": "text",
+  "porte": "text",
+  "qualificacao_responsavel": "text",
+  "razao_social": "text"
+ },
+ "rf_estabelecimentos": {
+  "bairro": "text",
+  "cep": "text",
+  "cidade_exterior": "text",
+  "cnae_principal": "text",
+  "cnae_secundaria": "text",
+  "cnpj_basico": "text",
+  "cnpj_dv": "text",
+  "cnpj_ordem": "text",
+  "complemento": "text",
+  "data_inicio": "text",
+  "data_situacao": "text",
+  "data_situacao_especial": "text",
+  "ddd1": "text",
+  "ddd2": "text",
+  "ddd_fax": "text",
+  "email": "text",
+  "fax": "text",
+  "logradouro": "text",
+  "matriz_filial": "text",
+  "motivo_situacao": "text",
+  "municipio": "text",
+  "nome_fantasia": "text",
+  "numero": "text",
+  "pais": "text",
+  "situacao_cadastral": "text",
+  "situacao_especial": "text",
+  "tel1": "text",
+  "tel2": "text",
+  "tipo_logradouro": "text",
+  "uf": "text"
+ },
+ "rf_motivos": {
+  "codigo": "text",
+  "descricao": "text"
+ },
+ "rf_municipios": {
+  "codigo": "text",
+  "descricao": "text"
+ },
+ "rf_naturezas": {
+  "codigo": "text",
+  "descricao": "text"
+ },
+ "rf_paises": {
+  "codigo": "text",
+  "descricao": "text"
+ },
+ "rf_qualificacoes": {
+  "codigo": "text",
+  "descricao": "text"
+ },
+ "rf_simples": {
+  "cnpj_basico": "text",
+  "data_exclusao_mei": "text",
+  "data_exclusao_simples": "text",
+  "data_opcao_mei": "text",
+  "data_opcao_simples": "text",
+  "opcao_mei": "text",
+  "opcao_simples": "text"
+ },
+ "rf_socios": {
+  "cnpj_basico": "text",
+  "cnpj_cpf_socio": "text",
+  "data_entrada": "text",
+  "faixa_etaria": "text",
+  "identificador_socio": "text",
+  "nome_representante": "text",
+  "nome_socio": "text",
+  "pais": "text",
+  "qualificacao_representante": "text",
+  "qualificacao_socio": "text",
+  "representante_cpf": "text"
+ }
+}

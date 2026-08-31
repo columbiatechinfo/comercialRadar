@@ -1,0 +1,57 @@
+{
+  "_leia": "As 37 colunas cujo tipo NAO estava declarado em lugar nenhum. Cada uma traz a evidencia que usei. Tudo aqui e julgamento meu e precisa de revisao; as outras 384 sairam declaradas de migration, do dump de 06/07/2026, de CREATE TABLE em Python, ou de lista Python de pares (coluna, tipo).",
+  "_atencao": "`pessoas_estimadas` e o exemplo de por que isto nao pode ser adivinhado pelo nome: PARECE inteiro e e TEXT, porque o modelo devolve faixa ('15 a 30'). Se eu tivesse chutado pelo nome, todo write da tabela falharia.",
+
+  "analise_ia": {
+    "poi_id":                ["integer", "recebe row['id'] de pois"],
+    "confere":               ["boolean", "conf recebe True/False literais no descrever_imagens.py:477-488"],
+    "equivalencia":          ["text", "frase montada: \"{base} com a categoria '{cat}'.\""],
+    "porte":                 ["text", "p.get('porte'), campo livre do modelo"],
+    "pessoas_estimadas":     ["text", "FAIXA, nao numero: o prompt pede \"faixa de funcionarios, ex '15 a 30'\""],
+    "atividade_real":        ["text", "p.get('atividade_real')"],
+    "veredito":              ["text", "'aprovado' | 'reprovado'"],
+    "veredito_motivo":       ["text", "p.get('atividade_real')"],
+    "motivo":                ["text", "'ok' | 'ponto_vago' | 'imagem_insuficiente' | ..."],
+    "outro_estabelecimento": ["text", "nome lido no letreiro, ou NULL"],
+    "tipo_construcao":       ["text", "campo livre do modelo"],
+    "resposta_json":         ["jsonb", "json.dumps(res) — a resposta inteira do modelo"],
+    "modelo":                ["text", "identificador do modelo que respondeu"],
+    "imagem_fonte":          ["text", "row.get('streetview_path'), caminho no Storage"],
+    "n_imagens":             ["integer", "contagem"],
+    "recomendar_visita":     ["boolean", "_recomendar_visita devolve (True|False, motivo)"],
+    "recomendacao_motivo":   ["text", "segundo item da tupla acima"],
+    "criado_em":             ["timestamptz", "set criado_em = now() no ON CONFLICT"]
+  },
+
+  "pois": {
+    "cidade":              ["text", "comparada com 'Canoas' em WHERE"],
+    "uf":                  ["text", "sigla de duas letras"],
+    "cnpj_conf":           ["real", "recebe v.conf de cnpj_tratado, que e confianca"],
+    "coord_compartilhada": ["boolean", "WHERE coord_compartilhada = true"],
+    "coord_grupo":         ["integer", "recebe g.n de um agrupamento, e vai a NULL"],
+    "cruzado_em":          ["timestamptz", "recebe now()"],
+    "descoberto_de":       ["integer", "comparado com v.origem::int; e id de outro poi"],
+    "endereco_gerado_por": ["text", "nome do metodo que gerou o endereco"],
+    "facebook":            ["text", "URL de rede social, como website"],
+    "revisar_manual":      ["boolean", "set revisar_manual = true"],
+    "revisar_motivo":      ["text", "recebe frase: 'coordenada distante do endereco declarado'"]
+  },
+
+  "images_urls":     { "storage_path": ["text", "caminho no Storage, como nas demais tabelas de imagem"] },
+  "streetview_imgs": { "storage_path": ["text", "idem"],
+                       "angulo":       ["double precision", "grau; heading e fov ja sao double precision"] },
+
+  "ibge_cnefe": {
+    "cep":           ["text", "base_cnefe monta a DDL do cabecalho do CSV com f'{c} text' — TUDO text"],
+    "cod_municipio": ["text", "idem; e codigo com zero a esquerda, que bigint perderia"]
+  },
+
+  "ibge_malha": {
+    "cod_municipio": ["text", "codigo IBGE com zero a esquerda"],
+    "nome":          ["text", ""],
+    "uf":            ["text", ""],
+    "geom":          ["jsonb", "PostGIS NAO esta instalado neste banco (extensoes: pg_net, pg_stat_statements, pgcrypto, plpgsql, supabase_vault, uuid-ossp). A malha e lida como GeoJSON no Python. Se PostGIS entrar depois, esta coluna e a primeira a virar geometry."]
+  },
+
+  "_tenant_id": "Nao entra: `tenant_id` de `pois` e `fachada_anotacao` vira `id_empresa uuid not null` no padrao A2L, referenciando core.tb_empresas."
+}
