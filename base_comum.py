@@ -35,34 +35,49 @@ def conectar():
 
 
 def conectar_referencia():
-    """Banco de REFERÊNCIA: CNEFE, Receita Federal, OSM — 60 GB de base pública.
+    """Base PUBLICA: CNEFE, Receita Federal, malha do IBGE — dezenas de GB.
 
-    Instância separada de propósito, e não capricho de organização: uma varredura
-    na `ibge_cnefe` (111 milhões de linhas) disputaria o page cache com o Auth, o
-    PostgREST e o Realtime da instância que atende usuário. É a regra da casa —
-    analítico pesado não divide Postgres com quem serve requisição. Ver o
-    ADR 0003.
+    ELA MUDOU DE LUGAR DUAS VEZES, e as duas mudancas importam para quem le uma
+    consulta antiga.
 
-    Consequência que o chamador precisa saber: **não existe JOIN entre os dois
-    bancos.** Cruzar POI com CNEFE é consulta aqui, recorte, e junção no Python —
-    que é como o `coletivas_importar.py` já faz, por casamento de coordenada.
+    Era uma INSTANCIA de Postgres separada, e o motivo era bom: uma varredura na
+    `ibge_cnefe` (111 milhoes de linhas) disputaria o page cache com o Auth, o
+    PostgREST e o Realtime da instancia que atende usuario. Analitico pesado nao
+    divide Postgres com quem serve requisicao (ADR 0003).
 
-    Enquanto `REF_POSTGRES_HOST` não estiver no `.env`, devolve a conexão do
-    banco do produto. Isso mantém quem ainda não migrou funcionando sem tocar em
-    nada — a migração de cada módulo é independente.
+    No padrao A2L ela e um SCHEMA — `resources_root` —, no mesmo banco. A troca
+    nao foi por conveniencia: base publica e a mesma para todas as ferramentas do
+    A2L, e uma instancia por ferramenta significaria baixar o CNPJ da Receita
+    tres vezes. A preocupacao do ADR 0003 continua de pe e passa a ser resolvida
+    por `pg_stat_statements` e por nao rodar varredura em horario de uso.
+
+    O QUE MUDOU PARA O CHAMADOR: agora EXISTE join entre a base publica e o dado
+    do produto — eles estao no mesmo banco. O codigo que junta no Python por
+    casamento de coordenada continua correto, so deixou de ser obrigatorio.
+
+    ATE 31/08/2026 ESTA FUNCAO CAIA NO BANCO DO PRODUTO quando
+    `REF_POSTGRES_HOST` faltava. Era uma ponte para quem ainda nao tinha migrado,
+    e virou armadilha: sem a variavel, o carregador do CNEFE criaria
+    `ibge_cnefe` DENTRO de `radar_comercial` e despejaria 111 milhoes de linhas
+    de base publica no schema do cliente. A queda saiu.
     """
     import psycopg2
-    host = (os.environ.get("REF_POSTGRES_HOST") or "").strip()
-    if not host:
-        return conectar()
+
+    # A base publica e escrita por PROCESSO, nao por usuario — e por isso vai
+    # pela 7100 (sessao). `COPY` de 111 milhoes de linhas precisa de conexao que
+    # nao volte ao pool no meio.
+    dsn = (os.environ.get("A2L_PIPELINE_DB_URL") or "").strip()
+    if not dsn:
+        raise RuntimeError(
+            "A2L_PIPELINE_DB_URL nao esta no .env, e a base publica precisa "
+            "dela: ela e carregada por COPY longo, que morre em modo transacao. "
+            "Ate 31/08/2026 a falta desta variavel caia no banco do produto e "
+            "despejaria a base publica dentro do schema do cliente.")
+
     return psycopg2.connect(
-        host=host,
-        port=os.environ.get("REF_POSTGRES_PORT", "5443"),
-        user=os.environ.get("REF_POSTGRES_USER", "postgres"),
-        password=os.environ.get("REF_POSTGRES_PASSWORD", ""),
-        dbname=os.environ.get("REF_POSTGRES_DB", "referencia"),
-        connect_timeout=int(os.environ.get("PG_CONNECT_TIMEOUT", "20")),
-    )
+        dsn,
+        options="-c search_path=resources_root,public",
+        connect_timeout=int(os.environ.get("PG_CONNECT_TIMEOUT", "20")))
 
 
 # ── Controle de arquivos já carregados (idempotência) ───────────────────────────
