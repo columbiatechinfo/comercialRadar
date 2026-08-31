@@ -110,7 +110,29 @@ fi
 
 if [ "$QUAL" = "tudo" ] || [ "$QUAL" = "cnpj" ]; then
   echo "──── CNPJ (Receita Federal) ────"
-  "$P" base_cnpj.py
+  # RECARGA LIMPA, sob demanda: `CR_RECRIAR=1`.
+  #
+  # A carga normal PULA o que já está marcado como carregado em
+  # `fonte_arquivos` — é o que faz uma execução interrompida retomar em vez de
+  # baixar 37 arquivos de novo. Mas quando o problema é o dado ESTAR ERRADO, e
+  # não faltar, essa mesma esperteza impede o conserto: o marcador diz "ok" e
+  # o carregador não toca em nada.
+  #
+  # Foi o caso em 31/08/2026. As 220 milhões de linhas entraram com toda coluna
+  # no lugar errado (`uf` vazia, sigla de estado em `motivo_situacao`), porque
+  # a lista de colunas do COPY vinha do banco e o banco estava em ordem
+  # alfabética. Corrigido o carregador, a recarga precisava de um jeito de
+  # dizer "esqueça o que está marcado".
+  #
+  # `--recriar` faz TRUNCATE nas dez tabelas e apaga as marcas de `cnpj` em
+  # `fonte_arquivos`. Não é o padrão de propósito: apagar 220 milhões de linhas
+  # é decisão, não detalhe de execução.
+  if [ "${CR_RECRIAR:-0}" = "1" ]; then
+    echo "  RECARGA LIMPA: truncando as rf_* e apagando as marcas de cnpj"
+    "$P" base_cnpj.py --recriar
+  else
+    "$P" base_cnpj.py
+  fi
   echo "  CNPJ terminou com código $?"
   echo
 fi
@@ -161,11 +183,29 @@ echo "fim: $(date -Is)"
 ROTEIRO
 
 echo "▶ disparando a carga destacada ($QUAL${UFS:+ · $UFS})"
+# A CARGA VOLTA SOZINHA DEPOIS DE UMA QUEDA.
+#
+# O servidor caiu duas vezes em 31/08/2026 no meio da recarga do CNPJ — queda
+# seca, sem nenhum registro de desligamento no journal, 34 minutos fora na
+# primeira e 6 na segunda. Com `--restart no`, cada queda exigia alguem
+# redisparar a mao, e entre a volta da maquina e esse alguem a producao ficava
+# parada sem ninguem saber.
+#
+# `on-failure` e seguro AQUI por uma razao especifica, e nao por otimismo: a
+# carga e idempotente por arquivo. Cada arquivo grava o dado e a marca na MESMA
+# transacao, e a execucao seguinte pula o que ja esta marcado. Reiniciar do topo
+# custa segundos de "ja carregado, pula" e retoma onde parou. Sem essa
+# propriedade, reinicio automatico duplicaria dado em vez de salvar tempo.
+#
+# O `:5` importa tanto quanto o resto. Sem limite, uma falha DETERMINISTICA —
+# fonte fora do ar, disco cheio, defeito no proprio carregador — viraria laco
+# infinito baixando gigabytes contra um erro que nao vai passar. Cinco
+# tentativas separam "a maquina caiu" de "isto nao vai funcionar".
 docker run -d --name "$NOME" \
   --network host \
-  --restart no \
+  --restart on-failure:5 \
   -v "$RAIZ":/app -v "$VENV":/venv -v "$ROTEIRO_HOST":/roteiro.sh:ro -w /app \
-  -e QUAL="$QUAL" -e UFS="$UFS" \
+  -e QUAL="$QUAL" -e UFS="$UFS" -e CR_RECRIAR="${CR_RECRIAR:-0}" \
   -e RADAR_USUARIO_SERVICO="${RADAR_USUARIO_SERVICO:-}" \
   -e PG_CONNECT_TIMEOUT=30 \
   --log-opt max-size=50m --log-opt max-file=5 \

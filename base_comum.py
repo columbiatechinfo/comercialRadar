@@ -163,9 +163,27 @@ def baixar(url: str, destino: Path, auth: str = None, tentativas: int = 4) -> Pa
 
 # ── COPY: streaming de um CSV (file-like binário) direto pro Postgres ───────────
 def copy_csv(conn, tabela: str, fobj, delimiter=";", header=False,
-             encoding="LATIN1", quote='"', colunas=None) -> int:
+             encoding="LATIN1", quote='"', colunas=None, commit=True) -> int:
     """COPY tabela FROM STDIN lendo o CSV cru de fobj (sem parsear em Python).
-    Retorna o nº de linhas inseridas. fobj deve entregar bytes."""
+    Retorna o nº de linhas inseridas. fobj deve entregar bytes.
+
+    `commit=False` DEIXA A TRANSAÇÃO ABERTA, e existe por causa de uma janela de
+    duplicação que o commit automático abria.
+
+    Quem carrega em lote faz duas coisas por arquivo: copia as linhas e marca o
+    arquivo como carregado. Com commit aqui dentro, são dois commits separados —
+    e uma queda entre eles deixa o dado no banco SEM a marca. A retomada pula
+    pelo marcador, não encontra nenhum, e carrega o mesmo arquivo de novo: as
+    linhas entram em dobro, sem erro nenhum.
+
+    A janela é pequena e por isso mesmo traiçoeira: aparece uma vez a cada
+    muitas execuções, e o sintoma é contagem inflada, não falha. O servidor caiu
+    duas vezes em 31/08/2026 no meio de cargas longas — com máquina assim, uma
+    janela pequena vira uma questão de tempo.
+
+    Com `commit=False` quem chama fecha as duas coisas na MESMA transação: ou o
+    arquivo entra e fica marcado, ou não entra.
+    """
     cols = f" ({', '.join(colunas)})" if colunas else ""
     sql = (f"COPY {tabela}{cols} FROM STDIN WITH (FORMAT csv, DELIMITER '{delimiter}', "
            f"QUOTE '{quote}', ENCODING '{encoding}'"
@@ -174,7 +192,8 @@ def copy_csv(conn, tabela: str, fobj, delimiter=";", header=False,
         with conn.cursor() as cur:
             cur.copy_expert(sql, _FiltraNul(fobj))   # tira NUL 0x00 (a RFB às vezes traz)
             n = cur.rowcount                          # nº de linhas copiadas (sem scan)
-        conn.commit()
+        if commit:
+            conn.commit()
         return n if (n is not None and n >= 0) else 0
     except Exception:
         conn.rollback()      # COPY é atômico: em erro, desfaz e libera a transação

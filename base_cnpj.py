@@ -213,8 +213,18 @@ def run(mes, recriar, so, indices):
             bc.baixar(WEBDAV + mes + "/" + nome, destino, auth=AUTH)
             tam = destino.stat().st_size
             print(f"      COPY → {tab} ({tam/1e6:.0f} MB)…", flush=True)
-            n = bc.copy_de_zip(conn, tab, destino, colunas=cols)
-            bc.marcar(conn, "cnpj", ref, tab, n, tam)
+            # O COPY E A MARCA NA MESMA TRANSAÇÃO.
+            #
+            # Antes eram dois commits: o `copy_csv` fechava o dele e o `marcar`
+            # o seu. Uma queda entre os dois deixaria o arquivo carregado e NÃO
+            # marcado — e a retomada, que pula pelo marcador, carregaria tudo de
+            # novo. Milhões de linhas em dobro, sem erro nenhum, e a única
+            # pista seria uma contagem maior que a soma dos arquivos.
+            #
+            # Não é hipótese de laboratório: o servidor caiu duas vezes em
+            # 31/08/2026 no meio de cargas longas.
+            n = bc.copy_de_zip(conn, tab, destino, colunas=cols, commit=False)
+            bc.marcar(conn, "cnpj", ref, tab, n, tam)   # `with conn` fecha as duas
             print(f"      ✓ {n:,} linhas".replace(",", "."), flush=True)
         except Exception as e:
             print(f"      ✗ erro: {str(e)[:140]}", flush=True)
