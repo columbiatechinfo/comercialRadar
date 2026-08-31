@@ -55,49 +55,54 @@ def test_o_gate_existe_e_tem_flag():
 
 def test_todo_ato_caro_passa_pelo_gate():
     """NENHUM ato caro pode ficar de fora: uma etapa que escapa gasta horas de
-    captura e — pior — deixa processo órfão segurando porta no i9.
+    captura.
 
-    A VERIFICAÇÃO OLHA A FUNÇÃO QUE CONTÉM a chamada, e não a linha. A primeira
-    versão exigia o gate na própria linha e reprovou o `i9.rodar` de dentro do
-    `_tolerante_i9`, que já é guardado no topo da função — falso positivo meu.
+    O QUE ESTE TESTE COBRAVA ANTES, e por que mudou. Ele exigia que toda chamada
+    a `i9.rodar` estivesse sob a guarda — porque o passo 4 chamava aquela função
+    DIRETO e atravessou o `--de-etapa` na primeira versão: o cabeçalho dizia
+    "PULADA" e a captura rodava assim mesmo. O escape custou caro uma hora
+    depois, quando a captura órfã segurou a porta 8766 e matou a rodada seguinte
+    com 0 de 3.234 tiles.
+
+    Em 30/08/2026 a camada de SSH saiu inteira — o sistema roda no servidor, e
+    `i9.rodar` não existe mais. O teste passou a cobrar as duas coisas que
+    sobrevivem à mudança: que as portas de entrada guardem, e que **nenhuma
+    outra porta apareça** sem guarda.
     """
-    import ast
-    fonte = _codigo()
-    arv = ast.parse(fonte)
+    py = _codigo()
 
-    # as três portas de entrada guardam no topo
+    # as portas de entrada guardam — na propria linha, ou delegando a uma que
+    # guarda. `_tolerante_i9` e hoje um delegador de uma linha: exigir o gate
+    # DENTRO dele seria exigir a guarda duas vezes no mesmo caminho.
     for fn in ("_rodar", "_tolerante", "_tolerante_i9"):
-        i = fonte.index("def %s(" % fn)
-        assert "_etapa_pulada()" in fonte[i:i + 400], \
-            "%s roda mesmo com a etapa pulada" % fn
+        i = py.index("def %s(" % fn)
+        corpo = py[i:i + 1800]
+        corpo = corpo[:corpo.index("\ndef ", 10)] if "\ndef " in corpo[10:] else corpo
+        propria = "_etapa_pulada()" in corpo
+        delega = any(("return %s(" % g) in corpo
+                     for g in ("_rodar", "_tolerante") if g != fn)
+        assert propria or delega, \
+            "%s roda mesmo com a etapa pulada: nao guarda nem delega" % fn
 
-    # e toda chamada a `i9.rodar` está sob alguma dessas guardas
-    def guardada(no):
-        """A função que contém esta linha menciona o gate?"""
-        for f in ast.walk(arv):
-            if not isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                continue
-            if f.lineno <= no.lineno <= (f.end_lineno or f.lineno):
-                trecho = "\n".join(fonte.splitlines()[f.lineno - 1:f.end_lineno])
-                if "_etapa_pulada()" in trecho:
-                    return True
-        return False
+    # e a camada de SSH não voltou: ela era a porta que escapava
+    assert "i9.rodar" not in py and "import i9" not in py, (
+        "a camada de SSH voltou. Ela era uma porta de entrada FORA das três "
+        "guardadas, e foi por ela que a captura atravessou o `--de-etapa`")
 
-    achou = 0
-    for no in ast.walk(arv):
-        if not isinstance(no, ast.Call):
-            continue
-        f = no.func
-        if not (isinstance(f, ast.Attribute) and f.attr == "rodar"
-                and isinstance(f.value, ast.Name) and f.value.id == "i9"):
-            continue
-        achou += 1
-        assert guardada(no), (
-            "há um `i9.rodar(` na linha %d fora de qualquer guarda: a etapa "
-            "pulada dispara trabalho no i9 e deixa processo órfão — foi assim "
-            "que a captura de Rio Grande travou a porta 8766 de Santa Maria"
-            % no.lineno)
-    assert achou >= 2, "as chamadas a `i9.rodar` sumiram; o teste ficou cego"
+    # nenhum subprocess solto: todo disparo passa por uma das três
+    import re as _re
+    soltos = []
+    for m in _re.finditer(r"subprocess\.(run|Popen|call|check_output)\(", py):
+        ini = py.rfind("\n", 0, m.start()) + 1
+        # `_rodar` e `_tolerante` PODEM chamar subprocess: são elas as guardas
+        trecho = py[max(0, m.start() - 2000):m.start()]
+        dono = trecho.rfind("\ndef ")
+        nome = py[max(0, m.start() - 2000) + dono:][5:40].split("(")[0] if dono >= 0 else "?"
+        if nome.strip() not in ("_rodar", "_tolerante", "_tolerante_i9"):
+            soltos.append((nome.strip(), py[ini:py.find("\n", m.start())].strip()[:60]))
+    assert not soltos, (
+        "há disparo de processo fora das funções guardadas — a etapa pulada "
+        "ainda executa: %s" % soltos)
 
 
 def test_o_gate_bloqueia_e_solta_no_lugar_certo():

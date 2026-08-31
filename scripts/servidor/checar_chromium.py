@@ -16,7 +16,7 @@ Nos dois casos o `publicar.sh` concluia "o Chromium NAO abre" com o Chromium
 abrindo, e mandava o dono da maquina rodar um `sudo install-deps` a toa.
 
 Um arquivo nao tem aspas para colapsar. A chamada vira
-`python scripts/i9/checar_chromium.py`, que atravessa as tres camadas intacta.
+`python scripts/servidor/checar_chromium.py`, que atravessa as tres camadas intacta.
 """
 import sys
 

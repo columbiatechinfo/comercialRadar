@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Os scripts que publicam e operam o painel no i9 precisam SOBREVIVER à viagem.
+"""Os scripts de operação precisam SOBREVIVER à viagem até o servidor.
 
 Três coisas quebraram a publicação em 24/08/2026, e as três falham em silêncio
 ou apontam para o lugar errado. Nenhuma aparece em revisão de código lendo o
@@ -24,7 +24,7 @@ import sys
 import pytest
 
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DIR = os.path.join(RAIZ, "scripts", "i9")
+DIR = os.path.join(RAIZ, "scripts", "servidor")
 SCRIPTS = sorted(f for f in os.listdir(DIR) if f.endswith(".sh"))
 
 
@@ -35,7 +35,7 @@ def _bytes(nome):
 
 def test_ha_scripts_para_conferir():
     """Se a pasta esvaziar, os testes abaixo passariam sem olhar nada."""
-    assert SCRIPTS, "nenhum .sh em scripts/i9 — os testes abaixo virariam decoração"
+    assert SCRIPTS, "nenhum .sh em scripts/servidor — os testes abaixo virariam decoração"
 
 
 @pytest.mark.parametrize("nome", SCRIPTS)
@@ -77,14 +77,14 @@ def test_e_executavel_no_indice_do_git(nome):
     o arquivo pode estar `-rwxr-xr-x` aqui e entrar como 644 no repositório.
     """
     saida = subprocess.run(
-        ["git", "ls-files", "-s", f"scripts/i9/{nome}"],
+        ["git", "ls-files", "-s", f"scripts/servidor/{nome}"],
         cwd=RAIZ, capture_output=True, text=True).stdout.strip()
     if not saida:
         pytest.skip(f"{nome} ainda não está versionado")
     modo = saida.split()[0]
     assert modo == "100755", (
         f"{nome} está {modo} no índice. Corrija com:\n"
-        f"  git update-index --chmod=+x scripts/i9/{nome}")
+        f"  git update-index --chmod=+x scripts/servidor/{nome}")
 
 
 @pytest.mark.parametrize("nome", SCRIPTS)
@@ -124,33 +124,18 @@ def test_bash_aceita(nome):
     assert r.returncode == 0, f"{nome} não passa em bash -n:\n{r.stderr}"
 
 
-def test_a_conferencia_do_chromium_nao_tem_aspas():
-    """Entre este notebook e o Python do i9 ha TRES camadas de aspas.
-
-    ssh -> PowerShell -> `wsl -- bash -lc` -> python. Duas versoes ja morreram
-    ali: um python de quatro linhas (`from: command not found`, a quebra saiu do
-    `-lc`) e um `python -c "..."` (`syntax error near (`, o PowerShell colapsou
-    as aspas internas). Nas duas o script anunciava "o Chromium NAO abre" com o
-    Chromium abrindo, e mandava o dono da maquina rodar um sudo a toa.
-
-    A forma que atravessa e um ARQUIVO, sem aspas nenhuma no comando.
-    """
-    txt = _bytes("publicar.sh").decode("utf-8", "replace")
-    linha = next((l for l in txt.splitlines() if "checar_chromium.py" in l), None)
-    assert linha, "a conferencia do Chromium sumiu do publicar.sh"
-    depois = linha.split("checar_chromium.py")[0]
-    for aspa in ('\\"', "'"):
-        assert aspa not in depois.split("remoto")[-1], (
-            "aspas no comando remoto voltam a ser comidas pelas tres camadas: %s"
-            % linha[:100])
-    # Só linhas EXECUTÁVEIS. O comentário logo acima da conferência cita
-    # `python -c "..."` para explicar por que ele não serve aqui — proibir a
-    # palavra no arquivo inteiro proibiria documentar o próprio defeito.
-    codigo = [l for l in txt.splitlines() if not l.lstrip().startswith("#")]
-    assert not any("python -c" in l for l in codigo), \
-        "o `python -c` inline voltou ao publicar.sh"
-    assert os.path.exists(os.path.join(RAIZ, "scripts", "i9", "checar_chromium.py"))
-
+# O TESTE `test_a_conferencia_do_chromium_nao_tem_aspas` SAIU DAQUI.
+#
+# Ele guardava uma licao boa: entre o notebook e o Python do outro lado havia
+# TRES camadas de aspas (ssh -> PowerShell -> `wsl -- bash -lc` -> python), e
+# duas versoes da conferencia do Chromium morreram ali — um python de quatro
+# linhas (`from: command not found`, a quebra saiu do `-lc`) e um `python -c`
+# (`syntax error near (`, o PowerShell colapsou as aspas internas). Nas duas o
+# script anunciava "o Chromium NAO abre" com o Chromium abrindo.
+#
+# A forma que atravessa e um ARQUIVO, sem aspas nenhuma no comando — e essa
+# licao continua valendo para qualquer comando que eu mande por ssh a partir do
+# Windows. O que saiu foi o `publicar.sh`, que era quem fazia a viagem.
 
 def test_a_producao_estadual_tem_trava_de_instancia_unica():
     """Duas copias do mesmo laco rodaram juntas por quatro horas em 25/08/2026.
@@ -179,37 +164,23 @@ def test_a_producao_estadual_tem_trava_de_instancia_unica():
             "morreria no fim do comando em vez de durar a execucao inteira.")
 
 
-def test_o_lancador_nao_confia_em_nohup_nem_em_pgrep():
-    """Duas crencas erradas custaram uma tarde em 25/08/2026.
+# O TESTE `test_o_lancador_nao_confia_em_nohup_nem_em_pgrep` SAIU DAQUI, com o
+# `lancar.sh`. As duas crencas erradas que ele guardava custaram uma tarde em
+# 25/08/2026 e continuam verdadeiras onde se aplicam:
+#
+#   · `setsid`/`nohup`/`disown` NAO bastavam ali. O OpenSSH do Windows derrubava
+#     a sessao inteira e o WSL levava junto os processos daquela invocacao — um
+#     `sleep 300` sumia no instante em que o ssh voltava. Isso era do par
+#     Windows+WSL; num sshd de Linux comum `setsid nohup` sobrevive. NAO foi
+#     medido no servidor novo, e por isso o `dataset_brasil.sh` diz no cabecalho
+#     que a forma dele nao foi conferida aqui.
+#
+#   · `pgrep -f <padrao>` NAO responde se o trabalho esta vivo: dentro de
+#     `bash -lc '... pgrep -f dataset_brasil.sh ...'` o padrao casa com a PROPRIA
+#     linha de comando da conferencia. O `1` lido era ele mesmo, e uma producao
+#     dada como viva estava morta havia meia hora. Esta vale em qualquer maquina.
+#
+# O `lancar.sh` usava `systemd-run --user`. No servidor novo `Linger=no`, entao
+# unidade de usuario nao sobrevive ao logout — quem repetir a manobra precisa de
+# `loginctl enable-linger` antes, ou de unidade de sistema.
 
-    A PRIMEIRA: que `setsid`/`nohup`/`disown` — ou o `Start-Process` do
-    PowerShell — bastam para o trabalho sobreviver ao fim da conexao. Nao
-    bastam: o OpenSSH do Windows derruba a sessao inteira e o WSL leva junto os
-    processos daquela invocacao. Um `sleep 300` some no instante em que o ssh
-    volta, sem escrever uma linha. As rodadas que sobreviviam sobreviviam por
-    acidente — havia uma sessao desconectada segurando o WSL de pe.
-
-    A SEGUNDA, pior: que `pgrep -f <padrao>` responde se o trabalho esta vivo.
-    Dentro de `bash -lc '... pgrep -f dataset_brasil.sh ...'` o padrao casa com a
-    PROPRIA linha de comando da conferencia. O `1` lido era ele mesmo, e uma
-    producao dada como viva estava morta havia meia hora.
-
-    O lancador usa `systemd-run --user` (o WSL do i9 roda systemd como PID 1, e
-    a unidade transitoria fica fora da arvore do ssh) e pergunta o estado ao
-    systemd, que nao tem como se auto-encontrar.
-    """
-    txt = _bytes("lancar.sh").decode("utf-8", "replace")
-    codigo = [l for l in txt.splitlines() if not l.lstrip().startswith("#")]
-    junto = "\n".join(codigo)
-
-    assert "systemd-run --user" in junto, \
-        "lancar.sh deixou de usar systemd-run — o trabalho volta a morrer com a sessao"
-    assert "is-active" in junto, \
-        "a conferencia saiu do systemd; sem ela o lancador volta a mentir sobre estar vivo"
-    for morto in ("nohup", "setsid", "Start-Process"):
-        assert morto not in junto, (
-            f"`{morto}` voltou ao lancar.sh em codigo executavel. Foi medido que "
-            "nao sobrevive ao fim da conexao — e falha em silencio.")
-    assert "pgrep" not in junto, (
-        "`pgrep` voltou a ser usado para conferir se o trabalho vive. O padrao "
-        "casa com a propria conferencia e o resultado e falso positivo.")

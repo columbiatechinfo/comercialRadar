@@ -179,29 +179,21 @@ def test_toda_etapa_com_navegador_roda_no_i9():
             f"{etapa} tem uma chamada local sobrando"
 
 
-def test_o_i9_tem_todos_os_arquivos_dessas_etapas():
-    """Etapa que roda lá e não está na lista de sincronização é defeito
-    corrigido que volta. Três já estavam nessa situação sem ninguém saber:
-    `segmentar_endereco`, `ajuste_logradouro` e `povoar_vinculo` EXISTIAM no i9
-    fora da lista — cópias antigas que nenhuma sincronização atualizava."""
-    import i9
-    for etapa in ("descobrir_maps.py", "enriquecer_por_ifood.py",
-                  "normalizar_bases.py", "segmentar_endereco.py",
-                  "ajuste_logradouro.py", "corrigir_coordenada.py",
-                  "conferir_municipio.py", "povoar_vinculo.py",
-                  "cruzar_fontes.py", "julgar_par_banco.py"):
-        assert etapa in i9.ARQUIVOS, \
-            f"{etapa} roda no i9 mas não é sincronizado — rodaria a versão velha"
+# O TESTE `test_o_i9_tem_todos_os_arquivos_dessas_etapas` SAIU DAQUI.
+#
+# Ele conferia se a etapa estava na lista de arquivos sincronizados para o
+# i9, e guardava um defeito real: etapa fora da lista rodava a versao VELHA
+# la, e tres estiveram nessa situacao sem ninguem saber.
+#
+# Em 30/08/2026 a sincronia por SSH acabou — o sistema passou a RODAR no
+# servidor. Sem duas copias nao ha lista, e o defeito que ele guardava
+# deixou de ser possivel. Removido, e nao adaptado: teste que nao pode
+# falhar nao protege nada.
 
+# O TESTE `test_a_etapa_no_i9_cai_de_volta_para_o_local` SAIU DAQUI.
+#
+# Ele exigia que a etapa mandada por SSH caisse de volta para execucao local
+# quando o `ssh` falhasse, com aviso de que ia pesar a maquina. Em 30/08/2026
+# a viagem por SSH acabou: `_tolerante_i9` virou delegador de `_tolerante` e
+# TODA etapa ja roda local. Nao ha de onde cair, entao nao ha queda a cobrar.
 
-def test_a_etapa_no_i9_cai_de_volta_para_o_local():
-    """Perder a etapa por causa do SSH seria trocar um problema de lugar por um
-    problema de existência. E o aviso diz que ela rodou aqui, para ninguém
-    estranhar a máquina pesando."""
-    s = _ler("minerar_tudo.py")
-    i = s.index("def _tolerante_i9(")
-    corpo = s[i:i + 1600]
-    assert "except Exception" in corpo and "_tolerante([PYTHON]" in corpo, \
-        "a etapa no i9 deixou de cair de volta para o local quando o SSH falha"
-    assert "o notebook vai pesar" in corpo, \
-        "o aviso de que rodou localmente sumiu"

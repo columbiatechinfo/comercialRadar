@@ -131,11 +131,16 @@ def test_o_cadastro_cruza_depois_da_fusao():
         "o cadastro passou a cruzar antes da fusão"
 
 
-def test_o_arquivo_e_sincronizado_para_o_i9():
-    """Etapa que roda lá e não está na lista é conserto que volta."""
-    import i9
-    assert "cadastro_cliente.py" in i9.ARQUIVOS
-
+# O TESTE `test_o_arquivo_e_sincronizado_para_o_i9` SAIU DAQUI.
+#
+# Ele conferia se a etapa estava na lista de arquivos sincronizados para o
+# i9, e guardava um defeito real: etapa fora da lista rodava a versao VELHA
+# la, e tres estiveram nessa situacao sem ninguem saber.
+#
+# Em 30/08/2026 a sincronia por SSH acabou — o sistema passou a RODAR no
+# servidor. Sem duas copias nao ha lista, e o defeito que ele guardava
+# deixou de ser possivel. Removido, e nao adaptado: teste que nao pode
+# falhar nao protege nada.
 
 def test_o_total_de_etapas_nao_e_chumbado_no_texto():
     """Quando a etapa 9 entrou, todo o log continuou dizendo "de 8" — inclusive

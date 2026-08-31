@@ -23,14 +23,15 @@ import os, sys, urllib.request, urllib.error
 sys.path.insert(0, r"C:\Users\ceo\Documents\Sistemas\comercialRadar")
 os.chdir(r"C:\Users\ceo\Documents\Sistemas\comercialRadar")
 import config  # noqa: F401
+import endpoints
 import base_comum as bc
 
 APLICAR = "--aplicar" in sys.argv
 
 def apagar_do_storage(caminho: str) -> bool:
     chave = (os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or "").strip()
-    gw = f"http://{os.environ.get('I9_POSTGRES_HOST','100.115.117.49')}:8000"
-    req = urllib.request.Request(f"{gw}/storage/v1/object/comercialradar/{caminho}",
+    gw = endpoints.SUPABASE
+    req = urllib.request.Request(f"{gw}/storage/v1/object/{endpoints.BUCKET}/{caminho}",
                                  method="DELETE",
                                  headers={"apikey": chave, "Authorization": f"Bearer {chave}"})
     try:

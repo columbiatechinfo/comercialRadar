@@ -1,11 +1,22 @@
 #!/usr/bin/env bash
-# dataset_brasil.sh — produz a base estadual das 27 UFs, uma por vez, no i9.
+# dataset_brasil.sh — produz a base estadual das 27 UFs, uma por vez.
 #
-# RODA NO i9. Do notebook:
-#   ssh orbisgrid@100.115.117.49 "wsl -d Ubuntu -- bash -lc \
-#     'cd /home/orbisgrid/comercialradar && setsid nohup ./scripts/i9/dataset_brasil.sh \
-#      > logs/estadual_BRASIL.log 2>&1 < /dev/null &'"
+# São dias de trabalho. Roda no servidor, solto do terminal:
 #
+#   cd ~/Documentos/sistemas/radarComercial
+#   setsid nohup ./scripts/servidor/dataset_brasil.sh > logs/brasil.log 2>&1 &
+#
+# ESTA FORMA NAO FOI MEDIDA NESTE SERVIDOR. Em 25/08/2026 `setsid`/`nohup` NAO
+# seguraram o trabalho — mas aquilo era ssh do Windows para dentro do WSL, que
+# derrubava a invocacao inteira. Num sshd de Linux comum a expectativa e que
+# sobreviva; se cair junto com a conexao, o caminho e `tmux` ou uma unidade de
+# sistema (o `loginctl` deste servidor esta com `Linger=no`, entao unidade de
+# usuario tambem morre no logout).
+#
+# ATÉ 30/08/2026 O CABEÇALHO MANDAVA DISPARAR POR SSH no i9, com `wsl -d Ubuntu`
+# no meio. A máquina não existe mais: o sistema mora no servidor, e quem produz
+# é a mesma máquina que consome.
+
 # UMA POR VEZ, e não em paralelo. A skill já satura CPU e rede sozinha (DuckDB
 # sobre o Overture no S3 e o PBF do OSM), e duas ao mesmo tempo disputariam o
 # mesmo disco enquanto o Postgres de produção tenta escrever nele.
@@ -18,7 +29,7 @@
 # base pronta cedo é base que já serve. O resto vem depois.
 set -uo pipefail          # SEM `-e`: uma UF que falha não pode derrubar as 26.
 
-RAIZ="${CR_DIR:-/home/orbisgrid/comercialradar}"
+RAIZ="${CR_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 DATASETS="$RAIZ/dados_externos/estadual"
 
 # UMA RODADA POR VEZ, e a trava e do sistema — nao do costume de quem dispara.
@@ -103,7 +114,7 @@ for uf in $UFS; do
   echo "[$uf]   $(date '+%H:%M') · ${livre} GB livres"
   echo "---------------------------------------------------------------"
   t0=$(date +%s)
-  if "$RAIZ/scripts/i9/dataset_estadual.sh" "$uf" >> "$RAIZ/logs/estadual_$uf.log" 2>&1; then
+  if "$RAIZ/scripts/servidor/dataset_estadual.sh" "$uf" >> "$RAIZ/logs/estadual_$uf.log" 2>&1; then
     echo "[ok] $uf em $((($(date +%s) - t0) / 60)) min · $(du -sh "$DATASETS/$uf" 2>/dev/null | cut -f1)"
     feitas=$((feitas + 1))
     seguidas=0

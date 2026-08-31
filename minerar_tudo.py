@@ -51,16 +51,17 @@ import time
 from pathlib import Path
 
 import config  # noqa: F401  (.env + UTF-8)
-import i9
-import i9_windows
+
+
 import area_utils
 
 BASE = Path(__file__).resolve().parent
 PYTHON = sys.executable
 SKILL = BASE / "skills" / "extracao-poi-estadual"
 DATASETS = BASE / "dados_externos" / "estadual"
-# Onde o watcher do servidor procura o resultado da captura. Com a etapa
-# rodando no i9 o arquivo nasce la e o `i9.Espelho` o traz para ca.
+# Onde o watcher do servidor procura o resultado da captura. Quem escreve e
+# quem le sao o mesmo disco desde 30/08/2026 — antes a etapa rodava em outra
+# maquina e uma thread trazia o arquivo de tempos em tempos.
 CAPTURAS = BASE / "capturas"
 
 # Escrito pelo próprio orquestrador quando a skill termina inteira. A skill tem
@@ -119,23 +120,22 @@ def _fontes_disponiveis() -> tuple[str, list]:
 
 
 def garantir_dataset(uf: str, produzir_aqui: bool = False) -> Path:
-    """Devolve a pasta do dataset da UF. NÃO a produz nesta máquina por padrão.
+    """Devolve a pasta do dataset da UF. NÃO a produz sozinha por padrão.
 
-    POR QUE NÃO PRODUZ AQUI
+    POR QUE NÃO PRODUZ SOZINHA
 
     Produzir a UF é o trabalho pesado do processo: DuckDB sobre o Overture no S3
     mais o PBF do OpenStreetMap, para um estado inteiro — 383 mil POIs no RS.
-    Num notebook isso disputa CPU e disco com os dez Chromiums da captura, e
-    leva horas antes de a captura sequer começar.
+    São horas de CPU e disco, e enquanto isso a captura não começa.
 
-    Esse é o tipo de trabalho que mora no i9, ao lado do OSRM e do Photon. A
-    máquina tem 16 CPUs, 94 GB de RAM e 682 GB livres, e o código já está
-    publicado lá (`scripts/i9/publicar.sh`).
+    A regra é: se o dataset existe, usa; se não existe, **para e diz o comando
+    que o produz** — em vez de começar sozinha uma tarefa de horas que ninguém
+    pediu. `--produzir-bases` autoriza a produção nesta rodada.
 
-    Então aqui a regra é: se o dataset existe, usa; se não existe, **para e diz
-    o comando que o produz** — em vez de começar sozinho uma tarefa de horas que
-    ninguém pediu. `--produzir-bases` força a produção local, para quando não há
-    i9 à mão.
+    ATÉ 30/08/2026 O TEXTO MANDAVA PRODUZIR NO i9, por SSH. Fazia sentido quando
+    quem editava era um notebook e o dataset de 10 GB morava ao lado do banco,
+    na outra máquina. No padrão A2L o sistema mora no servidor — que é
+    justamente a máquina com CPU para isso — e a produção acontece aqui.
     """
     destino = DATASETS / uf.upper()
     # A MESMA verdade do diagnóstico, e não uma segunda conferência.
@@ -153,15 +153,11 @@ def garantir_dataset(uf: str, produzir_aqui: bool = False) -> Path:
         raise SystemExit(
             f"\n❌ Não há dataset de {uf.upper()} em {destino}.\n\n"
             f"   Produzir é trabalho de HORAS (a UF inteira: Overture + OSM +\n"
-            f"   Foursquare) e não roda aqui de propósito — é tarefa do i9.\n\n"
-            f"   No i9, uma vez por UF:\n\n"
-            f"     ssh orbisgrid@100.115.117.49 \"wsl -d Ubuntu -- bash -lc \\\n"
-            f"       'cd /home/orbisgrid/comercialradar && \\\n"
-            f"        ./scripts/i9/dataset_estadual.sh {uf.upper()}'\"\n\n"
-            f"   Depois traga a pasta com:\n\n"
-            f"     bash scripts/i9/dataset_estadual.sh --baixar {uf.upper()}\n\n"
-            f"   Para minerar SÓ com a captura enquanto isso: --pular-bases.\n"
-            f"   Para produzir aqui mesmo, sabendo do custo: --produzir-bases.")
+            f"   Foursquare) e não começa sozinho de propósito — quem paga as\n"
+            f"   horas decide quando.\n\n"
+            f"   Uma vez por UF, nesta máquina:\n\n"
+            f"     python minerar_tudo.py --uf {uf.upper()} --produzir-bases\n\n"
+            f"   Para minerar SÓ com a captura enquanto isso: --pular-bases.\n")
 
     destino.mkdir(parents=True, exist_ok=True)
     fontes, faltando = _fontes_disponiveis()
@@ -196,54 +192,32 @@ def garantir_dataset(uf: str, produzir_aqui: bool = False) -> Path:
     return destino
 
 
-# ONDE O DADO MORA, e por que perguntar no lugar errado dava resposta errada.
+# ONDE O DATASET MORA — uma maquina so, desde 30/08/2026.
 #
-# O banco ja aponta para o i9 pelo `.env` (`I9_POSTGRES_HOST`). Os datasets
-# estaduais, nao: sao ARQUIVOS, e vivem no disco de la — 10 GB so o RS. Rodando
-# no notebook, `dados_externos/estadual/RS` nao existe, e a conferencia dizia
-# "sem dataset de RS" com o RS pronto no i9 ha uma hora.
+# Ate esta data havia duas: o notebook editava e o i9 guardava o dataset da UF
+# (10 GB) junto do banco. `dataset_pronto` PERGUNTAVA AO i9 POR SSH se a UF
+# estava produzida, e a resposta mudava o caminho da importacao. Isso ja custou
+# um defeito calado: a conferencia foi para o i9 e o caminho ficou local, entao
+# `garantir_dataset` devolvia uma pasta que no notebook nao existia e o
+# `extracao_estadual` morria sem dizer por que — a base estadual simplesmente
+# nao entrava.
 #
-# Erro bobo e caro: leva a produzir de novo o que ja existe, ou a concluir que a
-# etapa foi pulada por falta de dado quando o dado esta la.
-#
-# A regra passa a ser uma so: quem pergunta pelo dataset pergunta ONDE ELE MORA.
-I9_SSH = os.environ.get("I9_SSH", "orbisgrid@100.115.117.49")
-I9_DIR = os.environ.get("I9_DIR", "/home/orbisgrid/comercialradar")
-
-
-def no_i9() -> bool:
-    """Estamos rodando NA maquina onde o dado mora?"""
-    return str(BASE).replace("\\", "/").startswith(I9_DIR)
+# No padrao A2L o sistema MORA no servidor: dataset, banco e codigo na mesma
+# maquina. A pergunta remota deixou de existir, e com ela a classe de defeito.
 
 
 def dataset_pronto(uf: str) -> tuple:
-    """`(pronto, onde)` — confere no disco local e, se nao achar, NO i9.
+    """`(pronto, onde)` — o dataset da UF esta no disco?
 
-    Devolve tambem ONDE a resposta foi obtida, porque "nao existe aqui" e "nao
-    existe em lugar nenhum" sao conclusoes diferentes e so uma delas justifica
-    produzir a UF de novo.
+    Devolve tambem ONDE, porque "nao existe" e a unica resposta que justifica
+    produzir a UF de novo, e quem le o log precisa ver o caminho conferido.
     """
     uf = (uf or "").upper()
     if not uf:
         return False, "sem UF"
     if (DATASETS / uf / MARCADOR).exists():
         return True, "disco local"
-    if no_i9():
-        return False, "disco do i9 (rodando nele)"
-
-    # Uma pergunta so, curta, e que NAO derruba nada se o i9 estiver fora: sem
-    # resposta, seguimos com o que sabemos do disco local.
-    try:
-        r = subprocess.run(
-            ["ssh", "-n", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", I9_SSH,
-             f"wsl -d Ubuntu -- bash -lc 'test -f {I9_DIR}/dados_externos/"
-             f"estadual/{uf}/{MARCADOR} && echo PRONTO'"],
-            capture_output=True, text=True, timeout=25)
-        if "PRONTO" in (r.stdout or ""):
-            return True, "i9"
-    except Exception as erro:  # noqa: BLE001
-        return False, f"nao consegui perguntar ao i9 ({type(erro).__name__})"
-    return False, "nem aqui nem no i9"
+    return False, f"nao existe em {DATASETS / uf}"
 
 
 CADASTUR = Path(os.environ.get("CADASTUR_SAIDA")
@@ -320,10 +294,7 @@ def _diagnostico(uf: str, cod: str, cidade: str, empresa: str,
     _log("=" * 62)
     _log(f" O QUE RODA EM {cidade or '?'}/{uf or '?'}"
          + (f" ({cod})" if cod else ""))
-    # NESTA maquina. O dataset da UF mora onde a mineracao roda, e no notebook
-    # ele nao esta — dizer so "nao ha dataset de RS" faria parecer que a UF nao
-    # foi produzida, quando ela pode estar pronta no i9.
-    _log(f" banco: i9 · datasets: {'i9' if not no_i9() else 'esta maquina'}")
+    _log(f" datasets: {DATASETS}")
     _log("=" * 62)
     for n, nome, vai, motivo in etapas:
         marca = "SIM " if vai else "NAO "
@@ -355,21 +326,6 @@ def _importar_municipio(uf: str, cod: str, empresa: str,
     """
     pronto, onde = dataset_pronto(uf)
 
-    # O DATASET SO EXISTE NO i9? ENTAO A IMPORTACAO RODA LA.
-    #
-    # Defeito que eu mesmo criei hoje: fiz a CONFERENCIA perguntar ao i9 e deixei
-    # o CAMINHO local. `dataset_pronto` dizia "pronto (i9)", `garantir_dataset`
-    # devolvia `dados_externos/estadual/RS` — que no notebook nao existe — e o
-    # `extracao_estadual` morria com "nao achei poi_padronizado_*". Calado,
-    # porque a etapa e tolerante: a base estadual simplesmente nao entrava.
-    #
-    # Rodar la e o desenho certo por dois motivos, e nao so por conveniencia: o
-    # arquivo tem 10 GB e o BANCO tambem esta no i9. Trazer o dataset para o
-    # notebook so para reenviar o recorte de um municipio de volta seria
-    # atravessar a rede duas vezes a toa.
-    if pronto and onde == "i9" and not no_i9():
-        return _importar_no_i9(uf, cod, empresa)
-
     try:
         destino = garantir_dataset(uf, produzir_aqui)
     except SystemExit as aviso:
@@ -383,83 +339,17 @@ def _importar_municipio(uf: str, cod: str, empresa: str,
                    "--aplicar"])
 
 
-def _importar_no_i9(uf: str, cod: str, empresa: str) -> int:
-    """A importacao do municipio, executada na maquina onde o dado esta.
-
-    O COMANDO VAI POR ARQUIVO, pela entrada padrao. Entre este notebook e o bash
-    do i9 ha tres camadas — ssh, PowerShell e `wsl -- bash` — e cada uma
-    reinterpreta aspas. `--empresa "Aegea - Corsan"` tem espaco E hifen: montado
-    na linha de comando, chega do outro lado partido em tres argumentos. Com
-    `bash -s` lendo da entrada, a linha de comando remota e so "bash -s" e nao ha
-    o que as camadas comam.
-    """
-    import shlex
-
-    # `chr(10)` no lugar de uma barra-n: este arquivo ja foi corrompido duas
-    # vezes hoje por escape comido na edicao, e o sintoma e sempre um erro de
-    # sintaxe longe da causa. Onde da para nao ter barra, nao tem.
-    py = I9_DIR + "/.venv/bin/python"
-    roteiro = chr(10).join([
-        "cd " + shlex.quote(I9_DIR) + " || exit 1",
-        "export PYTHONUTF8=1 PYTHONIOENCODING=utf-8",
-        " ".join([shlex.quote(py), "extracao_estadual.py",
-                  "--saida",
-                  shlex.quote("dados_externos/estadual/" + uf.upper() + "/saida"),
-                  "--municipio", shlex.quote(str(cod)),
-                  "--empresa", shlex.quote(empresa or ""),
-                  "--aplicar"]),
-    ])
-    # O CODIGO VAI JUNTO, TODA VEZ.
-    #
-    # O i9 rodava uma COPIA propria de `extracao_estadual.py`, sem sincronia
-    # nenhuma com o repositorio, e isso trouxe um defeito de volta depois de
-    # corrigido. Em 25/08 arrumei o vazio do pandas virando a palavra "nan" e
-    # limpei 105.146 campos; em 26/08 a importacao de Bento Goncalves gravou
-    # 1.408 POIs de nome "nan" outra vez, porque a maquina que importa nao tinha
-    # a correcao. O erro nao parou no banco: quatro clubes com piscina distintos,
-    # a ate 119 m um do outro, foram FUNDIDOS num so por "nomes iguais (100%)".
-    #
-    # Conferir a versao e avisar nao bastaria: o aviso chega quando o dado ja
-    # entrou. Mandar o arquivo antes de cada execucao elimina a classe inteira,
-    # e custa os 40 KB que ja viajam por esta mesma conexao.
-    #
-    # `config.py` e `base_comum.py` NAO vao: o primeiro e legitimamente
-    # diferente (credencial e caminho daquela maquina) e o segundo ja esta
-    # igual. Sobrescreve-los quebraria o i9.
-    import base64
-
-    fonte = (BASE / "extracao_estadual.py").read_bytes()
-    envio = subprocess.run(
-        ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=20", I9_SSH,
-         "wsl -d Ubuntu -- bash -s"],
-        input=("cd " + shlex.quote(I9_DIR) + " || exit 1" + chr(10)
-               + "base64 -d > extracao_estadual.py" + chr(10)).encode("utf-8")
-              + base64.b64encode(fonte) + bytes((10,)),
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    if envio.returncode != 0:
-        _log("  ⚠️  nao consegui atualizar o extracao_estadual.py do i9 — "
-             "ele pode estar rodando codigo antigo:")
-        _log("      " + envio.stdout.decode("utf-8", "replace")[:200])
-
-    _log(f"  o dataset esta no i9 — importando {cod} la, junto do banco")
-    # BYTES, e nao `text=True`. No Windows o wrapper de texto traduz cada
-    # quebra de linha para CRLF, e o bash do outro lado recebe o ultimo
-    # argumento com um carriage return colado: `--aplicar` virou
-    # `--aplicar<CR>` e o argparse respondeu 'unrecognized arguments:
-    # --aplicar' — com a flag listada no proprio usage, que e o tipo de erro
-    # que faz perder meia hora procurando no lugar errado.
-    #
-    # E a mesma cicatriz que o projeto ja tinha: o CR do Windows quebrando
-    # script publicado no Linux (commit 7130d50).
-    p = subprocess.Popen(
-        ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=20", I9_SSH,
-         "wsl -d Ubuntu -- bash -s"],
-        stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT)
-    saida, _ = p.communicate(roteiro.encode("utf-8") + bytes((10,)))
-    for linha in saida.decode("utf-8", "replace").splitlines():
-        print("    " + linha.rstrip(), flush=True)
-    return p.returncode
+# A FUNCAO `_importar_no_i9` SAIU DAQUI.
+#
+# Ela mandava o recorte do municipio para rodar no i9 por SSH, e antes de
+# cada execucao reenviava o `extracao_estadual.py` em base64 — porque a
+# copia de la nao tinha sincronia nenhuma com o repositorio e isso trouxe
+# de volta um defeito ja corrigido: em 26/08/2026 a importacao de Bento
+# Goncalves gravou 1.408 POIs de nome "nan", e quatro clubes distintos a
+# ate 119 m um do outro foram FUNDIDOS por "nomes iguais (100%)".
+#
+# Com codigo, dataset e banco na mesma maquina nao ha copia a sincronizar,
+# nem base64 a mandar, nem CR do Windows para o bash do outro lado engolir.
 
 
 TOTAL_ETAPAS = 9
@@ -532,33 +422,28 @@ def _tolerante(cmd: list, nome: str) -> int:
 
 
 def _tolerante_i9(argumentos: list, nome: str) -> int:
-    if _etapa_pulada():
-        return 0
-    """O mesmo que `_tolerante`, mas a etapa roda NO i9.
+    """O NOME FICOU, A VIAGEM SAIU. Roda local, como todo o resto.
 
-    É para a etapa que abre NAVEGADOR. O notebook do operador é onde ele está
-    olhando o painel; seis Chromium com proxy ali disputam a CPU da tela que
-    mostra a própria mineração acontecendo.
+    Até 30/08/2026 esta função mandava a etapa para OUTRA máquina por SSH: o
+    notebook do operador editava o código, o i9 executava. Existia por um motivo
+    bom — seis Chromium com proxy no notebook disputam a CPU da tela que mostra
+    a própria mineração — e cobrou caro por isso três vezes em um único dia:
 
-    E há um efeito que só aparece na hora do incidente: com os navegadores no
-    notebook, "derrubar os navegadores da mineração" derruba o Chrome PESSOAL
-    junto — não há como separá-los pelo nome do processo. No i9 os dois deixam
-    de se confundir.
+        · a captura escapou do `--de-etapa`, ficou órfã no i9 e segurou a porta
+          8766; a rodada seguinte morreu com "porta já está em uso", 0 de 3.234
+          tiles;
+        · matar o processo local NÃO matava o remoto — matar o pai não mata o
+          filho do outro lado do SSH;
+        · o i9 reiniciou no meio de uma rodada e o `ssh` local ficou pendurado
+          sem timeout, esperando resposta de um processo que já não existia.
 
-    CAI DE VOLTA PARA O LOCAL se o i9 não responder. Perder a etapa por causa
-    do SSH seria trocar um problema de lugar por um problema de existência —
-    e o aviso diz que ela rodou aqui, para ninguém estranhar a máquina pesando.
+    No padrão A2L (doc 23) o sistema MORA no servidor: quem edita e quem executa
+    são a mesma máquina, e a classe inteira de defeito desaparece.
+
+    O nome sobrevive para não reescrever dezesseis chamadas num commit que já
+    muda banco, identidade e portas. Ele será aposentado quando a poeira baixar.
     """
-    try:
-        rc = i9.rodar([f"./{argumentos[0]}"] + argumentos[1:], _log)
-    except Exception as e:
-        _log(f"  i9 indisponível ({type(e).__name__}) — {nome} roda AQUI, "
-             f"e o notebook vai pesar")
-        return _tolerante([PYTHON] + argumentos, nome)
-    if rc != 0:
-        _log(f"⚠️  {nome} falhou no i9 (código {rc}). As demais etapas continuam;")
-        _log(f"   esta pode ser repetida sozinha depois.")
-    return rc
+    return _tolerante([PYTHON] + argumentos, nome)
 
 
 def main(argv=None) -> int:
@@ -586,8 +471,8 @@ def main(argv=None) -> int:
                    action="store_true",
                    help="não varre as categorias do Maps nesta rodada")
     p.add_argument("--produzir-bases", dest="produzir_bases", action="store_true",
-                   help="produz o dataset da UF NESTA máquina. São horas e ela "
-                        "disputa CPU com a captura — o lugar disso é o i9.")
+                   help="produz o dataset da UF. São horas de CPU e disco, e "
+                        "nesse tempo a captura não anda.")
     a = p.parse_args(argv)
     global _DE_ETAPA
     _DE_ETAPA = max(1, min(int(a.de_etapa or 1), TOTAL_ETAPAS))
@@ -670,18 +555,17 @@ def main(argv=None) -> int:
 
     # ── 4 · captura + OCR ─────────────────────────────────────────────────
     #
-    # RODA NO i9, e por dois motivos independentes.
+    # A ETAPA MAIS PESADA: dez navegadores reais mais uma sessão com proxy por
+    # lote. Ela come CPU, memória e banda, e é por isso que o sistema mora no
+    # servidor e não na máquina de quem opera.
     #
-    # O primeiro é de carga: a captura sobe dez navegadores reais e a busca abre
-    # uma sessão com proxy por lote. É o que come CPU, memória e banda do
-    # notebook enquanto o operador tenta usar o sistema.
-    #
-    # O segundo decide a questão: **a API da Webshare não responde do
-    # notebook**. Medido em 26/08/2026 — `urlopen error timed out` de lá, 1,1 s
-    # do i9. Sem ela o pool cai num cache em disco e trabalha às cegas sobre a
-    # lista de ontem, que foi o que aconteceu na run de Bento Gonçalves.
+    # UM DETALHE QUE JÁ CUSTOU UMA RODADA: **a API da Webshare não responde de
+    # qualquer lugar**. Medido em 26/08/2026 — `urlopen error timed out` do
+    # notebook, 1,1 s do servidor. Sem ela o pool cai num cache em disco e
+    # trabalha às cegas sobre a lista de ontem, que foi o que aconteceu na run
+    # de Bento Gonçalves. Se a mineração voltar a rodar de outro lugar, este é
+    # o primeiro item a conferir.
     _etapa(4, "captura + OCR do Maps — a única que traz painel e foto")
-    i9.sincronizar(_log)
 
     cmd = ["minerar_captura.py", "--area", a.area, "--sessao", a.sessao,
            "--zoom", str(a.zoom), "--workers", str(a.workers),
@@ -691,22 +575,24 @@ def main(argv=None) -> int:
 
     # O MAPA AO VIVO PRECISA DO ARQUIVO AQUI.
     #
+    # O ESPELHO SAIU, E ELE NÃO TINHA MAIS O QUE ESPELHAR.
+    #
     # Quem grava os POIs durante a mineração é o watcher do servidor, e ele
-    # observa `crops/<sessao>_db.json` LOCAL. Com a captura rodando lá o arquivo
-    # nasce lá; sem alguém trazê-lo o operador veria a tela parada até o fim —
-    # justamente a hora em que ele quer ver o marcador caindo.
-    relativo = f"capturas/{a.sessao}/crops/{a.sessao}_db.json"
-    espelho = i9.Espelho(relativo, CAPTURAS / a.sessao / "crops" / f"{a.sessao}_db.json")
-    espelho.start()
-    try:
-        # O GATE TAMBÉM AQUI. Esta etapa não usa `_rodar` nem `_tolerante`:
-        # ela chama `i9.rodar` direto, e por isso atravessou o `--de-etapa` na
-        # primeira versão — o cabeçalho dizia "PULADA" e a captura rodava
-        # assim mesmo. Gate por FUNÇÃO só cobre quem passa por ela.
-        rc_captura = 0 if _etapa_pulada() else i9.rodar(cmd, _log)
-    finally:
-        espelho.encerrar()
-        _log(f"  (o resultado veio do i9 {espelho.trouxe}x durante a captura)")
+    # observa `crops/<sessao>_db.json`. Enquanto a captura rodava em OUTRA
+    # máquina, o arquivo nascia lá e uma thread o trazia de tempos em tempos —
+    # sem isso o operador via a tela parada até o fim, justamente a hora em que
+    # ele quer ver o marcador caindo.
+    #
+    # Rodando no servidor, quem escreve e quem lê são o mesmo disco. Copiar um
+    # arquivo para o lugar onde ele já está seria trabalho e uma janela a mais
+    # para inconsistência.
+    #
+    # NADA A FAZER AQUI, PORTANTO — este bloco é só o registro de por quê.
+    # O GATE TAMBÉM AQUI. Esta etapa não passa por `_rodar` com guarda própria
+    # no cabeçalho: ela dispara direto, e por isso atravessou o `--de-etapa` na
+    # primeira versão — o cabeçalho dizia "PULADA" e a captura rodava assim
+    # mesmo. Gate por FUNÇÃO só cobre quem passa por ela.
+    rc_captura = 0 if _etapa_pulada() else _rodar([PYTHON] + cmd)
 
     if rc_captura != 0:
         _log(f"⚠️  A captura terminou com código {rc_captura}. As etapas de")
@@ -742,17 +628,13 @@ def main(argv=None) -> int:
     if a.pular_descoberta:
         _log("  pulado por --pular-descoberta")
     else:
-        # NO i9, COMO A CAPTURA — e isto é conserto de um defeito de lugar.
+        # PESADA COMO A CAPTURA: abre um navegador com proxy POR WORKER, seis
+        # Chromium ao mesmo tempo. Enquanto isso rodou na máquina do operador,
+        # o sintoma enganava — quem sentia a máquina pesar culpava a captura.
         #
-        # Esta etapa abre um navegador com proxy POR WORKER. Rodando aqui, eram
-        # seis Chromium no notebook do operador, disputando CPU e memória com o
-        # painel que ele está olhando — exatamente o que a regra "trabalho
-        # pesado vai para o i9" existe para evitar. E o sintoma enganava: quem
-        # sentia a máquina pesar achava que era a captura, que já estava lá.
-        #
-        # Pior: quando alguém derrubava "os navegadores da mineração", derrubava
-        # o Chrome PESSOAL junto — não há como distinguir pelo nome do processo.
-        # Rodando no i9, os dois deixam de se confundir.
+        # E derrubar "os navegadores da mineração" derrubava o Chrome PESSOAL
+        # junto: não há como distinguir pelo nome do processo. No servidor, sem
+        # ninguém navegando, os dois deixam de se confundir.
         _tolerante_i9(["descobrir_maps.py", "--area", a.area,
                        "--empresa", a.empresa, "--aplicar"],
                       "descoberta por categoria")
@@ -762,18 +644,15 @@ def main(argv=None) -> int:
     # Sob demanda, como a captura: o iFood não tem base pública por UF, e a
     # metade cara (enumerar os ids) precisa de navegador na praça daquela área.
     #
-    # RODA NO WINDOWS DO i9 — e hoje está BLOQUEADA POR FORA.
+    # BLOQUEADA POR FORA — e isso NÃO é problema de máquina.
     #
-    # Duas coisas separadas, e eu já as confundi uma vez neste arquivo.
-    #
-    # ONDE RODA. O i9 é uma máquina com dois ambientes: o WSL Linux, onde moram
-    # banco, datasets e a captura, e o Windows, que tem desktop. O iFood abre
-    # navegador, e navegador visível não sobe no WSL — medido em 26/08/2026,
+    # PRECISA DE DESKTOP. Esta etapa abre navegador visível, e navegador visível
+    # não sobe em ambiente sem sessão gráfica — medido em 26/08/2026 no WSL,
     # cinco variantes (sem `WAYLAND_DISPLAY`, `--ozone-platform=x11`,
     # `XDG_RUNTIME_DIR` do WSLg e as combinações), todas estourando o launch em
-    # ~46 s. No Windows do i9 sobe em 1,1 s, e o banco responde de lá. Então a
-    # etapa vai para o Windows do i9, não para o notebook: o notebook é onde o
-    # operador trabalha.
+    # ~46 s, contra 1,1 s onde havia desktop. No servidor Ubuntu isso continua
+    # valendo: sem X ou Wayland, esta metade da etapa não roda. **Item aberto da
+    # migração** — a alternativa é Xvfb, ainda não medida aqui.
     #
     # POR QUE ESTÁ FALHANDO. Não é a máquina, e escrever que era foi erro meu.
     # Em 25/08 esta etapa gravou 1.598 lojas; em 26/08 devolve zero — no
@@ -811,8 +690,9 @@ def main(argv=None) -> int:
         # falhas, CNPJ em 99,7%). E alcança QUALQUER POI da base — antes o iFood
         # só enriquecia o que ele mesmo tinha descoberto.
         #
-        # RODA AQUI, não no i9: ele usa o pool de busca (`SerpPool`), que é a
-        # mesma infraestrutura do `minerar_web`, e não precisa de desktop.
+        # ESTA METADE NÃO PRECISA DE DESKTOP: usa o pool de busca (`SerpPool`),
+        # a mesma infraestrutura do `minerar_web`. É a que continua funcionando
+        # com a outra bloqueada.
         rc = _tolerante_i9(["enriquecer_por_ifood.py", "--area", a.area,
                          "--empresa", a.empresa, "--aplicar"],
                         "iFood — CNPJ pelo link da loja")
