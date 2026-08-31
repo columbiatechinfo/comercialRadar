@@ -123,6 +123,19 @@ nvidia-ml-py==13.610.43
 openai==2.34.0
 opencv-python-headless==4.13.0.92
 opencv-python==4.13.0.92
+# overturemaps: a CLI que baixa o Overture, e ela FALTAVA AQUI.
+#
+# Estava instalada no venv de quem escreveu o codigo e nunca foi declarada.
+# No servidor limpo ela nao existe — e `dataset_estadual.sh` NAO falha por
+# isso: ele avisa "sem overture: CLI ausente" e continua com OSM sozinho,
+# gravando o marcador de PRODUZIDO. Seriam 27 UFs de base degradada,
+# marcadas como prontas, com a cobertura menor e ninguem sabendo.
+#
+# O proprio script ja documenta esse defeito acontecendo na primeira
+# execucao do RS. Ele voltou porque a licao virou comentario e nao virou
+# dependencia declarada.
+overturemaps==1.0.1
+
 openpyxl==3.1.5
 outcome==1.3.0.post0
 packaging==26.2

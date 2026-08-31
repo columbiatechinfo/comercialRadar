@@ -80,14 +80,25 @@ if [ -f "$RAIZ/.env" ]; then
   set +a
 fi
 
-# O `bin` do venv ENTRA no PATH antes de procurar o `overturemaps`.
+# O `bin` DO VENV ENTRA NO PATH antes de procurar o `overturemaps`, e ONDE fica
+# esse venv é configurável.
 #
-# Ele é instalado como dependência do projeto, então mora em
-# `.venv/bin/overturemaps` — não no PATH do shell. Sem esta linha, `command -v`
-# não o acha, a lista de fontes cai para `osm` sozinha, e sai um dataset
-# OSM-only com nome de "bases públicas": cobertura menor, marcado como pronto, e
-# ninguém sabe. Aconteceu na primeira execução do RS.
-export PATH="$RAIZ/.venv/bin:$PATH"
+# O `overturemaps` é dependência do projeto e mora em `<venv>/bin/` — não no
+# PATH do shell. Sem esta linha `command -v` não o acha, a lista de fontes cai
+# para `osm` sozinha, e sai um dataset OSM-only com nome de "bases públicas":
+# cobertura menor, marcado como pronto, e ninguém sabe. Aconteceu na primeira
+# execução do RS, e quase aconteceu de novo em 31/08/2026 — daquela vez porque o
+# pacote sequer estava no `requirements.txt`.
+#
+#
+# Rodando na maquina, ele e `$RAIZ/.venv`. Rodando no conteiner da carga, e
+# `/venv` — um volume proprio, para nao refazer 200 pacotes a cada execucao nem
+# sujar a pasta do sistema. Chumbar `$RAIZ/.venv` fazia o `command -v
+# overturemaps` falhar la dentro, e a consequencia NAO e um erro: a lista de
+# fontes cai para `osm` sozinha e sai um dataset OSM-only com nome de "bases
+# publicas", marcado como pronto.
+VENV="${VENV:-$RAIZ/.venv}"
+export PATH="$VENV/bin:$PATH"
 
 FONTES="osm"
 command -v overturemaps >/dev/null && FONTES="overture,$FONTES" \
@@ -122,7 +133,7 @@ echo "  source-mode: $MODO_FONTE"
 
 cd "$RAIZ/skills/extracao-poi-estadual"
 set +e
-"$RAIZ/.venv/bin/python" poi_estadual.py run \
+"$VENV/bin/python" poi_estadual.py run \
   --uf "$UF" --fontes "$FONTES" --formatos csv,geoparquet \
   --source-mode "$MODO_FONTE" \
   --base-dir "$DESTINO"

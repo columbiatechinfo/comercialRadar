@@ -16,10 +16,21 @@
 # não o trabalho todo — então rodar de novo é sempre seguro.
 #
 # USO
-#     ./scripts/servidor/carregar_bases.sh              # CNEFE + CNPJ, tudo
-#     ./scripts/servidor/carregar_bases.sh cnefe RS,SC  # só o CNEFE dessas UFs
-#     ./scripts/servidor/carregar_bases.sh --situacao   # o que está rodando
-#     ./scripts/servidor/carregar_bases.sh --log        # acompanhar ao vivo
+#     ./scripts/servidor/carregar_bases.sh                # todas
+#     ./scripts/servidor/carregar_bases.sh cnefe RS,SC    # só o CNEFE dessas UFs
+#     ./scripts/servidor/carregar_bases.sh cadastur       # só o Cadastur
+#     ./scripts/servidor/carregar_bases.sh estadual       # só a base estadual
+#     ./scripts/servidor/carregar_bases.sh estadual RS,SC # só essas UFs
+#     ./scripts/servidor/carregar_bases.sh --situacao     # o que está rodando
+#     ./scripts/servidor/carregar_bases.sh --log          # acompanhar ao vivo
+#
+# AS QUATRO BASES, e o que cada uma custa:
+#
+#   cnefe      IBGE, censo 2022 — 111 M de endereços, ~1 h
+#   cnpj       Receita Federal  — 220 M de linhas, ~40 min
+#   cadastur   MTur             — prestadores de turismo, minutos
+#   estadual   Overture+OSM+FSQ — a mais cara: DuckDB sobre o Overture, HORAS
+#              POR UF. É a que justifica o processo destacado existir.
 set -uo pipefail
 
 RAIZ="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -93,6 +104,32 @@ if [ "$QUAL" = "tudo" ] || [ "$QUAL" = "cnpj" ]; then
   echo "──── CNPJ (Receita Federal) ────"
   "$P" base_cnpj.py
   echo "  CNPJ terminou com código $?"
+  echo
+fi
+
+if [ "$QUAL" = "tudo" ] || [ "$QUAL" = "cadastur" ]; then
+  echo "──── Cadastur (MTur) ────"
+  # `--so-carregar --gerar`: baixa o snapshot e produz o entregável, sem
+  # encadear as etapas seguintes. É o mesmo par que o `minerar_tudo` usa.
+  "$P" cadastur.py --so-carregar --gerar
+  echo "  Cadastur terminou com código $?"
+  echo
+fi
+
+if [ "$QUAL" = "tudo" ] || [ "$QUAL" = "estadual" ]; then
+  echo "──── base estadual (Overture + OSM + Foursquare) ────"
+  # NÃO é um `.py`: é o laço que roda as 27 UFs uma por vez, com trava por UF e
+  # marcador de veredito. Ele já é retomável — UF com `_pronto.txt` é PULADA —,
+  # então cair no meio custa a UF corrente, não as 26 outras.
+  #
+  # CADA UF ESCREVE O PRÓPRIO LOG em `logs/estadual_<UF>.log`. O log deste
+  # contêiner mostra só o avanço; o detalhe de uma UF está no arquivo dela.
+  if [ -n "$UFS" ]; then
+    CR_UFS="$(echo "$UFS" | tr ',' ' ')" ./scripts/servidor/dataset_brasil.sh
+  else
+    ./scripts/servidor/dataset_brasil.sh
+  fi
+  echo "  base estadual terminou com código $?"
   echo
 fi
 
