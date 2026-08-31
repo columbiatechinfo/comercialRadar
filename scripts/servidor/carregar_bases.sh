@@ -89,6 +89,14 @@ export PYTHONUNBUFFERED=1 PYTHONUTF8=1
 P=/venv/bin/python
 [ -x "$P" ] || P=python
 
+# ONDE ESTA O VENV, para quem for chamado daqui.
+#
+# `dataset_estadual.sh` procura o `overturemaps` no PATH do venv. Sem esta
+# linha ele cairia no padrao `$RAIZ/.venv`, que no conteiner nao existe — e a
+# consequencia NAO e erro: a lista de fontes cai para `osm` sozinha e sai um
+# dataset OSM-only com nome de "bases publicas", marcado como pronto.
+export VENV=/venv
+
 echo "════════ carga das bases públicas ════════"
 echo "início: $(date -Is)"
 echo
