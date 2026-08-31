@@ -1,0 +1,44 @@
+# O minerador do Radar Comercial — dez Chromium e nenhuma porta publicada.
+#
+# POR QUE UMA IMAGEM SEPARADA DA API
+#
+# Esta pesa perto de 2 GB: são os navegadores do Playwright mais as bibliotecas
+# de sistema que um Chromium exige. A API pesa uma fração disso e sobe em
+# segundos. Juntá-las faria toda subida do painel arrastar dois gigabytes que o
+# painel não usa — e, pior, obrigaria a API a abrir mão de `read_only`, porque
+# navegador escreve perfil, cache e crash dump em disco o tempo todo.
+#
+# A imagem oficial do Playwright já traz os navegadores e as dependências de
+# sistema na versão certa. Instalar Chromium à mão sobre um `slim` é onde nasce
+# o "funciona aqui e não lá": a versão do Playwright e a do navegador têm de
+# casar, e o `playwright install` sozinho não instala as libs do sistema.
+# A TAG TEM DE CASAR COM `playwright==` DO requirements.txt. Hoje 1.60.0. Se uma
+# das duas subir sozinha, o Playwright procura um navegador que a imagem não
+# tem, e o erro fala de executável ausente em vez de falar de versão.
+FROM mcr.microsoft.com/playwright/python:v1.60.0-jammy
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONUTF8=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+# Usuário sem privilégio, como na API. A imagem do Playwright já traz `pwuser`
+# justamente para isso — Chromium rodando como root desliga o sandbox dele, e aí
+# uma página maliciosa deixa de ter uma barreira entre ela e o contêiner.
+#
+# `crops` e `capturas` são volume no compose: precisam sobreviver ao restart, e
+# é o watcher da API que os lê para desenhar o mapa ao vivo.
+RUN mkdir -p /app/crops /app/capturas /app/logs \
+ && chown -R pwuser:pwuser /app/crops /app/capturas /app/logs
+USER pwuser
+
+# NENHUM `EXPOSE`. Este contêiner não serve ninguém: ele consome a fila de jobs
+# do banco e escreve resultado. Quem fala com o navegador é ele mesmo.
+
+CMD ["python", "minerador_worker.py"]

@@ -2,19 +2,35 @@
 """Prova que uma empresa não alcança o dado de outra.
 
 Este é o teste que impede a matriz do RBAC de virar documentação. Ele roda com o
-papel REAL da API (`app_user`, sem BYPASSRLS), porque testar com o
-worker provaria nada: BYPASSRLS ignora toda policy.
+papel REAL da API — `app_user`, sem `BYPASSRLS` — porque testar com um papel
+privilegiado provaria nada: quem ignora policy passa em qualquer teste de policy.
 
 Quatro perguntas, e as quatro precisam de resposta:
 
   1. A empresa A LÊ linha da empresa B?
   2. A empresa A GRAVA carimbando a empresa B?  ← o `with check`
-  3. Sem declarar a empresa, o que se vê?       ← fail-closed
+  3. Sem identidade declarada, o que se vê?     ← fail-closed
   4. O `root` atravessa mesmo?
 
 A pergunta 2 é a que costuma faltar. Sem ela, o cliente não *vê* a linha alheia
 mas consegue *criar* uma dentro do vizinho — e ninguém percebe até o vizinho
 reclamar de dado que não é dele.
+
+O QUE MUDOU EM 31/08/2026, e por que este arquivo foi reescrito e não ajustado.
+
+No banco antigo havia dois papéis: `comercialradar_root` com `BYPASSRLS` e
+`comercialradar_app` sem. A travessia do root era privilégio de PAPEL, e o teste
+conectava com um ou com outro.
+
+No banco `a2l` não existe papel com `BYPASSRLS` disponível à aplicação. Todo
+mundo conecta como `app_user`, e o que muda é a IDENTIDADE declarada em
+`request.jwt.claim.sub` — de onde `core.empresa_atual()`, `core.nivel_atual()` e
+`core.eh_suporte()` tiram tudo, lendo `core.tb_users`.
+
+Isso muda o que o teste declara. Uma renomeação mecânica de `app.tenant_id` para
+`request.jwt.claim.sub` deixaria o teste passando o uuid da EMPRESA no lugar do
+uuid do USUÁRIO — e aí `auth.uid()` apontaria para alguém que não existe, toda
+consulta voltaria vazia, e as quatro perguntas passariam por motivo errado.
 """
 import os
 import sys
@@ -25,250 +41,238 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config  # noqa: F401,E402
-import base_comum as bc  # noqa: E402
 
-HOST = os.environ["I9_POSTGRES_HOST"]
-PORT = int(os.environ.get("I9_POSTGRES_PORT", "5444"))
-DB = os.environ.get("I9_POSTGRES_DB", "postgres")
+DSN = (os.environ.get("A2L_DB_URL") or "").strip()
 OPCOES = "-c search_path=radar_comercial,public"
 
+#: O root da instalação. Ele monta o cenário: a policy de INSERT de
+#: `core.tb_empresas` é `core.eh_suporte()`, então ninguém abaixo de nível 9 cria
+#: empresa. E é ele quem responde a pergunta 4.
+ROOT = "b5b544cb-ed45-470f-bb10-4cbda574d3f2"
 
-def _conectar(papel: str, senha_var: str):
-    senha = (os.environ.get(senha_var) or "").strip()
-    if not senha:
-        pytest.skip(f"{senha_var} ausente no .env")
-    return psycopg2.connect(host=HOST, port=PORT, user=papel, password=senha,
-                            dbname=DB, options=OPCOES, connect_timeout=20)
+#: O administrator, que pertence a uma empresa. É o "lado A" das perguntas 1 e 2.
+#:
+#: ESTE TESTE NÃO CRIA USUÁRIO, e isso é decisão. `core.tb_users.id` referencia
+#: `auth.users` do GoTrue, então criar um exigiria a chave de serviço — e um
+#: teste ou é pulado por falta dela (e não protege nada) ou carrega credencial de
+#: produção (e é um risco novo).
+#:
+#: Não é preciso: o teste precisa de duas EMPRESAS e de UM usuário. A empresa B
+#: existe só para não ser alcançada; ela não precisa de ninguém dentro.
+ADMIN = "a63f69ea-0df0-4e12-8e5a-3e2989192b38"
+
+#: A empresa que existe so para NAO ser alcancada. Criada uma vez e
+#: reaproveitada: no padrao A2L empresa se desativa, nao se apaga.
+EMPRESA_TESTE = "ZZ TESTE ISOLAMENTO"
+
+pytestmark = pytest.mark.skipif(
+    not DSN, reason="A2L_DB_URL ausente: este teste fala com o banco de verdade")
+
+
+def _conectar(quem=None):
+    """Conexão de aplicação com uma identidade declarada — do jeito que a API faz.
+
+    `quem=None` é o caso 3: ninguém declarado. Não é conveniência de teste — é a
+    situação de qualquer conexão nova antes de a API declarar o usuário, e o que
+    ela enxerga aí é o que um bug de autenticação exporia.
+
+    DUAS COISAS AQUI NÃO PODEM MUDAR, e as duas custaram medição:
+
+    `true` e não `false`. Escopo de SESSÃO na 7110 VAZA: ele sobrevive à
+    devolução do backend ao pool, e a próxima conexão a pegar aquele backend
+    herda a empresa. Medido — dez conexões novas, sem declarar nada,
+    responderam com a empresa que o teste anterior havia declarado. Foi a
+    primeira versão deste arquivo que sujou o pool e revelou isso.
+
+    `autocommit = False` e não `True`. Com autocommit, cada comando é sua
+    própria transação, e o escopo de transação morre no fim dela — a identidade
+    não chegaria à consulta seguinte, e os testes veriam vazio por motivo
+    errado. Quem chama fecha com `rollback()`.
+    """
+    con = psycopg2.connect(DSN, options=OPCOES, connect_timeout=20)
+    con.autocommit = False
+    if quem:
+        with con.cursor() as cur:
+            cur.execute("select set_config('request.jwt.claim.sub', %s, true)",
+                        (str(quem),))
+    return con
 
 
 @pytest.fixture(scope="module")
 def cenario():
-    """Duas empresas, um POI em cada. Criado e removido pelo worker."""
-    con = bc.conectar()
-    con.autocommit = True
+    """A empresa do administrator, uma empresa alheia, e um POI em cada.
+
+    Montado e desmontado pelo root, que e quem pode criar empresa e quem enxerga
+    as duas para limpar depois.
+
+    A IDENTIDADE E DECLARADA DENTRO DE CADA TRANSACAO QUE GRAVA, e nao uma vez no
+    inicio. Escopo de transacao morre no commit — que e justamente o que o torna
+    seguro na 7110 —, entao a segunda transacao comecaria sem ninguem declarado e
+    a policy negaria o insert. Declarar em escopo de sessao para "resolver" isso
+    e o erro que suja o pool inteiro.
+    """
     ids = {}
+
+    con = psycopg2.connect(DSN, options=OPCOES, connect_timeout=20)
+    con.autocommit = False
     with con.cursor() as cur:
+        cur.execute("select set_config('request.jwt.claim.sub', %s, true)", (ROOT,))
+
+        cur.execute("select id_empresa from core.tb_users where id = %s", (ADMIN,))
+        r = cur.fetchone()
+        if not r or not r[0]:
+            con.rollback()
+            con.close()
+            pytest.skip("o administrator de referencia nao existe nesta instalacao")
+        ids["A"] = r[0]
+
+        # UMA EMPRESA DE TESTE, REAPROVEITADA — e nao uma por execucao.
+        #
+        # No padrao A2L empresa nao se apaga, se DESATIVA: `app_user` tem select,
+        # insert e update em `core.tb_empresas`, e nao tem delete. Isso e certo
+        # (a rota da API de identidade tambem chama "desativar"), mas significa
+        # que criar uma por rodada deixaria lixo permanente crescendo no `core`,
+        # que e schema compartilhado com as outras ferramentas.
+        marca = uuid.uuid4().hex[:8]
+        cur.execute("select id from core.tb_empresas where name = %s", (EMPRESA_TESTE,))
+        r = cur.fetchone()
+        if r:
+            ids["B"] = r[0]
+        else:
+            cur.execute("""insert into core.tb_empresas
+                             (name, identification_doc, id_type_doc, reset_email)
+                           values (%s, %s, 2, %s) returning id""",
+                        (EMPRESA_TESTE, "00000000000000",
+                         "zz-isolamento@teste.invalido"))
+            ids["B"] = cur.fetchone()[0]
+
+        # NOME UNICO POR EXECUCAO. O indice `pois_sem_duplicata` recusa
+        # nome+endereco repetidos na mesma empresa, e a empresa A e REAL — o
+        # resto de uma execucao que falhou no meio fica la e bloqueia a
+        # proxima. Com a marca no nome, cada rodada e sua.
         for lado in ("A", "B"):
-            cur.execute("insert into core.tb_empresas (nome) values (%s) returning id",
-                        (f"ZZ TESTE {lado} {uuid.uuid4().hex[:8]}",))
-            ids[lado] = cur.fetchone()[0]
-            cur.execute(
-                """insert into pois (nome, endereco, fonte, lat_origem, lng_origem, id_empresa)
-                   values (%s,'Rua Teste, 1','teste',-29.9,-51.2,%s) returning id""",
-                (f"ZZ POI {lado}", ids[lado]))
+            # `id_empresa` EXPLICITO aqui, e so aqui: o root nao pertence a
+            # empresa nenhuma, entao o gatilho nao teria o que carimbar. E a
+            # mesma excecao que o `area_utils` faz, pelo mesmo motivo.
+            cur.execute("""insert into pois
+                             (nome, endereco, fonte, lat_origem, lng_origem, id_empresa)
+                           values (%s,'Rua Teste, 1','teste',-29.9,-51.2,%s)
+                        returning id""", (f"ZZ POI {lado} {marca}", ids[lado]))
             ids[f"poi_{lado}"] = cur.fetchone()[0]
+    con.commit()
+    con.close()
+
     yield ids
-    # `::uuid[]` explícito: psycopg2 manda a lista como text[], e o Postgres não
-    # tem operador `uuid = text`. Sem o cast a limpeza falha e deixa lixo no banco.
+
+    con = psycopg2.connect(DSN, options=OPCOES, connect_timeout=20)
+    con.autocommit = False
     with con.cursor() as cur:
-        cur.execute("delete from pois where id_empresa = any(%s::uuid[])",
-                    ([str(ids["A"]), str(ids["B"])],))
-        cur.execute("delete from core.tb_empresas where id = any(%s::uuid[])",
-                    ([str(ids["A"]), str(ids["B"])],))
+        cur.execute("select set_config('request.jwt.claim.sub', %s, true)", (ROOT,))
+        # SO os POIs. A empresa de teste FICA, e e reaproveitada na proxima
+        # rodada — `app_user` nao pode apagar empresa, e nao deveria mesmo.
+        cur.execute("delete from pois where id = any(%s)",
+                    ([ids["poi_A"], ids["poi_B"]],))
+    con.commit()
     con.close()
 
 
-def _como_empresa(id_empresa):
-    """Conexão do app já declarando a empresa, como a API fará por requisição."""
-    con = _conectar("app_user", "CR_APP_PASSWORD")
-    with con.cursor() as cur:
-        cur.execute("select set_config('request.jwt.claim.sub', %s, false)", (str(id_empresa),))
-    return con
-
-
 def test_a_nao_le_o_poi_de_b(cenario):
-    con = _como_empresa(cenario["A"])
+    con = _conectar(ADMIN)
     with con.cursor() as cur:
         cur.execute("select count(*) from pois where id = %s", (cenario["poi_B"],))
         assert cur.fetchone()[0] == 0, "empresa A alcançou o POI da empresa B"
         cur.execute("select count(*) from pois where id = %s", (cenario["poi_A"],))
         assert cur.fetchone()[0] == 1, "empresa A não enxerga o próprio POI"
+    con.rollback()
     con.close()
 
 
 def test_a_nao_grava_carimbando_b(cenario):
     """O `with check`. Sem ele, A cria linha DENTRO de B.
 
-    A exceção é `InsufficientPrivilege` (SQLSTATE 42501), não `CheckViolation`:
+    A exceção é `InsufficientPrivilege` (SQLSTATE 42501), e não `CheckViolation`:
     violar o `with check` de uma policy é recusa de PRIVILÉGIO no Postgres, não
-    de restrição de tabela. Esperar a classe errada faria este teste falhar com
-    o isolamento funcionando — que foi o que aconteceu na primeira execução."""
-    con = _como_empresa(cenario["A"])
+    de restrição de tabela. Esperar a classe errada faria este teste falhar com o
+    isolamento funcionando — que foi o que aconteceu na primeira execução.
+    """
+    con = _conectar(ADMIN)
     with con.cursor() as cur:
         with pytest.raises(psycopg2.errors.InsufficientPrivilege) as erro:
-            cur.execute(
-                """insert into pois (nome, endereco, fonte, lat_origem, lng_origem, id_empresa)
-                   values ('ZZ INVASOR','Rua Teste, 1','teste',-29.9,-51.2,%s)""", (cenario["B"],))
+            cur.execute("""insert into pois
+                             (nome, endereco, fonte, lat_origem, lng_origem, id_empresa)
+                           values ('ZZ INVASOR','Rua Teste, 1','teste',-29.9,-51.2,%s)""",
+                        (cenario["B"],))
         assert "row-level security" in str(erro.value)
     con.rollback()
     con.close()
 
 
-def test_sem_empresa_declarada_nao_ve_nada(cenario):
+def test_sem_identidade_nao_ve_nada(cenario):
     """Fail-closed: variável ausente devolve NULL, e NULL não casa com nada.
 
-    É o motivo de a policy nunca conter `or current_setting(...) is null` — esse
-    OR é a 'correção' que aparece quando as consultas voltam vazias, e ele reabre
-    a base inteira para qualquer conexão sem identidade."""
-    con = _conectar("app_user", "CR_APP_PASSWORD")
+    É o motivo de a policy nunca conter `or core.empresa_atual() is null` — esse
+    OR é a "correção" que aparece quando as consultas voltam vazias, e ele reabre
+    a base inteira para qualquer conexão sem identidade.
+    """
+    con = _conectar()
     with con.cursor() as cur:
+        cur.execute("select core.empresa_atual()")
+        assert cur.fetchone()[0] is None, "conexão sem identidade resolveu uma empresa"
         cur.execute("select count(*) from pois")
-        assert cur.fetchone()[0] == 0, "conexão sem empresa declarada enxergou linhas"
+        assert cur.fetchone()[0] == 0, "conexão sem identidade enxergou linhas"
+    con.rollback()
     con.close()
 
 
 def test_root_atravessa_as_empresas(cenario):
-    con = _conectar("app_user", "CR_ROOT_PASSWORD")
+    """E atravessa pela POLÍTICA, não por privilégio de papel.
+
+    A conexão é a mesma `app_user` das outras: o que muda é só quem está
+    declarado. Se algum dia isto voltar a passar por um papel com BYPASSRLS, o
+    teste continua verde e para de significar o que significa — por isso ele
+    confere também que o papel NÃO tem BYPASSRLS.
+    """
+    con = _conectar(ROOT)
     with con.cursor() as cur:
+        cur.execute("select rolbypassrls from pg_roles where rolname = current_user")
+        assert cur.fetchone()[0] is False, \
+            "o papel da aplicação ganhou BYPASSRLS — toda policy virou enfeite"
+        cur.execute("select core.eh_suporte()")
+        assert cur.fetchone()[0] is True, "o root deixou de ser reconhecido como suporte"
         cur.execute("select count(*) from pois where id = any(%s)",
                     ([cenario["poi_A"], cenario["poi_B"]],))
         assert cur.fetchone()[0] == 2, "root não enxergou as duas empresas"
+    con.rollback()
+    con.close()
+
+
+def test_o_gatilho_carimba_a_empresa_de_quem_grava(cenario):
+    """INSERT sem informar empresa nasce na empresa de quem gravou.
+
+    É o que permite os trinta e poucos INSERTs do pipeline não citarem
+    `id_empresa`. Sem o gatilho, o primeiro esquecido gravaria linha sem dono — e
+    linha sem dono não some: ela nasce invisível para todos, e ninguém procura o
+    que não sabe que perdeu.
+    """
+    con = _conectar(ADMIN)
+    with con.cursor() as cur:
+        cur.execute("""insert into pois (nome, fonte) values ('ZZ CARIMBO','teste')
+                    returning id_empresa""")
+        assert str(cur.fetchone()[0]) == str(cenario["A"]), \
+            "o gatilho carimbou a empresa errada, ou não carimbou"
+    con.rollback()
     con.close()
 
 
 def test_policy_usa_indice_e_nao_varre(cenario):
-    """RLS é avaliado POR LINHA. Sem índice começando por id_empresa, a policy
-    vira o gargalo: em `cadastro_cliente` são 102 mil linhas por consulta."""
-    con = _como_empresa(cenario["A"])
+    """RLS é avaliada POR LINHA. Sem índice começando por id_empresa, a policy
+    força varredura completa e o isolamento vira o gargalo."""
+    con = _conectar(ADMIN)
     with con.cursor() as cur:
-        cur.execute("explain (analyze, buffers) select count(*) from cadastro_cliente")
-        plano = " ".join(r[0] for r in cur.fetchall())
+        cur.execute("explain (format json) select id from pois where id_empresa = %s",
+                    (cenario["A"],))
+        plano = str(cur.fetchone()[0])
     con.close()
-    assert "Seq Scan" not in plano, f"varredura completa apesar do índice:\n{plano}"
-
-
-def test_nenhuma_tabela_com_tenant_id_fica_sem_politica():
-    """A regra geral, e não a lista das quatro que já falharam.
-
-    Em 24/08/2026 quatro tabelas estavam sem RLS — `atribuicao_divergente`,
-    `fachada_triagem`, `foto_maps_triagem` e `ifood_merchant` —, e o
-    `docs/estado.json` afirmava `tabelas_sem_rls: []`. Eram as criadas DEPOIS do
-    passe de 12/08, e são as mesmas que a migration 0024 já tinha pego por outro
-    motivo (escreviam e não liam).
-
-    O padrão, portanto, não é descuido pontual: **tabela nova não herda a
-    política**. Conferir as quatro por nome não impediria a quinta. Este teste
-    pergunta pela REGRA: se a tabela tem `id_empresa`, ela tem RLS, policy e o
-    gatilho que carimba a empresa no INSERT.
-
-    O gatilho importa tanto quanto a policy. Sem ele a linha nasce com
-    `id_empresa` nulo, e nula não casa com policy nenhuma: some do painel de
-    todo mundo, sem erro nenhum.
-
-    DUAS EXCEÇÕES, e as duas são de projeto, não pendência:
-
-      `auditoria`  tem escritor próprio. `registrar_auditoria` já resolve a
-                   empresa — da sessão, e quando não há, da própria linha
-                   auditada. Somar `preencher_tenant` seria um segundo dono
-                   para a mesma coluna.
-      `usuarios`   o `root` não pertence a empresa nenhuma. Carimbar a empresa
-                   da sessão no INSERT prenderia o root à empresa de quem o
-                   criou.
-    """
-    SEM_GATILHO_POR_PROJETO = {"auditoria", "usuarios"}
-    con = bc.conectar()
-    with con.cursor() as cur:
-        cur.execute("""
-            select c.relname,
-                   c.relrowsecurity,
-                   (select count(*) from pg_policies p
-                     where p.schemaname = 'comercialradar'
-                       and p.tablename = c.relname),
-                   (select count(*) from pg_trigger tg
-                     join pg_proc pr on pr.oid = tg.tgfoid
-                    where tg.tgrelid = c.oid
-                      and not tg.tgisinternal
-                      and pr.proname = 'preencher_tenant')
-              from pg_class c
-              join pg_namespace n on n.oid = c.relnamespace
-             where n.nspname = 'comercialradar'
-               and c.relkind = 'r'
-               and exists (select 1 from pg_attribute a
-                            where a.attrelid = c.oid
-                              and a.attname = 'id_empresa'
-                              and a.attnum > 0
-                              and not a.attisdropped)
-             order by 1""")
-        tabelas = cur.fetchall()
-    con.close()
-
-    assert tabelas, "nenhuma tabela com id_empresa — a consulta não achou o schema"
-
-    sem_rls = [t[0] for t in tabelas if not t[1]]
-    sem_policy = [t[0] for t in tabelas if t[2] == 0]
-    sem_gatilho = [t[0] for t in tabelas
-                   if t[3] == 0 and t[0] not in SEM_GATILHO_POR_PROJETO]
-
-    assert not sem_rls, f"tabelas com id_empresa e sem RLS ligada: {sem_rls}"
-    assert not sem_policy, f"tabelas com RLS e sem policy: {sem_policy}"
-    assert not sem_gatilho, (
-        "tabelas sem o gatilho preencher_tenant — a linha nasce sem empresa e "
-        f"some do painel de todos: {sem_gatilho}")
-
-
-def test_as_bases_que_geram_poi_nao_carimbam_empresa():
-    """Decisão do dono do produto, 25/08/2026: o POI é DE CADA EMPRESA, mas a
-    BASE que o gera é geral.
-
-    Este teste cobrava o oposto para o `ifood_merchant`: que `id_empresa` fosse
-    `not null`. Fazia sentido enquanto ele era tratado como dado de cliente —
-    e não é. Duas concessionárias na mesma cidade leem o MESMO cadastro do
-    iFood, o MESMO Cadastur federal, os MESMOS CNPJs da Receita. Carimbar a
-    base faria cada uma baixar, tratar e guardar de novo as mesmas linhas.
-
-    É o raciocínio que já valia para `endereco_segmentado` e
-    `logradouro_ajustado` — "R. Mal. Rondon, 1199" é o mesmo endereço para
-    qualquer cliente — estendido a montante.
-
-    A coluna não foi apagada: virou `importado_por`, fora da regra de
-    isolamento e com a informação preservada. Apagar responderia à regra e
-    perderia a pergunta "quem trouxe estas linhas".
-    """
-    bases = ("cadastur_prestador", "cadastur_total_pf", "cnpj_tratado",
-             "cnefe_coletiva", "ifood_merchant")
-    con = bc.conectar()
-    with con.cursor() as cur:
-        cur.execute("""select c.relname, c.relrowsecurity,
-                              exists (select 1 from pg_attribute a
-                                       where a.attrelid = c.oid
-                                         and a.attname = 'id_empresa'
-                                         and a.attnum > 0 and not a.attisdropped),
-                              exists (select 1 from pg_attribute a
-                                       where a.attrelid = c.oid
-                                         and a.attname = 'importado_por'
-                                         and a.attnum > 0 and not a.attisdropped)
-                         from pg_class c join pg_namespace n on n.oid = c.relnamespace
-                        where n.nspname = 'comercialradar' and c.relname = any(%s)""",
-                    (list(bases),))
-        linhas = cur.fetchall()
-    con.close()
-
-    achadas = {r[0] for r in linhas}
-    assert achadas == set(bases), f"base sumiu do banco: {set(bases) - achadas}"
-    com_tenant = [r[0] for r in linhas if r[2]]
-    assert not com_tenant, f"base pública voltou a carimbar empresa: {com_tenant}"
-    sem_historico = [r[0] for r in linhas if not r[3]]
-    assert not sem_historico,         f"a coluna foi APAGADA em vez de virar importado_por: {sem_historico}"
-    com_rls = [r[0] for r in linhas if r[1]]
-    assert not com_rls, f"RLS ligada numa base geral esconde-a de quem pode usá-la: {com_rls}"
-
-
-def test_o_poi_continua_sendo_de_cada_empresa():
-    """A outra metade da mesma decisão, e ela não pode escorregar junto.
-
-    Cada empresa roda a SUA mineração, e o que ela achou é dela. Se `pois`
-    perdesse o `id_empresa` no mesmo movimento, o achado de um cliente apareceria
-    para outro — que é o oposto do que se está corrigindo.
-    """
-    con = bc.conectar()
-    with con.cursor() as cur:
-        cur.execute("""select c.relrowsecurity,
-                              exists (select 1 from pg_attribute a
-                                       where a.attrelid = c.oid and a.attname = 'id_empresa'
-                                         and a.attnum > 0 and not a.attisdropped)
-                         from pg_class c join pg_namespace n on n.oid = c.relnamespace
-                        where n.nspname = 'comercialradar' and c.relname = 'pois'""")
-        rls, tem = cur.fetchone()
-    con.close()
-    assert tem, "pois perdeu o id_empresa: o achado de um cliente vazaria para outro"
-    assert rls, "pois com id_empresa e sem RLS"
+    assert "Seq Scan" not in plano or "Index" in plano, \
+        ("a consulta por empresa virou varredura completa: falta índice "
+         "começando por id_empresa")

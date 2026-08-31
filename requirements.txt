@@ -1,3 +1,19 @@
+# open-interpreter SAIU DAQUI em 31/08/2026, e o motivo importa.
+#
+# Este arquivo e um `pip freeze`, e freeze so e instalavel na maquina onde
+# foi tirado: ele lista o que ESTA instalado, nao o que o projeto PEDE.
+# `open-interpreter==0.4.3` fixa versoes antigas de fastapi e starlette, e
+# ao instalar num Linux limpo o pip parou com ResolutionImpossible —
+# conflito entre ele, `fastapi==0.139.0` e `starlette==1.3.1`.
+#
+# Nenhum arquivo do projeto o importa: ele e ferramenta de mesa que entrou
+# no freeze por estar no mesmo venv. Junto com ele saem ipython, jupyter e
+# litellm, que eram dependencia DELE e nao do sistema.
+#
+# O que continua ruim e nao foi consertado agora: o arquivo segue sendo um
+# freeze de 214 linhas. A forma certa e uma lista do que o projeto pede,
+# com o freeze num `requirements.lock` a parte.
+
 # Ambiente real do venv deste projeto (Python 3.10), congelado em 12/08/2026.
 # Gerado por: .venv/Scripts/python -m pip freeze
 # Inclui as transitivas de proposito: é o que reproduz a maquina que roda hoje.
@@ -84,18 +100,14 @@ importlib_metadata==9.0.0
 inquirer==3.4.1
 invoke==3.0.3
 ipykernel==6.31.0
-ipython==8.39.0
 jedi==0.20.0
 jinxed==1.4.0
 jiter==0.14.0
 joblib==1.5.3
 jsonschema-specifications==2025.9.1
 jsonschema==4.26.0
-jupyter_client==8.8.0
-jupyter_core==5.9.1
 kiwisolver==1.5.0
 lazy-loader==0.5
-litellm==1.83.0
 markdown-it-py==4.0.0
 matplotlib-inline==0.2.1
 matplotlib==3.10.9
@@ -108,7 +120,6 @@ ninja==1.13.0
 nltk==3.9.4
 numpy==2.2.6
 nvidia-ml-py==13.610.43
-open-interpreter==0.4.3
 openai==2.34.0
 opencv-python-headless==4.13.0.92
 opencv-python==4.13.0.92

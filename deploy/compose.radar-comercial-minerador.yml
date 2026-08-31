@@ -1,0 +1,115 @@
+# Minerador do Radar Comercial — a exceção ao molde da stack, e por quê.
+#
+#   docker compose -f compose.radar-comercial-minerador.yml up -d --build
+#
+# TODO SERVIÇO DA STACK SOBE `read_only: true`. Este não sobe, e isso foi
+# decidido em 30/08/2026 com o custo à vista. Dez Chromium escrevem perfil,
+# cache, cookie e crash dump em disco o tempo todo; num sistema de arquivos
+# somente-leitura o navegador nem abre. Não há configuração que resolva — é
+# assim que o Chromium funciona.
+#
+# O QUE FOI FEITO PARA A EXCEÇÃO CUSTAR O MENOS POSSÍVEL:
+#
+#   · o serviço NÃO publica porta nenhuma. Ele não é alcançável de fora do
+#     host, nem pela LAN. A única superfície é o que ele mesmo vai buscar;
+#   · a API continua no molde, `read_only` e tudo. A exceção fica aqui, num
+#     contêiner que não serve requisição;
+#   · `cap_drop: [ALL]` e `no-new-privileges` continuam valendo: o que ele
+#     precisa é escrever no próprio disco, não é privilégio de sistema;
+#   · o disco gravável é só o que ele usa — `crops`, `capturas`, `logs` e o
+#     perfil dos navegadores. O resto da imagem segue intocado.
+
+name: radar-comercial-minerador
+
+services:
+  radar-comercial-minerador:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.minerador
+    container_name: radar-comercial-minerador
+    restart: unless-stopped
+
+    env_file:
+      - ../.env
+
+    environment:
+      # A 7100 — MODO SESSÃO. O ETL faz poucas conexões com trabalho longo, e em
+      # modo transação morrem tabela temporária entre transações, prepared
+      # statement e lock de sessão. É divergência assumida do doc 23, registrada
+      # em docs/AMBIENTE_A2L.md.
+      PYTHONUNBUFFERED: "1"
+
+    # SEM `ports`. Não é esquecimento: ele consome fila do banco e não atende
+    # ninguém. Publicar porta aqui seria abrir superfície para nada.
+
+    volumes:
+      # O mapa ao vivo lê `crops/<sessao>_db.json` enquanto a captura roda. Quem
+      # escreve é este contêiner; quem lê é a API. Sem o volume compartilhado, o
+      # operador veria a tela parada até o fim da rodada — justamente a hora em
+      # que ele quer ver o marcador caindo.
+      - radar-crops:/app/crops
+      - radar-capturas:/app/capturas
+      - radar-logs:/app/logs
+
+    # /dev/shm PADRÃO É 64 MB, e dez Chromium não cabem nisso.
+    #
+    # O código já passa `--disable-dev-shm-usage`, que manda o Chromium usar
+    # /tmp em vez da memória compartilhada — então isto é cinto além do
+    # suspensório. Fica porque a flag pode sair de `human_browser.py` num
+    # ajuste futuro, e o sintoma de /dev/shm cheio é a aba morrer sem erro
+    # legível: "Target page, context or browser has been closed", que é
+    # exatamente a mensagem que já custou uma investigação inteira em 29/08.
+    shm_size: 2gb
+
+    mem_limit: 12g
+
+    read_only: false     # a exceção, explicada no cabeçalho
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+      # O sandbox do Chromium precisa de user namespaces. `unconfined` no seccomp
+      # é o que a própria Microsoft recomenda para a imagem do Playwright; sem
+      # isso a alternativa seria `--no-sandbox`, que é PIOR — desliga a barreira
+      # entre a página e o processo.
+      - seccomp=unconfined
+
+    healthcheck:
+      # Ele não tem porta, então o healthcheck pergunta ao BANCO se este worker
+      # deu sinal de vida. Um worker travado com o processo vivo é o caso comum:
+      # o Chromium pendura e o Python fica esperando para sempre.
+      test: ["CMD", "python", "minerador_worker.py", "--saude"]
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 60s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+# VOLUMES EXTERNOS, e isto nao e preferencia.
+#
+# O `docker compose` PREFIXA o nome do volume com o nome do projeto. Como os
+# dois composes tem `name:` diferente — sao servicos separados de proposito —,
+# declarar `radar-crops` solto criaria `radar-comercial-api_radar-crops` e
+# `radar-comercial-minerador_radar-crops`: DOIS discos com o mesmo apelido.
+#
+# O sintoma seria cruel: tudo sobe sem erro, a captura grava, e o mapa ao vivo
+# fica parado porque a API esta olhando um diretorio vazio que tambem se chama
+# `crops`. Nada no log diria isso.
+#
+# `external: true` tira o prefixo e amarra os dois no mesmo volume. Criar uma
+# vez, antes da primeira subida:
+#
+#   docker volume create radar-crops
+#   docker volume create radar-capturas
+#   docker volume create radar-logs
+volumes:
+  radar-crops:
+    external: true
+  radar-capturas:
+    external: true
+  radar-logs:
+    external: true

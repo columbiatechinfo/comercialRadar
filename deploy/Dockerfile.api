@@ -1,0 +1,51 @@
+# A API do Radar Comercial — porta 7720 (bloco de APIs próprias, doc 17).
+#
+# SÓ HTTP, WebSocket e banco. Nada de navegador aqui: a mineração vive no
+# `Dockerfile.minerador`, que é uma imagem dez vezes maior e não pode rodar
+# somente-leitura. Manter as duas juntas custaria a segurança da API para servir
+# a conveniência do minerador — e uma falha da captura derrubaria o painel junto.
+#
+# Python 3.10, e não o 3.14 do servidor: as versões pinadas em requirements.txt
+# foram resolvidas contra 3.10, e trocar de interpretador junto com trocar de
+# banco seria mudar duas coisas ao mesmo tempo num dia em que só uma precisa
+# mudar.
+FROM python:3.10-slim
+
+# `PYTHONUNBUFFERED`: sem isso o log do uvicorn fica preso no buffer e o
+# `docker logs` mostra a linha do erro minutos depois dele — o que já custou uma
+# investigação inteira olhando para a hora errada.
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONUTF8=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /app
+
+# As dependências ANTES do código, e isso não é estilo: o Docker guarda em cache
+# a camada de cada instrução, e uma mudança em `server.py` invalidaria a
+# instalação inteira se ela viesse depois. São 214 pacotes.
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+# NÃO roda como root. `read_only` no compose impede escrita no sistema de
+# arquivos, mas um processo root dentro do contêiner ainda tem privilégio demais
+# para o que uma API precisa: ela só fala TCP e Postgres.
+RUN useradd --uid 10001 --no-create-home --shell /usr/sbin/nologin radar
+USER 10001
+
+EXPOSE 7720
+
+# `0.0.0.0` AQUI NÃO É A EXCEÇÃO QUE O DOC 23 PROÍBE. A regra é sobre o que o
+# HOST publica, e quem decide isso é o `ports:` do compose — que amarra em
+# 127.0.0.1 e na LAN, nunca em 0.0.0.0. Dentro do contêiner, `0.0.0.0` é apenas
+# "todas as interfaces DESTE namespace de rede", que são a loopback e a ponte do
+# Docker. Bindar em 127.0.0.1 aqui dentro tornaria o serviço inalcançável até
+# pelo próprio `ports:`.
+#
+# `--proxy-headers` porque quem termina TLS é o Caddy: sem isso o uvicorn
+# registra o IP do proxy em todo log e o `origem_ip` da auditoria vira inútil —
+# uma coluna cheia do mesmo endereço.
+CMD ["python", "-m", "uvicorn", "server:app", \
+     "--host", "0.0.0.0", "--port", "7720", \
+     "--proxy-headers", "--forwarded-allow-ips", "*"]

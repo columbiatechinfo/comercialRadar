@@ -114,15 +114,32 @@ def conectar():
     # prepared statement e lock de sessao — que e exatamente o que um `COPY` de
     # 111 milhoes de linhas do CNEFE usa. O doc diz "toda aplicacao pela 7110";
     # a regra vale para aplicacao, e o pipeline e lote.
-    dsn = (os.environ.get("A2L_PIPELINE_DB_URL")
-           or os.environ.get("A2L_DB_URL") or "").strip()
+    # SEM QUEDA PARA A `A2L_DB_URL`, e isto foi medido em 31/08/2026.
+    #
+    # A queda parecia inofensiva: faltando a variavel do pipeline, usaria a da
+    # API. So que o pipeline declara a identidade em escopo de SESSAO — ele roda
+    # milhares de transacoes na mesma conexao, e escopo de transacao morreria no
+    # primeiro commit.
+    #
+    # E GUC de sessao na 7110 VAZA. Medido: declarar `request.jwt.claim.sub` com
+    # `set_config(..., false)` naquela porta suja o backend de forma PERMANENTE,
+    # e toda conexao seguinte que pegar aquele backend do pool herda a empresa —
+    # inclusive as do painel, de outros clientes. Dez conexoes novas, sem
+    # declarar nada, responderam com a empresa do teste anterior.
+    #
+    # Uma variavel esquecida no `.env` transformaria isso num vazamento entre
+    # clientes, calado. Melhor recusar a subir.
+    dsn = (os.environ.get("A2L_PIPELINE_DB_URL") or "").strip()
     if dsn:
         return psycopg2.connect(
             dsn, options=_opcoes(),
             connect_timeout=int(os.environ.get("PG_CONNECT_TIMEOUT", "20")))
 
     raise RuntimeError(
-        "A2L_PIPELINE_DB_URL nao esta no .env. Ate 30/08/2026 a conexao vinha "
+        "A2L_PIPELINE_DB_URL nao esta no .env, e NAO ha queda para a A2L_DB_URL: "
+        "o pipeline declara a identidade em escopo de sessao, e GUC de sessao na "
+        "7110 vaza para a conexao seguinte do pool (medido). "
+        "Ate 30/08/2026 a conexao vinha "
         "das I9_POSTGRES_*, que apontavam para uma maquina que nao existe mais. "
         "Cair em 'localhost' produziria um erro de conexao longe da causa — a "
         "causa e o .env.\n\n"

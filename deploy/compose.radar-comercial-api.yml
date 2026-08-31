@@ -1,0 +1,97 @@
+# API do Radar Comercial — porta 7720 (bloco de APIs próprias, doc 17).
+#
+#   docker compose -f compose.radar-comercial-api.yml up -d --build
+#
+# ESTE CONTÊINER NÃO MINERA. Ele serve HTTP, WebSocket e fala com o banco; a
+# mineração vive no `compose.radar-comercial-minerador.yml`, que sobe dez
+# Chromium e por isso não cabe no molde de segurança da stack.
+#
+# A separação foi decidida em 30/08/2026 e tem consequência de código: a API
+# deixou de dar `Popen` no `minerar_tudo.py` e passou a ENFILEIRAR o trabalho
+# numa tabela. Quem consome é o minerador. Sem isso, os dois contêineres
+# precisariam compartilhar espaço de processos, que é o mesmo que não separar.
+
+name: radar-comercial-api
+
+services:
+  radar-comercial-api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.api
+    container_name: radar-comercial-api
+    restart: unless-stopped
+
+    env_file:
+      - ../.env          # A2L_DB_URL, chaves do Google, HF_TOKEN — chmod 600
+
+    environment:
+      # A API usa a 7110 (transação): muitas conexões curtas, uma transação por
+      # requisição. O pipeline é que usa a 7100 — ver o compose do minerador.
+      PORTA_API: 7720
+      PYTHONUNBUFFERED: "1"
+
+    ports:
+      - "127.0.0.1:7720:7720"
+      - "${BIND_LAN:-127.0.0.1}:7720:7720"
+
+    volumes:
+      # SÓ LEITURA, e é o ponto: quem escreve aqui é o minerador. A API observa
+      # `crops/<sessao>_db.json` durante a captura para o mapa ir preenchendo ao
+      # vivo, e serve as imagens de `capturas/`. Montar como `:ro` faz o
+      # contêiner impor o que o desenho já dizia — a API lê o resultado, não o
+      # produz.
+      - radar-crops:/app/crops:ro
+      - radar-capturas:/app/capturas:ro
+
+    mem_limit: 1g
+
+    # Somente-leitura como todo serviço da stack. A API não escreve em disco: o
+    # que ela guarda vai para o banco ou para o Storage. As duas exceções abaixo
+    # são de memória, e somem no restart.
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /app/logs
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+
+    healthcheck:
+      # `/api/saude` e não `/`: a raiz devolve o HTML do painel e responderia 200
+      # com o banco fora do ar — um healthcheck que só prova que o processo está
+      # vivo não distingue "de pé" de "de pé e inútil".
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:7720/api/saude', timeout=5).status==200 else 1)"]
+      interval: 30s
+      timeout: 8s
+      retries: 3
+      start_period: 20s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+# VOLUMES EXTERNOS, e isto nao e preferencia.
+#
+# O `docker compose` PREFIXA o nome do volume com o nome do projeto. Como os
+# dois composes tem `name:` diferente — sao servicos separados de proposito —,
+# declarar `radar-crops` solto criaria `radar-comercial-api_radar-crops` e
+# `radar-comercial-minerador_radar-crops`: DOIS discos com o mesmo apelido.
+#
+# O sintoma seria cruel: tudo sobe sem erro, a captura grava, e o mapa ao vivo
+# fica parado porque a API esta olhando um diretorio vazio que tambem se chama
+# `crops`. Nada no log diria isso.
+#
+# `external: true` tira o prefixo e amarra os dois no mesmo volume. Criar uma
+# vez, antes da primeira subida:
+#
+#   docker volume create radar-crops
+#   docker volume create radar-capturas
+#   docker volume create radar-logs
+volumes:
+  radar-crops:
+    external: true
+  radar-capturas:
+    external: true

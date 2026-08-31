@@ -2732,8 +2732,40 @@ class _FrontSemCache(StaticFiles):
 # isso que faz `realtime_ingest.conectar()` — chamado por 10 rotas antigas —
 # devolver a conexão com RLS em vez da conexão do worker. Nenhuma daquelas rotas
 # precisou ser tocada.
+@app.get("/api/saude")
+def saude():
+    """Está de pé E serve para alguma coisa?
+
+    CONFERE O BANCO, e não só o processo. Um healthcheck que responde 200 porque
+    o uvicorn está vivo não distingue "de pé" de "de pé e inútil": com o Postgres
+    fora do ar, toda rota devolve 503 e o Docker continua marcando o contêiner
+    como saudável — então nada reinicia e nada avisa.
+
+    NÃO DIZ O QUE ESTÁ ERRADO. É rota pública, e quem pergunta antes de entrar
+    não precisa saber se o que caiu foi o banco, o pooler ou a credencial. O
+    motivo vai para o log, que só quem tem o servidor lê.
+
+    `select 1` e nada mais: ela roda a cada 30 segundos, e uma consulta que
+    encoste em tabela de negócio somaria trabalho ao banco o dia inteiro para
+    responder uma pergunta que `select 1` já responde.
+    """
+    try:
+        con = realtime_ingest.conectar()
+        try:
+            with con.cursor() as cur:
+                cur.execute("select 1")
+                cur.fetchone()
+        finally:
+            con.close()
+        return {"ok": True}
+    except Exception as erro:                                   # noqa: BLE001
+        print(f"[saude] o banco nao respondeu: {type(erro).__name__}: {erro}",
+              flush=True)
+        return JSONResponse({"ok": False}, status_code=503)
+
+
 PUBLICAS = {
-    "/", "/api/login", "/api/renovar",
+    "/", "/api/login", "/api/renovar", "/api/saude",
     "/favicon.ico", "/docs", "/openapi.json", "/redoc",
 }
 
