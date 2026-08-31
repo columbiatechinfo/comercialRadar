@@ -1,0 +1,169 @@
+[
+ {
+  "tabela": "analise_ia",
+  "colunas": [
+   "poi_id"
+  ],
+  "onde": [
+   "descrever_imagens.py"
+  ]
+ },
+ {
+  "tabela": "area_trabalho",
+  "colunas": [
+   "id_empresa",
+   "nome"
+  ],
+  "onde": [
+   "area_utils.py"
+  ]
+ },
+ {
+  "tabela": "atribuicao",
+  "colunas": [
+   "poi_id",
+   "supervisor_id"
+  ],
+  "onde": [
+   "server.py"
+  ]
+ },
+ {
+  "tabela": "cadastro_cliente",
+  "colunas": [
+   "cliente",
+   "num_ligacao"
+  ],
+  "onde": [
+   "cadastro_cliente.py"
+  ]
+ },
+ {
+  "tabela": "cadastur_prestador",
+  "colunas": [
+   "recurso_id",
+   "linha_origem"
+  ],
+  "onde": [
+   "cadastur.py"
+  ]
+ },
+ {
+  "tabela": "cadastur_total_pf",
+  "colunas": [
+   "dataset",
+   "uf",
+   "municipio",
+   "ref_periodo"
+  ],
+  "onde": [
+   "cadastur.py"
+  ]
+ },
+ {
+  "tabela": "campo_catalogo",
+  "colunas": [
+   "id_empresa",
+   "fonte",
+   "chave"
+  ],
+  "onde": [
+   "semear_catalogo.py"
+  ]
+ },
+ {
+  "tabela": "cnpj_tratado",
+  "colunas": [
+   "id_empresa",
+   "cnpj"
+  ],
+  "onde": [
+   "tratamento_cnpj.py"
+  ]
+ },
+ {
+  "tabela": "cruzamento",
+  "colunas": [
+   "id_empresa",
+   "base_a",
+   "id_a",
+   "base_b",
+   "id_b",
+   "chave"
+  ],
+  "onde": [
+   "cruzar_bases.py",
+   "cruzar_ifood_receita.py",
+   "marcar_ifood_nos_pois.py"
+  ]
+ },
+ {
+  "tabela": "endereco_segmentado",
+  "colunas": [
+   "endereco"
+  ],
+  "onde": [
+   "segmentar_endereco.py"
+  ]
+ },
+ {
+  "tabela": "fachada_anotacao",
+  "colunas": [
+   "poi_id"
+  ],
+  "onde": [
+   "avaliar_fachada.py"
+  ]
+ },
+ {
+  "tabela": "ibge_malha",
+  "colunas": [
+   "cod_municipio"
+  ],
+  "onde": [
+   "area_utils.py",
+   "server.py"
+  ]
+ },
+ {
+  "tabela": "ifood_merchant",
+  "colunas": [
+   "merchant_id"
+  ],
+  "onde": [
+   "carregar_ifood_zip.py",
+   "enriquecer_ifood.py",
+   "extrair_ifood.py"
+  ]
+ },
+ {
+  "tabela": "logradouro_ajustado",
+  "colunas": [
+   "fonte",
+   "record_id"
+  ],
+  "onde": [
+   "ajuste_logradouro.py"
+  ]
+ },
+ {
+  "tabela": "proxy_ip",
+  "colunas": [
+   "id"
+  ],
+  "onde": [
+   "proxy_pool.py"
+  ]
+ },
+ {
+  "tabela": "vinculo_poi",
+  "colunas": [
+   "fonte",
+   "id_fonte",
+   "poi_id"
+  ],
+  "onde": [
+   "vinculo.py"
+  ]
+ }
+]

@@ -26,46 +26,47 @@ _LOCK = threading.Lock()
 
 
 def _opcoes() -> str:
-    """Opções da conexão: `search_path` e a empresa dona do que este processo grava.
+    """So o `search_path`. A identidade NAO cabe aqui — ver `_assumir`.
 
-    `request.jwt.claim.sub` é a MESMA variável que as policies de RLS leem, por
-    meio de `core.empresa_atual()`. Declarar aqui faz a trigger
-    `preencher_empresa` carimbar cada INSERT com a empresa certa, e faz gravar e
-    enxergar concordarem por construção — não por alguém lembrar de passar
-    `id_empresa` em todo INSERT espalhado pelo código.
-
-    Sem `CR_TENANT_ID` a variável não é declarada, a trigger deixa `id_empresa`
-    nulo e o `NOT NULL` recusa a linha. É de propósito: linha sem dono não some,
-    ela nasce invisível para todo mundo depois que a RLS liga — e ninguém procura
-    o que não sabe que perdeu.
-
-    O pipeline tem UMA empresa por processo, então a variável pode viver na
-    conexão. A API é o oposto: lá o tenant vem do token e muda a cada requisição,
-    então lá é `SET LOCAL`, dentro da transação, e nunca isto aqui.
+    O `search_path` ja vem do papel (`alter role ... set search_path`), entao o
+    codigo segue escrevendo `pois` sem qualificar o schema. Declarar aqui
+    tambem protege quem conectar com outro papel.
     """
-    opts = "-c search_path=radar_comercial,extensions,public"
+    return "-c search_path=radar_comercial,extensions,public"
 
-    # QUEM E O PIPELINE, no padrao A2L.
-    #
-    # As politicas do `core` decidem por `core.empresa_atual()`, que faz
-    # `select id_empresa from core.tb_users where id = (select auth.uid())`. E
-    # `auth.uid()` le `request.jwt.claim.sub` — uma variavel de sessao, a mesma
-    # mecanica do antigo `request.jwt.claim.sub`, com outro nome.
-    #
-    # O pipeline nao tem login: e lote. Por isso cada empresa tem um USUARIO DE
-    # SERVICO em `core.tb_users`, e o que viaja aqui e o uuid DELE — nao o da
-    # empresa. A empresa sai da linha do usuario, que e a mesma fonte que o
-    # painel usa. Assim gravar e enxergar concordam por construcao, e a
-    # auditoria registra QUEM gravou cada POI, em vez de "o pipeline".
-    #
-    # Sem a variavel, `auth.uid()` volta nulo, `empresa_atual()` volta nulo e
-    # toda politica nega. E de proposito: linha sem dono nao some, ela nasce
-    # invisivel para todo mundo — e ninguem procura o que nao sabe que perdeu.
+
+def _assumir(con) -> None:
+    """Declara de quem e o que este processo grava.
+
+    POR QUE AQUI, E NAO NAS OPCOES DA CONEXAO. Medido em 31/08/2026: um
+    `options="-c request.jwt.claim.sub=<uuid>"` chega VAZIO ao servidor. O
+    `search_path`, da MESMA string, chega — o Postgres aplica os parametros
+    conhecidos do pacote de conexao e ignora em silencio os customizados, que
+    sao os de nome com ponto.
+
+    Nao ha erro. A conexao abre, o schema esta certo, e `core.empresa_atual()`
+    devolve nulo: toda gravacao passa a ser recusada pela policy, com a
+    mensagem apontando para a tabela e nao para a conexao.
+
+    ESCOPO DE SESSAO (`false`), e nao de transacao. O pipeline abre uma conexao
+    e roda milhares de transacoes nela; local a transacao morreria no primeiro
+    commit e a segunda gravacao ja nasceria sem dono. Isso e seguro na 7100
+    (modo sessao), onde a conexao e pinada — e SO nela: na 7110 um GUC de
+    sessao vaza para o cliente seguinte do pool, o que tambem foi medido.
+
+    Sem `RADAR_USUARIO_SERVICO` a variavel nao e declarada, `empresa_atual()`
+    volta nulo e o `not null` recusa a linha. E de proposito: linha sem dono
+    nao some, ela nasce invisivel para todo mundo — e ninguem procura o que nao
+    sabe que perdeu.
+    """
     quem = (os.environ.get("RADAR_USUARIO_SERVICO")
             or os.environ.get("CR_TENANT_ID") or "").strip()
-    if quem:
-        opts += f" -c request.jwt.claim.sub={quem}"
-    return opts
+    if not quem:
+        return
+    with con.cursor() as cur:
+        cur.execute("select set_config('request.jwt.claim.sub', %s, false)",
+                    (quem,))
+    con.commit()
 
 
 def conectar():
@@ -131,9 +132,11 @@ def conectar():
     # clientes, calado. Melhor recusar a subir.
     dsn = (os.environ.get("A2L_PIPELINE_DB_URL") or "").strip()
     if dsn:
-        return psycopg2.connect(
+        con = psycopg2.connect(
             dsn, options=_opcoes(),
             connect_timeout=int(os.environ.get("PG_CONNECT_TIMEOUT", "20")))
+        _assumir(con)
+        return con
 
     raise RuntimeError(
         "A2L_PIPELINE_DB_URL nao esta no .env, e NAO ha queda para a A2L_DB_URL: "
