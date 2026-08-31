@@ -80,6 +80,21 @@ UFS="${CR_UFS:-RS PI SC PR SP RJ MG ES BA PE CE GO MT MS DF TO PA AM MA PB RN AL
 
 _livre_gb() { df -BG --output=avail "$RAIZ" | tail -1 | tr -dc '0-9'; }
 
+# QUAIS FONTES ESTA MAQUINA CONSEGUE PRODUZIR AGORA.
+#
+# Mesma deducao que o `dataset_estadual.sh` faz — e ela precisa acontecer aqui
+# tambem, antes do laco, porque e o que decide se uma UF ja pronta continua
+# pronta. A duplicacao e deliberada: passar isso por variavel de ambiente
+# significaria que uma discordancia entre os dois scripts vira base incompleta
+# marcada como pronta, que e exatamente o defeito que este bloco existe para
+# fechar.
+VENV="${VENV:-$RAIZ/.venv}"
+export PATH="$VENV/bin:$PATH"
+export HF_TOKEN="${HF_TOKEN:-${huggingface:-}}"
+FONTES_HOJE="osm"
+command -v overturemaps >/dev/null && FONTES_HOJE="overture,$FONTES_HOJE"
+[ -n "${HF_TOKEN:-}" ] && FONTES_HOJE="$FONTES_HOJE,fsq"
+
 echo "==============================================================="
 echo " base estadual do BRASIL — 27 UFs, uma por vez"
 echo " inicio : $(date '+%d/%m/%Y %H:%M')"
@@ -106,10 +121,40 @@ MAX_SEGUIDAS="${CR_MAX_FALHAS_SEGUIDAS:-3}"
 PAUSA_S="${CR_PAUSA_ENTRE_UFS:-15}"
 
 for uf in $UFS; do
+  # PRONTA COM QUAIS FONTES — porque "pronta" nao e um sim ou nao.
+  #
+  # O marcador ja registrava `fontes=`, e o laco nao lia. O RS foi produzido em
+  # 31/08/2026 com `overture,osm` porque o HF_TOKEN nao chegou ao ambiente;
+  # corrigido o token, a rodada seguinte leu o marcador, respondeu "ja pronta" e
+  # PULOU — a UF ficaria sem Foursquare para sempre, e as outras 26 fariam o
+  # mesmo assim que uma fonte fosse acrescentada.
+  #
+  # Um marcador diz que o trabalho terminou. Nao diz que o trabalho ainda e o
+  # trabalho certo. A comparacao abaixo e o que separa as duas coisas.
   if [ -f "$DATASETS/$uf/$MARCADOR" ]; then
-    echo "[pulada] $uf — ja pronta ($(du -sh "$DATASETS/$uf" 2>/dev/null | cut -f1))"
-    puladas=$((puladas + 1))
-    continue
+    fontes_da_uf=$(sed -n 's/.*fontes=\([a-z,]*\).*/\1/p' "$DATASETS/$uf/$MARCADOR" | head -1)
+
+    # SUPERSET, e nao diferenca. Se o marcador tem uma fonte que hoje falta (o
+    # token saiu do .env, o venv sumiu), refazer produziria uma base PIOR do que
+    # a que esta em disco. So refaz quando ha o que ACRESCENTAR.
+    faltando=""
+    for _f in $(echo "$FONTES_HOJE" | tr ',' ' '); do
+      echo ",$fontes_da_uf," | grep -q ",$_f," || faltando="$faltando $_f"
+    done
+
+    if [ -z "$faltando" ]; then
+      echo "[pulada] $uf — ja pronta ($(du -sh "$DATASETS/$uf" 2>/dev/null | cut -f1)) · fontes=$fontes_da_uf"
+      puladas=$((puladas + 1))
+      continue
+    fi
+
+    echo "[refazendo] $uf — pronta com fontes=${fontes_da_uf:-?}, e hoje da para $FONTES_HOJE"
+    echo "            falta:$faltando · o workspace fica, so o marcador sai"
+    # O WORKSPACE FICA. A skill e retomavel e enderecada por hash de escopo: o
+    # que ja foi baixado do Overture e do OSM e reaproveitado, e o custo real e
+    # a fonte nova mais a refusao. Apagar a pasta aqui jogaria fora horas de
+    # download para chegar ao mesmo lugar.
+    rm -f "$DATASETS/$uf/$MARCADOR"
   fi
 
   livre=$(_livre_gb)
