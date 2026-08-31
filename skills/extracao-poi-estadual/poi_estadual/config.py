@@ -259,9 +259,70 @@ class Config:
         return base + ("_exceto_%dmun" % len(self.excluir) if self.excluir else "")
 
 
+def _ao_disco(caminho):
+    """Forca os bytes de `caminho` para o disco, e depois o proprio diretorio.
+
+    O `os.replace` e atomico no NOME, nao no CONTEUDO. O kernel registra a troca
+    de nome no journal e deixa os dados na cache de pagina para escrever quando
+    quiser. Numa queda de energia entre uma coisa e outra, o arquivo aparece com
+    o nome definitivo e ZERO BYTE — que e exatamente o que o reinicio de
+    31/08/2026 deixou em `cache/fontes/fsq/.../dist.json`, e que derrubou a
+    producao do PI com
+
+        json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+
+    O fsync do DIRETORIO e o segundo passo, e nao e redundante: sem ele o
+    proprio registro do nome novo pode nao ter chegado ao disco.
+    """
+    fd = os.open(caminho, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    d = os.open(os.path.dirname(os.path.abspath(caminho)), os.O_RDONLY)
+    try:
+        os.fsync(d)
+    finally:
+        os.close(d)
+
+
 def salvar_atomico(df, path):
-    """Escrita atomica: .tmp + os.replace. Retomada nunca ve arquivo parcial."""
+    """Escrita atomica: .tmp + os.replace + fsync. Retomada nunca ve parcial —
+    nem depois de queda de energia, que era o furo (ver `_ao_disco`)."""
     tmp = path + ".tmp"
     df.to_parquet(tmp, index=False)
     os.replace(tmp, path)
+    _ao_disco(path)
     return path
+
+
+def salvar_json_atomico(obj, path):
+    """O mesmo cuidado do parquet, para JSON de cache e de manifesto."""
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(obj, fh)
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, path)
+    _ao_disco(path)
+    return path
+
+
+def ler_json_cache(path):
+    """Le um JSON de cache; devolve None se nao existe OU nao abre.
+
+    ARQUIVO ILEGIVEL E ARQUIVO AUSENTE SAO A MESMA COISA para um cache — nos
+    dois casos o trabalho precisa ser refeito. Tratar diferente foi o que
+    transformou um arquivo de zero byte em parada de producao exigindo alguem
+    apagar na mao: `os.path.exists()` respondia sim, e o `json.load` estourava
+    na etapa `fetch`, sem dizer que arquivo era.
+
+    O fsync acima faz o zero byte parar de acontecer. Isto faz ele parar de
+    IMPORTAR quando acontecer mesmo assim — disco cheio no meio da escrita,
+    sistema de arquivos que mente sobre fsync, container morto com -9.
+    """
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return None

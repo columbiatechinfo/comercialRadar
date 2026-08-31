@@ -35,6 +35,8 @@ import time
 import numpy as np
 import pandas as pd
 
+from .config import ler_json_cache, salvar_json_atomico
+
 BASE_HF = "hf://datasets/foursquare/fsq-os-places/release"
 
 MAPA = {
@@ -108,18 +110,16 @@ def gate(cfg):
 
 def _release(cfg, man):
     fl = os.path.join(_dir(cfg, man), "files.json")
-    if os.path.exists(fl):
-        with open(fl, encoding="utf-8") as fh:
-            return json.load(fh)
+    em_cache = ler_json_cache(fl)
+    if em_cache is not None:
+        return em_cache
     snap = man.snapshot("fsq")
     fixada = snap.get("source_version")
     # DEFEITO CORRIGIDO (v3.5.0): o manifesto dizia agosto e o adapter consumia a
     # release corrente. Havendo `source_version` resolvida, ela MANDA.
     rel, files = listar_releases(cfg, release=fixada)
     meta = {"rel": rel, "files": files, "release_fixada": bool(fixada)}
-    with open(fl + ".tmp", "w", encoding="utf-8") as fh:
-        json.dump(meta, fh)
-    os.replace(fl + ".tmp", fl)
+    salvar_json_atomico(meta, fl)
     col, wk = man.colecao("fsq")
     man.versao_fonte("fsq", release=rel, shards_total=len(files),
                      collection_id=col, work_id=wk,
@@ -129,9 +129,9 @@ def _release(cfg, man):
 
 def _densos(cfg, man, bbox):
     dp = os.path.join(_dir(cfg, man), "dist.json")
-    if os.path.exists(dp):
-        with open(dp, encoding="utf-8") as fh:
-            return json.load(fh)
+    em_cache = ler_json_cache(dp)
+    if em_cache is not None:
+        return em_cache
     W, S, E, N = bbox
     files = _release(cfg, man)["files"]
     con = _con(cfg)
@@ -142,9 +142,7 @@ def _densos(cfg, man, bbox):
         "WHERE longitude BETWEEN %s AND %s AND latitude BETWEEN %s AND %s "
         "GROUP BY filename ORDER BY c DESC" % (lst, W, E, S, N)).fetchall()
     dense = {fn: int(c) for fn, c in r if c}
-    with open(dp + ".tmp", "w", encoding="utf-8") as fh:
-        json.dump(dense, fh)
-    os.replace(dp + ".tmp", dp)
+    salvar_json_atomico(dense, dp)
     man.versao_fonte("fsq", shards_densos=len(dense), pontos_bbox=sum(dense.values()),
                      dist_segundos=round(time.time() - t))
     print("  FSQ dist: %d shards densos de %d | %d pontos no bbox | %.0fs"
