@@ -127,9 +127,9 @@ decoração — e a `/seguranca` audita isso como crítico.
 | Papel | Para | `superuser` | `bypassrls` |
 |---|---|---|---|
 | `comercialradar_migrator` | migrations e CI | não | não |
-| `comercialradar_app` | a API, sujeita a RLS | não | não |
+| `app_user` | a API, sujeita a RLS | não | não |
 | `comercialradar_readonly` | relatório e BI | não | não |
-| `comercialradar_worker` | **o pipeline Python** | não | **sim** |
+| `app_user` | **o pipeline Python** | não | **sim** |
 
 O nome leva a ferramenta porque o banco é compartilhado: `app` genérico esconde
 de quem é o papel quando houver três sistemas ali.
@@ -143,7 +143,7 @@ policy futura em decoração.
 
 Senhas no `.env` da pilha, com permissão `600`.
 
-> Isolamento **provado**, não afirmado: `comercialradar_app` recebe
+> Isolamento **provado**, não afirmado: `app_user` recebe
 > `permission denied for schema radartelhados` ao tentar atravessar sem grant.
 
 ---

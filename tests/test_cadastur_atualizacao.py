@@ -104,10 +104,12 @@ def test_a_tabela_de_totais_nao_identifica_ninguem():
     """Contar não é tratar dado pessoal — desde que não haja coluna que
     identifique. Esta é a linha de defesa que sobrevive a qualquer refatoração
     do Python."""
-    sql = io.open(RAIZ / "migrations" / "0027_cadastur_atualizacao_e_totais.sql",
+    sql = io.open(RAIZ / "migrations_a2l" / "0001_radar_comercial.sql",
                   encoding="utf-8").read()
-    corpo = sql[sql.index("create table if not exists comercialradar.cadastur_total_pf"):]
-    corpo = corpo[:corpo.index("comment on table")]
+    # Nome SIMPLES: a migracao declara `set local search_path = radar_comercial`
+    # no topo e nao qualifica cada tabela.
+    i = sql.index("create table if not exists cadastur_total_pf (")
+    corpo = sql[i:sql.index(");", i)]
     corpo = re.sub(r"--[^\n]*", "", corpo)
     for proibida in ("cpf", "nome", "endereco", "email", "telefone",
                      "data_nascimento", "documento"):

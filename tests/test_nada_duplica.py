@@ -31,8 +31,8 @@ def con():
     c = bc.conectar()
     c.autocommit = False
     with c.cursor() as cur:
-        cur.execute("select id from tenants where ativo order by nome limit 1")
-        cur.execute("select set_config('app.tenant_id', %s, false)",
+        cur.execute("select id from core.tb_empresas where ativo order by nome limit 1")
+        cur.execute("select set_config('request.jwt.claim.sub', %s, false)",
                     (str(cur.fetchone()[0] if cur.rowcount else ""),))
     yield c
     c.rollback()

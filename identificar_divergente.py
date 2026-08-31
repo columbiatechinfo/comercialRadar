@@ -248,8 +248,8 @@ def _fundir_homonimos(cur, origens: set) -> int:
     cur.execute("""SELECT id, nome, COALESCE(maps_lat, lat_origem),
                           COALESCE(maps_lng, lng_origem)
                      FROM pois
-                    WHERE fonte = 'ia_fachada' AND tenant_id IS NOT DISTINCT FROM
-                          (SELECT tenant_id FROM pois WHERE id = %s)
+                    WHERE fonte = 'ia_fachada' AND id_empresa IS NOT DISTINCT FROM
+                          (SELECT id_empresa FROM pois WHERE id = %s)
                       AND nome IS NOT NULL AND nome NOT ILIKE 'sem nome%%'
                     ORDER BY id""", (list(origens)[0],))
     linhas = [(i, chave(nome), la, lo) for i, nome, la, lo in cur.fetchall()]

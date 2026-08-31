@@ -117,7 +117,7 @@ def elegiveis(con, poligono, limit: int, refazer: bool, ids: list | None,
     tenant = os.environ.get("CR_TENANT_ID")
     if tenant and alvos:
         with con.cursor() as cur:
-            cur.execute("SELECT id FROM pois WHERE id = ANY(%s) AND tenant_id = %s",
+            cur.execute("SELECT id FROM pois WHERE id = ANY(%s) AND id_empresa = %s",
                         ([a["poi_id"] for a in alvos], tenant))
             meus = {r[0] for r in cur.fetchall()}
         antes, alvos = len(alvos), [a for a in alvos if a["poi_id"] in meus]
@@ -128,11 +128,13 @@ def elegiveis(con, poligono, limit: int, refazer: bool, ids: list | None,
         # se lê como "não há trabalho" quando o caso é "olhei na empresa errada".
         if antes and not alvos:
             with con.cursor() as cur:
-                cur.execute("SELECT nome FROM tenants WHERE id = %s", (tenant,))
+                cur.execute("select name from core.tb_empresas where id = %s",
+                            (tenant,))
                 r = cur.fetchone()
             print(f"! os {antes} POIs elegíveis são de OUTRA empresa — "
-                  f"CR_TENANT_ID aponta para {r[0] if r else tenant}, "
-                  f"que não tem nenhum deles.", flush=True)
+                  f"o usuário de serviço em RADAR_USUARIO_SERVICO pertence a "
+                  f"{r[0] if r else tenant}, que não tem nenhum deles.",
+                  flush=True)
     if not refazer and alvos:
         with con.cursor() as cur:
             cur.execute("""SELECT DISTINCT poi_id FROM fachada_anotacao
@@ -154,13 +156,13 @@ def contexto(con, alvos: list) -> None:
     por_id = {a["poi_id"]: a for a in alvos}
     with con.cursor() as cur:
         cur.execute("""SELECT id, cnpj, razao_social, situacao_cadastral, cnae,
-                              avaliacao, total_avaliacoes, status_horario, tenant_id
+                              avaliacao, total_avaliacoes, status_horario, id_empresa
                          FROM pois WHERE id = ANY(%s)""", (ids,))
         for (pid, cnpj, razao, sit, cnae, nota, nav, hor, tenant) in cur.fetchall():
             a = por_id[pid]
             a.update(cnpj=cnpj, razao_social=razao, situacao_cadastral=sit,
                      cnae=cnae, total_avaliacoes=nav, status_horario=hor,
-                     tenant_id=tenant,
+                     id_empresa=tenant,
                      # vírgula decimal do scraping quebra o float do lado do modelo
                      avaliacao=str(nota).replace(",", ".") if nota else None)
 
@@ -526,14 +528,14 @@ def gravar_lote(con, alvos: list, modelo: str) -> None:
     # imagem de trás e não a que encara o endereço.
     # UMA linha de triagem por ponto: o que se julga agora é a panorâmica. O
     # `sv_id` gravado é o da fachada, que é a visada que ancora a faixa.
-    tri = [(a["visadas"][0]["sv_id"], a["poi_id"], a["tenant_id"], "panorama",
+    tri = [(a["visadas"][0]["sv_id"], a["poi_id"], a["id_empresa"], "panorama",
             (a["tri"] or {}).get("tipo_de_foto", "indefinido"),
             Json((a["tri"] or {}).get("notas") or {}), a["nota"], a["ver"],
             (a["tri"] or {}).get("motivo") or (a["tri"] or {}).get("erro"),
             modelo, SCHEMA_VERSAO)
            for a in alvos if a.get("tri") is not None and a.get("visadas")]
 
-    fot = [(f["id"], a["poi_id"], a["tenant_id"], f.get("v", "erro"),
+    fot = [(f["id"], a["poi_id"], a["id_empresa"], f.get("v", "erro"),
             f.get("txt"), f.get("motivo"), f.get("data"), modelo, SCHEMA_VERSAO)
            for a in alvos for f in a.get("fotos", []) if f.get("v")]
 
@@ -549,7 +551,7 @@ def gravar_lote(con, alvos: list, modelo: str) -> None:
         e = (o or {}).get("elementos") or {}
         idf = (o or {}).get("identificacao") or {}
         ana.append((
-            a["poi_id"], a["tenant_id"], modelo, SCHEMA_VERSAO,
+            a["poi_id"], a["id_empresa"], modelo, SCHEMA_VERSAO,
             _status(c.get("acao_recomendada") if o else None),
             (o or {}).get("descricao"), c.get("alvo_encontrado"),
             c.get("posicao_na_imagem"), c.get("marcador_google_visivel"),
@@ -586,16 +588,16 @@ def gravar_lote(con, alvos: list, modelo: str) -> None:
     with con.cursor() as cur:
         if tri:
             execute_values(cur, """INSERT INTO fachada_triagem
-                (sv_id, poi_id, tenant_id, angulo, tipo_de_foto, notas,
+                (sv_id, poi_id, id_empresa, angulo, tipo_de_foto, notas,
                  nota_total, veredito, motivo, modelo, schema_versao)
                 VALUES %s""", tri)
         if fot:
             execute_values(cur, """INSERT INTO foto_maps_triagem
-                (imagem_id, poi_id, tenant_id, veredito, texto_legivel, motivo,
+                (imagem_id, poi_id, id_empresa, veredito, texto_legivel, motivo,
                  data_imagem, modelo, schema_versao) VALUES %s""", fot)
         if ana:
             execute_values(cur, """INSERT INTO fachada_anotacao
-                (poi_id, tenant_id, modelo, schema_versao, status,
+                (poi_id, id_empresa, modelo, schema_versao, status,
                  descricao, alvo_encontrado, posicao_na_imagem,
                  marcador_google_visivel, tipo_cliente, tipo_imovel,
                  status_ocupacao, multiplas_unidades, limite_ambiguo,
@@ -605,7 +607,7 @@ def gravar_lote(con, alvos: list, modelo: str) -> None:
                  texto_do_letreiro, elementos, identificacao,
                  comercios_encontrados, comercio_divergente,
                  imagens_usadas) VALUES %s
-                RETURNING id, poi_id, tenant_id, acao_recomendada,
+                RETURNING id, poi_id, id_empresa, acao_recomendada,
                           comercio_divergente, comercios_encontrados""", ana)
             _enfileirar_divergentes(cur, cur.fetchall())
         n = _criar_pois_divergentes(cur, alvos)
@@ -725,13 +727,13 @@ def _criar_pois_divergentes(cur, alvos) -> int:
                 nome = "sem nome — a identificar"
             la, lo = _coord_do_achado(a["lat"], a["lng"], cam, x.get("posicao"))
             novos.append((nome, x.get("atividade"), la, lo, a.get("endereco"),
-                          a["tenant_id"], a["poi_id"]))
+                          a["id_empresa"], a["poi_id"]))
     if not novos:
         return 0
     from psycopg2.extras import execute_values
     execute_values(cur, """
         INSERT INTO pois (nome, categoria, maps_lat, maps_lng, lat_origem,
-                          lng_origem, endereco, tenant_id, fonte, status,
+                          lng_origem, endereco, id_empresa, fonte, status,
                           match_valido, descoberto_de)
         SELECT v.nome, v.cat, v.la::float8, v.lo::float8, v.la::float8,
                v.lo::float8, v."end", v.tenant::uuid,
@@ -767,7 +769,7 @@ def _enfileirar_divergentes(cur, gravadas) -> None:
     if itens:
         from psycopg2.extras import execute_values
         execute_values(cur, """INSERT INTO atribuicao_divergente
-            (poi_id, anotacao_id, tenant_id, nome_lido, atividade) VALUES %s
+            (poi_id, anotacao_id, id_empresa, nome_lido, atividade) VALUES %s
             ON CONFLICT DO NOTHING""", itens)
 
 

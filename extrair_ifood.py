@@ -169,7 +169,7 @@ class Escuta:
 
 
 GRAVAR = """
-insert into comercialradar.ifood_merchant
+insert into radar_comercial.ifood_merchant
        (merchant_id, nome, categoria, slug, nota, bairro, estado_detalhe, bruto,
         visto_em)
 values %s
@@ -202,7 +202,7 @@ def gravar(con, lojas: list[dict]) -> int:
         execute_values(k, GRAVAR, linhas, page_size=500,
                        template="(%s,%s,%s,%s,%s,%s,%s,%s::jsonb,now())")
         # o estado só sobe, nunca desce
-        k.execute("""update comercialradar.ifood_merchant
+        k.execute("""update radar_comercial.ifood_merchant
                         set estado_detalhe = 'OK'
                       where cnpj is not null or rua is not null""")
     con.commit()
@@ -361,7 +361,7 @@ async def rodar(args) -> int:
         print(f"gravadas {gravar(con, lojas)}", flush=True)
         with con.cursor() as k:
             k.execute("""select estado_detalhe, count(*)
-                           from comercialradar.ifood_merchant group by 1""")
+                           from radar_comercial.ifood_merchant group by 1""")
             print("estado:", dict(k.fetchall()), flush=True)
     finally:
         con.close()

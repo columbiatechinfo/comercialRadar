@@ -136,7 +136,7 @@ def _fontes_catalogo(con, e_root: bool) -> list:
     with con.cursor() as cur:
         cur.execute("""select fonte::text, chave, rotulo, grupo, ajuda,
                               procedencia, formato
-                         from comercialradar.campo_catalogo
+                         from radar_comercial.campo_catalogo
                         where ativo order by fonte, ordem, id""")
         linhas = cur.fetchall()
 
@@ -197,7 +197,7 @@ def _um_poi(con, poi_id: int, item: dict, e_root: bool) -> dict:
     with con.cursor() as cur:
         cur.execute("""select veredito, veredito_motivo, confere,
                               recomendar_visita, recomendacao_motivo, n_imagens
-                         from comercialradar.analise_ia where poi_id=%s
+                         from radar_comercial.analise_ia where poi_id=%s
                         order by criado_em desc limit 1""", (poi_id,))
         ia = cur.fetchone()
 

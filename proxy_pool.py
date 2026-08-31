@@ -426,7 +426,7 @@ class ProxyPool:
             with con.cursor() as cur:
                 psycopg2.extras.execute_values(cur, """
                     INSERT INTO proxy_evento
-                           (tenant_id, proxy_id, tipo, motivo, etapa,
+                           (id_empresa, proxy_id, tipo, motivo, etapa,
                             segundos, bytes)
                     VALUES %s""", lote,
                     template="(%s::uuid, %s, %s, %s, %s, %s::int, %s::bigint)")

@@ -44,7 +44,7 @@ Não são suposições: cada um foi contado no código em 30/08/2026.
 | hoje | padrão |
 |---|---|
 | `100.115.117.49:5444`, banco `postgres` | `192.168.3.10:7110`, banco `a2l` |
-| papel `comercialradar_worker` | `app_user` |
+| papel `app_user` | `app_user` |
 | schema `comercialradar` | `radar_comercial` |
 | **segundo banco `referencia` na 5443** — CNEFE (111M linhas), `ibge_malha`, CNPJ; **41 chamadas** a `conectar_referencia()` | `resources_root`, mesmo banco |
 

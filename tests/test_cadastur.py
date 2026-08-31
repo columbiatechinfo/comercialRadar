@@ -61,11 +61,15 @@ def test_dado_pessoal_nao_entra_nem_em_extras(cad):
 def test_a_tabela_nao_tem_coluna_para_dado_pessoal():
     """A migração é a última linha de defesa: sem coluna, não há descuido
     possível."""
-    sql = io.open(RAIZ / "migrations" / "0026_cadastur_prestador.sql",
+    sql = io.open(RAIZ / "migrations_a2l" / "0001_radar_comercial.sql",
                   encoding="utf-8").read()
     # Só o corpo do `create table`, senão os comentários explicativos — que
     # citam CPF de propósito — derrubariam o teste.
-    corpo = sql[sql.index("create table"):sql.index("comment on table")]
+    # O CORPO DA TABELA, e so ele. Antes a fatia ia de "create table" ate
+    # "comment on table" — funcionava quando o arquivo tinha UMA tabela.
+    # O schema novo tem 28 no mesmo arquivo, entao a fatia pegava tudo.
+    i = sql.index("create table if not exists cadastur_prestador (")
+    corpo = sql[i:sql.index(");", i)]
     corpo = re.sub(r"--[^\n]*", "", corpo)
     for proibida in ("cpf", "data_nascimento", "nome_social", "tipo_sanguineo"):
         assert not re.search(rf"^\s+{proibida}\s", corpo, re.M), \
@@ -164,23 +168,23 @@ def test_o_gerador_usa_o_escritor_unico_de_poi(cad):
 def test_a_migracao_separa_nao_virou_de_ninguem_tentou():
     """`sem_poi_motivo` nulo e `poi_id` nulo significam coisas diferentes, e
     confundi-las faz reprocessar eternamente o que não tem solução."""
-    sql = io.open(RAIZ / "migrations" / "0026_cadastur_prestador.sql",
+    sql = io.open(RAIZ / "migrations_a2l" / "0001_radar_comercial.sql",
                   encoding="utf-8").read()
     assert "sem_poi_motivo" in sql
     assert "poi_id is null and sem_poi_motivo is null" in sql   # o índice da fila
 
 
 def test_a_tabela_tem_rls_e_tenant_na_frente_do_indice():
-    """RLS é avaliada por linha; sem `tenant_id` na frente do índice a policy
+    """RLS é avaliada por linha; sem `id_empresa` na frente do índice a policy
     força varredura completa e o isolamento vira o gargalo."""
-    sql = io.open(RAIZ / "migrations" / "0026_cadastur_prestador.sql",
+    sql = io.open(RAIZ / "migrations_a2l" / "0001_radar_comercial.sql",
                   encoding="utf-8").read()
     assert "enable row level security" in sql
     assert "force  row level security" in sql
     for idx in re.findall(r"create index[^;]+?on comercialradar\.cadastur_prestador\s*\(([^)]+)\)",
                           sql, re.S):
-        assert idx.strip().startswith("tenant_id"), \
-            f"índice sem tenant_id na frente: ({idx.strip()})"
+        assert idx.strip().startswith("id_empresa"), \
+            f"índice sem id_empresa na frente: ({idx.strip()})"
 
 
 def test_a_ancora_de_coordenada_ignora_cruzamento_ambiguo(cad):

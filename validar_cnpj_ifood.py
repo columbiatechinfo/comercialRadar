@@ -70,7 +70,7 @@ def cnae_plausivel(cnae: str | None) -> bool:
 
 LOJAS = """
 select merchant_id, nome, cidade, cnpj
-  from comercialradar.ifood_merchant
+  from radar_comercial.ifood_merchant
  where cnpj is not null
 """
 
@@ -85,7 +85,7 @@ select e.cnpj_basico || e.cnpj_ordem || e.cnpj_dv as cnpj,
 """
 
 APAGAR = """
-update comercialradar.ifood_merchant m
+update radar_comercial.ifood_merchant m
    set cnpj = null, cnpj_conf = null,
        bruto = coalesce(m.bruto, '{}'::jsonb)
                || jsonb_build_object('cnpj_recusado', v.cnpj,
@@ -95,7 +95,7 @@ update comercialradar.ifood_merchant m
 """
 
 CONFIRMAR = """
-update comercialradar.ifood_merchant m
+update radar_comercial.ifood_merchant m
    set cnpj_conf = v.conf,
        rua    = coalesce(m.rua, v.rua),
        numero = coalesce(m.numero, v.numero),

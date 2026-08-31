@@ -46,7 +46,7 @@ select e.cnpj_basico || e.cnpj_ordem || e.cnpj_dv,
 
 LOJAS = """
 select merchant_id, nome, categoria, bairro, slug
-  from comercialradar.ifood_merchant
+  from radar_comercial.ifood_merchant
  where cidade = %s and nome is not null
  order by nome
 """

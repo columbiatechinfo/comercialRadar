@@ -49,7 +49,7 @@ def ctx():
 
     con = bc.conectar()
     with con.cursor() as cur:
-        cur.execute("""select p.id from pois p join tenants t on t.id=p.tenant_id
+        cur.execute("""select p.id from pois p join core.tb_empresas t on t.id=p.id_empresa
                         where t.nome='Aegea - Corsan'
                           and exists(select 1 from streetview_imgs s where s.poi_id=p.id)
                         order by p.id limit 1""")

@@ -140,7 +140,7 @@
       nivel: $("nu-nivel").value,
       cargo: $("nu-cargo").value.trim() || null,
     };
-    if (eu().nivel === "root" && corpo.nivel !== "root") corpo.tenant_id = $("nu-empresa").value;
+    if (eu().nivel === "root" && corpo.nivel !== "root") corpo.id_empresa = $("nu-empresa").value;
     const r = await fetch("/api/usuarios", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(corpo),

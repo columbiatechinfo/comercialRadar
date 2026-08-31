@@ -42,7 +42,7 @@ def _sem_acento(s: str) -> str:
 
 SELECIONAR = """
 select merchant_id, nome, categoria, bairro, cidade, uf
-  from comercialradar.ifood_merchant
+  from radar_comercial.ifood_merchant
  where nome is not null and coalesce(rua, '') = ''
    and (%(cidade)s is null or cidade = %(cidade)s)
  order by nome
@@ -109,7 +109,7 @@ def _partes(endereco: str | None) -> tuple:
 
 
 GRAVAR = """
-update comercialradar.ifood_merchant as m set
+update radar_comercial.ifood_merchant as m set
   rua      = coalesce(v.rua, m.rua),
   numero   = coalesce(v.numero, m.numero),
   cep      = coalesce(v.cep, m.cep),
@@ -151,7 +151,7 @@ def importar(caminho: str, planilha: str, cidade: str, simular: bool) -> int:
 
     con0 = bc.conectar()
     with con0.cursor() as k0:
-        k0.execute("select merchant_id, cidade, uf from comercialradar.ifood_merchant")
+        k0.execute("select merchant_id, cidade, uf from radar_comercial.ifood_merchant")
         de_cidade = {m: _cidade_bonita(c, u) for m, c, u in k0.fetchall()}
     con0.close()
 

@@ -345,7 +345,7 @@ def _novos(cur, achados: list) -> list:
                and abs(maps_lat - %s) < 0.0003 and abs(maps_lng - %s) < 0.0003
                and upper(translate(coalesce(nome,''), %s, %s))
                  = upper(translate(%s, %s, %s))
-               and tenant_id = (select nullif(current_setting('app.tenant_id', true), '')::uuid)
+               and id_empresa = core.empresa_atual()
              limit 1""",
                     (a["lat"], a["lng"], _ACENTOS, _LISOS,
                      a["nome"], _ACENTOS, _LISOS))
@@ -375,12 +375,7 @@ def main(argv=None) -> int:
     con = bc.conectar()
     con.autocommit = False
     cur = con.cursor()
-    cur.execute("select id, nome from tenants where lower(nome)=lower(%s) and ativo",
-                (a.empresa.strip(),))
-    r = cur.fetchone()
-    if not r:
-        raise SystemExit(f"empresa {a.empresa!r} não existe")
-    cur.execute("select set_config('app.tenant_id', %s, false)", (str(r[0]),))
+    bc.assumir_empresa(cur, a.empresa)
 
     termos = CATEGORIAS[:a.limite_cat] if a.limite_cat else CATEGORIAS
     print(f"  varrendo {len(termos)} categorias na área {a.area!r}...")

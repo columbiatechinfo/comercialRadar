@@ -73,7 +73,7 @@ def cenario(cred):
         # e la os invalidos nao entram. Sem este filtro o fixture pegava um POI
         # invalidado pela coerencia e o teste acusava o supervisor de ver menos
         # do que recebeu — quando quem estava errado era a escolha do fixture.
-        cur.execute("""select p.id from pois p join tenants t on t.id=p.tenant_id
+        cur.execute("""select p.id from pois p join core.tb_empresas t on t.id=p.id_empresa
                         where t.nome='Aegea - Corsan' and p.match_valido is not false
                         order by p.id limit 3""")
         pois = [r[0] for r in cur.fetchall()]

@@ -229,11 +229,7 @@ def ingerir(res: Path, cod_ibge: str, empresa: str, aplicar: bool):
     con = bc.conectar()
     con.autocommit = False
     cur = con.cursor()
-    cur.execute("select id, nome from tenants where lower(nome)=lower(%s) and ativo", (empresa,))
-    r = cur.fetchone()
-    if not r:
-        raise SystemExit(f"empresa '{empresa}' não existe")
-    cur.execute("select set_config('app.tenant_id', %s, false)", (str(r[0]),))
+    bc.assumir_empresa(cur, empresa)
 
     def v(row, c):
         if not c:
@@ -265,7 +261,7 @@ def ingerir(res: Path, cod_ibge: str, empresa: str, aplicar: bool):
               aptidao_geo, perfil_comercial, evidencia, potencial, rota,
               lat, lng, incerteza_m)
            values %s
-           on conflict (tenant_id, cnpj) do update set
+           on conflict (id_empresa, cnpj) do update set
              aptidao_geo=excluded.aptidao_geo, perfil_comercial=excluded.perfil_comercial,
              evidencia=excluded.evidencia, potencial=excluded.potencial,
              rota=excluded.rota, lat=excluded.lat, lng=excluded.lng,

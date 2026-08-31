@@ -11,7 +11,7 @@ entulho: a tela fica lenta, a fila de aprovação enche de ponto que ninguém
 pediu, e o custo de enriquecer sobe para todos eles. O município é a unidade que
 o usuário de fato escolhe, e é a que a `quadras_br` já usa.
 
-**Carimba a empresa dona.** O `tenant_id` vem da variável de sessão, como todo o
+**Carimba a empresa dona.** O `id_empresa` vem da variável de sessão, como todo o
 resto — a trigger cuida. Sem isso a extração cairia sem dono e, com a RLS
 ligada, ficaria invisível para todo mundo.
 
@@ -192,21 +192,19 @@ def ingerir(saida: str, cod_municipio: str, limite: int = 0, aplicar: bool = Fal
     # Canoas na empresa errada — sem erro nenhum, porque a trigger carimba o que
     # a sessão mandar.
     if empresa:
-        cur.execute("select id, nome from tenants where lower(nome) = lower(%s) and ativo",
-                    (empresa.strip(),))
-        r = cur.fetchone()
-        if not r:
-            cur.execute("select nome from tenants where ativo order by nome")
-            disp = ", ".join(x[0] for x in cur.fetchall())
-            raise SystemExit(f"empresa '{empresa}' não existe. Ativas: {disp}")
-        tenant, dono = str(r[0]), r[1]
-        cur.execute("select set_config('app.tenant_id', %s, false)", (tenant,))
+        eid, dono = bc.assumir_empresa(cur, empresa)
+        tenant = str(eid)
     else:
-        cur.execute("select current_setting('app.tenant_id', true)")
+        # SEM --empresa, vale quem a conexao ja assumiu. `_opcoes()` declara
+        # `request.jwt.claim.sub` a partir de RADAR_USUARIO_SERVICO, entao
+        # `core.empresa_atual()` responde sem consultar mais nada.
+        cur.execute("select core.empresa_atual()")
         tenant = cur.fetchone()[0]
         if not tenant:
-            raise SystemExit("informe --empresa, ou defina CR_TENANT_ID no .env")
-        cur.execute("select nome from tenants where id = %s::uuid", (tenant,))
+            raise SystemExit(
+                "informe --empresa, ou defina RADAR_USUARIO_SERVICO no .env "
+                "com o uuid do usuario de servico da empresa.")
+        cur.execute("select name from core.tb_empresas where id = %s::uuid", (tenant,))
         dono = (cur.fetchone() or ["?"])[0]
         print(f"  [aviso] usando a empresa do .env: {dono}. "
               f"Passe --empresa para escolher outra.")

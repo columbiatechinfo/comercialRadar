@@ -28,12 +28,13 @@ _LOCK = threading.Lock()
 def _opcoes() -> str:
     """Opções da conexão: `search_path` e a empresa dona do que este processo grava.
 
-    `app.tenant_id` é a MESMA variável que as policies de RLS leem. Declarar aqui
-    faz a trigger `preencher_tenant` carimbar cada INSERT com a empresa certa, e
-    faz gravar e enxergar concordarem por construção — não por alguém lembrar de
-    passar `tenant_id` em todo INSERT espalhado pelo código.
+    `request.jwt.claim.sub` é a MESMA variável que as policies de RLS leem, por
+    meio de `core.empresa_atual()`. Declarar aqui faz a trigger
+    `preencher_empresa` carimbar cada INSERT com a empresa certa, e faz gravar e
+    enxergar concordarem por construção — não por alguém lembrar de passar
+    `id_empresa` em todo INSERT espalhado pelo código.
 
-    Sem `CR_TENANT_ID` a variável não é declarada, a trigger deixa `tenant_id`
+    Sem `CR_TENANT_ID` a variável não é declarada, a trigger deixa `id_empresa`
     nulo e o `NOT NULL` recusa a linha. É de propósito: linha sem dono não some,
     ela nasce invisível para todo mundo depois que a RLS liga — e ninguém procura
     o que não sabe que perdeu.
@@ -42,10 +43,28 @@ def _opcoes() -> str:
     conexão. A API é o oposto: lá o tenant vem do token e muda a cada requisição,
     então lá é `SET LOCAL`, dentro da transação, e nunca isto aqui.
     """
-    opts = "-c search_path=comercialradar,public"
-    tid = (os.environ.get("CR_TENANT_ID") or "").strip()
-    if tid:
-        opts += f" -c app.tenant_id={tid}"
+    opts = "-c search_path=radar_comercial,public"
+
+    # QUEM E O PIPELINE, no padrao A2L.
+    #
+    # As politicas do `core` decidem por `core.empresa_atual()`, que faz
+    # `select id_empresa from core.tb_users where id = (select auth.uid())`. E
+    # `auth.uid()` le `request.jwt.claim.sub` — uma variavel de sessao, a mesma
+    # mecanica do antigo `request.jwt.claim.sub`, com outro nome.
+    #
+    # O pipeline nao tem login: e lote. Por isso cada empresa tem um USUARIO DE
+    # SERVICO em `core.tb_users`, e o que viaja aqui e o uuid DELE — nao o da
+    # empresa. A empresa sai da linha do usuario, que e a mesma fonte que o
+    # painel usa. Assim gravar e enxergar concordam por construcao, e a
+    # auditoria registra QUEM gravou cada POI, em vez de "o pipeline".
+    #
+    # Sem a variavel, `auth.uid()` volta nulo, `empresa_atual()` volta nulo e
+    # toda politica nega. E de proposito: linha sem dono nao some, ela nasce
+    # invisivel para todo mundo — e ninguem procura o que nao sabe que perdeu.
+    quem = (os.environ.get("RADAR_USUARIO_SERVICO")
+            or os.environ.get("CR_TENANT_ID") or "").strip()
+    if quem:
+        opts += f" -c request.jwt.claim.sub={quem}"
     return opts
 
 
@@ -64,9 +83,17 @@ def conectar():
     código segue escrevendo `pois` sem qualificar o schema. Definir aqui também
     protege quem conectar com outro papel.
     """
-    # DENTRO de uma requisição autenticada, a conexão é a do USUÁRIO: papel sem
-    # BYPASSRLS e `app.tenant_id` declarado, então a RLS filtra. Fora dela —
-    # pipeline, scripts, jobs — segue sendo o worker, como sempre foi.
+    # DENTRO de uma requisição autenticada, a conexão é a do USUÁRIO: o uuid
+    # dele em `request.jwt.claim.sub`, e a RLS filtra pelo que `core.tb_users`
+    # disser. Fora dela — pipeline, scripts, jobs — vale o usuário de SERVIÇO da
+    # empresa.
+    #
+    # O QUE MUDOU EM 30/08/2026, e é mais do que um nome: antes o pipeline usava
+    # um papel com BYPASSRLS ("o worker"), que ignorava toda policy de toda
+    # tabela. Agora ele é `app_user` como o resto, e passa pelas mesmas
+    # políticas. Se uma consulta do pipeline voltar vazia onde antes voltava
+    # cheia, a causa provável é esta — e é a política funcionando, não um
+    # defeito.
     #
     # A checagem mora aqui, e não em cada rota, porque era assim que o buraco
     # nascia: 29 rotas chamando este mesmo `conectar()` e recebendo um papel que
@@ -79,29 +106,29 @@ def conectar():
     except ImportError:
         pass          # ambiente sem FastAPI (pipeline puro): segue no worker
 
-    host = (os.environ.get("I9_POSTGRES_HOST") or "").strip()
-    if host:
-        cfg = dict(
-            host=host,
-            # Porta 5444: o Postgres da pilha escuta na 5442 DENTRO do container
-            # (POSTGRES_PORT define a porta interna também), e a 5444 é a
-            # publicada. Não é o pooler de propósito: worker de ETL faz poucas
-            # conexões com trabalho longo, e o modo transação do Supavisor perde
-            # tabela temporária, prepared statement e lock de sessão.
-            port=os.environ.get("I9_POSTGRES_PORT", "5444"),
-            user=os.environ.get("I9_POSTGRES_USER", "comercialradar_worker"),
-            password=os.environ.get("I9_POSTGRES_PASSWORD", ""),
-            dbname=os.environ.get("I9_POSTGRES_DB", "postgres"),
-            options=_opcoes(),
-        )
-    else:
-        raise RuntimeError(
-            "I9_POSTGRES_HOST não está no .env. Até 13/08/2026 a falta dessa "
-            "variável caía no Postgres do notebook; esse banco foi aposentado e "
-            "não existe mais. Cair em 'localhost' agora só produziria um erro de "
-            "conexão longe da causa — a causa é o .env.")
-    cfg["connect_timeout"] = int(os.environ.get("PG_CONNECT_TIMEOUT", "20"))
-    return psycopg2.connect(**cfg)
+    # A 7100 — MODO SESSAO, e nao a 7110 do doc 23.
+    #
+    # E divergencia assumida, decidida em 30/08/2026, e o motivo e velho: ETL faz
+    # POUCAS conexoes com trabalho LONGO. Em modo transacao o Supavisor devolve o
+    # backend a cada comando, e ali morrem tabela temporaria entre transacoes,
+    # prepared statement e lock de sessao — que e exatamente o que um `COPY` de
+    # 111 milhoes de linhas do CNEFE usa. O doc diz "toda aplicacao pela 7110";
+    # a regra vale para aplicacao, e o pipeline e lote.
+    dsn = (os.environ.get("A2L_PIPELINE_DB_URL")
+           or os.environ.get("A2L_DB_URL") or "").strip()
+    if dsn:
+        return psycopg2.connect(
+            dsn, options=_opcoes(),
+            connect_timeout=int(os.environ.get("PG_CONNECT_TIMEOUT", "20")))
+
+    raise RuntimeError(
+        "A2L_PIPELINE_DB_URL nao esta no .env. Ate 30/08/2026 a conexao vinha "
+        "das I9_POSTGRES_*, que apontavam para uma maquina que nao existe mais. "
+        "Cair em 'localhost' produziria um erro de conexao longe da causa — a "
+        "causa e o .env.\n\n"
+        "  A2L_PIPELINE_DB_URL=postgresql://app_user.a2l:<senha>@127.0.0.1:7100/a2l\n\n"
+        "O `.a2l` no nome do usuario NAO e enfeite: o Supavisor exige o tenant "
+        "embutido, e sem ele responde ENOIDENTIFIER.")
 
 
 def _f(v):

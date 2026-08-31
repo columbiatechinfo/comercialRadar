@@ -77,7 +77,7 @@ def test_admin_nao_cria_root(cred):
 
 
 def test_admin_nao_cria_em_empresa_alheia(cred):
-    """`tenant_id` do corpo e ignorado: admin herda a PROPRIA empresa."""
+    """`id_empresa` do corpo e ignorado: admin herda a PROPRIA empresa."""
     ta = entrar(cred, "columbiatechinfo@gmail.com")
     s, emp = http(f"{API}/api/empresas", t=ta)
     outra = next(e["id"] for e in emp["empresas"] if e["nome"] == "Aegea - Piaui")
@@ -92,7 +92,7 @@ def test_admin_nao_cria_em_empresa_alheia(cred):
     t = entrar(cred, "admin.corsan@comercialradar.com.br")
     s, b = http(f"{API}/api/usuarios", "POST",
                 {"nome": "ZZ Invasor", "email": email,
-                 "nivel": "user", "tenant_id": outra}, t=t)
+                 "nivel": "user", "id_empresa": outra}, t=t)
     assert s == 201, b
     novo = b["id"]
 

@@ -289,6 +289,63 @@ for t in sorted(COM_EMPRESA):
 
 w("""
 -- ─────────────────────────────────────────────────────────────────────
+-- Quem carimba a empresa
+-- ─────────────────────────────────────────────────────────────────────
+--
+-- POR GATILHO, e nao por codigo de rota. Sao mais de trinta INSERTs espalhados
+-- pelo pipeline e pela API; exigir `id_empresa` em cada um significa que o
+-- primeiro esquecido grava linha sem dono. E linha sem dono NAO some: ela nasce
+-- invisivel para todo mundo, e ninguem procura o que nao sabe que perdeu.
+--
+-- Variavel ausente deixa NULL, e o `not null` recusa. Falha barulhenta e melhor
+-- que linha orfa: o erro aparece no primeiro insert, junto da causa.
+
+create or replace function preencher_empresa() returns trigger
+language plpgsql as $$
+begin
+  if new.id_empresa is null then
+    new.id_empresa := core.empresa_atual();
+  end if;
+  return new;
+end $$;
+
+comment on function preencher_empresa() is
+  'Carimba id_empresa a partir de core.empresa_atual(), que resolve pelo uuid '
+  'do usuario em request.jwt.claim.sub. Ausente deixa NULL e o NOT NULL recusa.';
+""")
+for t in sorted(COM_EMPRESA):
+    w("create trigger trg_empresa_%s before insert on %s" % (t, t))
+    w("  for each row execute function preencher_empresa();")
+w("")
+
+w("""
+-- ─────────────────────────────────────────────────────────────────────
+-- Auditoria — quem FEZ, e nao quem PODE
+-- ─────────────────────────────────────────────────────────────────────
+--
+-- Reusa `core.registrar_auditoria()`, que ja escreve em `core.tb_auditoria`
+-- (particionada por mes) e ja e usada pelas oito tabelas do `core`. Escrever
+-- uma segunda funcao de auditoria daria duas tabelas de log com formatos
+-- diferentes para a mesma pergunta.
+--
+-- POR GATILHO, e nao por decorator: rota esquecida nao escapa do registro — foi
+-- assim que 29 rotas ficaram sem autenticacao e ninguem percebeu por semanas —
+-- e o pipeline, que nunca passaria por um decorator de FastAPI, tambem entra.
+--
+-- `pois` FICA DE FORA DO INSERT, DE PROPOSITO. O pipeline grava dezenas de
+-- milhares por rodada; auditar isso encheria o log de ruido e esconderia
+-- justamente o evento raro que se quer achar. O DELETE de POI, esse sim, e
+-- registrado: apagar e o que ninguem deveria fazer sem deixar rastro.
+
+create trigger tg_auditoria after insert or update or delete on atribuicao
+  for each row execute function core.registrar_auditoria();
+
+create trigger tg_auditoria_del after delete on pois
+  for each row execute function core.registrar_auditoria();
+""")
+
+w("""
+-- ─────────────────────────────────────────────────────────────────────
 -- Chaves naturais — o que impede a mesma coisa de entrar duas vezes
 -- ─────────────────────────────────────────────────────────────────────
 """)
@@ -304,16 +361,32 @@ for nome, tab, cols, onde, porque in UNICOS:
 
 w("""
 -- ─────────────────────────────────────────────────────────────────────
--- Indices de leitura — id_empresa SEMPRE primeiro
+-- Indices de leitura
 -- ─────────────────────────────────────────────────────────────────────
+--
+-- SAO OS INDICES QUE JA EXISTIAM, e nao um por tabela.
+--
+-- A primeira versao deste gerador emitia UM indice por tabela — `(id_empresa)`
+-- e mais nada — e teria jogado fora 78 indices construidos para consultas
+-- especificas ao longo de 42 migracoes. Nenhum teste falharia por isso: o
+-- sistema funcionaria, so que varrendo. O sintoma apareceria como "o painel
+-- ficou lento" meses depois, longe de qualquer commit.
+--
+-- Cada um foi reescrito com `id_empresa` no lugar de `tenant_id`. Politica de
+-- RLS e avaliada por linha, entao indice que nao comeca pela coluna da empresa
+-- nao serve a ela — e os que ja comecavam por `tenant_id` continuam servindo.
 """)
-for t in sorted(COM_EMPRESA):
-    cols = tipos.get(t, {})
-    segunda = ("poi_id" if "poi_id" in cols else
-               "criado_em desc" if "criado_em" in cols else
-               "id" if t not in SEM_ID else None)
-    alvo = "id_empresa" + (", " + segunda if segunda else "")
-    w("create index if not exists ix_%s_empresa on %s (%s);" % (t, t, alvo))
+vistos = {n for n, _, _, _, _ in UNICOS}
+for ix in est["indices"]:
+    tab = ix["tabela"]
+    if tab not in PRODUTO or ix["unico"] or ix["nome"] in vistos:
+        continue
+    vistos.add(ix["nome"])
+    cols = ix["colunas"].replace("tenant_id", "id_empresa")
+    resto = ix["resto"].replace("tenant_id", "id_empresa").strip()
+    nome = ix["nome"].replace("tenant", "empresa")
+    w("create index if not exists %s on %s (%s)%s;"
+      % (nome, tab, cols, ("\n  " + resto) if resto else ""))
 w("")
 
 w("""

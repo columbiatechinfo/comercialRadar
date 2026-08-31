@@ -147,10 +147,10 @@ CAMPOS = [
 ]
 
 SQL = """
-insert into comercialradar.campo_catalogo
+insert into radar_comercial.campo_catalogo
     (fonte, chave, rotulo, grupo, ordem, peso, formato, procedencia, ajuda)
 values (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-on conflict (tenant_id, fonte, chave) do update set
+on conflict (id_empresa, fonte, chave) do update set
     rotulo = excluded.rotulo, grupo = excluded.grupo, ordem = excluded.ordem,
     peso = excluded.peso, formato = excluded.formato,
     procedencia = excluded.procedencia, ajuda = excluded.ajuda
@@ -163,7 +163,7 @@ def semear() -> dict:
         with con.cursor() as k:
             k.executemany(SQL, CAMPOS)
             k.execute("""select fonte::text, count(*)
-                           from comercialradar.campo_catalogo
+                           from radar_comercial.campo_catalogo
                           where ativo group by fonte order by fonte""")
             por_aba = dict(k.fetchall())
         con.commit()

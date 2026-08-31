@@ -189,7 +189,7 @@ COLS = ("cnpj", "razao_social", "nome_fantasia", "cnae", "natureza_juridica",
 # update de propósito: são resultado do nosso trabalho, não do arquivo de
 # origem, e uma recarga não pode desfazê-lo.
 GRAVAR = f"""
-insert into comercialradar.cadastur_prestador ({', '.join(COLS)})
+insert into radar_comercial.cadastur_prestador ({', '.join(COLS)})
 values %s
 on conflict (recurso_id, linha_origem) do update set
 """ + ",\n  ".join(
@@ -447,7 +447,7 @@ def carregar(con, linhas: list, simular: bool = False) -> dict:
 # ── 2b. Pessoa física: só o total ────────────────────────────────────────────
 
 TOTAL_PF = """
-insert into comercialradar.cadastur_total_pf
+insert into radar_comercial.cadastur_total_pf
        (dataset, atividade, uf, municipio, ref_periodo, quantidade)
 values %s
 on conflict (dataset, uf, municipio, ref_periodo) do update set
@@ -536,7 +536,7 @@ def marcar_saidas(con, eventos: dict, simular: bool = False) -> int:
     with con.cursor() as k:
         if saiu:
             execute_values(
-                k, """update comercialradar.cadastur_prestador c
+                k, """update radar_comercial.cadastur_prestador c
                          set saiu_em = coalesce(c.saiu_em, current_date)
                         from (values %s) as v(dataset, cnpj)
                        where c.dataset = v.dataset
@@ -547,7 +547,7 @@ def marcar_saidas(con, eventos: dict, simular: bool = False) -> int:
             # ausente, e manter a data antiga faria o painel acusar uma baixa
             # que já foi desfeita.
             execute_values(
-                k, """update comercialradar.cadastur_prestador c
+                k, """update radar_comercial.cadastur_prestador c
                          set saiu_em = null
                         from (values %s) as v(dataset, cnpj)
                        where c.saiu_em is not null
@@ -592,7 +592,7 @@ JA_CRUZADOS = """
 select cad_id, min(poi_id) from (
   select case when base_a = 'cadastur' then id_a else id_b end as cad_id,
          (case when base_a = 'pois' then id_a else id_b end)::bigint as poi_id
-    from comercialradar.cruzamento
+    from radar_comercial.cruzamento
    where 'cadastur' in (base_a, base_b) and 'pois' in (base_a, base_b)
 ) t group by cad_id
 """
@@ -601,7 +601,7 @@ PENDENTES = """
 select id, cnpj, nome_fantasia, razao_social, atividade_turistica,
        tipo_hospedagem, coalesce(endereco_comercial, endereco_rfb),
        municipio, uf, telefone, email, website, cnae, uh, leitos
-  from comercialradar.cadastur_prestador
+  from radar_comercial.cadastur_prestador
  where poi_id is null and sem_poi_motivo is null
    and (%(uf)s is null or upper(uf) = upper(%(uf)s))
    and (%(municipio)s is null or lower(municipio) = lower(%(municipio)s))
@@ -619,7 +619,7 @@ def _coordenada_por_cnpj(con, cnpjs: list) -> dict:
         return {}
     with con.cursor() as k:
         k.execute("""select regexp_replace(cnpj, '[^0-9]', '', 'g'), lat, lng
-                       from comercialradar.cnpj_tratado
+                       from radar_comercial.cnpj_tratado
                       where lat is not null
                         and regexp_replace(cnpj, '[^0-9]', '', 'g') = any(%s)""",
                   (cnpjs,))
@@ -651,7 +651,7 @@ with pares as (
          (case when base_a = 'cadastur' then base_b else base_a end)     as outra,
          (case when base_a = 'cadastur' then id_b else id_a end)         as outro_id,
          chave, score
-    from comercialradar.cruzamento
+    from radar_comercial.cruzamento
    where 'cadastur' in (base_a, base_b)
      and not ambiguo
      and (case when base_a = 'cadastur' then base_b else base_a end)
@@ -659,15 +659,15 @@ with pares as (
 ),
 com_geo as (
   select p.cad_id, p.outra, p.score, c.lat, c.lng
-    from pares p join comercialradar.cadastro_cliente c on c.id::text = p.outro_id
+    from pares p join radar_comercial.cadastro_cliente c on c.id::text = p.outro_id
    where p.outra = 'cadastro_cliente' and c.lat is not null
   union all
   select p.cad_id, p.outra, p.score, t.lat, t.lng
-    from pares p join comercialradar.cnpj_tratado t on t.id::text = p.outro_id
+    from pares p join radar_comercial.cnpj_tratado t on t.id::text = p.outro_id
    where p.outra = 'cnpj_tratado' and t.lat is not null
   union all
   select p.cad_id, p.outra, p.score, i.lat, i.lng
-    from pares p join comercialradar.ifood_merchant i on i.merchant_id = p.outro_id
+    from pares p join radar_comercial.ifood_merchant i on i.merchant_id = p.outro_id
    where p.outra = 'ifood_merchant' and i.lat is not null
 )
 select distinct on (cad_id) cad_id, outra, lat, lng
@@ -693,7 +693,7 @@ def _poi_por_cnpj(con, cnpjs: list) -> dict:
         return {}
     with con.cursor() as k:
         k.execute("""select regexp_replace(cnpj, '[^0-9]', '', 'g'), min(id)
-                       from comercialradar.pois
+                       from radar_comercial.pois
                       where cnpj is not null
                         and regexp_replace(cnpj, '[^0-9]', '', 'g') = any(%s)
                       group by 1""", (cnpjs,))
@@ -971,13 +971,13 @@ def _descarregar(con, marcas: list, ligados: list, gerados: list,
     with con.cursor() as k:
         if marcas:
             execute_values(
-                k, """update comercialradar.cadastur_prestador c
+                k, """update radar_comercial.cadastur_prestador c
                          set sem_poi_motivo = v.motivo, cruzado_em = now()
                         from (values %s) as v(motivo, id)
                        where c.id = v.id""", marcas)
         if ligados:
             execute_values(
-                k, """update comercialradar.cadastur_prestador c
+                k, """update radar_comercial.cadastur_prestador c
                          set poi_id = v.poi, sem_poi_motivo = 'ja_existe',
                              cruzado_em = now()
                         from (values %s) as v(poi, id)
@@ -987,7 +987,7 @@ def _descarregar(con, marcas: list, ligados: list, gerados: list,
             # não ter virado. O literal na consulta, e não um nulo na lista, é
             # o que mantém o VALUES com tipo.
             execute_values(
-                k, """update comercialradar.cadastur_prestador c
+                k, """update radar_comercial.cadastur_prestador c
                          set poi_id = v.poi, sem_poi_motivo = null,
                              cruzado_em = now()
                         from (values %s) as v(poi, id)
@@ -1024,7 +1024,7 @@ def gerar(con, uf: str | None, municipio: str | None,
     # prestador casa com POI — que é a cidade onde o gerador mais serve — ela
     # concluía que o cruzamento não tinha rodado e se recusava a trabalhar.
     with con.cursor() as k:
-        k.execute("""select exists (select 1 from comercialradar.cruzamento
+        k.execute("""select exists (select 1 from radar_comercial.cruzamento
                                      where 'cadastur' in (base_a, base_b))""")
         rodou = k.fetchone()[0]
     if not rodou:
@@ -1426,7 +1426,7 @@ def main() -> int:
                       "novo.\n"
                       "  Motivo linha a linha:  select nome_fantasia, "
                       "sem_poi_motivo, endereco_comercial from "
-                      "comercialradar.cadastur_prestador where "
+                      "radar_comercial.cadastur_prestador where "
                       "sem_poi_motivo is not null;", flush=True)
     finally:
         con.close()

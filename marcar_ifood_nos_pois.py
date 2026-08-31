@@ -37,28 +37,28 @@ from cruzar_bases import EMPATE, MIN_NOME, parecenca, sem_acento, tokens
 POIS = """
 select id::text, nome, nome_fantasia, razao_social, endereco, cidade,
        maps_lat, maps_lng
-  from comercialradar.pois
+  from radar_comercial.pois
  where (%(cidade)s is null or lower(cidade) = lower(%(cidade)s))
 """
 
 LOJAS = """
 select merchant_id, nome, categoria, bairro
-  from comercialradar.ifood_merchant where nome is not null
+  from radar_comercial.ifood_merchant where nome is not null
 """
 
 MARCAR = """
-update comercialradar.pois as p
+update radar_comercial.pois as p
    set presente_no_ifood = true, ifood_visto_em = now()
   from (values %s) as v(id)
  where p.id::text = v.id
 """
 
 GRAVAR_CRUZ = """
-insert into comercialradar.cruzamento
+insert into radar_comercial.cruzamento
        (base_a, id_a, base_b, id_b, chave, score, evidencia, ambiguo,
         concorrentes)
 values %s
-on conflict (tenant_id, base_a, id_a, base_b, id_b, chave) do update set
+on conflict (id_empresa, base_a, id_a, base_b, id_b, chave) do update set
   score = excluded.score, evidencia = excluded.evidencia,
   ambiguo = excluded.ambiguo, criado_em = now()
 """
@@ -146,7 +146,7 @@ def main() -> int:
             execute_values(k, MARCAR, [(i,) for i in marcados], page_size=500)
     con.commit()
     with con.cursor() as k:
-        k.execute("""select count(*) from comercialradar.pois
+        k.execute("""select count(*) from radar_comercial.pois
                       where presente_no_ifood""")
         print(f"\n  gravado · POIs marcados no total: {k.fetchone()[0]}",
               flush=True)

@@ -83,7 +83,7 @@ def banco_produto() -> bool:
         t0 = time.time()
         con = bc.conectar()
         with con.cursor() as k:
-            k.execute("select count(*) from comercialradar.pois")
+            k.execute("select count(*) from radar_comercial.pois")
             n = k.fetchone()[0]
         con.close()
         _linha(OK, "banco do produto", f"{n:,} POIs · {time.time()-t0:.1f}s")

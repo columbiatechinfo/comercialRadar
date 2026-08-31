@@ -74,7 +74,7 @@ FOLGA = 3.0
 ALVOS = """
 select id, nome, endereco, cidade, uf,
        coalesce(maps_lat, lat_origem), coalesce(maps_lng, lng_origem)
-  from comercialradar.pois
+  from radar_comercial.pois
  where coord_precisao = 'desconhecida'
    and endereco is not null and btrim(endereco) <> ''
    and coalesce(maps_lat, lat_origem) is not null
@@ -83,7 +83,7 @@ select id, nome, endereco, cidade, uf,
 """
 
 GRAVAR = """
-update comercialradar.pois p
+update radar_comercial.pois p
    set coord_precisao = v.precisao,
        coord_fonte = v.fonte,
        coord_incerteza_m = v.incerteza::int
@@ -92,7 +92,7 @@ update comercialradar.pois p
 """
 
 MOVER = """
-update comercialradar.pois p
+update radar_comercial.pois p
    set maps_lat = v.la::float8, maps_lng = v.lo::float8,
        lat_origem = v.la::float8, lng_origem = v.lo::float8,
        coord_precisao = v.precisao, coord_fonte = v.fonte,

@@ -8,7 +8,7 @@
 > `tenant_id`, todas com RLS, policy e gatilho** — as quatro últimas entraram
 > pela migração [`0029`](../migrations/0029_rls_nas_quatro_que_ficaram_de_fora.sql).
 > `tests/test_isolamento_tenant.py` prova o isolamento com o papel real da API
-> (`comercialradar_app`, sem `BYPASSRLS`) e cobra a regra para toda tabela nova.
+> (`app_user`, sem `BYPASSRLS`) e cobra a regra para toda tabela nova.
 > Ver a seção 32 da [`DOCUMENTACAO.md`](../DOCUMENTACAO.md).
 
 ---

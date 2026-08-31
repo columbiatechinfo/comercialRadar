@@ -811,22 +811,24 @@ def test_o_resumo_do_cadastro_respeita_a_area():
 
 
 def test_a_migracao_do_indice_do_cadastro():
-    d = os.path.join(RAIZ, "migrations")
-    achou = [f for f in os.listdir(d) if f.startswith("0040_")]
-    assert achou, "a migração 0040 sumiu"
-    sql = _ler(os.path.join(d, achou[0]))
-    corpo = "\n".join(l.split("--")[0] for l in sql.splitlines())
-    assert "ix_cad_geo_por_tenant" in corpo, "o índice mudou de nome sem avisar"
-    assert "(tenant_id, lat, lng)" in corpo, (
-        "tenant_id deixou de ser a primeira coluna: a RLS filtra por empresa "
-        "antes de tudo, e um índice geográfico global varre as ligações das "
-        "outras empresas para depois descartá-las")
-    # o velho, sem tenant, tem de sair — dois índices para a mesma pergunta é
-    # escrita mais cara sem leitura melhor
-    assert "DROP INDEX IF EXISTS ix_cad_geo;" in corpo, \
-        "o índice antigo sem tenant_id ficou para trás"
-    assert corpo.index("CREATE INDEX") < corpo.index("DROP INDEX"), \
-        "o índice novo tem de nascer antes de o velho morrer"
+    """O recorte por área varre `cadastro_cliente` por coordenada, e são 102 mil
+    linhas. Sem índice que comece pela empresa, a policy de RLS força varredura
+    completa a cada abertura do painel.
+
+    ANCORADO NA DECISÃO, e não no número do arquivo: este teste procurava por um
+    arquivo `0040_*`. A numeração recomeçou quando o schema foi refeito no
+    padrão A2L, e um teste que depende do número teria falhado sem que nada de
+    verdade tivesse mudado.
+    """
+    import io as _io
+    sql = _io.open(os.path.join(RAIZ, "migrations_a2l", "0001_radar_comercial.sql"),
+                   encoding="utf-8").read()
+    i = sql.find("ix_cad_geo_por_empresa")
+    assert i > 0, "o índice geográfico do cadastro sumiu"
+    trecho = sql[i:sql.index(";", i)]
+    assert trecho.index("id_empresa") < trecho.index("lat"), \
+        "id_empresa deixou de ser a primeira coluna — a policy volta a varrer"
+
 
 def test_os_cartoes_dizem_o_que_cada_numero_e():
     """A CAIXINHA MORREU, e por um motivo.

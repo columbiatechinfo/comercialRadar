@@ -149,12 +149,22 @@ def test_a_marcacao_nao_substitui_o_original():
     cadastro: quem aplica a correção é o processo a jusante, olhando o tier —
     não a ingestão.
     """
-    sql = " ".join(open(os.path.join(RAIZ, "migrations",
-                                     "0031_logradouro_ajustado.sql"),
-                        encoding="utf-8").read().split())
-    assert "logradouro_original" in sql and "logradouro_marcado" in sql
+    # A TABELA MUDOU DE SCHEMA em 31/08/2026: saiu do schema da ferramenta e
+    # foi para `resources_root`. Ela e cache de normalizacao — o mesmo nome de
+    # rua se corrige igual para qualquer cliente e para qualquer ferramenta — e
+    # por isso e a UNICA que legitimamente nao tem empresa.
+    sql = open(os.path.join(RAIZ, "migrations_a2l", "0002_resources_root.sql"),
+               encoding="utf-8").read()
+    assert "logradouro_ajustado" in sql, \
+        "a tabela sumiu do resources_root"
+    assert "logradouro_original" in sql and "logradouro_marcado" in sql, \
+        "a marcacao passou a substituir o original em vez de conviver com ele"
     assert "tier" in sql and "run_id" in sql, \
-        "sem tier e run_id a marcação não é aplicável nem auditável"
-    # E a exceção de RLS precisa estar ESCRITA, não presumida: a regra da 0029
-    # cobra a política de toda tabela que tenha tenant_id.
-    assert "tenant_id" in sql, "a ausência de tenant_id precisa estar justificada no arquivo"
+        "sumiu a rastreabilidade de qual execucao produziu cada correcao"
+    # A AUSENCIA DE EMPRESA PRECISA ESTAR JUSTIFICADA NO ARQUIVO. E o que separa
+    # "decidimos compartilhar" de "esquecemos de isolar" — e so o primeiro pode
+    # sobreviver a uma auditoria.
+    assert "cache de normalizacao" in sql.lower() or "compartilhad" in sql.lower(), \
+        ("a tabela nao tem empresa e o arquivo nao diz por que. Sem a "
+         "justificativa escrita, quem revisar nao consegue distinguir decisao "
+         "de esquecimento")

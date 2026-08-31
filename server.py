@@ -601,14 +601,14 @@ def _iniciar_subprocess(cmd: list, out_json: Path, poligono):
     env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1")
     # A EMPRESA DO USUÁRIO vai para o subprocesso.
     #
-    # O coletor grava com o worker (BYPASSRLS) e carimba `tenant_id` a partir de
+    # O coletor grava com o worker (BYPASSRLS) e carimba `id_empresa` a partir de
     # `CR_TENANT_ID`. Sem sobrescrever aqui, todo job disparado pelo painel
     # gravaria na empresa fixa do `.env` — a Corsan rodaria uma mineração e o
     # resultado nasceria na Columbia Tech Info, sem erro nenhum, invisível para
     # quem pediu.
     u = _auth.USUARIO_DA_REQUISICAO.get()
-    if u is not None and u.tenant_id:
-        env["CR_TENANT_ID"] = u.tenant_id
+    if u is not None and u.id_empresa:
+        env["CR_TENANT_ID"] = u.id_empresa
     proc = subprocess.Popen(
         cmd, cwd=str(BASE), env=env,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -631,10 +631,10 @@ def get_area():
 def _tenant_para_gravar():
     """A empresa em que ESTA requisição grava — do token, nunca do corpo.
 
-    Devolve `(tenant_id | None, erro | None)`.
+    Devolve `(id_empresa | None, erro | None)`.
 
     Para quem tem empresa, devolve `None`: a conexão de `auth.conectar_como` já
-    declarou `app.tenant_id`, e reescrever a variável a partir daqui seria abrir
+    declarou `request.jwt.claim.sub`, e reescrever a variável a partir daqui seria abrir
     a porta para um usuário gravar na empresa do vizinho. Só o ROOT precisa de
     resposta, porque ele é o único sem empresa — e sem ela nenhuma trigger tem
     o que carimbar.
@@ -645,7 +645,7 @@ def _tenant_para_gravar():
     uma área, ela nasce na empresa em que as mineracões dele já gravam.
     """
     u = _auth.USUARIO_DA_REQUISICAO.get()
-    if u is not None and u.tenant_id:
+    if u is not None and u.id_empresa:
         return None, None
     tid = (os.environ.get("CR_TENANT_ID") or "").strip()
     if tid:
@@ -1199,7 +1199,7 @@ def _escopo_da_area(cur) -> tuple[str, str] | None:
     POR QUE EM DOIS PASSOS, e não num `ST_Contains`
     ------------------------------------------------
     O PostGIS deste banco vive no schema `extensions`, e o papel
-    `comercialradar_worker` não tem USAGE nele — nem o tipo `geometry` resolve
+    `app_user` não tem USAGE nele — nem o tipo `geometry` resolve
     pela conexão do produto. `ST_Contains` só funciona contra o banco de
     REFERÊNCIA (5443). Liberar o schema exigiria superusuário, e a decisão de
     28/08/2026 foi não depender disso.
@@ -2274,12 +2274,12 @@ def _empresa_do_pedido() -> str:
     """Nome da empresa de quem disparou o job. É o que os adaptadores exigem —
     e é do TOKEN, nunca do corpo do pedido."""
     u = _auth.USUARIO_DA_REQUISICAO.get()
-    if u is None or not u.tenant_id:
+    if u is None or not u.id_empresa:
         return ""
     con = base_comum.conectar()
     try:
         with con.cursor() as cur:
-            cur.execute("select nome from tenants where id = %s::uuid", (u.tenant_id,))
+            cur.execute("select name from core.tb_empresas where id = %s::uuid", (u.id_empresa,))
             r = cur.fetchone()
             return r[0] if r else ""
     finally:
@@ -2790,7 +2790,7 @@ async def portao(request: Request, call_next):
 # ── Empresas clientes (CRUD) ─────────────────────────────────────────────────
 #
 # A conexão vem de `auth.conectar_como(u)`: o papel muda conforme o nível e a
-# transação declara `app.tenant_id`. Quem filtra é a policy, não o `WHERE`.
+# transação declara `request.jwt.claim.sub`. Quem filtra é a policy, não o `WHERE`.
 
 
 class EmpresaEntrada(BaseModel):
@@ -2813,7 +2813,7 @@ def empresas_listar(u: _auth.Usuario = Depends(_auth.exige("admin"))):
     try:
         with con.cursor() as cur:
             cur.execute("""select id, nome, documento, ativo, criado_em
-                             from tenants order by nome""")
+                             from core.tb_empresas order by nome""")
             return {"empresas": [
                 {"id": str(i), "nome": n, "documento": d, "ativo": a,
                  "criado_em": c.isoformat() if c else None}
@@ -2827,7 +2827,7 @@ def empresas_criar(e: EmpresaEntrada, u: _auth.Usuario = Depends(_auth.exige("ro
     con = _auth.conectar_como(u)
     try:
         with con.cursor() as cur:
-            cur.execute("""insert into tenants (nome, documento, ativo)
+            cur.execute("""insert into core.tb_empresas (nome, documento, ativo)
                            values (%s,%s,%s) returning id""",
                         (e.nome.strip(), e.documento, e.ativo))
             novo = cur.fetchone()[0]
@@ -2843,7 +2843,7 @@ def empresas_editar(empresa_id: str, e: EmpresaEntrada,
     con = _auth.conectar_como(u)
     try:
         with con.cursor() as cur:
-            cur.execute("""update tenants set nome=%s, documento=%s, ativo=%s
+            cur.execute("""update core.tb_empresas set nome=%s, documento=%s, ativo=%s
                             where id=%s returning id""",
                         (e.nome.strip(), e.documento, e.ativo, empresa_id))
             if not cur.fetchone():
@@ -2864,7 +2864,7 @@ def empresas_desativar(empresa_id: str, u: _auth.Usuario = Depends(_auth.exige("
     con = _auth.conectar_como(u)
     try:
         with con.cursor() as cur:
-            cur.execute("update tenants set ativo=false where id=%s returning nome",
+            cur.execute("update core.tb_empresas set ativo=false where id=%s returning nome",
                         (empresa_id,))
             r = cur.fetchone()
             if not r:
@@ -3381,9 +3381,9 @@ def fila_decidir(item_id: int, d: DecisaoEntrada,
                               set status=%s::decisao_fila,
                                   motivo_generico=%s::motivo_reprova,
                                   motivo_escrito=%s, observacao=%s, decidido_em=now(),
-                                  pauta=%s::comercialradar.pauta_campo[],
+                                  pauta=%s::radar_comercial.pauta_campo[],
                                   pauta_porque=%s::jsonb,
-                                  prioridade=%s::comercialradar.prioridade_campo,
+                                  prioridade=%s::radar_comercial.prioridade_campo,
                                   -- concatena para não perder o que já havia
                                   -- sido preenchido numa devolução anterior
                                   revisao = coalesce(revisao, '{}'::jsonb) || %s::jsonb
@@ -3412,7 +3412,7 @@ def fila_decidir(item_id: int, d: DecisaoEntrada,
 #  1. Ninguém cria acima do próprio nível — senão `admin` vira `root` em dois
 #     passos, criando um root e entrando com ele.
 #  2. `root` só é criado por `root`. É o papel que atravessa todas as empresas.
-#  3. `admin` só mexe na PRÓPRIA empresa. O `tenant_id` vem do crachá dele,
+#  3. `admin` só mexe na PRÓPRIA empresa. O `id_empresa` vem do crachá dele,
 #     nunca do corpo do pedido — vindo do corpo, ele escolheria a empresa alheia.
 
 class UsuarioEntrada(BaseModel):
@@ -3421,7 +3421,7 @@ class UsuarioEntrada(BaseModel):
     nivel: str = Field(default="user")
     cargo: str | None = Field(default=None, max_length=80)
     telefone: str | None = Field(default=None, max_length=32)
-    tenant_id: str | None = None       # só o root usa; admin herda o próprio
+    id_empresa: str | None = None       # só o root usa; admin herda o próprio
 
 
 class UsuarioEdicao(BaseModel):
@@ -3450,7 +3450,7 @@ def usuarios_listar(u: _auth.Usuario = Depends(_auth.exige("admin"))):
             cur.execute("""select us.id, us.nome, us.email, us.nivel, us.cargo,
                                   us.telefone, us.ativo, t.nome, us.criado_em
                              from usuarios us
-                             left join tenants t on t.id = us.tenant_id
+                             left join core.tb_empresas t on t.id = us.id_empresa
                             order by t.nome nulls first, us.nivel, us.nome""")
             return {"usuarios": [
                 {"id": str(i), "nome": n, "email": e, "nivel": nv, "cargo": c,
@@ -3466,16 +3466,16 @@ def usuarios_criar(novo: UsuarioEntrada, u: _auth.Usuario = Depends(_auth.exige(
     _validar_nivel(u, novo.nivel)
 
     # A empresa do novo usuário: root escolhe, admin herda a sua. Aceitar
-    # `tenant_id` do corpo para o admin seria deixá-lo cadastrar gente dentro
+    # `id_empresa` do corpo para o admin seria deixá-lo cadastrar gente dentro
     # do cliente vizinho.
     if u.nivel == "root":
-        destino = novo.tenant_id
+        destino = novo.id_empresa
         if novo.nivel != "root" and not destino:
             raise HTTPException(422, "informe a empresa para usuário que não é root")
         if novo.nivel == "root":
             destino = None
     else:
-        destino = u.tenant_id
+        destino = u.id_empresa
 
     email = novo.email.strip().lower()
     senha = secrets.token_urlsafe(12)
@@ -3501,7 +3501,7 @@ def usuarios_criar(novo: UsuarioEntrada, u: _auth.Usuario = Depends(_auth.exige(
     try:
         with con.cursor() as cur:
             cur.execute("""insert into usuarios
-                             (id, tenant_id, nivel, nome, email, cargo, telefone)
+                             (id, id_empresa, nivel, nome, email, cargo, telefone)
                            values (%s,%s,%s,%s,%s,%s,%s)""",
                         (uid, destino, novo.nivel, novo.nome.strip(), email,
                          novo.cargo, novo.telefone))
@@ -3582,12 +3582,12 @@ def quem_sou_eu(u: _auth.Usuario = Depends(_auth.usuario_atual)):
             cur.execute("""select us.nome, us.email, us.telefone, us.cargo,
                                   us.foto_path, t.nome, t.logo_path
                              from usuarios us
-                             left join tenants t on t.id = us.tenant_id
+                             left join core.tb_empresas t on t.id = us.id_empresa
                             where us.id = %s""", (u.id,))
             r = cur.fetchone() or (None,) * 7
     finally:
         con.close()
-    return {"id": u.id, "nivel": u.nivel, "tenant_id": u.tenant_id,
+    return {"id": u.id, "nivel": u.nivel, "id_empresa": u.id_empresa,
             "nome": r[0], "email": r[1], "telefone": r[2], "cargo": r[3],
             "tem_foto": bool(r[4]), "empresa": r[5],
             # A marca do TENANT, no terceiro espaco do cabecalho (ADR 0005).
@@ -3777,15 +3777,15 @@ async def enviar_logo(arquivo: UploadFile = File(...),
         raise HTTPException(413, "imagem acima de 2 MB")
 
     import imagens
-    caminho = f"marca/{u.tenant_id}"
+    caminho = f"marca/{u.id_empresa}"
     if not imagens.enviar(caminho, dados, arquivo.content_type):
         raise HTTPException(502, "falha ao gravar no Storage")
 
     con = _auth.conectar_como(u)
     try:
         with con.cursor() as cur:
-            cur.execute("update tenants set logo_path=%s where id=%s",
-                        (caminho, u.tenant_id))
+            cur.execute("update core.tb_empresas set logo_path=%s where id=%s",
+                        (caminho, u.id_empresa))
         con.commit()
     finally:
         con.close()
@@ -3797,8 +3797,8 @@ def ler_logo(u: _auth.Usuario = Depends(_auth.usuario_atual)):
     con = _auth.conectar_como(u)
     try:
         with con.cursor() as cur:
-            cur.execute("select logo_path from tenants where id=%s",
-                        (u.tenant_id,))
+            cur.execute("select logo_path from core.tb_empresas where id=%s",
+                        (u.id_empresa,))
             r = cur.fetchone()
     finally:
         con.close()
@@ -3904,25 +3904,25 @@ def cadastur_resumo(municipio: str = "", uf: str = ""):
                                    count(*) filter (where saiu_em is not null),
                                    sum(leitos), sum(uh),
                                    max(ref_periodo)
-                              from comercialradar.cadastur_prestador {filtro}""",
+                              from radar_comercial.cadastur_prestador {filtro}""",
                         par)
             (total, com_poi, sem_poi, sairam, leitos, uh, periodo) = cur.fetchone()
 
             cur.execute(f"""select sem_poi_motivo, count(*)
-                              from comercialradar.cadastur_prestador {filtro}
+                              from radar_comercial.cadastur_prestador {filtro}
                              and sem_poi_motivo is not null and poi_id is null
                              group by 1 order by 2 desc""", par)
             motivos = {m: n for m, n in cur.fetchall()}
 
             cur.execute(f"""select atividade_turistica, count(*)
-                              from comercialradar.cadastur_prestador {filtro}
+                              from radar_comercial.cadastur_prestador {filtro}
                              and atividade_turistica is not null
                              group by 1 order by 2 desc limit 12""", par)
             atividades = [{"nome": a, "n": n} for a, n in cur.fetchall()]
 
             cur.execute(f"""select atividade, uf, municipio, ref_periodo,
                                    quantidade
-                              from comercialradar.cadastur_total_pf {filtro}
+                              from radar_comercial.cadastur_total_pf {filtro}
                              order by ref_periodo desc, quantidade desc""", par)
             pf = [{"atividade": a, "uf": u, "municipio": m,
                    "periodo": (per.isoformat() if per else None), "n": q}

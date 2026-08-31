@@ -24,6 +24,7 @@ roda 0002_resources_root.sql
 
 echo "=== ficou alguma coisa? (tem de ser 0 e 0) ==="
 docker exec supabase-db psql -U supabase_admin -d a2l -Atc \
-  "select n.nspname||': '||count(*) from pg_namespace n
-     left join pg_class c on c.relnamespace=n.oid and c.relkind='r'
-    where n.nspname in ('radar_comercial','resources_root') group by 1 order by 1"
+  "select n.nspname, count(c.oid) from pg_namespace n
+     left join pg_class c on c.relnamespace = n.oid and c.relkind = 'r'
+    where n.nspname in ('radar_comercial','resources_root')
+    group by n.nspname order by 1"

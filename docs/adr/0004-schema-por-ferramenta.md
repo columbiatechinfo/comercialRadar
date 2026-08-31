@@ -47,12 +47,12 @@ tabela.
 ## Consequências
 
 **Cruzar dado entre ferramentas continua possível.** É a razão de não separar por
-banco: `select … from comercialradar.pois join radartelhados.telhado …` funciona
+banco: `select … from radar_comercial.pois join radartelhados.telhado …` funciona
 com um `GRANT`, sem federação e sem cópia. Bancos separados exigiriam
 `postgres_fdw` para o mesmo efeito, com o dado atravessando a rede.
 
 **Acesso cruzado é explícito, nunca padrão.** Nenhum papel enxerga o schema de
-outra ferramenta. Provado: `comercialradar_app` recebe
+outra ferramenta. Provado: `app_user` recebe
 `permission denied for schema radartelhados` ao tentar. Quando o cruzamento for
 necessário, o `GRANT` entra e é registrado em ADR — o compartilhamento fica
 possível **e visível**.
@@ -64,7 +64,7 @@ inteira por sistema. O que fica no schema de cada uma é o perfil e o papel: que
 entra uma vez, e cada ferramenta decide sozinha o que pode.
 
 **RLS ligada em todas as 9 tabelas, sem policy.** Isso significa que
-`comercialradar_app` hoje lê **zero linhas** — RLS sem policy nega tudo para quem
+`app_user` hoje lê **zero linhas** — RLS sem policy nega tudo para quem
 não é dono. É o estado seguro. O pipeline segue funcionando porque conecta como
 `postgres`, que é dono e passa por cima. As policies são trabalho da
 `/modelo-acesso`, e o `GRANT` para `anon`/`authenticated` vem **junto** com elas.

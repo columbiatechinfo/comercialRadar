@@ -91,7 +91,7 @@ def ja_carregado(conn, fonte: str, referencia: str) -> bool:
 def marcar(conn, fonte, referencia, tabela, linhas, bytes_):
     with conn, conn.cursor() as cur:
         # ON CONSTRAINT, e não a lista de colunas: esta função grava no banco do
-        # produto, cuja chave é (tenant_id, fonte, referencia) desde a 0010, e no
+        # produto, cuja chave é (id_empresa, fonte, referencia) desde a 0010, e no
         # de referência, que não tem empresa e mantém (fonte, referencia). O nome
         # da constraint é o mesmo nos dois, a lista de colunas não.
         cur.execute("""INSERT INTO fonte_arquivos (fonte, referencia, tabela, linhas, bytes)
@@ -184,3 +184,50 @@ def limpar_tmp(*paths):
 
 def b64_token(token: str) -> str:
     return base64.b64encode(f"{token}:".encode()).decode()
+
+def assumir_empresa(cur, nome: str) -> tuple:
+    """Declara na SESSAO de quem este processo grava. Devolve `(id, nome)`.
+
+    O QUE VIAJA AQUI E O UUID DO USUARIO DE SERVICO, e nao o da empresa.
+
+    Ate 30/08/2026 era `set_config('request.jwt.claim.sub', <uuid da empresa>)`, e as
+    policies liam aquela variavel direto. As politicas do `core` nao leem: elas
+    chamam `core.empresa_atual()`, que faz
+    `select id_empresa from core.tb_users where id = (select auth.uid())` — ou
+    seja, partem de um USUARIO e descobrem a empresa. Passar o uuid da empresa
+    ali daria `auth.uid()` apontando para um usuario que nao existe, e toda
+    politica negaria: o processo rodaria inteiro e gravaria zero linha.
+
+    Por isso cada empresa tem um usuario de servico (`pipeline@...`, nivel 1). E
+    ele quem o lote assume. De quebra, `core.tb_auditoria` passa a registrar
+    QUEM fez cada mudanca, em vez de nao registrar nada para o pipeline.
+
+    `false` no terceiro argumento, e nao `true`: a variavel vale pela SESSAO
+    inteira, nao por transacao. O pipeline abre uma conexao e roda milhares de
+    transacoes nela; local a transacao morreria no primeiro commit e a
+    segunda gravacao ja nasceria sem dono.
+    """
+    cur.execute("select id, name from core.tb_empresas "
+                "where lower(name) = lower(%s) and ativa", (nome.strip(),))
+    emp = cur.fetchone()
+    if not emp:
+        cur.execute("select name from core.tb_empresas where ativa order by name")
+        raise SystemExit(f"empresa {nome!r} nao existe. Ativas: "
+                         + ", ".join(x[0] for x in cur.fetchall()))
+
+    cur.execute("select id from core.tb_users "
+                "where id_empresa = %s and ativo and email like 'pipeline@%%' "
+                "order by criado_em limit 1", (emp[0],))
+    servico = cur.fetchone()
+    if not servico:
+        raise SystemExit(
+            f"a empresa {emp[1]!r} nao tem usuario de servico.\n\n"
+            f"  O lote nao tem login, entao ele assume um usuario de servico da\n"
+            f"  empresa para que `core.empresa_atual()` saiba de quem e o que\n"
+            f"  ele grava. Sem isso toda politica nega e a rodada grava zero\n"
+            f"  linha — sem erro, que e o pior jeito de falhar.\n\n"
+            f"  Criar um usuario `pipeline@...` de nivel 1 na empresa {emp[0]}.")
+
+    cur.execute("select set_config('request.jwt.claim.sub', %s, false)",
+                (str(servico[0]),))
+    return emp[0], emp[1]

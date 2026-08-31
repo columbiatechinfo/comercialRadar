@@ -81,20 +81,20 @@ def test_nenhuma_foto_ou_analise_fora_do_municipio():
                 select p.id, p.nome, p.cidade, p.uf,
                        coalesce(p.maps_lat, p.lat_origem),
                        coalesce(p.maps_lng, p.lng_origem),
-                       (select count(*) from comercialradar.streetview_imgs s
+                       (select count(*) from radar_comercial.streetview_imgs s
                          where s.poi_id = p.id) as fotos,
-                       (select count(*) from comercialradar.analise_ia a
+                       (select count(*) from radar_comercial.analise_ia a
                          where a.poi_id = p.id) as analises,
                        -- O CEP do endereço: a terceira fonte, que desempata
                        -- entre o rótulo e a coordenada.
                        substring(p.endereco from '[0-9]{5}') as cep
-                  from comercialradar.pois p
+                  from radar_comercial.pois p
                  where p.cidade is not null and p.uf is not null
                    and coalesce(p.maps_lat, p.lat_origem) is not null
                    and p.match_valido is not false
-                   and (exists (select 1 from comercialradar.streetview_imgs s
+                   and (exists (select 1 from radar_comercial.streetview_imgs s
                                  where s.poi_id = p.id)
-                     or exists (select 1 from comercialradar.analise_ia a
+                     or exists (select 1 from radar_comercial.analise_ia a
                                  where a.poi_id = p.id))""")
             linhas = k.fetchall()
     finally:

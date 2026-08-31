@@ -66,7 +66,7 @@ def coletar(poi_id: int, con) -> dict:
                    p.resumo_avaliacoes, p.cidade, p.uf,
                    coalesce(p.maps_lat, p.lat_origem), coalesce(p.maps_lng, p.lng_origem),
                    p.fonte, p.endereco_fonte, t.nome
-              from pois p left join tenants t on t.id = p.tenant_id
+              from pois p left join core.tb_empresas t on t.id = p.id_empresa
              where p.id = %s""", (poi_id,))
         r = cur.fetchone()
         if not r:

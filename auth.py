@@ -3,13 +3,15 @@
 
 Duas responsabilidades que andam juntas e por isso moram no mesmo lugar:
 
-1. **Identificar.** O token vem do GoTrue; daqui sai `id`, `tenant_id` e `nivel`.
-2. **Conectar com esse crachá.** A conexão declara `app.tenant_id` por
-   TRANSAÇÃO, e é essa variável que as policies de RLS leem.
+1. **Identificar.** O token vem do GoTrue; daqui sai `id`, `id_empresa` e
+   `nivel`.
+2. **Conectar com esse crachá.** A conexão declara `request.jwt.claim.sub` por
+   TRANSAÇÃO — o uuid do usuário, e nada mais. É de lá que `core.empresa_atual()`,
+   `core.nivel_atual()` e `core.eh_suporte()` tiram empresa e nível, lendo
+   `core.tb_users`. Uma variável, três respostas, uma fonte só.
 
-O ponto que não pode ser afrouxado: **`tenant_id` e `nivel` vêm do banco, a
-partir do id do token — nunca do corpo da requisição e nunca do
-`user_metadata`.** Metadado do GoTrue é editável pelo próprio usuário em vários
+O ponto que não pode ser afrouxado: **empresa e nível vêm do banco, a partir do
+id do token — nunca do corpo da requisição e nunca do `user_metadata`.** Metadado do GoTrue é editável pelo próprio usuário em vários
 fluxos; aceitar `nivel` de lá seria deixar o cliente escolher o próprio nível.
 
 Sobre a validação do token: hoje ela é feita perguntando ao GoTrue, com cache de
@@ -46,7 +48,7 @@ NIVEIS = ("user", "supervisor", "admin", "root")   # do menos para o mais amplo
 @dataclass(frozen=True)
 class Usuario:
     id: str
-    tenant_id: str | None
+    id_empresa: str | None
     nivel: str
     nome: str | None
     email: str | None
@@ -96,7 +98,7 @@ def usuario_atual(authorization: str = Header(default="")) -> Usuario:
     con = bc.conectar()
     try:
         with con.cursor() as cur:
-            cur.execute("""select tenant_id, nivel, nome, email, ativo
+            cur.execute("""select id_empresa, nivel, nome, email, ativo
                              from usuarios where id = %s""", (uid,))
             r = cur.fetchone()
     finally:
@@ -105,7 +107,7 @@ def usuario_atual(authorization: str = Header(default="")) -> Usuario:
         raise HTTPException(403, "usuário autenticado mas sem vínculo com empresa")
     if not r[4]:
         raise HTTPException(403, "usuário desativado")
-    return Usuario(id=uid, tenant_id=str(r[0]) if r[0] else None,
+    return Usuario(id=uid, id_empresa=str(r[0]) if r[0] else None,
                    nivel=r[1], nome=r[2], email=r[3])
 
 
@@ -137,26 +139,43 @@ USUARIO_DA_REQUISICAO: contextvars.ContextVar[Usuario | None] = \
 
 
 def conectar_como(u: Usuario):
-    """Conexão com o crachá do usuário — é ela que a RLS filtra.
+    """Conexao com o cracha do usuario — e ela que a RLS filtra.
 
-    `root` usa o papel com BYPASSRLS, que enxerga todas as empresas e também o
-    schema das outras ferramentas. Os demais usam `comercialradar_app`, que NÃO
-    tem BYPASSRLS: para eles quem decide o que existe é a policy, não o `WHERE`
-    da rota. É essa diferença que faz uma rota esquecida vazar nada.
+    UM PAPEL SO, e nao dois. Ate 30/08/2026 havia `app_user` (com
+    BYPASSRLS) e `app_user` (sem), e o root enxergava todas as
+    empresas por PRIVILEGIO DE PAPEL. No banco `a2l` isso deixou de existir:
+    nenhum papel disponivel a aplicacao tem BYPASSRLS, e a travessia do root
+    acontece DENTRO da politica, por `core.eh_suporte()`.
 
-    `app.tenant_id` entra por `SET LOCAL`, dentro da transação: a variável morre
-    no commit e a conexão devolvida ao pool não carrega o tenant do usuário
-    anterior para a requisição seguinte.
+    A diferenca nao e de estilo. Papel com BYPASSRLS ignora TODA policy, de toda
+    tabela, inclusive as que ninguem lembrou de conferir — e uma rota esquecida
+    que use aquela conexao vaza tudo, calada. Pela politica, a excecao do root e
+    uma linha de SQL que da para ler, e vale so onde foi escrita.
+
+    UMA VARIAVEL SO, e nao tres. As policies antigas liam `request.jwt.claim.sub`,
+    `app.nivel` e `app.usuario_id`. As do `core` leem `core.empresa_atual()`,
+    `core.nivel_atual()` e `core.eh_suporte()` — e as tres saem de
+    `(select auth.uid())`, que e `request.jwt.claim.sub`. Declarando o uuid do
+    usuario, as tres respondem: empresa e nivel vem da linha dele em
+    `core.tb_users`, que e a autoridade. Antes o nivel viajava na conexao e podia
+    divergir do banco; agora nao ha o que divergir.
+
+    `set_config(..., true)` = local a TRANSACAO: a variavel morre no commit e a
+    conexao devolvida ao pool nao carrega o cracha do usuario anterior para a
+    requisicao seguinte. Com o pooler em modo transacao isso deixou de ser
+    cuidado e virou obrigacao — a conexao volta ao pool a cada transacao.
     """
-    raiz = u.nivel == "root"
+    dsn = (os.environ.get("A2L_DB_URL") or "").strip()
+    if not dsn:
+        raise RuntimeError(
+            "A2L_DB_URL nao esta no .env. E a conexao da API, pela 7110 "
+            "(modo transacao): muitas conexoes curtas, uma transacao por "
+            "requisicao.\n\n"
+            "  A2L_DB_URL=postgresql://app_user.a2l:<senha>@127.0.0.1:7110/a2l")
+
     con = psycopg2.connect(
-        host=os.environ["I9_POSTGRES_HOST"],
-        port=int(os.environ.get("I9_POSTGRES_PORT", "5444")),
-        user="comercialradar_root" if raiz else "comercialradar_app",
-        password=(os.environ.get("CR_ROOT_PASSWORD") if raiz
-                  else os.environ.get("CR_APP_PASSWORD")) or "",
-        dbname=os.environ.get("I9_POSTGRES_DB", "postgres"),
-        options="-c search_path=comercialradar,public",
+        dsn,
+        options="-c search_path=radar_comercial,public",
         connect_timeout=int(os.environ.get("PG_CONNECT_TIMEOUT", "20")))
     con.autocommit = False
     # Três variáveis, não uma. O tenant isola a empresa; o nível e o id do
@@ -169,8 +188,9 @@ def conectar_como(u: Usuario):
     # `set_config` com parâmetro ligado porque `SET LOCAL` não aceita parâmetro
     # — interpolar o uuid na string seria injeção.
     with con.cursor() as cur:
-        if u.tenant_id:
-            cur.execute("select set_config('app.tenant_id', %s, true)", (u.tenant_id,))
-        cur.execute("select set_config('app.nivel', %s, true)", (u.nivel,))
-        cur.execute("select set_config('app.usuario_id', %s, true)", (u.id,))
+        # O UUID DO USUARIO, e nada mais. Empresa e nivel o banco descobre
+        # sozinho, lendo `core.tb_users`. Mandar nivel na conexao seria mandar
+        # ao banco uma segunda versao de um dado que ele ja tem — e duas versoes
+        # de uma verdade divergem no dia em que alguem muda uma so.
+        cur.execute("select set_config('request.jwt.claim.sub', %s, true)", (u.id,))
     return con

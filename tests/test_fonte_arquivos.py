@@ -61,13 +61,13 @@ def test_duas_empresas_no_mesmo_municipio(con):
     """A prova da chave: a mesma referencia sob duas empresas convive."""
     ref = f"municipio {uuid.uuid4().hex[:8]}"
     with con.cursor() as cur:
-        cur.execute("select id from tenants where ativo order by criado_em limit 2")
+        cur.execute("select id from core.tb_empresas where ativo order by criado_em limit 2")
         empresas = [r[0] for r in cur.fetchall()]
         if len(empresas) < 2:
             pytest.skip("menos de duas empresas cadastradas")
         for tid in empresas:
             # A trigger carimba a empresa da sessao; aqui declaramos qual e.
-            cur.execute("select set_config('app.tenant_id', %s, false)", (str(tid),))
+            cur.execute("select set_config('request.jwt.claim.sub', %s, false)", (str(tid),))
             cur.execute(SQL, (FONTE, ref, 1000))
         cur.execute("""select count(*) from fonte_arquivos
                         where fonte = %s and referencia = %s""", (FONTE, ref))

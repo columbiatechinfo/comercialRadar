@@ -458,7 +458,7 @@ select p.id, p.nome, p.categoria, p.maps_lat, p.maps_lng, p.cidade, p.uf
    and coalesce(p.nome, '') <> ''
    and p.cnpj is null
    and p.fundido_em is null
-   and p.tenant_id = (select nullif(current_setting('app.tenant_id', true), '')::uuid)
+   and p.id_empresa = core.empresa_atual()
    and (%(cidade)s = '' or upper(translate(coalesce(p.cidade,''), %(ac)s, %(li)s))
                          = upper(translate(%(cidade)s, %(ac)s, %(li)s)))
 """
@@ -635,12 +635,7 @@ def main(argv=None) -> int:
     con = bc.conectar()
     con.autocommit = False
     cur = con.cursor()
-    cur.execute("select id, nome from tenants where lower(nome)=lower(%s) and ativo",
-                (a.empresa.strip(),))
-    r = cur.fetchone()
-    if not r:
-        raise SystemExit(f"empresa {a.empresa!r} não existe")
-    cur.execute("select set_config('app.tenant_id', %s, false)", (str(r[0]),))
+    bc.assumir_empresa(cur, a.empresa)
 
     poligono = au.carregar_area(a.area) if a.area else None
     if a.area and not poligono:

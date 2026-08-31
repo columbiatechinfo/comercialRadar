@@ -47,9 +47,9 @@ rotas = APIRouter(prefix="/api/chat", tags=["chat"])
 
 LISTAR = """
 select c.id::text, c.titulo, c.criada_em, c.mexida_em,
-       (select count(*) from comercialradar.chat_mensagem m
+       (select count(*) from radar_comercial.chat_mensagem m
          where m.conversa_id = c.id and m.papel in ('user','assistant'))
-  from comercialradar.chat_conversa c
+  from radar_comercial.chat_conversa c
  where not c.arquivada
  order by c.mexida_em desc
  limit 100
@@ -57,7 +57,7 @@ select c.id::text, c.titulo, c.criada_em, c.mexida_em,
 
 MENSAGENS = """
 select papel, conteudo, ferramenta, dados, criada_em
-  from comercialradar.chat_mensagem
+  from radar_comercial.chat_mensagem
  where conversa_id = %s
  order by id
 """
@@ -87,7 +87,7 @@ def criar(corpo: dict = Body(default={})):
     con = bc.conectar()
     try:
         with con.cursor() as k:
-            k.execute("""insert into comercialradar.chat_conversa (titulo)
+            k.execute("""insert into radar_comercial.chat_conversa (titulo)
                          values (%s) returning id::text""",
                       (corpo.get("titulo") or "Nova conversa",))
             novo = k.fetchone()[0]
@@ -118,7 +118,7 @@ def renomear(cid: str, corpo: dict = Body(...)):
     con = bc.conectar()
     try:
         with con.cursor() as k:
-            k.execute("""update comercialradar.chat_conversa
+            k.execute("""update radar_comercial.chat_conversa
                             set titulo = %s, mexida_em = now() where id = %s""",
                       (titulo[:120], cid))
         con.commit()
@@ -134,7 +134,7 @@ def arquivar(cid: str):
     con = bc.conectar()
     try:
         with con.cursor() as k:
-            k.execute("""update comercialradar.chat_conversa
+            k.execute("""update radar_comercial.chat_conversa
                             set arquivada = true where id = %s""", (cid,))
         con.commit()
         return {"ok": True}
@@ -146,7 +146,7 @@ def _historico(con, cid: str) -> list:
     """Remonta o histórico no formato que o modelo espera."""
     with con.cursor() as k:
         k.execute("""select papel, conteudo, ferramenta from
-                     comercialradar.chat_mensagem where conversa_id = %s
+                     radar_comercial.chat_mensagem where conversa_id = %s
                      order by id""", (cid,))
         linhas = k.fetchall()
     msgs = [{"role": "system", "content": agente.SISTEMA}]
@@ -185,12 +185,12 @@ def _historico(con, cid: str) -> list:
 def _gravar(con, cid: str, papel: str, conteudo: str,
             ferramenta: str | None = None, dados=None) -> None:
     with con.cursor() as k:
-        k.execute("""insert into comercialradar.chat_mensagem
+        k.execute("""insert into radar_comercial.chat_mensagem
                      (conversa_id, papel, conteudo, ferramenta, dados)
                      values (%s, %s, %s, %s, %s::jsonb)""",
                   (cid, papel, conteudo or "", ferramenta,
                    json.dumps(dados, ensure_ascii=False) if dados else None))
-        k.execute("""update comercialradar.chat_conversa
+        k.execute("""update radar_comercial.chat_conversa
                         set mexida_em = now() where id = %s""", (cid,))
     con.commit()
 
@@ -198,7 +198,7 @@ def _gravar(con, cid: str, papel: str, conteudo: str,
 
 
 GRAVAR_ANEXO = """
-insert into comercialradar.chat_anexo
+insert into radar_comercial.chat_anexo
        (conversa_id, nome, tipo, bytes, caminho, extraido, meta)
 values (%s, %s, %s, %s, %s, %s, %s::jsonb)
 returning id
@@ -255,7 +255,7 @@ def _carregar_anexos(con, ids: list) -> list:
         return []
     with con.cursor() as k:
         k.execute("""select id, nome, tipo, caminho, extraido, meta
-                       from comercialradar.chat_anexo
+                       from radar_comercial.chat_anexo
                       where id = any(%s) order by id""", (ids,))
         linhas = k.fetchall()
     saida = []
@@ -289,12 +289,12 @@ async def perguntar(cid: str, corpo: dict = Body(...)):
         try:
             _gravar(con, cid, "user", pergunta)
             with con.cursor() as k:
-                k.execute("""select titulo from comercialradar.chat_conversa
+                k.execute("""select titulo from radar_comercial.chat_conversa
                               where id = %s""", (cid,))
                 atual = (k.fetchone() or [""])[0]
             if atual in ("", "Nova conversa"):
                 with con.cursor() as k:
-                    k.execute("""update comercialradar.chat_conversa
+                    k.execute("""update radar_comercial.chat_conversa
                                     set titulo = %s where id = %s""",
                               (_titulo_de(pergunta), cid))
                 con.commit()

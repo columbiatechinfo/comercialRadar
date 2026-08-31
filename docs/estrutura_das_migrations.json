@@ -554,8 +554,8 @@
    "unico": true,
    "nome": "pois_sem_duplicata",
    "tabela": "pois",
-   "colunas": "upper(trim(nome",
-   "resto": "), upper(trim(endereco))) where fundido_em is null"
+   "colunas": "upper(trim(nome)), upper(trim(endereco))",
+   "resto": "where fundido_em is null"
   },
   {
    "unico": false,
@@ -568,8 +568,8 @@
    "unico": false,
    "nome": "pois_coord_por_tenant",
    "tabela": "pois",
-   "colunas": "tenant_id, (COALESCE(maps_lat, lat_origem",
-   "resto": "), (COALESCE(maps_lng, lng_origem)) ) WHERE fundido_em IS NULL AND COALESCE(maps_lat, lat_origem) IS NOT NULL AND COALESCE(maps_lng, lng_origem) IS NOT NULL"
+   "colunas": "tenant_id, (COALESCE(maps_lat, lat_origem)), (COALESCE(maps_lng, lng_origem))",
+   "resto": "WHERE fundido_em IS NULL AND COALESCE(maps_lat, lat_origem) IS NOT NULL AND COALESCE(maps_lng, lng_origem) IS NOT NULL"
   },
   {
    "unico": false,

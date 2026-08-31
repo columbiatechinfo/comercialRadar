@@ -211,15 +211,18 @@ def test_nao_declarada_nao_e_vermelha_no_filtro():
     assert not (r > g + 40 and r > b + 40), f"`desconhecida` está avermelhada ({cor})"
 
 
-def test_a_migracao_nao_inventa_precisao():
-    """O retroativo só classifica o que se pode provar pelo caminho de
-    ingestão. Rótulo errado é pior que coluna vazia, porque rótulo é
-    acreditado."""
-    sql = io.open(RAIZ / "migrations" / "0028_precisao_da_coordenada.sql",
-                  encoding="utf-8").read()
-    # A última regra é o balde: tudo que sobrou vira `desconhecida`.
-    assert "coord_precisao = 'desconhecida'" in sql
-    # E a extração estadual NÃO é tratada como pin do Google, apesar de ter
-    # `maps_lat` — foi a descoberta que motivou a migração.
-    corpo = sql[sql.index("fonte = 'estadual'") - 400:sql.index("fonte = 'estadual'")]
-    assert "overture_osm" in corpo
+# O TESTE `test_a_migracao_nao_inventa_precisao` SAIU DAQUI.
+#
+# Ele conferia que a migracao 0028 preenchia `coord_precisao = 'desconhecida'`
+# nas linhas antigas, em vez de chutar um valor plausivel. A licao era boa:
+# backfill que INVENTA e pior que backfill que admite nao saber, porque o
+# numero inventado depois e usado como se tivesse sido medido.
+#
+# O que mudou em 31/08/2026: o schema foi refeito do zero e nasce VAZIO. Nao ha
+# linha antiga para preencher, entao nao ha backfill, entao nao ha o que este
+# teste conferisse. Ele nao foi adaptado porque nao existe versao dele que possa
+# falhar — e teste que nao pode falhar nao protege nada.
+#
+# A REGRA CONTINUA VALENDO para quem escrever o proximo backfill: valor que nao
+# foi medido entra como "desconhecida", nunca como o palpite mais provavel.
+

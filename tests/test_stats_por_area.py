@@ -6,7 +6,7 @@ recortado: o número não descrevia nada do que estava na tela. `/api/stats`
 ganhou `?area=1`.
 
 POR QUE NÃO É `ST_Contains`. Seria o natural, e não dá: o PostGIS deste banco
-vive no schema `extensions`, e o papel `comercialradar_worker` não tem USAGE
+vive no schema `extensions`, e o papel `app_user` não tem USAGE
 nele — nem o tipo `geometry` resolve pela conexão do produto. Liberar exigiria
 superusuário, e a decisão de 28/08/2026 foi não depender disso.
 
@@ -194,14 +194,18 @@ def test_as_oito_consultas_compartilham_o_mesmo_recorte():
 
 
 def test_a_migracao_do_indice_existe_e_nao_usa_postgis():
-    d = os.path.join(RAIZ, "migrations")
-    achou = [f for f in os.listdir(d) if f.startswith("0039_")]
-    assert achou, "a migração 0039 do índice de coordenada sumiu"
-    sql = _sem_comentario(_ler(os.path.join(d, achou[0])), "--")
-    assert "pois_coord_por_tenant" in sql, "o índice mudou de nome sem avisar o código"
-    assert "tenant_id" in sql[:sql.index("WHERE")], \
-        "tenant_id deixou de ser a primeira coluna do índice"
-    assert "COALESCE(maps_lat, lat_origem)" in sql, \
+    sql = _sem_comentario(
+        _ler(os.path.join(RAIZ, "migrations_a2l", "0001_radar_comercial.sql")), "--")
+    assert "pois_coord_por_empresa" in sql, \
+        "o índice da coordenada sumiu, ou mudou de nome sem avisar o código"
+    # O trecho do PRÓPRIO índice, e não o arquivo inteiro: com 72 índices no
+    # mesmo arquivo, procurar `id_empresa` antes do primeiro `WHERE` acharia o
+    # de outra tabela e passaria por acidente.
+    i = sql.index("pois_coord_por_empresa")
+    trecho = sql[i:sql.index(";", i)]
+    assert trecho.index("id_empresa") < trecho.index("COALESCE"), \
+        "id_empresa deixou de ser a primeira coluna do índice"
+    assert "COALESCE(maps_lat, lat_origem)" in trecho, \
         "o índice deixou de indexar a coordenada efetiva, e o planejador não o usa"
     assert "ST_" not in sql, (
         "a migração voltou a depender de PostGIS, que o papel do produto não "

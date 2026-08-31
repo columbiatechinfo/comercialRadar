@@ -63,7 +63,7 @@ def test_decisao_fica_registrada_com_autor(cred):
 
     con = bc.conectar()
     with con.cursor() as cur:
-        cur.execute("""select p.id from pois p join tenants t on t.id=p.tenant_id
+        cur.execute("""select p.id from pois p join core.tb_empresas t on t.id=p.id_empresa
                         where t.nome='Aegea - Corsan' order by p.id desc limit 1""")
         poi = cur.fetchone()[0]
     con.close()
@@ -110,7 +110,7 @@ def test_log_nao_pode_ser_editado_nem_apagado(cred):
             port=int(os.environ.get("I9_POSTGRES_PORT", "5444")),
             user=papel, password=os.environ[var],
             dbname=os.environ.get("I9_POSTGRES_DB", "postgres"),
-            options="-c search_path=comercialradar,public")
+            options="-c search_path=radar_comercial,public")
 
     # A recusa e SILENCIOSA, e isso precisa estar escrito: sem policy de UPDATE
     # a RLS nao levanta erro, ela nao encontra linha — o resultado e zero linhas
@@ -124,7 +124,7 @@ def test_log_nao_pode_ser_editado_nem_apagado(cred):
     con.close()
     assert antes > 0, "sem registro nenhum, o teste nao prova nada"
 
-    con = como("comercialradar_app", "CR_APP_PASSWORD")
+    con = como("app_user", "CR_APP_PASSWORD")
     con.autocommit = True
     with con.cursor() as cur:
         cur.execute("select set_config('app.nivel','admin',true)")
@@ -147,11 +147,11 @@ def test_supervisor_nao_le_o_log(cred):
     con = psycopg2.connect(
         host=os.environ["I9_POSTGRES_HOST"],
         port=int(os.environ.get("I9_POSTGRES_PORT", "5444")),
-        user="comercialradar_app", password=os.environ["CR_APP_PASSWORD"],
+        user="app_user", password=os.environ["CR_APP_PASSWORD"],
         dbname=os.environ.get("I9_POSTGRES_DB", "postgres"),
-        options="-c search_path=comercialradar,public")
+        options="-c search_path=radar_comercial,public")
     with con.cursor() as cur:
-        cur.execute("select id from tenants limit 1")
+        cur.execute("select id from core.tb_empresas limit 1")
         cur.execute("select set_config('app.nivel','supervisor',true)")
         cur.execute("select count(*) from auditoria")
         assert cur.fetchone()[0] == 0, "supervisor leu o log de auditoria"

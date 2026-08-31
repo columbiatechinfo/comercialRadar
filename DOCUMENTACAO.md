@@ -2971,9 +2971,9 @@ force, policy, trigger — e quatro vezes isso não aconteceu.
 
 ### Por que ninguém tinha notado
 
-`comercialradar_worker` e `comercialradar_root` têm `rolbypassrls`. O pipeline
+`app_user` e `app_user` têm `rolbypassrls`. O pipeline
 inteiro, portanto, não sentia nada. Quem é submetido às políticas é
-`comercialradar_app`, o papel do servidor web — ou seja, **era exatamente por ali
+`app_user`, o papel do servidor web — ou seja, **era exatamente por ali
 que o painel de uma empresa alcançava linha de outra**, nas quatro tabelas.
 
 ### O `tenant_id` do `ifood_merchant`
@@ -4235,7 +4235,7 @@ Com área à mão, o cartão mostrava a base inteira ao lado de um mapa recortad
 número não descrevia nada do que estava na tela. `/api/stats` ganhou `?area=1`.
 
 **Por que não é `ST_Contains`.** Seria o natural, e não dá: o PostGIS deste banco
-vive no schema `extensions`, e o papel `comercialradar_worker` não tem USAGE nele
+vive no schema `extensions`, e o papel `app_user` não tem USAGE nele
 — nem o tipo `geometry` resolve pela conexão do produto. `ST_Contains` só
 funciona contra o banco de REFERÊNCIA (5443), onde a `ibge_malha` mora. Liberar
 o schema exigiria superusuário no Postgres do produto, e a decisão foi não

@@ -714,7 +714,7 @@ def test_conversa_apagada_sai_da_lista_e_o_registro_fica():
         con = bc.conectar()
         try:
             with con.cursor() as k:
-                k.execute("""select arquivada from comercialradar.chat_conversa
+                k.execute("""select arquivada from radar_comercial.chat_conversa
                               where id = %s""", (cid,))
                 linha = k.fetchone()
             assert linha is not None, "o registro foi destruído, não arquivado"
@@ -725,7 +725,7 @@ def test_conversa_apagada_sai_da_lista_e_o_registro_fica():
         con = bc.conectar()          # o teste não deixa lixo no banco
         try:
             with con.cursor() as k:
-                k.execute("""delete from comercialradar.chat_conversa
+                k.execute("""delete from radar_comercial.chat_conversa
                               where id = %s""", (cid,))
             con.commit()
         finally:
@@ -814,7 +814,7 @@ def test_renomear_muda_o_titulo_e_recusa_vazio():
         con = bc.conectar()
         try:
             with con.cursor() as k:
-                k.execute("""delete from comercialradar.chat_conversa
+                k.execute("""delete from radar_comercial.chat_conversa
                               where id = %s""", (cid,))
             con.commit()
         finally:

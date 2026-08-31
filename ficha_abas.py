@@ -35,7 +35,7 @@ PAUTA_VALIDA = (
 
 CATALOGO = """
 select fonte::text, chave, rotulo, grupo, peso::text, formato, procedencia, ajuda
-  from comercialradar.campo_catalogo
+  from radar_comercial.campo_catalogo
  where ativo
  order by fonte, ordem, id
 """
@@ -60,14 +60,14 @@ select maps_lat, maps_lng, distancia_m, similaridade, match_valido,
        natureza_juridica, cnpj_conf, instagram, facebook, email,
        presente_no_ifood, ifood_visto_em, preco_medio,
        coord_precisao, coord_fonte, coord_incerteza_m
-  from comercialradar.pois where id = %s
+  from radar_comercial.pois where id = %s
 """
 
 EXTRA_IA = """
 select veredito, veredito_motivo, confere, atividade_real, porte,
        pessoas_estimadas, tipo_construcao, outro_estabelecimento, n_imagens,
        recomendar_visita, recomendacao_motivo
-  from comercialradar.analise_ia where poi_id = %s
+  from radar_comercial.analise_ia where poi_id = %s
  order by criado_em desc limit 1
 """
 
@@ -264,7 +264,7 @@ def montar(con, dados: dict, e_root: bool) -> list:
         with con.cursor() as cur:
             cur.execute("""
                 select fonte, id_fonte, id, confianca, confianca_origem, motivo
-                  from comercialradar.vinculo_poi
+                  from radar_comercial.vinculo_poi
                  where poi_id = %s and estado = 'vinculado'
                  order by confianca desc, id""", (poi_id,))
             for f, idf, vid, conf, origem, motivo in cur.fetchall():

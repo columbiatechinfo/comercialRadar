@@ -11,7 +11,7 @@ Duas metades, e as duas precisavam existir para o erro ficar mudo:
 
   SERVIDOR  `POST /api/area` respondia 500. Dentro de uma requisição,
             `realtime_ingest.conectar()` devolve a conexão do USUÁRIO, e
-            `auth.conectar_como` só declara `app.tenant_id` quando o usuário tem
+            `auth.conectar_como` só declara `request.jwt.claim.sub` quando o usuário tem
             empresa. O `root` não tem — é o único assim, de propósito. A trigger
             `preencher_tenant` não achava o que carimbar e o `NOT NULL` recusava
             a linha.
@@ -218,7 +218,18 @@ def test_o_dataset_da_uf_e_reaproveitado():
     j = fonte.index("def dataset_pronto")
     conf = fonte[j:j + 1600]
     assert "MARCADOR" in conf, "a conferência deixou de exigir o marcador"
-    assert "I9_DIR" in conf or "i9" in conf.lower(),         "a conferência voltou a olhar só o disco local; o dataset mora no i9"
+    # A CONFERENCIA OLHA SO O DISCO LOCAL, E ISSO E O CERTO desde 30/08/2026.
+    #
+    # Antes ela perguntava ao i9 POR SSH se a UF estava produzida la, porque o
+    # dataset de 10 GB morava na outra maquina. Isso ja custou um defeito calado:
+    # a conferencia foi para o i9 e o CAMINHO ficou local, entao a importacao
+    # recebia uma pasta que nao existia e morria sem dizer por que.
+    #
+    # Com uma maquina so, perguntar a outra seria perguntar ao vazio. O que o
+    # teste cobra agora e o oposto do que cobrava: que NAO haja pergunta remota.
+    assert "ssh" not in conf.lower() and "I9_DIR" not in conf,         ("a conferencia voltou a perguntar a outra maquina. O sistema roda no "
+         "servidor: dataset, banco e codigo sao do mesmo disco")
+    assert "DATASETS" in conf,         "a conferencia deixou de dizer ONDE procurou, e 'nao existe' sem caminho "        "nao da para conferir"
 
 
 def test_ha_saida_quando_o_dataset_da_uf_nao_existe():

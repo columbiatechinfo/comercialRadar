@@ -70,19 +70,19 @@ def lembrar(resumo: str, detalhe: str = "", tipo: str = "fato",
         with con.cursor() as k:
             # o mesmo aprendizado dito duas vezes não vira duas memórias: quem
             # lê o índice depois não saberia qual das duas está atualizada
-            k.execute("""select id from comercialradar.memoria
+            k.execute("""select id from radar_comercial.memoria
                           where lower(resumo) = lower(%s) limit 1""",
                       (resumo[:MAX_RESUMO],))
             ja = k.fetchone()
             if ja:
-                k.execute("""update comercialradar.memoria
+                k.execute("""update radar_comercial.memoria
                                 set detalhe = coalesce(nullif(%s,''), detalhe),
                                     criado_em = now()
                               where id = %s""", (detalhe, ja[0]))
                 con.commit()
                 return {"ok": True, "id": ja[0], "acao": "atualizada"}
 
-            k.execute("""insert into comercialradar.memoria
+            k.execute("""insert into radar_comercial.memoria
                          (resumo, detalhe, tipo, conversa_id, chaves)
                          values (%s, %s, %s, %s, %s) returning id""",
                       (resumo[:MAX_RESUMO], detalhe or None, tipo,
@@ -110,7 +110,7 @@ def recordar(assunto: str = "", detalhado: bool = False) -> dict:
                 # casa por palavra-chave OU por texto: a chave acha o que foi
                 # indexado, o texto acha o que o usuário escreveu diferente
                 k.execute("""select id, resumo, detalhe, tipo, criado_em
-                               from comercialradar.memoria
+                               from radar_comercial.memoria
                               where chaves && %s
                                  or resumo ilike any(%s)
                               order by criado_em desc limit %s""",
@@ -118,12 +118,12 @@ def recordar(assunto: str = "", detalhado: bool = False) -> dict:
                            [f"%{t}%" for t in termos], MAX_INDICE))
             else:
                 k.execute("""select id, resumo, detalhe, tipo, criado_em
-                               from comercialradar.memoria
+                               from radar_comercial.memoria
                               order by criado_em desc limit %s""", (MAX_INDICE,))
             linhas = k.fetchall()
 
             if linhas:
-                k.execute("""update comercialradar.memoria
+                k.execute("""update radar_comercial.memoria
                                 set usado_em = now(),
                                     vezes_usada = vezes_usada + 1
                               where id = any(%s)""", ([l[0] for l in linhas],))

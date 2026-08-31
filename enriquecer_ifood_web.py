@@ -71,14 +71,14 @@ def _partes(endereco: str | None) -> tuple:
 
 SELECIONAR = """
 select merchant_id, nome, bairro
-  from comercialradar.ifood_merchant
+  from radar_comercial.ifood_merchant
  where coalesce(cnpj, '') = ''
    and coalesce(estado_detalhe, 'PENDENTE') <> 'OK'
  order by nome
 """
 
 GRAVAR = """
-update comercialradar.ifood_merchant as m set
+update radar_comercial.ifood_merchant as m set
   cnpj      = coalesce(v.cnpj, m.cnpj),
   telefone  = coalesce(v.telefone, m.telefone),
   rua       = coalesce(v.rua, m.rua),

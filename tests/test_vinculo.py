@@ -30,9 +30,9 @@ def cenario():
     con = bc.conectar()
     con.autocommit = False
     cur = con.cursor()
-    cur.execute("select id from tenants where ativo order by nome limit 1")
+    cur.execute("select id from core.tb_empresas where ativo order by nome limit 1")
     tenant = str(cur.fetchone()[0])
-    cur.execute("select set_config('app.tenant_id', %s, false)", (tenant,))
+    cur.execute("select set_config('request.jwt.claim.sub', %s, false)", (tenant,))
     cur.execute("""
         insert into pois (nome, endereco, fonte, lat_origem, lng_origem, maps_lat, maps_lng,
                           place_id, cidade, uf, status, match_valido)

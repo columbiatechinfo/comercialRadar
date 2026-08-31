@@ -123,12 +123,12 @@ COLS = ("merchant_id", "nome", "categoria", "slug", "nota", "cnpj", "telefone",
 # que uma recarga NUNCA apague um campo já colhido com um nulo — foi assim que
 # uma releitura apagou o estado noutro módulo hoje.
 #
-# `tenant_id` não aparece no INSERT de propósito: quem o preenche é a trigger
-# `preencher_tenant`, a partir do `app.tenant_id` que a conexão declara. É a
+# `id_empresa` não aparece no INSERT de propósito: quem o preenche é a trigger
+# `preencher_tenant`, a partir do `request.jwt.claim.sub` que a conexão declara. É a
 # convenção da casa (ver area_utils.py) e passar o valor à mão aqui abriria a
 # porta para gravar no tenant errado.
 SQL = f"""
-insert into comercialradar.ifood_merchant
+insert into radar_comercial.ifood_merchant
        ({', '.join(COLS)}, visto_em)
 values ({', '.join(['%s'] * len(COLS))}, now())
 on conflict (merchant_id) do update set
@@ -155,7 +155,7 @@ on conflict (merchant_id) do update set
 # realmente capturada aparecia como bloqueada. "Não colhi" e "não existe" são
 # coisas diferentes, e um rótulo errado aqui contamina todo cruzamento adiante.
 RECONCILIAR = """
-update comercialradar.ifood_merchant set estado_detalhe = case
+update radar_comercial.ifood_merchant set estado_detalhe = case
     when cnpj is not null or rua is not null then 'OK'
     when estado_detalhe = 'BLOQUEADO'             then 'BLOQUEADO'
     else 'PENDENTE' end
@@ -180,7 +180,7 @@ def main() -> int:
             con.commit()
 
             k.execute("""select estado_detalhe, count(*)
-                           from comercialradar.ifood_merchant
+                           from radar_comercial.ifood_merchant
                           group by 1 order by 2 desc""")
             print("\nestado do detail:", flush=True)
             for e, n in k.fetchall():
@@ -189,7 +189,7 @@ def main() -> int:
             k.execute("""select count(*) total, count(nome) nome,
                                 count(bairro) bairro, count(cnpj) cnpj,
                                 count(lat) geo
-                           from comercialradar.ifood_merchant""")
+                           from radar_comercial.ifood_merchant""")
             t, nm, ba, cn, ge = k.fetchone()
             print(f"\ntotal {t} · com nome {nm} · com bairro {ba} · "
                   f"com CNPJ {cn} · com coordenada {ge}", flush=True)

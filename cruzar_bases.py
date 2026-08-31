@@ -325,24 +325,24 @@ BASES = {
         select id::text, nome, nome_fantasia, razao_social, cnpj,
                endereco, null::text as numero, null::text as bairro,
                maps_lat as lat, maps_lng as lng
-          from comercialradar.pois
+          from radar_comercial.pois
          where (%(cidade)s is null or lower(cidade) = lower(%(cidade)s))
     """,
     "cadastro_cliente": """
         select id::text, null::text, null::text, null::text, null::text,
                logradouro, numero, bairro, lat, lng
-          from comercialradar.cadastro_cliente
+          from radar_comercial.cadastro_cliente
          where (%(cidade)s is null or lower(cidade) = lower(%(cidade)s))
     """,
     "cnpj_tratado": """
         select id::text, nome_fantasia, nome_fantasia, razao_social, cnpj,
                null::text, null::text, null::text, lat, lng
-          from comercialradar.cnpj_tratado
+          from radar_comercial.cnpj_tratado
     """,
     "ifood_merchant": """
         select merchant_id, nome, nome, null::text, cnpj,
                rua, numero, bairro, lat, lng
-          from comercialradar.ifood_merchant
+          from radar_comercial.ifood_merchant
     """,
     # Cadastur: SEM coordenada propria — a skill de origem nao geocodifica, e o
     # endereco moderno e texto livre (numero em 74% das linhas, CEP em 55%).
@@ -358,7 +358,7 @@ BASES = {
                coalesce(endereco_comercial, endereco_rfb),
                null::text as numero, null::text as bairro,
                null::double precision as lat, null::double precision as lng
-          from comercialradar.cadastur_prestador
+          from radar_comercial.cadastur_prestador
          where (%(cidade)s is null or lower(municipio) = lower(%(cidade)s))
     """,
 }
@@ -592,11 +592,11 @@ CHAVES = {
 }
 
 GRAVAR = """
-insert into comercialradar.cruzamento
+insert into radar_comercial.cruzamento
        (base_a, id_a, base_b, id_b, chave, score, distancia_m,
         evidencia, ambiguo, concorrentes)
 values %s
-on conflict (tenant_id, base_a, id_a, base_b, id_b, chave) do update set
+on conflict (id_empresa, base_a, id_a, base_b, id_b, chave) do update set
   score = excluded.score, distancia_m = excluded.distancia_m,
   evidencia = excluded.evidencia, ambiguo = excluded.ambiguo,
   concorrentes = excluded.concorrentes, criado_em = now()

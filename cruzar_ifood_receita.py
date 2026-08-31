@@ -87,17 +87,17 @@ select e.cnpj_basico || e.cnpj_ordem || e.cnpj_dv as cnpj,
 
 LOJAS = """
 select merchant_id, nome, categoria, bairro
-  from comercialradar.ifood_merchant
+  from radar_comercial.ifood_merchant
  where nome is not null
  order by nome
 """
 
 GRAVAR = """
-insert into comercialradar.cruzamento
+insert into radar_comercial.cruzamento
        (base_a, id_a, base_b, id_b, chave, score, evidencia, ambiguo,
         concorrentes)
 values %s
-on conflict (tenant_id, base_a, id_a, base_b, id_b, chave) do update set
+on conflict (id_empresa, base_a, id_a, base_b, id_b, chave) do update set
   score = excluded.score, evidencia = excluded.evidencia,
   ambiguo = excluded.ambiguo, concorrentes = excluded.concorrentes,
   criado_em = now()

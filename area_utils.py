@@ -38,10 +38,10 @@ def _esquema(cur):
     """
     # PERGUNTA antes de tentar. Não é otimização: a primeira versão desta
     # correção usava try/except com `rollback()`, e o rollback DESFAZIA o
-    # `set_config('app.tenant_id')` que a conexão do usuário tinha acabado de
+    # `set_config('request.jwt.claim.sub')` que a conexão do usuário tinha acabado de
     # declarar — a RLS passava a negar tudo e a área sumia de novo, agora por
     # outro motivo. Consultar o catálogo não mexe na transação.
-    cur.execute("select to_regclass('comercialradar.area_trabalho')")
+    cur.execute("select to_regclass('radar_comercial.area_trabalho')")
     if cur.fetchone()[0] is not None:
         return
     cur.execute("""CREATE TABLE IF NOT EXISTS area_trabalho (
@@ -56,8 +56,8 @@ def salvar_area(poligono, nome: str = AREA_PADRAO, tenant: str | None = None) ->
     `tenant` existe por causa do ROOT, e o motivo merece ficar escrito.
 
     Dentro de uma requisição, `bc.conectar()` devolve a conexão do USUÁRIO
-    (`auth.conectar_como`), e ela só declara `app.tenant_id` quando o usuário
-    tem empresa. O `root` não tem — é o único usuário sem `tenant_id`, de
+    (`auth.conectar_como`), e ela só declara `request.jwt.claim.sub` quando o usuário
+    tem empresa. O `root` não tem — é o único usuário sem `id_empresa`, de
     propósito, porque ele atravessa todas as empresas. Resultado: a trigger
     `preencher_tenant` não achava o que carimbar, o `NOT NULL` recusava a linha
     e a rota estourava 500.
@@ -76,25 +76,42 @@ def salvar_area(poligono, nome: str = AREA_PADRAO, tenant: str | None = None) ->
     try:
         with con.cursor() as cur:
             _esquema(cur)
-            if tenant:
-                cur.execute("select set_config('app.tenant_id', %s, true)",
-                            (str(tenant),))
+
             if not poligono or len(poligono) < 3:
                 cur.execute("DELETE FROM area_trabalho WHERE nome=%s", (nome,))
                 con.commit()
                 return 0
             pol = [[float(a), float(b)] for a, b in poligono]
-            # `ON CONFLICT (tenant_id, nome)`: a chave passou a ser por empresa
+            # `ON CONFLICT (id_empresa, nome)`: a chave passou a ser por empresa
             # em 13/08/2026. Com `(nome)` sozinho, a segunda empresa a desenhar
             # sobrescrevia a área da primeira — que ela nem enxerga, porque a
             # RLS esconde a linha mas a unicidade vale sobre a tabela inteira.
-            # `tenant_id` não aparece no INSERT de propósito: quem o preenche é
-            # a trigger, a partir da mesma variável de sessão que a RLS lê.
-            cur.execute("""INSERT INTO area_trabalho (nome, polygon, salvo_em)
-                           VALUES (%s, %s, now())
-                           ON CONFLICT (tenant_id, nome) DO UPDATE
-                             SET polygon = EXCLUDED.polygon, salvo_em = now()""",
-                        (nome, json.dumps(pol)))
+            # A EMPRESA VAI NA COLUNA quando quem grava e o root, e so entao.
+            #
+            # Para quem TEM empresa, `id_empresa` fica de fora do INSERT de
+            # proposito: quem preenche e a trigger `preencher_empresa`, a partir
+            # da mesma identidade que a RLS le. Um caminho so, sem chance de o
+            # que se grava divergir do que se enxerga.
+            #
+            # O root e a excecao, porque ele nao pertence a empresa nenhuma —
+            # `core.empresa_atual()` devolve nulo para ele e a trigger nao teria
+            # o que carimbar. Ate 30/08/2026 isso era resolvido declarando uma
+            # variavel de sessao com a empresa alvo; agora vai direto na coluna,
+            # que e mais honesto: a excecao aparece na chamada, em vez de ficar
+            # escondida num `set_config` tres linhas acima.
+            if tenant:
+                cur.execute("""INSERT INTO area_trabalho
+                                 (id_empresa, nome, polygon, salvo_em)
+                               VALUES (%s, %s, %s, now())
+                               ON CONFLICT (id_empresa, nome) DO UPDATE
+                                 SET polygon = EXCLUDED.polygon, salvo_em = now()""",
+                            (str(tenant), nome, json.dumps(pol)))
+            else:
+                cur.execute("""INSERT INTO area_trabalho (nome, polygon, salvo_em)
+                               VALUES (%s, %s, now())
+                               ON CONFLICT (id_empresa, nome) DO UPDATE
+                                 SET polygon = EXCLUDED.polygon, salvo_em = now()""",
+                            (nome, json.dumps(pol)))
         con.commit()
         return len(pol)
     finally:
@@ -137,7 +154,7 @@ def carregar_area(ref=AREA_PADRAO) -> list | None:
             _esquema(cur)
             # SEM `con.commit()` aqui. Ele existia para fechar o CREATE TABLE, e
             # passou a ser destrutivo quando a conexão virou a do usuário: o
-            # `app.tenant_id` é declarado com `set_config(..., true)`, que é
+            # `request.jwt.claim.sub` é declarado com `set_config(..., true)`, que é
             # LOCAL À TRANSAÇÃO. Commitar apagava o tenant, e o SELECT logo
             # abaixo rodava sem identidade — a RLS negava, `carregar_area`
             # devolvia None e a tela dizia "nenhuma área definida", com a área

@@ -143,7 +143,7 @@ def _fachada(poi_id: int, la: float, lo: float) -> dict:
             with con.cursor() as k:
                 k.execute("""select streetview_path is not null
                                     and streetview_path not in ('', 'NA')
-                               from comercialradar.pois where id = %s""",
+                               from radar_comercial.pois where id = %s""",
                           (poi_id,))
                 linha = k.fetchone()
         finally:
@@ -165,7 +165,7 @@ def _fachada(poi_id: int, la: float, lo: float) -> dict:
         try:
             with con.cursor() as k:
                 k.execute("""select streetview_path
-                               from comercialradar.pois where id = %s""",
+                               from radar_comercial.pois where id = %s""",
                           (poi_id,))
                 caminho = (k.fetchone() or [None])[0]
         finally:

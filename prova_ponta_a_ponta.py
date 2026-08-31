@@ -55,8 +55,8 @@ def _achar_poi(cur) -> tuple:
                         + (coalesce(p.presente_no_ifood, false))::int
                         + (a.poi_id is not null)::int
                         + (p.avaliacao is not null)::int as fontes
-                     from comercialradar.pois p
-                     left join comercialradar.analise_ia a on a.poi_id = p.id
+                     from radar_comercial.pois p
+                     left join radar_comercial.analise_ia a on a.poi_id = p.id
                     where p.cidade ilike %s and p.nome is not null
                       and p.endereco is not null
                     order by fontes desc, p.id limit 1""", (CIDADE,))
@@ -65,8 +65,22 @@ def _achar_poi(cur) -> tuple:
 
 
 def _usuarios(cur) -> dict:
-    cur.execute("""select nivel, id from comercialradar.usuarios
-                    where nivel in ('root','supervisor','admin') order by nivel""")
+    """`{codigo_do_nivel: uuid}` para root, supervisor e administrator.
+
+    O NIVEL DEIXOU DE SER TEXTO. Era um ENUM ('root','admin','supervisor',
+    'user') na tabela desta ferramenta; agora e `id_nivel_user smallint` em
+    `core.tb_users`, e o nome legivel vive em `core.tb_niveis_user.codigo`. O
+    join existe para esta funcao continuar devolvendo o codigo, que e o que quem
+    chama espera.
+
+    `admin` tambem mudou de nome: no `core` o codigo e `administrator`.
+    """
+    cur.execute("""select n.codigo, u.id
+                     from core.tb_users u
+                     join core.tb_niveis_user n on n.id = u.id_nivel_user
+                    where n.codigo in ('root', 'supervisor', 'administrator')
+                      and u.ativo
+                    order by n.hierarquia desc""")
     return {n: i for n, i in cur.fetchall()}
 
 
@@ -92,7 +106,7 @@ def rodar() -> list:
                ", ".join(sorted(us)))
 
             # ── a atribuição de teste ────────────────────────────────────────
-            cur.execute("""insert into comercialradar.atribuicao
+            cur.execute("""insert into radar_comercial.atribuicao
                              (poi_id, supervisor_id, atribuido_por, status)
                            values (%s, %s, %s, 'pendente') returning id""",
                         (poi_id, us.get("supervisor"), us.get("root")))
@@ -129,10 +143,10 @@ def rodar() -> list:
         pauta = ["confirmar_atividade", "confirmar_numero", "fotografar_fachada"]
         porque = {"confirmar_numero": "o Maps devolveu S/N e a Receita tem número"}
         with con.cursor() as cur:
-            cur.execute("""update comercialradar.atribuicao
-                              set status='campo', pauta=%s::comercialradar.pauta_campo[],
+            cur.execute("""update radar_comercial.atribuicao
+                              set status='campo', pauta=%s::radar_comercial.pauta_campo[],
                                   pauta_porque=%s::jsonb,
-                                  prioridade=%s::comercialradar.prioridade_campo,
+                                  prioridade=%s::radar_comercial.prioridade_campo,
                                   decidido_em=now()
                             where id=%s
                         returning status::text, pauta::text[], prioridade::text""",
@@ -148,7 +162,7 @@ def rodar() -> list:
         recusou = False
         try:
             with con.cursor() as cur:
-                cur.execute("""update comercialradar.atribuicao
+                cur.execute("""update radar_comercial.atribuicao
                                   set status='campo', pauta=null where id=%s""",
                             (item_id,))
             con.commit()
@@ -163,7 +177,7 @@ def rodar() -> list:
                               ("reprovado", "duplicado")):
             try:
                 with con.cursor() as cur:
-                    cur.execute("""update comercialradar.atribuicao
+                    cur.execute("""update radar_comercial.atribuicao
                                       set status=%s::decisao_fila,
                                           motivo_generico=%s::motivo_reprova,
                                           motivo_escrito=case when %s is null then null
@@ -185,11 +199,17 @@ def rodar() -> list:
         ok("rota da logo da empresa existe", "/api/empresa/logo" in rotas)
 
         with con.cursor() as cur:
+            # A LOGO MUDOU DE DONO. Era `comercialradar.tenants.logo_path`;
+            # agora e `core.tb_empresas.img_perfil` — a empresa deixou de ser
+            # tabela desta ferramenta e passou a ser do `core`, compartilhada
+            # com os outros sistemas. Conferir a coluna velha diria "falta a
+            # logo" com a logo no lugar certo.
             cur.execute("""select count(*) from information_schema.columns
-                            where table_schema='comercialradar'
-                              and table_name='tenants' and column_name='logo_path'""")
+                            where table_schema='core'
+                              and table_name='tb_empresas'
+                              and column_name='img_perfil'""")
             tem_col = cur.fetchone()[0] == 1
-        ok("tenants.logo_path existe", tem_col)
+        ok("core.tb_empresas.img_perfil existe", tem_col)
 
         html = io.open("frontend/index.html", encoding="utf-8").read()
         ok("cabecalho tem o terceiro espaco", "brand-cliente" in html
@@ -304,13 +324,14 @@ def rodar() -> list:
         # funcionando.
         import auth as _a
         with con.cursor() as cur:
-            cur.execute("""select us.id::text, us.tenant_id::text, us.nivel,
-                                  us.nome, us.email
-                             from comercialradar.usuarios us
-                             join comercialradar.pois p
-                               on p.tenant_id = us.tenant_id
-                            where p.id = %s
-                            order by (us.nivel = 'root') desc limit 1""",
+            cur.execute("""select us.id::text, us.id_empresa::text, n.codigo,
+                                  us.name, us.email
+                             from core.tb_users us
+                             join core.tb_niveis_user n on n.id = us.id_nivel_user
+                             join radar_comercial.pois p
+                               on p.id_empresa = us.id_empresa
+                            where p.id = %s and us.ativo
+                            order by n.hierarquia desc limit 1""",
                         (poi_id,))
             linha = cur.fetchone()
         ds2 = _srv.bancada_dataset(limite=5, poi=poi_id, u=_a.Usuario(*linha))
@@ -322,7 +343,7 @@ def rodar() -> list:
         if item_id:                      # a prova não deixa lixo na fila
             try:
                 with con.cursor() as cur:
-                    cur.execute("delete from comercialradar.atribuicao where id=%s",
+                    cur.execute("delete from radar_comercial.atribuicao where id=%s",
                                 (item_id,))
                 con.commit()
             except Exception:

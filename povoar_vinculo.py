@@ -78,15 +78,8 @@ def _util(v):
 
 
 def _empresa(cur, nome: str) -> str:
-    cur.execute("select id, nome from tenants where lower(nome)=lower(%s) and ativo",
-                (nome.strip(),))
-    r = cur.fetchone()
-    if not r:
-        cur.execute("select nome from tenants where ativo order by nome")
-        raise SystemExit(f"empresa '{nome}' não existe. Ativas: "
-                         + ", ".join(x[0] for x in cur.fetchall()))
-    cur.execute("select set_config('app.tenant_id', %s, false)", (str(r[0]),))
-    return r[1]
+    """Mantido como nome local; a logica vive em `bc.assumir_empresa`."""
+    return bc.assumir_empresa(cur, nome)[1]
 
 
 def proprios(empresa: str, aplicar: bool) -> None:
@@ -128,7 +121,7 @@ def proprios(empresa: str, aplicar: bool) -> None:
            -- A RLS não podia ter pego: o `with check` da política aprova o que a
            -- sessão está inserindo — o problema não era o tenant do vínculo, era
            -- eu estar lendo POI que não é da sessão. O recorte vai aqui.
-           and p.tenant_id = (select nullif(current_setting('app.tenant_id', true), '')::uuid)
+           and p.id_empresa = core.empresa_atual()
          order by p.id""")
     linhas = cur.fetchall()
     print(f"  {dono}: {len(linhas):,} POIs sem vínculo")

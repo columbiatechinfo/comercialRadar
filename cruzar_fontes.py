@@ -70,7 +70,7 @@ select p.id, p.nome, p.fonte, p.categoria, p.endereco, p.telefone, p.website,
  where coalesce(p.maps_lat, p.lat_origem) is not null
    and coalesce(p.maps_lng, p.lng_origem) is not null
    and p.fundido_em is null
-   and p.tenant_id = (select nullif(current_setting('app.tenant_id', true), '')::uuid)
+   and p.id_empresa = core.empresa_atual()
    and (%(cidade)s = '' or upper(translate(coalesce(p.cidade, ''), %(ac)s, %(li)s))
                          = upper(translate(%(cidade)s, %(ac)s, %(li)s)))
 """
@@ -115,15 +115,9 @@ def _um_lado_dentro(par, poligono):
 
 
 def _empresa(cur, nome: str) -> str:
-    cur.execute("select id, nome from tenants where lower(nome)=lower(%s) and ativo",
+    cur.execute("select id, name from core.tb_empresas where lower(name)=lower(%s) and ativa",
                 (nome.strip(),))
-    r = cur.fetchone()
-    if not r:
-        cur.execute("select nome from tenants where ativo order by nome")
-        raise SystemExit(f"empresa {nome!r} não existe. Ativas: "
-                         + ", ".join(x[0] for x in cur.fetchall()))
-    cur.execute("select set_config('app.tenant_id', %s, false)", (str(r[0]),))
-    return r[1]
+    return bc.assumir_empresa(cur, nome)[1]
 
 
 def carregar(cur, cidade: str, poligono=None,

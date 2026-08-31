@@ -762,7 +762,7 @@ def esquema(con):
     """Cria a tabela na primeira vez; nas demais, não toca no banco.
 
     DDL aqui é trabalho de quem é dono do schema — o worker. A API conecta como
-    `comercialradar_app`, que não tem CREATE, e chamava esta função também na
+    `app_user`, que não tem CREATE, e chamava esta função também na
     rota de *leitura* `/api/avaliar/estimativa`: o resultado era um 500 com
     "permission denied for schema comercialradar" sobre uma tabela que já
     existia, íntegra, com todas as colunas. Sair cedo quando não há nada a
