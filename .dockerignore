@@ -1,0 +1,46 @@
+# O que NÃO entra na imagem.
+#
+# A primeira construção do `radar-minerador` deu 38,4 GB. O Dockerfile promete
+# ~2 GB, e a diferença inteira é isto: `COPY . .` levou junto os 14 GB de
+# dataset estadual, as capturas, os logs e o `.git`. Nada disso é usado dentro
+# do container — os diretórios de dado entram por volume em tempo de execução,
+# que é como devem entrar: dado que muda não pertence a uma camada de imagem.
+#
+# O custo de não ter este arquivo não é só disco. Todo `docker build` reenvia o
+# contexto inteiro ao daemon antes de começar, e qualquer byte alterado em
+# `dados_externos/` invalida o cache do `COPY` e refaz tudo dali para baixo.
+
+# ── dado, e ele entra por volume ────────────────────────────────────────────
+dados_externos/
+capturas/
+crops/
+logs/
+backups/
+assets/*.csv
+assets/*.zip
+assets/*.gz
+
+# ── histórico e ambiente local ──────────────────────────────────────────────
+.git/
+.gitignore
+.venv/
+venv/
+node_modules/
+__pycache__/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+
+# ── segredo nunca entra em imagem ───────────────────────────────────────────
+.env
+.env.*
+*.pem
+*.key
+
+# ── ruído ───────────────────────────────────────────────────────────────────
+*.log
+*.tmp
+*.part
+.DS_Store
+docs/painel.html

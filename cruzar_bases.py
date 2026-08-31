@@ -358,7 +358,12 @@ BASES = {
                coalesce(endereco_comercial, endereco_rfb),
                null::text as numero, null::text as bairro,
                null::double precision as lat, null::double precision as lng
-          from radar_comercial.cadastur_prestador
+          -- `resources_root`, e nao `radar_comercial`. O Cadastur e BASE: o
+          -- Ministerio do Turismo publica, nos so lemos. Mudou de schema na
+          -- migracao 0008, e esta linha ficou para tras — a etapa 3 da fase 1
+          -- morria com `relation "radar_comercial.cadastur_prestador" does
+          -- not exist` depois de ja ter cruzado os 27.527 POIs.
+          from resources_root.cadastur_prestador
          where (%(cidade)s is null or lower(municipio) = lower(%(cidade)s))
     """,
 }

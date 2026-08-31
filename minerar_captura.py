@@ -51,16 +51,40 @@ _RE_BUSCA = re.compile(r"\[\s*(\d+)\s*/\s*(\d+)\s+\d+%\s*\]")
 NORMALIZA_S = 10.0
 
 
-def _npx() -> str:
-    """No Windows o executável é npx.cmd; `npx` sozinho não é executável fora
-    do shell e o subprocess morre com FileNotFoundError."""
+def _ts_node() -> list:
+    """Como chamar o `ts-node` — o DO PROJETO, se ele estiver instalado.
+
+    A versão anterior devolvia sempre `npx`, e o comando ficava
+    `npx ts-node src/capture-cli.ts`. Funciona na máquina de quem desenvolve,
+    onde `npm install` já rodou e o npx acha o binário local. No contêiner
+    falhou de um jeito que não parece o que é:
+
+        TypeError: Cannot read properties of undefined (reading 'fileExists')
+          at readConfig (/tmp/.npm/_npx/1bf7c3c15bf47d04/node_modules/ts-node/...)
+
+    Repare no caminho: `/tmp/.npm/_npx/...`. O npx NÃO usou o ts-node de
+    `/app/node_modules/.bin` — que está lá, instalado por `npm ci` — e foi
+    BAIXAR outro da internet. O ts-node avulso não enxerga o `typescript` do
+    projeto, e estoura num campo interno, sem dizer que o problema é esse.
+
+    Chamar o binário local pelo caminho tira o npx da decisão: ou o arquivo
+    existe e é ele, ou não existe e caímos no npx como antes. Nenhuma rede, e
+    nenhuma versão surpresa.
+    """
+    local = BASE / "node_modules" / ".bin" / ("ts-node.cmd" if os.name == "nt" else "ts-node")
+    if local.exists():
+        return [str(local)]
+
+    # Sem `node_modules` — máquina de desenvolvimento antes do `npm install`.
+    # No Windows o executável é `npx.cmd`; `npx` sozinho não é executável fora
+    # do shell e o subprocess morre com FileNotFoundError.
     if os.name == "nt":
         for c in ("npx.cmd", "npx.exe"):
             for d in os.environ.get("PATH", "").split(os.pathsep):
-                p = Path(d) / c
-                if p.exists():
-                    return str(p)
-    return "npx"
+                cand = Path(d) / c
+                if cand.exists():
+                    return [str(cand), "ts-node"]
+    return ["npx", "ts-node"]
 
 
 def _env(**extra) -> dict:
@@ -210,7 +234,7 @@ def main():
 
     if a.de <= 1 <= a.ate:
         env = _env(CAPTURE_WORKERS=str(a.capture_workers))
-        cmd = [_npx(), "ts-node", "src/capture-cli.ts",
+        cmd = _ts_node() + ["src/capture-cli.ts",
                "--sessao", a.sessao, "--saida", str(sdir),
                "--poly", str(poly_json), "--zoom", str(a.zoom),
                "--overlap", str(a.overlap)]

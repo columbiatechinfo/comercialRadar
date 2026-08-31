@@ -882,6 +882,20 @@ def cruzar(cidade: str, empresa: str, aplicar_de_fato: bool, usar_ia: bool,
         if falhas:
             print(f"    ⚠️  {len(falhas)} pares a IA não conseguiu julgar — "
                   "ficam SEM fusão, e podem ser repetidos depois.")
+            # O MOTIVO, e não só a contagem.
+            #
+            # `FALHOU` cobre duas coisas muito diferentes: "a IA respondeu e não
+            # decidiu" e "a chamada nem chegou lá". A primeira é informação
+            # sobre os dados; a segunda é infraestrutura quebrada. Sem o motivo
+            # impresso, as duas parecem iguais — e em 31/08/2026 eu li
+            # `{'FALHOU': 566}` e escrevi num relatório que o serviço estava
+            # fora do ar. Estava no ar: o que mudara era o NOME do modelo, e a
+            # mensagem `model 'qwen3vl-moe' does not exist` estava ali,
+            # guardada em `motivo_ia`, sem nunca ser mostrada.
+            from collections import Counter as _C
+            for motivo, n in _C(j.get("motivo_ia") or "(sem motivo)"
+                                for j in falhas).most_common(3):
+                print(f"       {n:>6,} × {motivo[:140]}")
     elif perguntar:
         print("    (--sem-ia: os duvidosos ficam como estão)")
 

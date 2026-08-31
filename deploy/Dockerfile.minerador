@@ -26,6 +26,43 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# ── NODE, E ELE FALTAVA ─────────────────────────────────────────────────────
+#
+# A etapa 1 da captura NAO e Python: `minerar_captura.py` chama
+#
+#     npx ts-node src/capture-cli.ts --sessao ... --poly ... --zoom ...
+#
+# e a imagem `playwright/python` NAO traz Node — so a `playwright/javascript`
+# traz. O sintoma foi este, depois de a area ja ter sido carregada e a sessao
+# criada, com a rodada morrendo no primeiro subprocesso:
+#
+#     FileNotFoundError: [Errno 2] No such file or directory: 'npx'
+#
+# `--no-install-recommends` e a limpeza do apt no mesmo RUN: sem isso a camada
+# guarda a lista de pacotes do apt inteira, que nao serve para nada em execucao.
+USER root
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
+ && mkdir -p /etc/apt/keyrings \
+ && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+      | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
+ && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" \
+      > /etc/apt/sources.list.d/nodesource.list \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends nodejs \
+ && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# `npm ci` e nao `npm install`: ele obedece ao package-lock.json e falha se os
+# dois discordarem, em vez de resolver versao sozinho. Numa imagem, resolver
+# versao em tempo de build e o comeco de "funciona aqui e nao la".
+#
+# O `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD` existe porque o pacote `playwright` do
+# npm quer baixar OUTRA copia dos navegadores — a imagem ja traz os dela, na
+# versao que casa com o Python, e a segunda copia so pesaria mais um giga.
+COPY package.json package-lock.json ./
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+RUN npm ci --no-audit --no-fund
+
 COPY . .
 
 # Usuário sem privilégio, como na API. A imagem do Playwright já traz `pwuser`

@@ -515,7 +515,21 @@ def do_municipio(cod: str, limite: int = 0, aplicar: bool = False,
               (endereco, logradouro, numero, complemento, bairro, cep, cidade, uf,
                metodo, motivo, modelo)
             values %s
-            on conflict (endereco) do update set
+            -- `id_empresa` ENTROU NA CHAVE em 31/08/2026 (migracao 0014), e o
+            -- alvo do conflito precisa acompanhar. A tabela saiu de
+            -- `resources_root`, onde nao tinha tenant nenhum, para
+            -- `radar_comercial`, e o indice unico virou
+            -- `(id_empresa, endereco)` — senao a segmentacao de um cliente
+            -- impediria a de outro para o mesmo texto de endereco.
+            --
+            -- Com o alvo antigo o Postgres recusa a instrucao inteira:
+            --   InvalidColumnReference: there is no unique or exclusion
+            --   constraint matching the ON CONFLICT specification
+            --
+            -- `id_empresa` nao e passado pelo INSERT: o gatilho
+            -- `preencher_empresa()` o carimba antes, e o conflito e avaliado
+            -- depois disso.
+            on conflict (id_empresa, endereco) do update set
               logradouro = excluded.logradouro, numero = excluded.numero,
               complemento = excluded.complemento, bairro = excluded.bairro,
               cep = excluded.cep, cidade = excluded.cidade, uf = excluded.uf,

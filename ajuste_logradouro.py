@@ -535,7 +535,11 @@ def ingerir(rundir: Path, cod: str, aplicar: bool) -> None:
           (fonte, record_id, scope_id, logradouro_original, logradouro_marcado,
            tier, origem, risco, numero_canonico, complemento_organizado, run_id)
         values %s
-        on conflict (fonte, record_id) do update set
+        -- Mesma razao do `segmentar_endereco`: a migracao 0014 trouxe esta
+        -- tabela para `radar_comercial` e pos `id_empresa` na frente do
+        -- indice unico. Sem isso, a correcao de logradouro que um cliente
+        -- revisou bloquearia a de outro para o mesmo `(fonte, record_id)`.
+        on conflict (id_empresa, fonte, record_id) do update set
           scope_id = excluded.scope_id,
           logradouro_original = excluded.logradouro_original,
           logradouro_marcado = excluded.logradouro_marcado,
