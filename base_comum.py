@@ -63,16 +63,31 @@ def conectar_referencia():
     """
     import psycopg2
 
-    # A base publica e escrita por PROCESSO, nao por usuario — e por isso vai
-    # pela 7100 (sessao). `COPY` de 111 milhoes de linhas precisa de conexao que
-    # nao volte ao pool no meio.
-    dsn = (os.environ.get("A2L_PIPELINE_DB_URL") or "").strip()
+    # `resources_loader`, E NAO `app_user`.
+    #
+    # O schema `resources_root` pertence a `resources_loader` — o papel existe
+    # justamente para carregar base publica, e foi assim que quem montou a stack
+    # desenhou. Usar `app_user` exigiria dar a ele CREATE no schema e a posse das
+    # tabelas, porque `base_cnefe.py` DERRUBA e RECRIA a `ibge_cnefe` com as
+    # colunas lidas do cabecalho do CSV do IBGE. Isso divergiria do doc 23 ("sem
+    # posse, sem BYPASSRLS") para resolver um problema que o desenho ja resolve.
+    #
+    # PELA 7100 (sessao), e nao pela 7110: `COPY` de 111 milhoes de linhas
+    # precisa de conexao que nao volte ao pool no meio.
+    dsn = (os.environ.get("A2L_RECURSOS_DB_URL") or "").strip()
     if not dsn:
+        _n = chr(10)          # o escape nao sobrevive a um heredoc
         raise RuntimeError(
-            "A2L_PIPELINE_DB_URL nao esta no .env, e a base publica precisa "
-            "dela: ela e carregada por COPY longo, que morre em modo transacao. "
-            "Ate 31/08/2026 a falta desta variavel caia no banco do produto e "
-            "despejaria a base publica dentro do schema do cliente.")
+            "A2L_RECURSOS_DB_URL nao esta no .env." + _n + _n +
+            "  E a conexao que carrega a base publica, com o papel que e" + _n +
+            "  dono do schema:" + _n + _n +
+            "    A2L_RECURSOS_DB_URL=postgresql://resources_loader.a2l:"
+            "<senha>@127.0.0.1:7100/a2l" + _n + _n +
+            "  NAO ha queda para outra variavel, de proposito. Ate" + _n +
+            "  31/08/2026 esta funcao caia no banco do PRODUTO quando a" + _n +
+            "  variavel faltava, e isso despejaria 111 milhoes de linhas" + _n +
+            "  de base publica dentro do schema do cliente. Falhar aqui" + _n +
+            "  e mais barato.")
 
     return psycopg2.connect(
         dsn,
