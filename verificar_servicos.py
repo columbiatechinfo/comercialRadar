@@ -90,18 +90,21 @@ def banco_produto() -> bool:
         return True
     except Exception as e:
         _linha(RUIM, "banco do produto", f"{type(e).__name__}")
-        # A CAUSA MAIS COMUM, e a que custou meia hora da primeira vez.
-        if not _porta(I9, 5444):
-            print("       A porta 5444 não responde de fora, mas o container "
-                  "costuma estar de pé.\n"
-                  "       O encaminhamento do Windows para o WSL perde a amarra "
-                  "no reinício:\n"
-                  "       as regras existem mas ficam presas em 127.0.0.1. "
-                  "Reaplicá-las resolve —\n"
-                  "       `netsh interface portproxy delete/add v4tov4 "
-                  "listenaddress=100.115.117.49 ...`\n"
-                  "       (reiniciar o iphlpsvc NÃO basta: a regra precisa ser "
-                  "reinserida).")
+        # A CAUSA MAIS COMUM.
+        #
+        # ATÉ 30/08/2026 ESTE CONSELHO FALAVA DE `netsh interface portproxy`: o
+        # encaminhamento do Windows para o WSL do i9 perdia a amarra a cada
+        # reinício, as regras ficavam presas em 127.0.0.1, e reinseri-las era a
+        # cura (reiniciar o `iphlpsvc` não bastava). Aquela máquina não existe
+        # mais — o conselho mandava mexer em coisa que não há, que é pior do que
+        # não dar conselho nenhum.
+        if not _porta(endpoints.LAN, 7110):
+            print("       O pooler não responde na 7110. Ele é um container:\n"
+                  "       `docker ps | grep supabase-pooler` e\n"
+                  "       `docker logs --tail 40 supabase-pooler`.\n"
+                  "       Se estiver de pé e ainda assim recusar, confira o nome\n"
+                  "       do usuário: o Supavisor exige o tenant embutido\n"
+                  "       (`app_user.a2l`) e, sem ele, responde ENOIDENTIFIER.")
         return False
 
 

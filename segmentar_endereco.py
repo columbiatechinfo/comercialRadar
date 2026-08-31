@@ -71,11 +71,6 @@ import endpoints
 SPARK = endpoints.VLLM
 MODELO = os.environ.get("SPARK_MODELO", "qwen3vl-moe")
 
-# O i9. Está aqui pelo nome para que a recusa diga QUAL máquina foi barrada e
-# por quê, em vez de falhar com "endpoint inválido" e deixar quem leu sem saber
-# que existe uma regra.
-I9 = endpoints.LAN
-
 CAMPOS = ("logradouro", "numero", "complemento", "bairro", "cep", "cidade", "uf")
 
 SKILL = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -166,23 +161,12 @@ ENDEREÇOS:
 
 
 def _conferir_endpoint(url: str) -> None:
-    """A IA roda na Spark. Só nela.
+    """A IA roda na Spark. Só nela — a guarda vive no `endpoints`.
 
-    Recusa explícita em vez de "funciona e ninguém percebe": se um dia alguém
-    apontar `SPARK_LLM_URL` para o i9 para "resolver rápido", a rodada para aqui
-    com o motivo escrito, em vez de consumir a máquina que segura o Postgres de
-    produção e a extração estadual.
+    Era uma lista negra de um IP aqui dentro, e ficou cega quando aquela máquina
+    saiu do ar: o IP deixou de casar e a recusa passou a não recusar nada.
     """
-    if I9 in url:
-        raise SystemExit(
-            f"\n❌ RECUSADO: {url} é o i9, e a IA não roda no i9.\n\n"
-            f"   O i9 é a máquina do trabalho pesado de dados — DuckDB sobre o\n"
-            f"   Overture, o PBF do OSM e o Postgres de produção. Modelo ali\n"
-            f"   disputa a mesma RAM e cria uma segunda verdade sobre qual\n"
-            f"   modelo respondeu o quê.\n\n"
-            f"   Aponte SPARK_LLM_URL para a Spark.")
-    if not url.startswith("http"):
-        raise SystemExit(f"SPARK_LLM_URL inválida: {url!r}")
+    endpoints.conferir_endpoint_de_ia(url, "SPARK_LLM_URL")
 
 
 def _cru(s: str) -> str:

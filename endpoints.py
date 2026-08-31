@@ -164,3 +164,52 @@ def esquecer_token() -> None:
     """Descarta o token guardado — para teste, e para reagir a um 401 tardio."""
     with _lock:
         _token["valor"], _token["expira"] = "", 0.0
+
+# ──────────────────────────────────────────────────────────────────────────
+# A IA roda num lugar so
+# ──────────────────────────────────────────────────────────────────────────
+#
+# Regra do dono do produto, 25/08/2026: a única máquina que carrega modelo é a
+# Spark. Modelo em qualquer outra disputa RAM com o Postgres de produção e com a
+# extração estadual, e cria uma segunda verdade sobre qual modelo respondeu o
+# quê — que ninguém consegue auditar depois.
+#
+# ESTA GUARDA JÁ FICOU CEGA UMA VEZ, e é por isso que ela mudou de forma. Ela
+# era uma lista NEGRA de um IP só (`if "100.115.117.49" in url`). Quando aquela
+# máquina foi desligada e o código passou a resolver endereços pelo módulo, o IP
+# deixou de casar: a guarda continuou lá, verde na leitura, recusando nada.
+#
+# Lista BRANCA não envelhece assim. Máquina nova só entra aqui de propósito.
+
+#: Onde é legítimo haver modelo. `vllm.stack` é o nome que o Caddy resolve;
+#: 192.168.3.20 é a Spark no cabo, alcançável só por dentro do servidor.
+HOSTS_DE_IA = ("vllm.stack", "192.168.3.20")
+
+
+def _host(url: str) -> str:
+    from urllib.parse import urlsplit
+    return (urlsplit(url).hostname or "").lower()
+
+
+def conferir_endpoint_de_ia(url: str, variavel: str = "VLLM_URL") -> None:
+    """Levanta `SystemExit` se `url` não for o vLLM sancionado.
+
+    A recusa DIZ qual host foi barrado. Falhar com "endpoint inválido" deixaria
+    quem leu sem saber que existe uma regra — e a próxima pessoa apontaria para
+    a mesma máquina de novo.
+    """
+    if not url or not url.startswith("http"):
+        raise SystemExit(f"{variavel} inválida: {url!r}")
+
+    alvo = _host(url)
+    if alvo in HOSTS_DE_IA or alvo == _host(VLLM):
+        return
+
+    raise SystemExit(
+        f"\n❌ RECUSADO: {url}\n\n"
+        f"   O host `{alvo}` não é máquina de IA. A única que carrega modelo é\n"
+        f"   a Spark, servida pelo vLLM em {' ou '.join(HOSTS_DE_IA)}.\n\n"
+        f"   Modelo em qualquer outra máquina disputa a RAM do Postgres de\n"
+        f"   produção e da extração estadual, e cria uma segunda verdade sobre\n"
+        f"   qual modelo respondeu o quê.\n\n"
+        f"   Aponte {variavel} para o vLLM.")

@@ -159,29 +159,22 @@ def test_dois_pois_sem_nome_no_mesmo_bairro_nao_fundem():
     assert ev.avaliar(a, b)["decisao"] == "descartar"
 
 
-def test_o_i9_recebe_o_codigo_a_cada_importacao():
-    """A causa ESTRUTURAL do retorno do defeito.
+# O TESTE `test_o_i9_recebe_o_codigo_a_cada_importacao` SAIU DAQUI.
+#
+# Ele guardava a causa ESTRUTURAL de um defeito que voltou depois de corrigido: o
+# i9 rodava uma copia propria de `extracao_estadual.py`, sem sincronia com o
+# repositorio. A correcao do vazio do pandas existia aqui e nao la, e em
+# 26/08/2026 a importacao de Bento Goncalves regravou 1.408 POIs de nome "nan" —
+# e quatro clubes com piscina distintos, a ate 119 m um do outro, foram FUNDIDOS
+# por "nomes iguais (100%)".
+#
+# A cura era mandar o arquivo em base64 ANTES de cada execucao, e o teste cobrava
+# exatamente isso. Em 30/08/2026 o sistema passou a rodar no servidor: ha UMA
+# copia do codigo, a mesma que se edita. A causa estrutural deixou de existir, e
+# com ela a cura.
+#
+# O QUE CONTINUA VALENDO, e por isso fica escrito aqui: conferir a versao e
+# AVISAR nao teria bastado — o aviso chega quando o dado ja entrou. Se algum dia
+# voltar a haver duas copias de um importador, a unica defesa que funciona e a
+# copia viajar junto, nao o alerta.
 
-    O i9 rodava uma cópia própria de `extracao_estadual.py`, sem sincronia com o
-    repositório: a correção de 25/08 existia aqui e não lá, e a importação de
-    26/08 regravou 1.408 POIs de nome "nan".
-
-    Conferir a versão e avisar não bastaria — o aviso chega quando o dado já
-    entrou. O arquivo vai antes de cada execução.
-    """
-    import io
-    s = io.open(os.path.join(RAIZ, "minerar_tudo.py"), encoding="utf-8").read()
-    i = s.index("def _importar_no_i9(")
-    j = s.index("def _etapa(", i)
-    corpo = s[i:j]
-    assert "base64" in corpo and "extracao_estadual.py" in corpo, \
-        "o i9 voltou a rodar a própria cópia do importador"
-    assert corpo.index("base64.b64encode") < corpo.index("importando {cod} la"), \
-        "o código precisa ir ANTES de a importação rodar"
-    # O que importa é o que se ESCREVE no i9, não o que se menciona. `config.py`
-    # aparece no comentário logo acima, explicando por que ele NÃO vai: é
-    # legitimamente diferente lá (credencial e caminho daquela máquina), e
-    # sobrescrevê-lo quebraria o i9.
-    gravados = re.findall(r"base64 -d > ([\w./]+)", corpo)
-    assert gravados == ["extracao_estadual.py"], \
-        f"o envio passou a gravar outros arquivos no i9: {gravados}"

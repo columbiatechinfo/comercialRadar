@@ -100,7 +100,15 @@ def test_o_prompt_diz_que_telefone_igual_nao_e_prova():
 
 
 def test_a_ia_do_julgamento_tambem_e_so_da_spark():
-    """Mesma regra do resto da cadeia: o i9 não carrega modelo."""
+    """Mesma regra do resto da cadeia: só a Spark carrega modelo.
+
+    O julgamento importa a guarda do `segmentar_endereco`, que por sua vez a
+    pega do `endpoints`. Este teste existe para que a importação não se perca
+    numa refatoração — o julgamento é caro e roda sozinho.
+    """
     with pytest.raises(SystemExit) as e:
         J._conferir_endpoint("http://100.115.117.49:8081/v1")
-    assert "i9" in str(e.value)
+    assert "100.115.117.49" in str(e.value), \
+        "a recusa precisa dizer QUAL host foi barrado"
+
+

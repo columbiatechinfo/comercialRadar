@@ -39,23 +39,51 @@ def _dublar(monkeypatch, respostas):
 
 # ─── a IA roda só na Spark ───────────────────────────────────────────────────
 
-def test_o_i9_e_recusado_como_endpoint_de_ia():
+def test_so_o_vllm_sancionado_e_aceito_como_endpoint_de_ia():
     """Regra do dono do produto, 25/08/2026: a única máquina de IA é a Spark.
 
-    O i9 é a máquina do trabalho pesado de DADOS — DuckDB sobre o Overture, o
-    PBF do OSM e o Postgres de produção. Modelo ali disputa a mesma RAM de uma
-    extração estadual e cria uma segunda verdade sobre qual modelo respondeu o
-    quê.
+    Modelo em qualquer outra disputa a mesma RAM de uma extração estadual e do
+    Postgres de produção, e cria uma segunda verdade sobre qual modelo respondeu
+    o quê.
 
-    A recusa é em código porque combinado não impede configuração: bastaria
-    alguém apontar `SPARK_LLM_URL` para o i9 "para resolver rápido" e a regra
-    viraria comentário.
+    A RECUSA MUDOU DE FORMA EM 30/08/2026, e o motivo é o que este teste guarda.
+    Ela era uma lista NEGRA de um IP só — o do i9. Quando aquela máquina foi
+    desligada e o código passou a resolver endereços pelo `endpoints`, o IP
+    deixou de casar: a guarda continuou no arquivo, legível e verde, recusando
+    coisa nenhuma. Lista negra envelhece quando uma máquina morre; lista branca
+    não.
+
+    Por isso o teste agora prova as duas pontas: máquina de fora é barrada COM O
+    NOME dela, e a sancionada passa.
     """
-    with pytest.raises(SystemExit) as e:
-        S._conferir_endpoint("http://100.115.117.49:8081/v1")
-    assert "i9" in str(e.value), "a recusa precisa dizer QUAL máquina foi barrada"
-    # E a da Spark passa.
-    S._conferir_endpoint("http://100.85.164.54:8000/v1")
+    import endpoints
+
+    for fora in ("http://100.115.117.49:8081/v1",   # o i9, desligado
+                 "http://192.168.3.10:7400/v1",     # o próprio servidor
+                 "http://127.0.0.1:11434/v1"):      # um Ollama de mesa
+        with pytest.raises(SystemExit) as e:
+            S._conferir_endpoint(fora)
+        alvo = fora.split("//")[1].split(":")[0]
+        assert alvo in str(e.value), \
+            "a recusa precisa dizer QUAL host foi barrado, e não disse: %s" % fora
+
+    # E o vLLM sancionado passa — pelo nome e pelo IP da Spark no cabo.
+    for dentro in ("https://vllm.stack/v1", "http://192.168.3.20:7400/v1",
+                   endpoints.VLLM + "/v1"):
+        S._conferir_endpoint(dentro)
+
+
+def test_a_lista_de_maquinas_de_ia_e_branca_e_nao_negra():
+    """Uma lista negra que não recusa nada é pior que nenhuma guarda: ela ocupa
+    o lugar da guarda na leitura de quem revisa."""
+    import endpoints
+    import inspect
+
+    fonte = inspect.getsource(endpoints.conferir_endpoint_de_ia)
+    assert "HOSTS_DE_IA" in fonte, \
+        "a guarda deixou de consultar a lista branca"
+    assert "not in" not in fonte.replace("if not url", ""), \
+        "voltou a haver recusa por exclusão — é a forma que já ficou cega uma vez"
 
 
 # ─── nada é inventado ────────────────────────────────────────────────────────
