@@ -175,7 +175,7 @@ def conectar_como(u: Usuario):
 
     con = psycopg2.connect(
         dsn,
-        options="-c search_path=radar_comercial,public",
+        options="-c search_path=radar_comercial,extensions,public",
         connect_timeout=int(os.environ.get("PG_CONNECT_TIMEOUT", "20")))
     con.autocommit = False
     # Três variáveis, não uma. O tenant isola a empresa; o nível e o id do

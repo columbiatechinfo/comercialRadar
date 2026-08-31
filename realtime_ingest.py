@@ -43,7 +43,7 @@ def _opcoes() -> str:
     conexão. A API é o oposto: lá o tenant vem do token e muda a cada requisição,
     então lá é `SET LOCAL`, dentro da transação, e nunca isto aqui.
     """
-    opts = "-c search_path=radar_comercial,public"
+    opts = "-c search_path=radar_comercial,extensions,public"
 
     # QUEM E O PIPELINE, no padrao A2L.
     #

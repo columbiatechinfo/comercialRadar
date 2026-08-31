@@ -110,7 +110,7 @@ def test_log_nao_pode_ser_editado_nem_apagado(cred):
             port=int(os.environ.get("I9_POSTGRES_PORT", "5444")),
             user=papel, password=os.environ[var],
             dbname=os.environ.get("I9_POSTGRES_DB", "postgres"),
-            options="-c search_path=radar_comercial,public")
+            options="-c search_path=radar_comercial,extensions,public")
 
     # A recusa e SILENCIOSA, e isso precisa estar escrito: sem policy de UPDATE
     # a RLS nao levanta erro, ela nao encontra linha — o resultado e zero linhas
@@ -149,7 +149,7 @@ def test_supervisor_nao_le_o_log(cred):
         port=int(os.environ.get("I9_POSTGRES_PORT", "5444")),
         user="app_user", password=os.environ["CR_APP_PASSWORD"],
         dbname=os.environ.get("I9_POSTGRES_DB", "postgres"),
-        options="-c search_path=radar_comercial,public")
+        options="-c search_path=radar_comercial,extensions,public")
     with con.cursor() as cur:
         cur.execute("select id from core.tb_empresas limit 1")
         cur.execute("select set_config('app.nivel','supervisor',true)")

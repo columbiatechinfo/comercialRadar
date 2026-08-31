@@ -91,7 +91,7 @@ def conectar_referencia():
 
     return psycopg2.connect(
         dsn,
-        options="-c search_path=resources_root,public",
+        options="-c search_path=resources_root,extensions,public",
         connect_timeout=int(os.environ.get("PG_CONNECT_TIMEOUT", "20")))
 
 

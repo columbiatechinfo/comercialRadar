@@ -32,12 +32,23 @@ USO
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 
-import config  # noqa: F401  — carrega o .env
-import area_utils
-import base_comum as bc
+# A RAIZ DO REPOSITORIO NO `sys.path`, e nao e detalhe de estilo.
+#
+# Rodando `python scripts/servidor/carregar_malha.py`, o Python poe
+# `scripts/servidor` no caminho — nao a raiz. `config`, `area_utils` e
+# `base_comum` moram na raiz, e o erro e `ModuleNotFoundError: No module named
+# 'config'`, que descreve o sintoma e esconde a causa (o diretorio de onde se
+# chamou). Os outros scripts do repositorio ja fazem isto; este nasceu sem.
+sys.path.insert(0, os.path.dirname(os.path.dirname(
+    os.path.dirname(os.path.abspath(__file__)))))
+
+import config  # noqa: F401,E402  — carrega o .env
+import area_utils  # noqa: E402
+import base_comum as bc  # noqa: E402
 
 UFS = ["AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS",
        "MG", "PA", "PB", "PR", "PE", "PI", "RJ", "RN", "RS", "RO", "RR", "SC",

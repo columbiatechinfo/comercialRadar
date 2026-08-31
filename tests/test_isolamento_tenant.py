@@ -43,7 +43,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config  # noqa: F401,E402
 
 DSN = (os.environ.get("A2L_DB_URL") or "").strip()
-OPCOES = "-c search_path=radar_comercial,public"
+OPCOES = "-c search_path=radar_comercial,extensions,public"
 
 #: O root da instalação. Ele monta o cenário: a policy de INSERT de
 #: `core.tb_empresas` é `core.eh_suporte()`, então ninguém abaixo de nível 9 cria
