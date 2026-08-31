@@ -215,7 +215,50 @@ coluna, uma a uma — e é o trabalho que falta.
 
 ---
 
-## 6 · O que não pode ser reconstruído
+## 6 · As bases públicas, carregadas em 31/08/2026
+
+Rodaram no servidor, destacadas do terminal (`docker run -d`), porque são horas
+de download e quem dispara pode estar longe, numa rede que cai.
+
+| base | linhas | fonte |
+|---|---|---|
+| `ibge_cnefe` | **111.110.860** | FTP do IBGE, censo 2022, um zip por UF |
+| `rf_empresas` | **69.534.713** | WebDAV público da Receita |
+| `rf_estabelecimentos` | em carga | idem |
+| `ibge_malha` | **5.570** | API de malhas do IBGE, qualidade `intermediaria` |
+| `rf_cnaes` e dicionários | 1.359 + | idem Receita |
+
+### A malha foi PROVADA, e não só carregada
+
+Quatro coordenadas conhecidas caem no município certo — inclusive Itambé/PE, a
+2 km da divisa, que é onde a malha `mínima` erra (em 2026 caía na Paraíba; por
+isso o carregador pede `intermediaria`). O plano confirma
+`Index Scan using ix_malha_geom`, 3 buffers, 0,008 ms: não é varredura sobre os
+5.570 polígonos.
+
+### O que a carga ensinou, em ordem
+
+Sete defeitos, e nenhum apareceria em leitura de código:
+
+1. `conectar_referencia` caía no banco do PRODUTO sem `REF_POSTGRES_HOST` —
+   despejaria a base pública dentro do schema do cliente;
+2. `ibge_cnefe` não pertence à migração: as 34 colunas vêm do cabeçalho do CSV,
+   e a minha criou 2. Com `CREATE TABLE IF NOT EXISTS`, o carregador achou a
+   tabela, não mexeu, e as 27 UFs falharam **depois** de baixar;
+3. o carregador saía com **código 0** tendo falhado tudo. Sem consertar isto, o
+   defeito 2 teria passado como carga bem-sucedida;
+4. `ModuleNotFoundError: config` — o script rodava de `scripts/servidor/` e a
+   raiz não estava no `sys.path`;
+5. `function st_geomfromgeojson does not exist` com o PostGIS instalado: a opção
+   de conexão **sobrescreve** o `search_path` do papel;
+6. o mesmo erro de novo: faltava **`USAGE`** no schema `extensions`. Sem
+   permissão o schema é invisível, e a mensagem fala de função inexistente;
+7. `ibge_malha` sem unicidade em `cod_municipio`, que é a chave natural — a
+   segunda carga duplicaria os 5.570 e o ponto-em-polígono daria duas respostas.
+
+---
+
+## 7 · O que não pode ser reconstruído
 
 - **Os dados.** O banco antigo morreu com a máquina. POIs, imagens e
   anotações não têm backup alcançável.
