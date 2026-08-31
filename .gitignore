@@ -43,6 +43,15 @@ mapa_pois.html
 # história do schema — que é o que explica por que cada coluna existe — vivia
 # só no disco de quem a escreveu. 157 KB de texto.
 !migrations/*.sql
+# E ACONTECEU DE NOVO EM 31/08/2026, com a pasta nova. O schema do padrao A2L
+# foi escrito em `migrations_a2l/`, e a excecao acima nomeia `migrations/` —
+# entao as tres migracoes ficaram FORA do git por horas, existindo so no disco
+# de quem as escreveu. `git add migrations_a2l/` adicionou os .py e o .sh e
+# ignorou os .sql em silencio, e os commits diziam que estavam versionadas.
+#
+# A licao nao e "acrescentar a pasta": e que uma excecao por NOME de pasta
+# quebra na proxima pasta. A excecao passa a ser por PADRAO.
+!migrations*/*.sql
 # Backups do banco (bem pesados — DB tem os bytes das imagens)
 backups_bd/
 
