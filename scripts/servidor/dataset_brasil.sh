@@ -46,7 +46,20 @@ DATASETS="$RAIZ/dados_externos/estadual"
 #
 # O descritor 9 fica aberto enquanto o script vive; o kernel solta a trava
 # sozinho se o processo morrer, entao queda nao deixa cadeado orfao.
-exec 9>"$RAIZ/logs/.dataset_brasil.lock"
+# A PASTA ANTES DA TRAVA, e isto custou um diagnostico errado.
+#
+# Num conteiner recem-criado `logs/` nao existe. O `exec 9>` falhava com "No
+# such file or directory", o `flock` respondia "Bad file descriptor" — e o
+# script concluia "JA HA uma producao do Brasil rodando". Causa: pasta ausente.
+# Diagnostico: outra execucao em curso. Duas coisas sem relacao nenhuma, e a
+# mensagem mandava esperar por um processo que nao existia.
+mkdir -p "$RAIZ/logs"
+
+exec 9>"$RAIZ/logs/.dataset_brasil.lock" || {
+  echo "NAO consegui criar a trava em $RAIZ/logs/ — problema de permissao ou"
+  echo "  de disco, e NAO outra execucao em curso."
+  exit 2
+}
 if ! flock -n 9; then
   echo "JA HA uma producao do Brasil rodando nesta maquina."
   echo "  Ela e retomavel: quando terminar, rodar de novo pula o que ficou pronto."
