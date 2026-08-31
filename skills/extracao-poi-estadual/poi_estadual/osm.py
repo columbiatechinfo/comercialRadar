@@ -41,12 +41,43 @@ CORE_BRUTO = ["id_fonte", "fonte", "nome", "lat", "lon", "categoria_orig", "ende
               "marca", "status", "data_atualizacao", "osm_type", "osm_id", "osm_tags_json"]
 
 
-def _con(cfg):
+# CORRIDA NA CONVERSAO DE COLUNA LIST — o teto existe por causa dela.
+#
+# `fetchdf()` de um resultado com coluna LIST corrompe a heap quando o DuckDB
+# converte em paralelo. O processo morre com `double free or corruption (out)`
+# e codigo 139, sem excecao Python: nao ha o que capturar, o interpretador ja
+# foi abaixo junto.
+#
+# Medido em 31/08/2026, DuckDB 1.5.4 / pyarrow 25.0.0 / pandas 2.3.3, todos
+# fixados no requirements.txt e instalados antes de qualquer uma das execucoes
+# — o ambiente NAO mudou entre uma UF que passou e outra que abortou:
+#
+#   RS, 8 threads, teto de 2.6GB  -> aborta em `_ways` (3 execucoes, 3 aborts)
+#   RS, 8 threads, teto de  32GB  -> aborta igual, em 5 segundos
+#   RS, 1 thread,  teto de 2.6GB  -> nodes=105315 ways=169626 relations=2263
+#   PE, 8 threads                 -> passa
+#
+# Os numeros da execucao com uma thread batem com os da rodada de duas fontes
+# que tinha dado certo, entao o teto nao muda o dado — so a ordem de conversao.
+#
+# NAO E MEMORIA: com 32 GB de teto numa maquina de 123 GB o abort acontece em
+# cinco segundos, cedo demais para derrame ou pressao. E nao e o arquivo: o PE
+# leu um `.pbf` de 439.839.968 bytes identico ao que o PI abortou lendo. E a
+# corrida, e quem a perde depende de onde caem os limites de chunk daquele
+# arquivo — o que faz a falha parecer deterministica por UF.
+#
+# O teto vale so onde ha coluna LIST: `_ways` (refs) e `_relations` (members).
+# `_nodes` traz id/lat/lon/tags, nenhuma lista, e e o scan mais pesado dos tres
+# — continua em paralelo. Custo medido do teto: 51s -> 69s no OSM do RS.
+THREADS_LIST = 1
+
+
+def _con(cfg, threads=None):
     import duckdb
     con = duckdb.connect()
     con.execute("INSTALL spatial; LOAD spatial;")
     con.execute("SET memory_limit='%s';" % cfg.duckdb_memory)
-    con.execute("SET threads=%d;" % cfg.threads)
+    con.execute("SET threads=%d;" % (threads or cfg.threads))
     con.execute("SET temp_directory='%s';" % cfg.dir_fonte("osm", "ddtmp"))
     return con
 
@@ -188,7 +219,7 @@ def _ways(cfg, man, pbf):
     if os.path.exists(dest):
         return int(pd.read_parquet(dest, columns=["id_fonte"]).shape[0])
     bruto = os.path.join(_dir(cfg, man), "_ways_raw.pkl")
-    con = _con(cfg)
+    con = _con(cfg, THREADS_LIST)  # refs e LIST
     if not os.path.exists(bruto):
         q = ("SELECT id, tags, refs FROM ST_ReadOSM('%s') "
              "WHERE kind='way' AND %s" % (pbf, _where(cfg)))
@@ -252,7 +283,7 @@ def _relations(cfg, man, pbf):
     sup = os.path.join(_dir(cfg, man), "supressao.parquet")
     if os.path.exists(dest):
         return int(pd.read_parquet(dest, columns=["id_fonte"]).shape[0])
-    con = _con(cfg)
+    con = _con(cfg, THREADS_LIST)  # members e LIST
     # `ref_types` e ENUM: `fetchdf()` devolve o CODIGO (int8), nao o rotulo. Sem o
     # cast, todo membro deixaria de ser reconhecido como way e a relation nao teria
     # geometria — falha silenciosa, com contagem zero e nenhum erro.
