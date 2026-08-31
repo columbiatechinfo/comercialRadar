@@ -74,6 +74,21 @@ create index if not exists ix_malha_geom
 create index if not exists ix_malha_nome_uf
   on resources_root.ibge_malha (uf, lower(nome));
 
+-- A CHAVE NATURAL É O CÓDIGO DO MUNICÍPIO, e faltava dizer isso ao banco.
+--
+-- Minha migração 0002 deu à tabela um `id` sintético e mais nada — porque o
+-- gerador dá um a toda tabela que não declara outro. Mas quem carrega a malha
+-- faz `on conflict (cod_municipio) do update`, para que recarregar uma UF
+-- ATUALIZE os municípios em vez de duplicá-los. Sem a restrição, o Postgres
+-- recusa com "there is no unique or exclusion constraint matching the ON
+-- CONFLICT specification" — que é claro sobre o que falta e não sobre onde.
+--
+-- Sem isto, a alternativa seria a carga inserir de novo a cada execução: 5.570
+-- municípios viram 11.140 na segunda rodada, e o ponto-em-polígono passa a
+-- devolver duas respostas para a mesma coordenada.
+create unique index if not exists ux_malha_municipio
+  on resources_root.ibge_malha (cod_municipio);
+
 
 -- ─────────────────────────────────────────────────────────────────────
 -- Quem chama, chama sem qualificar
@@ -87,6 +102,17 @@ create index if not exists ix_malha_nome_uf
 
 alter role app_user          set search_path = radar_comercial, extensions, public;
 alter role resources_loader  set search_path = resources_root, extensions, public;
+
+-- E `USAGE` NO SCHEMA, que o `search_path` sozinho nao da.
+--
+-- Isto custou duas tentativas. Com `extensions` no caminho mas sem permissao de
+-- uso, o schema e INVISIVEL — e o Postgres responde
+-- `function st_geomfromgeojson(unknown) does not exist`, e nao "permissao
+-- negada". A mensagem manda procurar extensao ausente com a extensao
+-- instalada, o papel configurado e a funcao existindo.
+--
+-- `search_path` diz ONDE procurar; `usage` diz se pode olhar. Os dois.
+grant usage on schema extensions to app_user, resources_loader, readonly;
 
 -- O QUE FALTA, E QUE ESTA MIGRAÇÃO NÃO PODE FAZER: `create extension` exige
 -- superusuário. Rodar antes, uma vez, com o papel da plataforma:
