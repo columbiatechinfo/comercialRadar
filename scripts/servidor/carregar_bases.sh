@@ -58,7 +58,20 @@ QUAL="${1:-tudo}"
 UFS="${2:-}"
 
 # ── o roteiro que roda lá dentro ────────────────────────────────────────────
-cat > "$RAIZ/.carga.sh" <<'ROTEIRO'
+#
+# EM `/tmp` DO HOST, e não na raiz do projeto.
+#
+# A primeira versão o escrevia em `$RAIZ/.carga.sh`. Parece inofensivo e não
+# é: um arquivo oculto na raiz, com cara de temporário, dentro de uma pasta
+# que alguém vai limpar. Em 31/08/2026 eu mesmo o apaguei numa faxina de
+# resíduo de depuração, com a carga rodando — e o bash lê script do disco por
+# DESLOCAMENTO, então apagar no meio pode quebrar a execução no ponto
+# seguinte. Passou porque o arquivo é pequeno e já tinha sido lido inteiro,
+# não porque era seguro.
+#
+# Em `/tmp`, com o nome do contêiner, ele não se parece com lixo do projeto.
+ROTEIRO_HOST="/tmp/$NOME.sh"
+cat > "$ROTEIRO_HOST" <<'ROTEIRO'
 set -uo pipefail
 cd /app
 export PYTHONUNBUFFERED=1 PYTHONUTF8=1
@@ -90,11 +103,11 @@ echo "▶ disparando a carga destacada ($QUAL${UFS:+ · $UFS})"
 docker run -d --name "$NOME" \
   --network host \
   --restart no \
-  -v "$RAIZ":/app -v "$VENV":/venv -w /app \
+  -v "$RAIZ":/app -v "$VENV":/venv -v "$ROTEIRO_HOST":/roteiro.sh:ro -w /app \
   -e QUAL="$QUAL" -e UFS="$UFS" \
   -e PG_CONNECT_TIMEOUT=30 \
   --log-opt max-size=50m --log-opt max-file=5 \
-  "$IMAGEM" bash /app/.carga.sh >/dev/null
+  "$IMAGEM" bash /roteiro.sh >/dev/null
 
 sleep 2
 echo
