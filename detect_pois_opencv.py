@@ -21,6 +21,7 @@ import numpy as np
 import httpx
 from PIL import Image as PILImage
 from playwright.async_api import async_playwright, Browser, Page
+import endpoints
 
 # ── Configuração ──────────────────────────────────────────────────────────────
 VP_W, VP_H   = 1024, 768
@@ -31,7 +32,7 @@ WORKERS      = 3
 DELAY_NAV    = 2.5
 DELAY_CLICK  = 1.5
 
-QWEN_URL     = "http://100.115.117.49:8081/v1/chat/completions"
+QWEN_URL     = endpoints.VLLM + "/v1/chat/completions"
 QWEN_MODEL   = "qwen2-vl"
 QWEN_TIMEOUT = 60
 

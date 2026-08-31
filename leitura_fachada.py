@@ -36,12 +36,13 @@ import base_comum as bc
 import imagens
 import anotar
 import prompts_fachada as P
+import endpoints
 
 # O endpoint é da Spark rodando vLLM. Ollama saiu: recusava `-np > 1` para as
 # arquiteturas `qwen3vl` e `qwen35moe`, o que matava o paralelismo e punha a
 # carga inteira em 213 horas.
 MODELO_PADRAO = os.environ.get("VLLM_MODELO", "qwen3vl-moe")
-BASE_PADRAO = os.environ.get("VLLM_URL", "http://100.85.164.54:8000/v1")
+BASE_PADRAO = endpoints.VLLM
 
 # 3.0.0 — a pergunta virou "há comércio aqui?" em vez de "este comércio está
 # aqui?", e a leitura passou a olhar o GIRO inteiro do panorama, não só a

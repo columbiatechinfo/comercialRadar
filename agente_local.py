@@ -40,10 +40,11 @@ import urllib.parse
 import urllib.request
 
 import base_comum as bc
+import endpoints
 
-SPARK = os.environ.get("SPARK_LLM_URL", "http://100.85.164.54:8000/v1")
+SPARK = endpoints.VLLM
 MODELO = os.environ.get("SPARK_MODELO", "qwen3vl-moe")
-SEARX = (os.environ.get("SEARXNG_URL", "http://100.115.117.49:8888")
+SEARX = (endpoints.SEARXNG
          .split(",")[0].strip())
 NL = chr(10)
 MARCA_INSTRUCOES = "<<ferramentas-por-texto>>"
@@ -263,7 +264,7 @@ def abrir_pagina(url: str, limite: int = 6000) -> dict:
     return {"status": status, "texto": txt[:limite]}
 
 
-NOMINATIM = os.environ.get("NOMINATIM_URL", "http://100.115.117.49:8080")
+NOMINATIM = endpoints.NOMINATIM
 
 
 def buscar_lugar(nome: str, cidade: str = "", uf: str = "", limite: int = 5) -> dict:

@@ -46,6 +46,7 @@ from datetime import datetime, timezone
 import config          # .env + UTF-8
 import area_utils
 import base_comum as bc
+import endpoints
 
 SKILL = Path(__file__).resolve().parent / "skills" / "leitura-fachada-cadastral"
 SCHEMA_VERSAO = "1.5.0"
@@ -65,7 +66,7 @@ MODELO_PADRAO = "gpt-4o-mini"
 # olhar o relógio do cartão, e para reprocessar à vontade quando a skill mudar.
 # `think: false` é obrigatório: modelo com "thinking" devolve `response` vazio
 # sem isso, e o placar do teste vira ficção.
-OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://100.115.117.49:11434").rstrip("/")
+OLLAMA_URL = endpoints.VLLM
 MODELOS_LOCAIS = ("qwen2.5vl:7b", "qwen2.5vl:3b")
 
 # JANELA DE CONTEXTO do modelo local — e por que ela é variável.
@@ -2059,7 +2060,7 @@ def _openai():
 # apontar para `http://100.115.117.49:11434/v1` usa o Ollama do i9 pelo MESMO
 # código — foi assim que este caminho pôde ser testado antes de a Spark subir.
 LOCAL_URL = os.environ.get(
-    "VLLM_URL", os.environ.get("LOCAL_LLM_URL", "http://100.85.164.54:8000/v1")
+    "VLLM_URL", endpoints.VLLM
 ).rstrip("/")
 
 _CLIENTE_LOCAL = None

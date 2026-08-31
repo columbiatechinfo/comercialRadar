@@ -32,9 +32,9 @@ import psycopg2
 from fastapi import Depends, Header, HTTPException
 
 import config  # noqa: F401  (carrega o .env)
+import endpoints
 
-_GW = (os.environ.get("SUPABASE_URL")
-       or f"http://{os.environ.get('I9_POSTGRES_HOST', '100.115.117.49')}:8000").rstrip("/")
+_GW = endpoints.SUPABASE
 _ANON = (os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or "").strip()
 
 CACHE_S = 60

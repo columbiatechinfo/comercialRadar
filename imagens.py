@@ -21,13 +21,13 @@ from __future__ import annotations
 import os
 import urllib.error
 import urllib.request
+import endpoints
 
 BUCKET = os.environ.get("SUPABASE_BUCKET", "comercialradar")
 
 
 def _gateway() -> str:
-    return (os.environ.get("SUPABASE_URL")
-            or f"http://{os.environ.get('I9_POSTGRES_HOST', '100.115.117.49')}:8000").rstrip("/")
+    return endpoints.SUPABASE
 
 
 def _chave() -> str:

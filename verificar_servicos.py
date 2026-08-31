@@ -39,9 +39,10 @@ import urllib.parse
 import urllib.request
 
 import config  # noqa: F401  (carrega o .env)
+import endpoints
 
-I9 = "100.115.117.49"
-DGX = "100.85.164.54"
+I9 = endpoints.LAN
+DGX = endpoints.LAN          # a Spark so responde por dentro do servidor
 UA = {"User-Agent": "ComercialRadar/verificacao"}
 
 OK, RUIM, AVISO = "OK ", ">> ", " ~ "
@@ -229,7 +230,7 @@ def llm(rapido: bool = False) -> bool:
     """
     base = (os.environ.get("VLLM_URL")
             or os.environ.get("LOCAL_LLM_URL")
-            or "http://100.85.164.54:8000/v1").rstrip("/")
+            or endpoints.VLLM).rstrip("/")
     try:
         d, s = _http(base + "/models", timeout=20)
     except Exception as e:

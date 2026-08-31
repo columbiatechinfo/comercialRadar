@@ -66,14 +66,15 @@ import urllib.error
 import urllib.request
 
 import config  # noqa: F401  (.env + UTF-8)
+import endpoints
 
-SPARK = os.environ.get("SPARK_LLM_URL", "http://100.85.164.54:8000/v1")
+SPARK = endpoints.VLLM
 MODELO = os.environ.get("SPARK_MODELO", "qwen3vl-moe")
 
 # O i9. Está aqui pelo nome para que a recusa diga QUAL máquina foi barrada e
 # por quê, em vez de falhar com "endpoint inválido" e deixar quem leu sem saber
 # que existe uma regra.
-I9 = "100.115.117.49"
+I9 = endpoints.LAN
 
 CAMPOS = ("logradouro", "numero", "complemento", "bairro", "cep", "cidade", "uf")
 

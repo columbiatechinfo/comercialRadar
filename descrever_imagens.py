@@ -43,6 +43,7 @@ from concurrent.futures import ThreadPoolExecutor
 from PIL import Image
 
 import realtime_ingest
+import endpoints
 
 BASE = Path(__file__).resolve().parent
 SV_DIR = BASE / "streetview"
@@ -62,7 +63,7 @@ RECENCIA_MESES = 12                     # janela p/ "recomendar visita" (coment/
 # código, porque ele também expõe `/v1` — foi assim que este caminho pôde ser
 # exercitado antes de a Spark subir.
 LOCAL_URL = os.environ.get(
-    "VLLM_URL", os.environ.get("LOCAL_LLM_URL", "http://100.85.164.54:8000/v1")
+    "VLLM_URL", endpoints.VLLM
 ).rstrip("/")
 MODELO_PADRAO = os.environ.get("MODELO_VISAO", "qwen3vl-moe")
 

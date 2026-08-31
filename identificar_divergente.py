@@ -37,9 +37,10 @@ import base_comum as bc
 import imagens
 import prompts_fachada as P
 import streetview_capture as SV
+import endpoints
 
 MODELO = os.environ.get("VLLM_MODELO", "qwen3vl-moe")
-BASE = os.environ.get("VLLM_URL", "http://100.85.164.54:8000/v1")
+BASE = endpoints.VLLM
 
 # `fov` fechado: aqui a missão é LER, não enxergar. 30° sobre uma testada de
 # loja a 15 m enche o quadro com a fachada — que é o oposto do que a panorâmica
