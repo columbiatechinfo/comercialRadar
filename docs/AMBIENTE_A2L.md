@@ -30,6 +30,7 @@ Blocos do doc 17: faixa 7000–7999, 100 por categoria, incremento de 10.
 |---|---|---|
 | `supabase-pooler` sessão | 7100 | contêiner (5432 interno) |
 | `supabase-pooler` transação | 7110 | contêiner (6543 interno) |
+| `supabase-db` | — | **não publica porta**; só pela rede do Docker |
 | Supabase gateway (Kong) | 7120 | contêiner |
 | `api-recursos` | 7700 | `compose.api-recursos.yml` |
 | `api-identidade` | 7710 | `compose.api-identidade.yml` |
@@ -78,7 +79,12 @@ está vazio; o Radar Comercial é o primeiro a povoar.
 `migrator` (dono das tabelas, só migrações) · `app_user` (runtime, sem posse e
 sem `BYPASSRLS`) · `readonly` · `authenticated`.
 
-**Não existe papel com `BYPASSRLS`.** O root atravessa empresas *dentro da
+Existem também `app_dev` (o par de desenvolvimento, que não conecta no banco de
+produção) e `resources_loader`, dono do `resources_root`.
+
+**Nenhum papel disponível à aplicação tem `BYPASSRLS`** — só os da plataforma
+(`postgres`, `service_role`, `supabase_admin`, `supabase_etl_admin`,
+`supabase_read_only_user`), e nenhum deles é para uso do produto. O root atravessa empresas *dentro da
 política*, por `core.eh_suporte()`. Isso resolve sozinho a pergunta de qual
 papel o `root` do painel usaria: nenhum novo.
 
@@ -98,8 +104,24 @@ isso responde `ENOIDENTIFIER`, que é erro longe da causa.
 > escondida.
 
 Variáveis no `.env` do servidor (valores escritos com `read -rs`, nunca por
-chat): `A2L_DB_URL` (app_user.a2l, 7110), `A2L_MIGRATOR_URL` (migrator.a2l,
-7110). Falta `A2L_PIPELINE_DB_URL` (app_user.a2l, **7100**).
+chat), **as três conferidas conectando em 31/08/2026**:
+
+| variável | papel | porta |
+|---|---|---|
+| `A2L_DB_URL` | `app_user.a2l` | 7110 |
+| `A2L_MIGRATOR_URL` | `migrator.a2l` | 7110 |
+| `A2L_PIPELINE_DB_URL` | `app_user.a2l` | 7100 |
+
+**`inet_server_port()` devolve 7100 nas três**, e isso confundiu a conferência
+por um tempo: não é a porta do host. O Postgres escuta na 7100 **dentro** do
+contêiner (`POSTGRES_PORT=7100` no ambiente do pooler) — dois espaços de nome
+diferentes com o mesmo número.
+
+A separação de modos foi provada pela **configuração** (`POOLER_POOL_MODE`,
+`mode_type=transaction` no tenant, e o mapeamento 5432/6543 padrão do
+Supavisor), **não pelo comportamento**: com um cliente só e pool ocioso, o
+Supavisor devolve o mesmo backend e um `SET` de sessão sobrevive nas duas
+portas. A diferença aparece sob concorrência.
 
 ---
 
@@ -136,6 +158,11 @@ core.eh_suporte() or id_empresa = core.empresa_atual()
 
 com `hierarquia >= N` quando o nível importa. `FORCE ROW LEVEL SECURITY` em toda
 tabela de negócio, e `id_empresa` como **primeira coluna de todo índice**.
+
+Permissões no `radar_comercial`, conferidas em 31/08/2026 e **já corretas**:
+`migrator` é dono e tem `CREATE`; `app_user` e `readonly` têm só `USAGE`.
+`authenticated` **não tem nem `USAGE`** — se o frontend for ler por PostgREST
+com `Accept-Profile: radar_comercial`, isso precisa ser concedido.
 
 ### O pipeline não tem quem seja
 
