@@ -450,7 +450,9 @@ def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--area", default=area_utils.AREA_PADRAO)
-    p.add_argument("--sessao", required=True)
+    # `required` deixa de valer com `--so-diagnostico`: pedir o nome da sessao
+    # para NAO rodar sessao nenhuma e obrigar a inventar um valor descartavel.
+    p.add_argument("--sessao", default="")
     p.add_argument("--zoom", type=int, default=19)
     p.add_argument("--workers", type=int, default=10)
     p.add_argument("--capture-workers", dest="capture_workers", type=int, default=10)
@@ -470,6 +472,8 @@ def main(argv=None) -> int:
     p.add_argument("--pular-descoberta", dest="pular_descoberta",
                    action="store_true",
                    help="não varre as categorias do Maps nesta rodada")
+    p.add_argument("--so-diagnostico", dest="so_diagnostico", action="store_true",
+                   help="mostra quais etapas rodariam, e SAI sem rodar nenhuma")
     p.add_argument("--produzir-bases", dest="produzir_bases", action="store_true",
                    help="produz o dataset da UF. São horas de CPU e disco, e "
                         "nesse tempo a captura não anda.")
@@ -488,6 +492,16 @@ def main(argv=None) -> int:
     _diagnostico(uf, cod_previa, cidade, a.empresa,
                  {"bases": a.pular_bases, "cadastur": a.pular_cadastur,
                   "ifood": a.pular_ifood, "descoberta": a.pular_descoberta})
+
+    if a.so_diagnostico:
+        _log("")
+        _log("  (--so-diagnostico: nada foi executado)")
+        return 0
+
+    if not a.sessao:
+        _log("❌ --sessao é obrigatório para rodar. Para só ver o quadro acima, "
+             "use --so-diagnostico.")
+        return 2
 
     # O CÓDIGO DO MUNICÍPIO NÃO DEPENDE DAS BASES PÚBLICAS.
     #
