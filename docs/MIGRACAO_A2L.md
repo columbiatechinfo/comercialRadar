@@ -22,6 +22,9 @@ e [24 · Adequação de sistemas existentes](../../avaliacoes_recomendacoes_anal
 | dados minerados | **migram todos**, com `tenant_id` reescrito para a empresa nova |
 | arquitetura | **API e frontend separados**, um par por sistema |
 | acesso | túnel SSH com a chave do pendrive |
+| IA de visão | vLLM na Spark, com token |
+| imagens | Supabase Storage na `:7120`, bucket `radar_comercial` |
+| proxies | recurso da API 7700, com token |
 
 **A empresa e o administrador novos:**
 
@@ -48,10 +51,19 @@ Não são suposições: cada um foi contado no código em 30/08/2026.
 Resíduo no `.env`: `POSTGRES_HOST=localhost:5432 / DB=comercialradar`, que já não é
 usado por nada.
 
-**A separação em dois bancos tinha um motivo**, registrado no `base_comum.py`: o
-CNEFE disputaria o page cache com o Auth. Ao juntar tudo no `a2l`, esse risco
-volta — e é preciso dizer onde ele quebra: consulta pesada no CNEFE concorrendo
-com o login. Mitigação a decidir na execução (índice, `pg_prewarm`, ou horário).
+**Levantei uma ressalva sobre page cache e ela não procede** — registrado porque
+custou uma volta. O `base_comum.py` justifica a separação em dois bancos dizendo
+que o CNEFE disputaria o page cache com o Auth. Medido antes de aceitar:
+
+- **o acesso é por município, não pela tabela toda.** Todas as consultas são
+  `WHERE cod_municipio = %s` — `ajuste_logradouro`, `corrigir_coordenada`,
+  `cadastur`, `coletivas_radar`. Lêem um município por vez;
+- **o Postgres já se protege disso.** Varredura sequencial de tabela maior que
+  1/4 do `shared_buffers` usa um *buffer ring* de 256 KB, criado justamente para
+  não despejar o cache. O cenário temido é o que esse mecanismo impede.
+
+`resources_root` no mesmo banco, leitura para todos, e o schema da ferramenta
+apenas referenciando.
 
 ### 2 · Identidade — o conflito mais profundo
 
@@ -71,8 +83,8 @@ com o login. Mitigação a decidir na execução (índice, `pg_prewarm`, ou hor�
 | SearXNG `100.115.117.49:8888` | `searxng.stack` + token da 7700 |
 | Nominatim `100.115.117.49:8080` | `nominatim.stack` + token |
 | Ollama `100.115.117.49:11434` | `vllm.stack` + token (IA passa a ser na Spark) |
-| OpenCV `100.115.117.49:8081` | **não existe no catálogo novo** |
-| upload `100.115.117.49:8000` | **idem** |
+| Qwen2-VL `100.115.117.49:8081` | `vllm.stack` + token — **é IA de visão, não OpenCV** |
+| upload `100.115.117.49:8000` | já é **Supabase Storage**: muda para `:7120`, bucket `radar_comercial` |
 
 **Nenhuma manda token.**
 
@@ -90,11 +102,18 @@ Tudo aponta para `100.115.117.49`. O novo é `192.168.3.10` na LAN e
 
 **620 ocorrências em 143 arquivos.**
 
-### 7 · Fora do catálogo
+### 7 · Proxies — passam a ser recurso do catálogo
 
-O pool de proxies Webshare (500 IPs, 250 BR + 250 CO) não aparece na lista de
-recursos da 7700 — hoje é chamado direto na API da Webshare. Decidir se entra no
-catálogo ou continua como está.
+O pool Webshare (500 IPs, 250 BR + 250 CO) é chamado direto na API da Webshare,
+com a chave no `.env`. **Decidido: vira recurso da API 7700**, com token — assim
+dois sistemas minerando não queimam os mesmos IPs sem saber um do outro.
+
+### 8 · Dois nomes que eu errei ao auditar
+
+- `detect_pois_opencv.py` **não usa OpenCV**: chama `/v1/chat/completions` com
+  `qwen2-vl`. É inferência, e vai para o vLLM da Spark.
+- `subir_imagens.py` **já usa Supabase Storage** — o `:8000` era o gateway, não
+  um serviço próprio. Muda porta e nome do bucket, nada mais.
 
 ---
 
@@ -156,10 +175,6 @@ Cada um tem teste. A suíte é a rede de proteção da migração.
 
 ## O que ficou em aberto
 
-- **Onde o CNEFE quebra sob carga** dentro do `a2l` compartilhado, e qual a
-  mitigação.
-- **OpenCV e upload de imagens** não têm endereço no catálogo novo.
-- **Webshare** entra ou não na API de recursos.
 - **A busca de Santa Maria está pela metade** (7.188 de 10.851) no ambiente
   antigo, que está fora do ar. Decidir se termina lá antes de migrar ou se
   recomeça no ambiente novo.
