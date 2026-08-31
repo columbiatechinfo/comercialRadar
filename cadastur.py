@@ -558,12 +558,37 @@ def marcar_saidas(con, eventos: dict, simular: bool = False) -> int:
     return len(saiu)
 
 
+def destino_vazio(con) -> bool:
+    """A tabela de destino esta vazia?
+
+    Existe para desarmar o incremental quando o marcador e o banco discordam.
+    E uma consulta so, e ela roda uma vez por execucao — o custo e nada perto
+    de uma carga que nao grava e diz que esta tudo certo.
+    """
+    with con.cursor() as cur:
+        cur.execute("select 1 from resources_root.cadastur_prestador limit 1")
+        return cur.fetchone() is None
+
+
 def filtrar_por_evento(linhas: list, eventos: dict) -> tuple:
     """Devolve (linhas a gravar, quantas ficaram de fora).
 
     Sem eventos — primeira execução — grava tudo. Com eventos, só ENTROU e
-    ALTEROU: PERMANECEU é, por definição, idêntico ao que já está no banco, e
-    regravá-lo é trabalho e I/O para chegar ao mesmo lugar.
+    ALTEROU: PERMANECEU é idêntico ao que já está no banco, e regravá-lo é
+    trabalho e I/O para chegar ao mesmo lugar.
+
+    A PREMISSA TEM UMA CONDIÇÃO, e ela não estava escrita: "já está no banco".
+    O marcador de eventos vive em DISCO e é gravado quando o snapshot é
+    baixado — antes, e independentemente, da gravação no banco.
+
+    Em 31/08/2026 as duas coisas se separaram: o download gravou o snapshot, a
+    escrita no banco falhou (a tabela ainda tinha RLS por empresa), e a partir
+    dali toda execução dizia "804 inalteradas — não regravadas · 0 gravadas",
+    com a tabela VAZIA. Código de saída 0, e nada no banco.
+
+    Quem chama precisa conferir o destino antes de confiar aqui — é o que
+    `destino_vazio()` faz. Um marcador de incremental só vale enquanto o que ele
+    marca tiver de fato chegado ao lugar.
     """
     if not eventos:
         return linhas, 0
@@ -1359,6 +1384,15 @@ def main() -> int:
     try:
         # ── O QUE MUDOU, e só isso ──────────────────────────────────────
         eventos = ler_eventos(SAIDA)
+        if eventos and destino_vazio(con):
+            # O MARCADOR DIZ "NADA MUDOU" E A TABELA ESTA VAZIA. As duas coisas
+            # nao podem ser verdade ao mesmo tempo: alguma gravacao anterior
+            # falhou depois de o snapshot ja ter sido registrado. Confiar no
+            # marcador aqui seria terminar com codigo 0 e zero linha, que foi
+            # exatamente o que aconteceu em 31/08/2026.
+            print("  ⚠ o marcador diz que nada mudou, mas a tabela esta VAZIA — "
+                  "gravando tudo", flush=True)
+            eventos = {}
         if eventos:
             linhas, pulou = filtrar_por_evento(linhas, eventos)
             if pulou:
