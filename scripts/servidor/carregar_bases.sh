@@ -117,9 +117,25 @@ fi
 
 if [ "$QUAL" = "tudo" ] || [ "$QUAL" = "cadastur" ]; then
   echo "──── Cadastur (MTur) ────"
-  # `--so-carregar --gerar`: baixa o snapshot e produz o entregável, sem
-  # encadear as etapas seguintes. É o mesmo par que o `minerar_tudo` usa.
-  "$P" cadastur.py --so-carregar --gerar
+  # O CADASTUR DEIXOU DE PRECISAR DE IDENTIDADE em 31/08/2026.
+  #
+  # Ele gravava em `radar_comercial.cadastur_prestador`, com política por
+  # empresa — e a carga morria com "new row violates row-level security policy"
+  # DEPOIS de baixar os 322 MB. O erro estava certo e a tabela é que estava no
+  # lugar errado: Cadastur é base pública do MTur, igual para todo cliente e
+  # para toda ferramenta. As duas tabelas foram para `resources_root` (0008), e
+  # base pública não tem de quem esconder.
+  # SEM `--so-carregar`, e é essa a diferença que importa aqui.
+  #
+  # `--so-carregar` carrega o que JÁ foi baixado — é o que o `minerar_tudo` usa
+  # na etapa 3, porque lá o snapshot já deveria existir. Numa máquina nova não
+  # existe, e o comando morre com "nenhum parquet em bronze_parquet — rode sem
+  # --so-carregar para baixar primeiro". Foi exatamente o que aconteceu na
+  # primeira tentativa: 22 segundos e código 1.
+  #
+  # Aqui é a carga inicial: baixar É o trabalho. `--gerar` produz o entregável
+  # depois de carregar.
+  "$P" cadastur.py --gerar
   echo "  Cadastur terminou com código $?"
   echo
 fi
@@ -150,6 +166,7 @@ docker run -d --name "$NOME" \
   --restart no \
   -v "$RAIZ":/app -v "$VENV":/venv -v "$ROTEIRO_HOST":/roteiro.sh:ro -w /app \
   -e QUAL="$QUAL" -e UFS="$UFS" \
+  -e RADAR_USUARIO_SERVICO="${RADAR_USUARIO_SERVICO:-}" \
   -e PG_CONNECT_TIMEOUT=30 \
   --log-opt max-size=50m --log-opt max-file=5 \
   "$IMAGEM" bash /roteiro.sh >/dev/null
