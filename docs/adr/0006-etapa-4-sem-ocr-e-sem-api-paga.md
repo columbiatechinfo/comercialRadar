@@ -224,6 +224,50 @@ qualidade 90. Uma imagem por posição, **137 KB** medidos no tile de Canoas.
 Com passo de meio tile (~21 mil posições) Canoas fica em **~2,9 GB** — bem
 dentro do teto de 30 GB por cidade média.
 
+## O navegador quente é REQUISITO DE COLETA, não otimização
+
+Esta foi a descoberta que mais mudou o desenho, e ela custou cinco correções
+erradas antes de aparecer.
+
+Com um navegador novo por POI — perfil zerado, sem cookie, sem consentimento
+aceito — **o Google serve uma ficha reduzida, sem a aba de avaliações**. E a
+ficha reduzida é indistinguível de "este lugar não tem avaliação": o nome, a
+categoria, o endereço, o telefone e até a nota vêm normalmente. Só o histograma,
+o resumo e as avaliações somem.
+
+Medido em 01/09/2026, mesmo instante, mesmo proxy, mesmos três POIs:
+
+| | O Boticário (174 aval.) | Lojas Colombo (523) | Panvel (125) |
+|---|---|---|---|
+| navegador novo por POI | 2 abas · 0 | 3 abas · 24 | 2 abas · 0 |
+| perfil persistente, aquecido | **3 abas · 25** | **3 abas · 24** | **3 abas · 24** |
+
+E no processo inteiro, sobre os mesmos 90 POIs da quadra:
+
+| | frio | quente |
+|---|---|---|
+| POIs com avaliação colhida | 6 a 10 | **82** |
+| avaliações | 26 a 150 | **709** |
+| com histograma | 6 a 16 | **82** |
+| horários gravados | 116 a 176 | **560** |
+| fotos | 163 a 198 | **486** |
+| tempo do detalhe | 2 a 4 min | 3 min |
+
+O aquecimento é simples: passar por `google.com/maps` uma vez e aceitar o
+consentimento, **antes** de visitar qualquer POI. Depois disso o perfil fica em
+disco e serve as execuções seguintes.
+
+> **Por que isso enganou tanto.** O sintoma era "avaliações variam por sessão", e
+> a variação era real — entre corridas idênticas o número ia de 26 a 150. Isso
+> parece defeito de espera, de seletor ou de concorrência, e eu tratei como os
+> três. Não era: era o Google decidindo, por sessão, o quanto entregar. O teste
+> que resolveu foi o mais simples — abrir os mesmos POIs num navegador frio e
+> num quente, lado a lado.
+
+O proxy é **fixo por perfil**, de propósito: um perfil com cookie feito no IP A
+aparecendo de repente no IP B é, ele mesmo, um sinal. A rotação vem de haver
+muitos navegadores, cada um no seu IP.
+
 ## Os navegadores: quentes, e nunca fechados
 
 - **20 no i9 principal** (100.66.173.63) e **15 no Predator**
