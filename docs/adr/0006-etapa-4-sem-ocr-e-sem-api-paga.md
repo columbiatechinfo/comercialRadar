@@ -175,41 +175,43 @@ já tinha lido o roteiro. Sem a bandeira, passam a valer.
 > sem nunca executar o comando. O Xvfb tem de subir à mão, com `DISPLAY` por
 > variável de ambiente.
 
-## Os tiles: em segundo plano, e a sobreposição do OSRM
+## Os tiles: em segundo plano, e só o do Google
 
 Os tiles deixam de bloquear o processo — são recortados em segundo plano
-enquanto o resto segue. Ao final, ou em paralelo, o mesmo enquadramento recebe
-o grafo de rotas do OSRM por cima, com transparência.
+enquanto o resto segue.
 
-O OSRM **serve tile** — eu afirmei o contrário e errei. O endpoint é
-`/tile/v1/{perfil}/tile(x,y,z).mvt`, e responde nas duas instâncias já de pé
-(`osrm-carro` em 7300, `osrm-pe` em 7310). Medido:
+### A sobreposição do OSRM foi construída, medida e descartada
 
-| zoom | 12 | 14 | 16 | 18 | 19 | 20+ |
-|---|---|---|---|---|---|---|
-| resposta | 1,4 MB | 184 KB | 29 KB | 2 KB | **vazio** | **400** |
+Chegou a ser montada e funcionava. O que a derrubou foi uma constatação simples:
+**o OSRM não tem telhado.** Sendo roteador, o tile dele expõe só o grafo de
+rotas — `speeds` (velocidade, peso, duração, e o nome da rua), `turns` e
+`osmnodes`, tudo `LineString`. Nenhum polígono, nenhuma edificação. Os telhados
+rosa da imagem sempre vieram do próprio Google, do estilo `mapa_pois_telhados`.
 
-O teto útil é **z18**, e o mapa é z20. Não é obstáculo: MVT é vetor, um tile
-z18 cobre 16 tiles z20, e a 4096 unidades por tile a precisão em z18 é de ~3 cm.
-**Uma busca no OSRM serve 16 tiles do Google.**
+Fica registrado o que se aprendeu, caso a ideia volte:
 
-O conteúdo são três camadas — `speeds` (velocidade, peso, duração, fonte, e o
-**nome da rua**), `turns` (ângulo, custo, tipo de conversão) e `osmnodes`.
+- O endpoint existe e responde nas duas instâncias já de pé (`osrm-carro` em
+  7300, `osrm-pe` em 7310): `/tile/v1/{perfil}/tile(x,y,z).mvt`.
 
-### Como a sobreposição é montada
+  | zoom | 12 | 14 | 16 | 18 | 19 | 20+ |
+  |---|---|---|---|---|---|---|
+  | resposta | 1,4 MB | 184 KB | 29 KB | 2 KB | **vazio** | **400** |
 
-Não se rasteriza o OSRM por fora para depois tentar encaixar. O GeoJSON é
-desenhado **dentro do próprio mapa do Google**, na camada `Data`: mesma tela,
-mesma projeção, mesmo centro — o alinhamento sai de graça, sem conta de
-projeção nenhuma.
+  O teto útil é z18. Não seria obstáculo: MVT é vetor, um tile z18 cobre 16
+  tiles z20 e a precisão em z18 é de ~3 cm por unidade.
 
-Duas armadilhas achadas ao montar isto:
+- O alinhamento não precisa de conta de projeção: basta desenhar o GeoJSON
+  **dentro do próprio mapa do Google**, na camada `Data` — mesma tela, mesma
+  projeção, mesmo centro.
 
-- **Esconder o basemap por CSS apaga junto a camada `Data`** — a imagem isolada
-  saía vazia. Precisa de um segundo mapa, sem `mapId` e com os estilos apagados.
-  (`styles` é ignorado quando há `mapId`.)
-- **Mapa com `display:none` nunca dispara `idle`** — a espera estoura. Os dois
-  mapas nascem visíveis, empilhados por `z-index`.
+- Duas armadilhas, se alguém refizer: esconder o basemap por CSS **apaga junto
+  a camada `Data`** (precisa de um segundo mapa sem `mapId`, porque `styles` é
+  ignorado quando há `mapId`); e mapa com `display:none` **nunca dispara
+  `idle`**, então a espera estoura.
+
+- Telhado de fonte independente do Google existe e não custa download:
+  `brazil-latest.osm.pbf` já está em disco no i9, e dele sai o polígono
+  `building`. Não foi feito — decisão de 01/09/2026 é ficar só com o Google.
 
 Sob Xvfb não há GPU, então o mapa vetorial cai para raster
 (`Attempted to load a Vector Map ... Falling back to Raster`). Não impede nada:
@@ -217,19 +219,10 @@ o `mapId` continua valendo e o estilo do `mapa_pois_telhados` é respeitado.
 
 ### Onde as imagens ficam
 
-No **Storage do Supabase self-hosted**, não em pasta do sistema. Em **WebP**
-qualidade 90, medido no tile de Canoas:
-
-| | |
-|---|---|
-| `tile_google` | 137 KB |
-| `tile_sobreposicao` | 143 KB |
-| `tile_osrm` | 12 KB — **não é guardado** |
-
-O tile do OSRM é regenerável de graça na própria infra. Guarda-se só **como foi
-gerado**: perfil, `x`/`y`/`z` e data. Duas imagens por posição ≈ 280 KB;
-Canoas com passo de meio tile (~21 mil posições) fica em **~6 GB** — dentro do
-teto de 30 GB por cidade média.
+No **Storage do Supabase self-hosted**, não em pasta do sistema, em **WebP**
+qualidade 90. Uma imagem por posição, **137 KB** medidos no tile de Canoas.
+Com passo de meio tile (~21 mil posições) Canoas fica em **~2,9 GB** — bem
+dentro do teto de 30 GB por cidade média.
 
 ## Os navegadores: quentes, e nunca fechados
 
