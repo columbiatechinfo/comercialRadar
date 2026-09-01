@@ -140,10 +140,9 @@ browser_profiles/
 */Default/Cookies
 */Default/Network/Cookies
 
-# perfis dos navegadores quentes: estado de execucao, nao codigo.
-# E deles que vem a aba de avaliacoes do Maps — ver ADR 0006 —, mas o conteudo
-# e cookie e cache, nao fonte.
-perfis_maps/
+# a sessao quente do Maps: e dela que vem a aba de avaliacoes (ADR 0006).
+# Cookie e credencial de sessao — fica na maquina, nao no repositorio.
+estado/
 
 # gerado pelo script de carga das bases, nao e codigo
 .carga.sh

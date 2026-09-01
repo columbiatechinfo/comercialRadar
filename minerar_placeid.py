@@ -509,24 +509,52 @@ async def carregar_avaliacoes(pg):
     return ordem, list(achadas.values()), resumo
 
 
-async def aquecer(ctx):
-    """Passa pelo Maps e aceita o que aparecer, antes de visitar POI algum.
+async def garantir_cookie(pw, pool, caminho, renovar):
+    """O cookie que faz o Google entregar a ficha inteira. Um arquivo, alguns KB.
 
-    NAO E OTIMIZACAO DE VELOCIDADE, E REQUISITO DE COLETA. Medido em
-    01/09/2026, mesmo instante e mesmo proxy:
+    NAO E OTIMIZACAO DE VELOCIDADE, E REQUISITO DE COLETA. Sem cookie e sem
+    consentimento aceito, o Google serve uma ficha REDUZIDA — sem a aba de
+    avaliacoes — e esse zero e indistinguivel de "este lugar nao tem
+    avaliacao". Medido em 01/09/2026, mesmo instante e mesmo proxy:
 
-        navegador novo por POI    O Boticario  2 abas · 0 avaliacoes
-                                  Panvel       2 abas · 0 avaliacoes
-        perfil persistente e      O Boticario  3 abas · 25 avaliacoes
-        aquecido                  Panvel       3 abas · 24 avaliacoes
+        contexto virgem   O Boticario (174 aval.)  2 abas ·  0 avaliacoes
+        com cookie        O Boticario              3 abas · 79 avaliacoes
 
-    Para uma sessao sem cookie e sem consentimento o Google serve uma ficha
-    reduzida, SEM a aba de avaliacoes — e a ficha reduzida nao se distingue de
-    "este lugar nao tem avaliacao". Perdi tres correcoes tentando consertar um
-    zero que era servido de proposito.
+    POR QUE COOKIE E NAO PERFIL PERSISTENTE. A primeira versao usava
+    `launch_persistent_context`, e funcionou — na primeira execucao. No reuso,
+    todas as requisicoes voltavam **HTTP 407**: o Chromium guarda estado de
+    autenticacao de proxy dentro do perfil e atropela as credenciais que o
+    Playwright injeta. Alem disso cada perfil pesava 52 MB, e 35 deles seriam
+    1,8 GB de cache.
+
+    `storage_state` guarda so cookie e localStorage — 1,1 KB, tres cookies — e
+    **viaja entre IPs**: medido, o mesmo arquivo em outro navegador e outro
+    proxy devolve as mesmas 79 avaliacoes. E isso que permite rotacionar proxy
+    por POI mantendo a memoria.
+
+    O arquivo NAO e renovado ao fim de cada execucao, de proposito: sessao
+    quente vale mais que sessao nova. Renova-se por comando — `--renovar-cookie`.
     """
-    pg = await ctx.new_page()
+    if os.path.exists(caminho) and not renovar:
+        idade = (time.time() - os.path.getmtime(caminho)) / 3600.0
+        import json as _json
+        try:
+            n = len(_json.load(open(caminho)).get("cookies", []))
+        except Exception:
+            n = 0
+        print("  cookie de %.1f h atras, %d cookies, reaproveitado "
+              "(--renovar-cookie para trocar)" % (idade, n))
+        return caminho
+
+    px = pool._proxies[random.randrange(len(pool._proxies))]
+    nav = await pw.chromium.launch(headless=False, args=ARGS, proxy={
+        "server": px["server"], "username": px["username"],
+        "password": px["password"]})
     try:
+        ctx = await nav.new_context(
+            viewport={"width": 1360, "height": 1000}, locale="pt-BR",
+            timezone_id="America/Sao_Paulo")
+        pg = await ctx.new_page()
         await pg.goto("https://www.google.com/maps", timeout=60000)
         await pg.wait_for_timeout(random.randint(4500, 7000))
         for texto in ("Aceitar tudo", "Accept all", "Concordo", "Aceito"):
@@ -538,10 +566,63 @@ async def aquecer(ctx):
                     break
             except Exception:
                 pass
-    except Exception:
-        pass
+        os.makedirs(os.path.dirname(caminho) or ".", exist_ok=True)
+        await ctx.storage_state(path=caminho)
+        import json as _json
+        e = _json.load(open(caminho))
+        print("  cookie novo: %d cookies · %d bytes · pelo %s"
+              % (len(e.get("cookies", [])), os.path.getsize(caminho),
+                 px["server"]))
+        await ctx.close()
     finally:
-        await pg.close()
+        await nav.close()
+    return caminho
+
+
+def engordar_cookie(caminho, estados):
+    """Guarda de volta o cookie SOMADO do que os navegadores trouxeram.
+
+    Renovar e engordar sao coisas opostas. Renovar joga a sessao fora e comeca
+    do zero — e por isso so acontece por comando. Engordar mantem a mesma
+    sessao e acrescenta o que ela ganhou navegando: a cada execucao o Google vê
+    um visitante com mais historico, nao um estranho reincidente.
+
+    A juncao e por (nome, dominio, caminho), ficando com o de validade mais
+    longa. Cada trabalhador partiu do mesmo cookie e divergiu um pouco; a uniao
+    e mais rica que qualquer um deles sozinho.
+
+    Se a execucao nao trouxe nada, o arquivo NAO e tocado: uma corrida que
+    falhou nao pode apagar uma sessao boa.
+    """
+    import json as _json
+    if not estados:
+        return None
+    try:
+        antes = _json.load(open(caminho)) if os.path.exists(caminho) else {}
+    except Exception:
+        antes = {}
+
+    juntos, origens = {}, {}
+    for e in [antes] + list(estados):
+        for c in (e or {}).get("cookies", []) or []:
+            k = (c.get("name"), c.get("domain"), c.get("path"))
+            velho = juntos.get(k)
+            if not velho or (c.get("expires") or 0) > (velho.get("expires") or 0):
+                juntos[k] = c
+        for o in (e or {}).get("origins", []) or []:
+            origens[o.get("origin")] = o
+
+    novo = {"cookies": list(juntos.values()), "origins": list(origens.values())}
+    if len(novo["cookies"]) < len(antes.get("cookies", []) or []):
+        return None                      # nunca empobrecer o que ja existia
+
+    tmp = caminho + ".novo"
+    with open(tmp, "w", encoding="utf-8") as f:
+        _json.dump(novo, f)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, caminho)
+    return len(antes.get("cookies", []) or []), len(novo["cookies"])
 
 
 async def detalhar(ctx, alvo):
@@ -726,8 +807,8 @@ async def principal(a):
         if not alvos:
             return 1
 
-        print("\n⟦B⟧ detalhe: %d navegadores QUENTES, perfil persistente"
-              % a.workers)
+        print("\n⟦B⟧ detalhe: %d navegadores, cada um num proxy, "
+              "todos com a MESMA sessao quente" % a.workers)
         t1 = time.time()
         registros, trava = [], asyncio.Lock()
         fila = asyncio.Queue()
@@ -737,25 +818,16 @@ async def principal(a):
         async def trabalhador(i):
             """Um navegador, muitos POIs. Nunca fecha entre um e outro."""
             px = pool._proxies[(i * 7) % len(pool._proxies)]
-            perfil = os.path.join(a.perfis, "n%02d" % i)
-            novo = not os.path.isdir(perfil)
-            os.makedirs(perfil, exist_ok=True)
-            ctx = None
+            nav = None
             try:
-                # Proxy FIXO por perfil, de proposito: um perfil com cookie
-                # feito no IP A aparecendo de repente no IP B e, ele mesmo,
-                # um sinal. A rotacao vem de haver muitos navegadores, cada um
-                # no seu IP.
-                ctx = await pw.chromium.launch_persistent_context(
-                    perfil, headless=False, args=ARGS,
-                    proxy={"server": px["server"], "username": px["username"],
-                           "password": px["password"]},
+                nav = await pw.chromium.launch(headless=False, args=ARGS, proxy={
+                    "server": px["server"], "username": px["username"],
+                    "password": px["password"]})
+                # A memoria vem do cookie, nao do perfil em disco: 1,1 KB que
+                # viaja entre IPs, em vez de 52 MB presos a um proxy so.
+                ctx = await nav.new_context(
                     viewport={"width": 1360, "height": 1000}, locale="pt-BR",
-                    timezone_id="America/Sao_Paulo")
-                if novo:
-                    await aquecer(ctx)
-                    async with trava:
-                        print("    navegador %02d aquecido (%s)" % (i, px["server"]))
+                    timezone_id="America/Sao_Paulo", storage_state=cookie)
                 while True:
                     try:
                         alvo = fila.get_nowait()
@@ -785,10 +857,21 @@ async def principal(a):
                 async with trava:
                     print("    navegador %02d caiu: %s" % (i, str(e)[:80]))
             finally:
-                if ctx:
-                    await ctx.close()
+                if nav:
+                    # O que este navegador ganhou navegando volta para o
+                    # arquivo — a sessao engorda em vez de recomecar.
+                    try:
+                        colhidos.append(await ctx.storage_state())
+                    except Exception:
+                        pass
+                    await nav.close()
 
+        cookie = await garantir_cookie(pw, pool, a.cookie, a.renovar_cookie)
+        colhidos = []
         await asyncio.gather(*(trabalhador(i) for i in range(a.workers)))
+        cresceu = engordar_cookie(a.cookie, colhidos)
+        if cresceu:
+            print("    cookie engordado: %d → %d cookies" % cresceu)
         t_detalhe = time.time() - t1
 
     print("\n⟦C⟧ gravacao")
@@ -847,10 +930,13 @@ if __name__ == "__main__":
     p.add_argument("--sem-tiles", action="store_true")
     p.add_argument("--sem-colheita", action="store_true",
                    help="pula a varredura e usa os placeId ja gravados nesta sessao")
-    p.add_argument("--perfis", default="/app/perfis_maps",
-                   help="onde ficam os perfis dos navegadores quentes; "
-                        "sobrevivem entre execucoes, e e disso que vem a aba "
-                        "de avaliacoes")
+    p.add_argument("--cookie", default="/app/estado/cookie_maps.json",
+                   help="o cookie que faz o Google entregar a ficha inteira. "
+                        "Sobrevive entre execucoes de proposito — sessao quente "
+                        "vale mais que sessao nova")
+    p.add_argument("--renovar-cookie", action="store_true",
+                   help="descarta o cookie e faz um novo. NAO acontece "
+                        "automaticamente ao fim da execucao")
     p.add_argument("--intervalo-min", type=float, default=1.5,
                    help="espera minima entre POIs do MESMO navegador")
     p.add_argument("--intervalo-max", type=float, default=5.0)
