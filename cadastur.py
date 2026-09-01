@@ -622,15 +622,27 @@ select cad_id, min(poi_id) from (
 ) t group by cad_id
 """
 
+# A FILA E O QUE AINDA NAO TEM VINCULO — e o vinculo mora em radar_comercial.
+#
+# Ate 01/09/2026 esta consulta perguntava `where poi_id is null and
+# sem_poi_motivo is null` a COLUNAS DA PROPRIA BASE. Quando os dados de teste
+# foram limpos, as colunas nao foram junto (limpar tabela base e proibido), e a
+# fila viu zero pendente numa cidade com 185 prestadores. Nada falhou: a etapa
+# imprimiu "pendentes 0" e seguiu.
+#
+# A RLS de `cadastur_vinculo` faz o resto sozinha: o LEFT JOIN so enxerga os
+# vinculos DESTA empresa, entao a fila e naturalmente por tenant — que e o que
+# faltava, ja que `cadastur_prestador` nao tem `id_empresa`.
 PENDENTES = """
-select id, cnpj, nome_fantasia, razao_social, atividade_turistica,
-       tipo_hospedagem, coalesce(endereco_comercial, endereco_rfb),
-       municipio, uf, telefone, email, website, cnae, uh, leitos
-  from resources_root.cadastur_prestador
- where poi_id is null and sem_poi_motivo is null
-   and (%(uf)s is null or upper(uf) = upper(%(uf)s))
-   and (%(municipio)s is null or lower(municipio) = lower(%(municipio)s))
- order by id
+select c.id, c.cnpj, c.nome_fantasia, c.razao_social, c.atividade_turistica,
+       c.tipo_hospedagem, coalesce(c.endereco_comercial, c.endereco_rfb),
+       c.municipio, c.uf, c.telefone, c.email, c.website, c.cnae, c.uh, c.leitos
+  from resources_root.cadastur_prestador c
+  left join radar_comercial.cadastur_vinculo v on v.cadastur_id = c.id
+ where v.id is null
+   and (%(uf)s is null or upper(c.uf) = upper(%(uf)s))
+   and (%(municipio)s is null or lower(c.municipio) = lower(%(municipio)s))
+ order by c.id
 """
 
 
@@ -994,29 +1006,43 @@ def _descarregar(con, marcas: list, ligados: list, gerados: list,
         marcas.clear(); ligados.clear(); gerados.clear()
         return
     with con.cursor() as k:
+        # `id_empresa` NAO vai no INSERT: quem carimba e o gatilho
+        # `preencher_empresa`, a partir da mesma identidade que a RLS le. Um
+        # caminho so, sem chance de gravar numa empresa e enxergar de outra.
+        # O gatilho e BEFORE INSERT, entao a coluna ja esta preenchida quando o
+        # `ON CONFLICT (id_empresa, cadastur_id)` e avaliado.
         if marcas:
             execute_values(
-                k, """update resources_root.cadastur_prestador c
-                         set sem_poi_motivo = v.motivo, cruzado_em = now()
+                k, """insert into radar_comercial.cadastur_vinculo
+                             (cadastur_id, sem_poi_motivo)
+                      select v.id::bigint, v.motivo::text
                         from (values %s) as v(motivo, id)
-                       where c.id = v.id""", marcas)
+                      on conflict (id_empresa, cadastur_id) do update
+                         set sem_poi_motivo = excluded.sem_poi_motivo,
+                             cruzado_em = now()""", marcas)
         if ligados:
             execute_values(
-                k, """update resources_root.cadastur_prestador c
-                         set poi_id = v.poi, sem_poi_motivo = 'ja_existe',
-                             cruzado_em = now()
+                k, """insert into radar_comercial.cadastur_vinculo
+                             (cadastur_id, poi_id, sem_poi_motivo)
+                      select v.id::bigint, v.poi::bigint, 'ja_existe'
                         from (values %s) as v(poi, id)
-                       where c.id = v.id""", ligados)
+                      on conflict (id_empresa, cadastur_id) do update
+                         set poi_id = excluded.poi_id,
+                             sem_poi_motivo = 'ja_existe',
+                             cruzado_em = now()""", ligados)
         if gerados:
             # `sem_poi_motivo` fica NULO: virou POI, então não há motivo para
             # não ter virado. O literal na consulta, e não um nulo na lista, é
             # o que mantém o VALUES com tipo.
             execute_values(
-                k, """update resources_root.cadastur_prestador c
-                         set poi_id = v.poi, sem_poi_motivo = null,
-                             cruzado_em = now()
+                k, """insert into radar_comercial.cadastur_vinculo
+                             (cadastur_id, poi_id, sem_poi_motivo)
+                      select v.id::bigint, v.poi::bigint, null
                         from (values %s) as v(poi, id)
-                       where c.id = v.id""", gerados)
+                      on conflict (id_empresa, cadastur_id) do update
+                         set poi_id = excluded.poi_id,
+                             sem_poi_motivo = null,
+                             cruzado_em = now()""", gerados)
     con.commit()
     marcas.clear(); ligados.clear(); gerados.clear()
 
@@ -1458,10 +1484,13 @@ def main() -> int:
                       "  O que costuma render: `tratamento_cnpj.py "
                       "--municipio <IBGE>` neste município, e passar aqui de "
                       "novo.\n"
-                      "  Motivo linha a linha:  select nome_fantasia, "
-                      "sem_poi_motivo, endereco_comercial from "
-                      "resources_root.cadastur_prestador where "
-                      "sem_poi_motivo is not null;", flush=True)
+                      "  Motivo linha a linha:\n"
+                      "    select c.nome_fantasia, v.sem_poi_motivo, "
+                      "c.endereco_comercial\n"
+                      "      from radar_comercial.cadastur_vinculo v\n"
+                      "      join resources_root.cadastur_prestador c "
+                      "on c.id = v.cadastur_id\n"
+                      "     where v.sem_poi_motivo is not null;", flush=True)
     finally:
         con.close()
     return 0

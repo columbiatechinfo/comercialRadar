@@ -3936,18 +3936,18 @@ def cadastur_resumo(municipio: str = "", uf: str = ""):
                                    count(*) filter (where saiu_em is not null),
                                    sum(leitos), sum(uh),
                                    max(ref_periodo)
-                              from radar_comercial.cadastur_prestador {filtro}""",
+                              from resources_root.cadastur_prestador {filtro}""",
                         par)
             (total, com_poi, sem_poi, sairam, leitos, uh, periodo) = cur.fetchone()
 
             cur.execute(f"""select sem_poi_motivo, count(*)
-                              from radar_comercial.cadastur_prestador {filtro}
+                              from resources_root.cadastur_prestador {filtro}
                              and sem_poi_motivo is not null and poi_id is null
                              group by 1 order by 2 desc""", par)
             motivos = {m: n for m, n in cur.fetchall()}
 
             cur.execute(f"""select atividade_turistica, count(*)
-                              from radar_comercial.cadastur_prestador {filtro}
+                              from resources_root.cadastur_prestador {filtro}
                              and atividade_turistica is not null
                              group by 1 order by 2 desc limit 12""", par)
             atividades = [{"nome": a, "n": n} for a, n in cur.fetchall()]

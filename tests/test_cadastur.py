@@ -167,11 +167,39 @@ def test_o_gerador_usa_o_escritor_unico_de_poi(cad):
 
 def test_a_migracao_separa_nao_virou_de_ninguem_tentou():
     """`sem_poi_motivo` nulo e `poi_id` nulo significam coisas diferentes, e
-    confundi-las faz reprocessar eternamente o que não tem solução."""
-    sql = io.open(RAIZ / "migrations_a2l" / "0001_radar_comercial.sql",
+    confundi-las faz reprocessar eternamente o que não tem solução.
+
+    Lê a 0015, e não a 0001: a 0001 é histórica e ainda descreve as colunas
+    dentro da base — ela continuaria passando com o defeito de pé.
+    """
+    sql = io.open(RAIZ / "migrations_a2l" /
+                  "0015_o_vinculo_do_cadastur_sai_da_base.sql",
                   encoding="utf-8").read()
     assert "sem_poi_motivo" in sql
-    assert "poi_id is null and sem_poi_motivo is null" in sql   # o índice da fila
+    assert "cadastur_vinculo" in sql
+
+
+def test_a_base_nao_guarda_escrituracao_do_sistema():
+    """O código não pode escrever `poi_id`/`sem_poi_motivo` dentro da BASE.
+
+    Foi o defeito de 01/09/2026: `resources_root.cadastur_prestador` guardava
+    o que o sistema concluiu, a limpeza dos dados de teste não alcançava aquilo
+    (limpar tabela base é proibido, e com razão), e 102 linhas ficaram
+    apontando para POIs apagados. A etapa 3 então disse "pendentes 0" numa
+    cidade com 185 prestadores — sem falhar, sem avisar.
+
+    Não há chave estrangeira possível entre schemas de donos diferentes, então
+    o ponteiro morto era estruturalmente impossível de impedir. A correção foi
+    mover o vínculo para `radar_comercial.cadastur_vinculo`, onde a FK existe.
+    """
+    fonte = io.open(RAIZ / "cadastur.py", encoding="utf-8").read()
+    escreve_na_base = re.search(
+        r"update\s+resources_root\.cadastur_prestador[^\"']*?\bset\b[^\"']*?"
+        r"(poi_id|sem_poi_motivo|cruzado_em)", fonte, re.I | re.S)
+    assert not escreve_na_base, \
+        "o codigo escreve escrituracao do sistema dentro da tabela base"
+    assert "radar_comercial.cadastur_vinculo" in fonte, \
+        "o vinculo deve ser gravado em radar_comercial, nao na base"
 
 
 def test_a_tabela_tem_rls_e_tenant_na_frente_do_indice():
