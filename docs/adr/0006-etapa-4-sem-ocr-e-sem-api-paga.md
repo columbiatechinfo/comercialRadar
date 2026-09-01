@@ -254,8 +254,40 @@ E no processo inteiro, sobre os mesmos 90 POIs da quadra:
 | tempo do detalhe | 2 a 4 min | 3 min |
 
 O aquecimento é simples: passar por `google.com/maps` uma vez e aceitar o
-consentimento, **antes** de visitar qualquer POI. Depois disso o perfil fica em
-disco e serve as execuções seguintes.
+consentimento, **antes** de visitar qualquer POI.
+
+### E a memória é um cookie, não um perfil em disco
+
+A primeira implementação usava perfil persistente (`launch_persistent_context`).
+Funcionou — **na primeira execução**. Na segunda, todas as requisições voltaram
+**HTTP 407**: o Chromium guarda estado de autenticação de proxy dentro do perfil
+e atropela as credenciais que o Playwright injeta. Perderam-se 90 de 90 POIs.
+Cada perfil pesava ainda 52 MB — com os 35 navegadores previstos, 1,8 GB de
+cache para guardar três cookies.
+
+`storage_state` guarda só cookie e `localStorage`: **999 bytes**. E ele
+**viaja entre IPs** — medido: o mesmo arquivo, noutro navegador e noutro proxy,
+devolve as mesmas 79 avaliações do Boticário. Isso devolve a rotação de proxy
+por POI, que o perfil tinha tirado.
+
+| na quadra, 90 POIs | perfil (52 MB) | cookie (1 KB) | 2ª execução |
+|---|---|---|---|
+| avaliações | 709 | 789 | **861** |
+| resumo do Gemini | 7 | 10 | 10 |
+| fotos | 486 | 709 | 736 |
+| POIs perdidos | 0 | 0 | 0 |
+| chamadas cobradas | 0 | 0 | 0 |
+
+A sessão **engorda em vez de recomeçar**: ao fim de cada execução o cookie
+somado dos navegadores volta para o arquivo, ficando com a validade mais longa
+de cada um. Não cresce em quantidade — sessão anônima do Google tem três
+cookies e pronto —, mas mantém o mesmo `NID` vivo entre corridas, e é isso que
+faz o Google ver um visitante que volta. O ganho aparece no número: 789
+avaliações na primeira corrida, 861 na segunda, com o mesmo código.
+
+Renovar é o oposto de engordar, e continua sendo **por comando**
+(`--renovar-cookie`), nunca automático ao fim da execução. E corrida que não
+trouxe nada não sobrescreve o arquivo: execução falha não apaga sessão boa.
 
 > **Por que isso enganou tanto.** O sintoma era "avaliações variam por sessão", e
 > a variação era real — entre corridas idênticas o número ia de 26 a 150. Isso
