@@ -6,7 +6,7 @@
         --fontes overture,osm,fsq --min-conf 0.0 \
         --formatos csv,geoparquet --gerar-mapa --base-dir ./execucao_rs
 
-Etapas: init -> fetch -> raw -> territory -> normalize -> dedup -> export -> map -> validate
+Etapas: init -> fetch -> raw -> territory -> normalize -> export -> map -> validate
 Cada uma e retomavel e so reaproveita artefato cujo hash de escopo bate com a
 config atual. `--ate <etapa>` para no meio; `--etapa <etapa>` roda so uma.
 """
@@ -34,12 +34,6 @@ def _config(a):
         base_dir=a.base_dir, malha_qualidade=a.malha_qualidade,
         simplificar_graus=a.simplificar_graus,
         osm_predicado=a.osm_predicado, osm_sem_nome=not a.osm_exigir_nome,
-        dedup_modo=a.dedup, dedup_raio_m=a.dedup_raio_m,
-        dedup_sim_min=a.dedup_sim_min, dedup_sim_cross=a.dedup_sim_cross,
-        dedup_jaccard_min=a.dedup_jaccard, dedup_diam_max_m=a.dedup_diametro,
-        dedup_ctx_raio_m=a.dedup_ctx_raio, dedup_ctx_min=a.dedup_ctx_min,
-        dedup_semnome_modo=a.dedup_semnome, dedup_celula_m=a.dedup_celula,
-        dedup_halo_m=a.dedup_halo, max_fusao_suspeita=a.max_fusao_suspeita,
         budget_s=a.budget, ov_cap=a.ov_cap, ov_tile_graus=a.ov_tile_graus,
         treat_batch=a.treat_batch, clip_chunk=a.clip_chunk, fsq_strips=a.fsq_strips,
         duckdb_memory=a.duckdb_memory, threads=a.threads,
@@ -115,9 +109,6 @@ def cmd_run(a):
                     return 2
             elif etapa == "normalize":
                 if normalizacao.normalizar(cfg, man) is None:
-                    return 2
-            elif etapa == "dedup":
-                if normalizacao.deduplicar(cfg, man) is None:
                     return 2
             elif etapa == "export":
                 df = exportacao.executar(cfg, man)
@@ -214,23 +205,6 @@ def main(argv=None):
                        help="ampliado inclui healthcare/craft/transporte/industria")
         p.add_argument("--osm-exigir-nome", dest="osm_exigir_nome", action="store_true",
                        help="volta a exigir `name` no OSM (v2); por padrao POI sem nome entra")
-        p.add_argument("--dedup", default="evidencia",
-                       choices=["evidencia", "legado", "exato", "none"])
-        p.add_argument("--dedup-raio-m", dest="dedup_raio_m", type=int, default=30)
-        p.add_argument("--dedup-sim-min", dest="dedup_sim_min", type=int, default=85)
-        p.add_argument("--dedup-sim-cross", dest="dedup_sim_cross", type=int, default=92)
-        p.add_argument("--dedup-jaccard", dest="dedup_jaccard", type=float, default=0.60)
-        p.add_argument("--dedup-diametro", dest="dedup_diametro", type=float, default=90.0)
-        p.add_argument("--dedup-ctx-raio", dest="dedup_ctx_raio", type=float, default=200.0)
-        p.add_argument("--dedup-ctx-min", dest="dedup_ctx_min", type=int, default=3)
-        p.add_argument("--dedup-semnome", dest="dedup_semnome", default="absorver",
-                       choices=["absorver", "marcar"])
-        p.add_argument("--dedup-celula", dest="dedup_celula", type=float, default=2000.0,
-                       help="lado da celula de blocking em m; 0 = particionar por municipio")
-        p.add_argument("--dedup-halo", dest="dedup_halo", type=float, default=0.0,
-                       help="halo da celula em m; 0 = auto (>= raio de evidencia forte)")
-        p.add_argument("--max-fusao-suspeita", dest="max_fusao_suspeita", type=float,
-                       default=0.02, help="fracao de clusters com fusao suspeita que reprova")
         p.add_argument("--budget", type=float, default=0.0, help="time-box em s (0=sem)")
         p.add_argument("--ov-cap", dest="ov_cap", type=int, default=20000)
         p.add_argument("--ov-tile-graus", dest="ov_tile_graus", type=float, default=1.0)

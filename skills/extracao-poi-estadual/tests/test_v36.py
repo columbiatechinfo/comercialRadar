@@ -75,17 +75,6 @@ def test_cache_sem_snapshot_falha(tmp_path):
         prov.resolver_todas(cfg, Manifesto(cfg), BBOX)
 
 
-def test_observacao_sob_snapshot_indeterminado_e_proibida(tmp_path):
-    import pandas as pd
-    from poi_estadual.normalizacao import _identificar_observacoes
-    cfg = _cfg(tmp_path)
-    man = Manifesto(cfg)
-    obs = pd.DataFrame({"fonte": ["osm"], "id_fonte": ["node/1"], "cluster_id": ["osm:node/1"]})
-    with pytest.raises(RuntimeError, match="snapshot indeterminado"):
-        _identificar_observacoes(obs, man)
-
-
-# ------------------------------- versão do processador entra na linhagem
 def test_versao_do_processador_invalida_a_etapa(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path)
     man = Manifesto(cfg)

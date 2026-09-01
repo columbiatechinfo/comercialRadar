@@ -18,11 +18,14 @@ UFS = ("AC", "AL", "AM", "AP", "BA", "CE", "DF", "ES", "GO", "MA", "MG", "MS", "
        "PA", "PB", "PE", "PI", "PR", "RJ", "RN", "RO", "RR", "RS", "SC", "SE", "SP", "TO")
 FONTES_VALIDAS = ("overture", "osm", "fsq", "ifood")
 FORMATOS_VALIDOS = ("csv", "geoparquet")
-DEDUP_VALIDOS = ("evidencia", "legado", "exato", "none")
 OSM_PREDICADOS = ("ampliado", "classico")
 SOURCE_MODES = ("cache", "latest", "pinned")
 
-ETAPAS = ("init", "fetch", "raw", "territory", "normalize", "dedup", "export", "map", "validate")
+# A FUSAO SAIU DAQUI EM 01/09/2026. Ela custava 25 dos 32 minutos do passo e
+# fundia 8,7% — no estado inteiro, para se aproveitar 2,8% num municipio.
+# Agora acontece sobre a area, junto com a normalizacao de endereco e a
+# identificacao de categoria.
+ETAPAS = ("init", "fetch", "raw", "territory", "normalize", "export", "map", "validate")
 
 # Campos da config que cada etapa consome. Mudou o campo -> artefato da etapa fica obsoleto.
 # `ov_tile_graus`/`fsq_strips` sao PLANO DE EXECUCAO: nao mudam a identidade do
@@ -33,25 +36,21 @@ _COLETA = ("uf", "fontes", "osm_predicado", "osm_sem_nome",
            "ov_tile_graus", "fsq_strips", "ifood_ids")
 _TERR = _COLETA + ("excluir", "malha_qualidade", "simplificar_graus")
 _NORM = _TERR + ("min_conf",)
-_DEDUP = _NORM + ("dedup_modo", "dedup_raio_m", "dedup_sim_min", "dedup_sim_cross",
-                  "dedup_jaccard_min", "dedup_diam_max_m", "dedup_ctx_raio_m",
-                  "dedup_ctx_min", "dedup_semnome_modo", "dedup_celula_m", "dedup_halo_m")
 ESCOPO_ETAPA = {
     "init":      ("uf", "excluir", "malha_qualidade"),
     "fetch":     _COLETA,
     "raw":       _COLETA,
     "territory": _TERR,
     "normalize": _NORM,
-    "dedup":     _DEDUP,
-    "export":    _DEDUP + ("formatos",),
-    "map":       _DEDUP,
-    "validate":  _DEDUP + ("formatos", "max_fusao_suspeita"),
+    "export":    _NORM + ("formatos",),
+    "map":       _NORM,
+    "validate":  _NORM + ("formatos",),
 }
 
 # Precedencia de etapa: nao roda a etapa N sem a N-1 concluida.
 PREDECESSORA = {
     "fetch": "init", "raw": "fetch", "territory": "raw", "normalize": "territory",
-    "dedup": "normalize", "export": "dedup", "map": "export", "validate": "export",
+    "export": "normalize", "map": "export", "validate": "export",
 }
 
 
@@ -86,20 +85,6 @@ class Config:
     source_mode: str = "cache"           # cache | latest | pinned
     refresh_fontes: tuple = ()           # fontes a reconsultar nesta execucao
 
-    # dedup — `evidencia` e o motor v3 (contexto + telefone + diametro)
-    dedup_modo: str = "evidencia"
-    dedup_raio_m: int = 30
-    dedup_sim_min: int = 85
-    dedup_sim_cross: int = 92
-    dedup_jaccard_min: float = 0.60
-    dedup_diam_max_m: float = 90.0
-    dedup_ctx_raio_m: float = 200.0
-    dedup_ctx_min: int = 3
-    dedup_semnome_modo: str = "absorver"  # absorver | marcar
-    # blocking espacial: a divisa municipal deixa de ser parede no matching.
-    # `dedup_celula_m = 0` volta a particionar por municipio (comportamento v3.1).
-    dedup_celula_m: float = 2000.0
-    dedup_halo_m: float = 0.0            # 0 = auto (max(raio_forte_m, 250))
 
     # plano de execucao da coleta (muda o diretorio materializado, nao o dado)
     ov_tile_graus: float = 1.0
@@ -112,7 +97,6 @@ class Config:
     ifood_proxies: str = ""
 
     # gate semantico: fracao maxima de clusters com fusao suspeita antes de reprovar
-    max_fusao_suspeita: float = 0.02
 
     # performance (fora do hash)
     budget_s: float = 0.0                # 0 = sem time-box; >0 = para e retoma
@@ -152,22 +136,6 @@ class Config:
             raise ConfigInvalida("source_mode: %s" % "|".join(SOURCE_MODES))
         if self.osm_predicado not in OSM_PREDICADOS:
             raise ConfigInvalida("osm_predicado: %s" % "|".join(OSM_PREDICADOS))
-        if self.dedup_modo not in DEDUP_VALIDOS:
-            raise ConfigInvalida("dedup_modo: %s" % "|".join(DEDUP_VALIDOS))
-        if self.dedup_semnome_modo not in ("absorver", "marcar"):
-            raise ConfigInvalida("dedup_semnome_modo: absorver|marcar")
-        if not 0.0 <= float(self.dedup_jaccard_min) <= 1.0:
-            raise ConfigInvalida("dedup_jaccard_min fora de [0,1]: %s" % self.dedup_jaccard_min)
-        if not 0.0 <= float(self.max_fusao_suspeita) <= 1.0:
-            raise ConfigInvalida("max_fusao_suspeita fora de [0,1]: %s" % self.max_fusao_suspeita)
-        if float(self.dedup_celula_m) < 0 or float(self.dedup_halo_m) < 0:
-            raise ConfigInvalida("dedup_celula_m/dedup_halo_m nao podem ser negativos")
-        if 0 < float(self.dedup_celula_m) < 500:
-            raise ConfigInvalida("dedup_celula_m muito pequena (%s): a celula deve ser bem "
-                                 "maior que o halo" % self.dedup_celula_m)
-        if float(self.dedup_diam_max_m) < float(self.dedup_raio_m):
-            raise ConfigInvalida("dedup_diam_max_m (%s) < dedup_raio_m (%s)"
-                                 % (self.dedup_diam_max_m, self.dedup_raio_m))
         if "fsq" in self.fontes and not os.environ.get("HF_TOKEN"):
             raise ConfigInvalida("fonte fsq exige HF_TOKEN no ambiente")
         # Falhar AQUI, e nao depois dos ~421 MB do OSM: a fonte ifood sem

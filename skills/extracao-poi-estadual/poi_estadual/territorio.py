@@ -167,6 +167,24 @@ def consolidar(cfg, man, bbox):
     raw = raw[mask]
     man.funil("raw.bbox", n3, len(raw), "fora do bbox da UF alvo")
 
+    # v3.7.0 — DUPLICATA EXATA da mesma fonte.
+    #
+    # Oito registros do Overture chegavam duas vezes no RS: mesmo `id_fonte`,
+    # mesmo nome, mesma coordenada. E o mesmo registro visto por dois tiles que
+    # se sobrepoem. Ate 01/09/2026 a fusao consolidava isso de passagem; quando
+    # ela saiu do passo 1, os oito apareceram na entrega e reprovaram a
+    # unicidade de `(fonte, id_fonte)` — com razao.
+    #
+    # Nao e trabalho de motor de fusao: nao ha o que julgar entre duas copias
+    # identicas do mesmo registro. E gate de coleta, e mora aqui.
+    n4 = len(raw)
+    m = raw.duplicated(subset=["fonte", "id_fonte"], keep="first")
+    if m.any():
+        rej.append(_rejeitados(raw[m], "raw", "duplicata exata da mesma fonte"))
+        raw = raw[~m]
+    man.funil("raw.duplicata_exata", n4, len(raw),
+              "mesmo (fonte, id_fonte) repetido — tiles sobrepostos")
+
     salvar_atomico(pd.concat(rej, ignore_index=True),
                    os.path.join(cfg.dir_proc("raw"), "r_raw.parquet"))
 
@@ -215,9 +233,38 @@ def clipar(cfg, man, alvo):
         raise RuntimeError("clip incompleto: %d/%d blocos" % (len(partes), nb))
     df = pd.concat([pd.read_parquet(p) for p in partes], ignore_index=True)
     df["COD_MUNICIPIO"] = df["COD_MUNICIPIO"].astype(str).str.replace(r"\.0$", "", regex=True)
+
+    # UM PONTO, UM MUNICIPIO.
+    #
+    # O `sjoin` devolve uma linha por PAR que casa. Se a malha traz o mesmo
+    # municipio em mais de uma feicao (multipoligono partido em partes), o
+    # ponto casa com todas e sai repetido. No RS eram 8, e os pares tinham o
+    # MESMO COD_MUNICIPIO — a mesma cidade duas vezes, nao duas cidades.
+    #
+    # Ordena antes de cortar para o sobrevivente ser sempre o mesmo: resultado
+    # que muda de execucao para execucao e pior que resultado errado, porque
+    # nao da para comparar duas corridas.
+    n_pre = len(df)
+    ordenado = df.sort_values(["fonte", "id_fonte", "COD_MUNICIPIO"], kind="stable")
+    repetidos = ordenado[ordenado.duplicated(subset=["fonte", "id_fonte"],
+                                             keep="first")]
+    df = (ordenado.drop_duplicates(subset=["fonte", "id_fonte"], keep="first")
+                  .reset_index(drop=True))
+    if len(repetidos):
+        man.funil("territory.multipoligono", n_pre, len(df),
+                  "mesmo ponto casou com mais de uma feicao do mesmo municipio")
+    # TODO DESCARTE TEM LINHA DE MOTIVO. Sao dois cortes aqui — o ponto fora
+    # dos municipios alvo e a repeticao por multipoligono —, e os dois
+    # precisam aparecer, senao o POI some sem explicacao e a auditoria acusa a
+    # diferenca (foi o que ela fez: 279.816 descartados contra 279.808
+    # rejeitados, exatamente os 8 da repeticao).
     fora = raw[~raw["id_fonte"].astype(str).isin(set(df["id_fonte"].astype(str)))]
-    salvar_atomico(_rejeitados(fora, "territory", "ponto fora dos municipios alvo"),
-                   os.path.join(cfg.dir_proc("territory"), "r_territory.parquet"))
+    salvar_atomico(
+        pd.concat([_rejeitados(fora, "territory", "ponto fora dos municipios alvo"),
+                   _rejeitados(repetidos, "territory",
+                               "mesmo ponto em mais de uma feicao do municipio")],
+                  ignore_index=True),
+        os.path.join(cfg.dir_proc("territory"), "r_territory.parquet"))
     salvar_atomico(df, kept)
     salvar_atomico(df[["id_fonte"]].drop_duplicates(), ids)
     man.funil("territory.clip", len(raw), len(df), "ponto fora dos municipios alvo")

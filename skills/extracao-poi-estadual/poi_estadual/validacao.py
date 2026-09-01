@@ -14,8 +14,7 @@ import os
 import geopandas as gpd
 import pandas as pd
 
-from .normalizacao import (PADRAO, carregar_normalizado, carregar_observacoes,
-                           carregar_rejeitados, carregar_vinculos)
+from .normalizacao import PADRAO, carregar_padronizado, carregar_rejeitados
 from .vendor import sha_vendor
 from .vendor import tratar_pois as tp
 
@@ -34,30 +33,6 @@ def _do_arquivo(cfg):
     if os.path.exists(p):
         return pd.read_csv(p, low_memory=False)
     raise RuntimeError("padronizado nao encontrado em %s" % cfg.saida)
-
-
-def _fusao_suspeita(cfg, entregue):
-    """Fusoes ACEITAS entre registros da MESMA fonte com nomes divergentes.
-
-    Criterio conservador da auditoria: Overture e OSM nao publicam o mesmo
-    estabelecimento duas vezes com nomes distintos. Se dois registros da mesma base
-    viraram uma linha, eram dois lugares. Nao conta fusao entre fontes diferentes
-    (que e o objetivo do dedup) nem absorcao de registro sem nome."""
-    vin = carregar_vinculos(cfg)
-    if not len(vin):
-        return pd.DataFrame(), 0.0, 0
-    base = carregar_normalizado(cfg)
-    dv = tp._dv()
-    origem = {}
-    for i, f, nm in zip(base["id_fonte"].astype(str), base["fonte"].astype(str),
-                        base["nome"]):
-        origem[i] = (f, " ".join(sorted(dv.tokens_nome(nm))))
-    susp = dv.fusoes_suspeitas(vin, origem)
-    clusters = int((pd.to_numeric(entregue.get("n_registros_fundidos"),
-                                  errors="coerce").fillna(1) > 1).sum()) \
-        if "n_registros_fundidos" in entregue.columns else 0
-    taxa = (len(susp) / clusters) if clusters else 0.0
-    return susp, taxa, clusters
 
 
 def executar(cfg, man, alvo):
@@ -95,7 +70,7 @@ def executar(cfg, man, alvo):
     # a chave do sistema e (fonte, id_fonte) — `fonte:id_fonte` e o que vira
     # `cluster_id`. Conferir so `id_fonte` dependeria de OSM e FSQ nunca colidirem.
     dup = int(df[["fonte", "id_fonte"]].astype(str).duplicated().sum())
-    checagens.append(_chk("unicidade: (fonte, id_fonte) sem duplicata apos dedup", dup == 0,
+    checagens.append(_chk("unicidade: (fonte, id_fonte) sem duplicata", dup == 0,
                           "duplicados=%d" % dup))
     dupc = int(df["cluster_id"].astype(str).duplicated().sum()) if "cluster_id" in df.columns else 0
     checagens.append(_chk("unicidade: cluster_id sem duplicata no entregavel", dupc == 0,
@@ -107,47 +82,28 @@ def executar(cfg, man, alvo):
     checagens.append(_chk("regra: nenhum registro abaixo de min_conf", abaixo == 0,
                           "min_conf=%.2f | abaixo=%d" % (cfg.min_conf, abaixo)))
 
-    # ---- semantica da fusao (v3.0.0)
-    # O gate da v2 conferia aritmetica: o funil fecha, os ids sao unicos, nada fora do
-    # poligono. Duas execucoes passaram 14/14 enquanto apagavam ~71 e ~115
-    # estabelecimentos reais na fusao. Aqui a entrega e reprovada por SEMANTICA.
-    susp, taxa, clusters = _fusao_suspeita(cfg, df)
-    checagens.append(_chk(
-        "fusao: fusao suspeita (mesma fonte, nomes divergentes) abaixo do limite",
-        taxa <= cfg.max_fusao_suspeita,
-        "suspeitas=%d | clusters_com_fusao=%d | taxa=%.4f | limite=%.4f"
-        % (len(susp), clusters, taxa, cfg.max_fusao_suspeita)))
-    if len(susp):
-        ps = cfg.arq_saida("poi_fusao_suspeita_%s.csv" % cfg.rotulo.lower())
-        susp.to_csv(ps + ".tmp", index=False)
-        os.replace(ps + ".tmp", ps)
-
-    # ---- elo observacao -> entidade (v3.2.0)
-    # A entrega deixa de ser so "o registro que sobreviveu a fusao": cada observacao
-    # de fonte tem de aparecer no elo, com o `cluster_id` da entidade que ajudou a
-    # sustentar. Se uma observacao some aqui, ela sumiu da base.
-    obs = carregar_observacoes(cfg)
-    base = carregar_normalizado(cfg)
-    if len(obs):
-        faltam_obs = len(base) - len(obs)
-        orfaos = int((~df["cluster_id"].astype(str).isin(
-            set(obs["cluster_id"].astype(str)))).sum()) if "cluster_id" in df.columns else -1
-        ok_elo = (faltam_obs == 0) and (orfaos == 0)
-        detalhe = ("observacoes=%d | normalizado=%d | entidade sem observacao=%d"
-                   % (len(obs), len(base), orfaos))
-    else:
-        ok_elo, detalhe = True, "modo sem elo (dedup legado/exato/none ou celula=0)"
-    checagens.append(_chk("rastreabilidade: toda observacao aparece no elo observacao->entidade",
-                          ok_elo, detalhe))
+    # As checagens de fusao sairam em 01/09/2026 junto com a propria fusao.
+    # Eram tres — fusao suspeita, elo observacao->entidade e a taxa — e todas
+    # perguntavam sobre um passo que o estado nao executa mais. Voltam na etapa
+    # da area, onde a fusao passou a acontecer, e la elas continuam valendo:
+    # foi por elas que se mediram 42 e 66 fusoes indevidas em Canoas e Santa
+    # Maria.
 
     # ---- auditoria dos descartes
     rej = carregar_rejeitados(cfg)
-    descartados = sum(f["descartados"] for f in man.d["funil"]
-                      if not str(f["etapa"]).startswith("dedup"))
+    # SO O FUNIL DESTA CORRIDA. O manifesto acumula entre execucoes — seis
+    # corridas do RS deixaram 46 entradas, com `raw.bbox` repetido tres vezes.
+    # Somando tudo davam 1.105.491 descartes contra 279.800 rejeitados, e a
+    # checagem reprovava por contabilidade, nao por descarte perdido.
+    inicio = str(man.d.get("started_at") or "")
+    do_run = [f for f in man.d["funil"] if str(f.get("em") or "") >= inicio]
+    descartados = sum(f["descartados"] for f in do_run)
     checagens.append(_chk("auditoria: todo descarte tem linha em rejeitados",
                           len(rej) >= descartados,
-                          "rejeitados=%d | descartados no funil (fora dedup)=%d"
-                          % (len(rej), descartados)))
+                          "rejeitados=%d | descartados nesta corrida=%d "
+                          "(%d entradas de funil, de %d no manifesto)"
+                          % (len(rej), descartados, len(do_run),
+                             len(man.d["funil"]))))
 
     # ---- funil
     ruins = man.funil_fecha()
@@ -155,9 +111,9 @@ def executar(cfg, man, alvo):
                           "divergencias=%d" % len(ruins)))
 
     # ---- manifesto
-    etapas_ok = [e for e in ("init", "fetch", "raw", "territory", "normalize", "dedup", "export")
+    etapas_ok = [e for e in ("init", "fetch", "raw", "territory", "normalize", "export")
                  if man.reutilizavel(e)]
-    faltam = [e for e in ("init", "raw", "territory", "normalize", "dedup", "export")
+    faltam = [e for e in ("init", "raw", "territory", "normalize", "export")
               if e not in etapas_ok]
     checagens.append(_chk("manifesto: etapas concluidas com o hash da config atual", not faltam,
                           "pendentes/obsoletas: %s" % faltam))
@@ -174,10 +130,7 @@ def executar(cfg, man, alvo):
         "hashes_etapa": cfg.hashes(),
         "fontes_versao": versoes,
         "vendor_sha": sha_vendor(),
-        "fusao_suspeita": {"pares": len(susp), "clusters_com_fusao": clusters,
-                           "taxa": round(taxa, 6), "limite": cfg.max_fusao_suspeita},
         "rejeitados": len(rej),
-        "observacoes": len(obs),
         "linhas_entregues": len(df),
         "colunas_entregues": len(df.columns),
         "municipios": len(cods_df),

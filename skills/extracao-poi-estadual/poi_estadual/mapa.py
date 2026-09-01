@@ -23,7 +23,10 @@ import time
 
 import pandas as pd
 
-COLS = ["nome", "segmento", "categoria_pt", "confianca_classe", "endereco_completo",
+# O passo 1 entrega cru: sem `segmento` e sem `categoria_pt`. O mapa agrupa
+# pela FONTE — que e o diagnostico util aqui: onde o Overture cobre e o OSM
+# nao, e vice-versa — e rotula com a categoria como a fonte escreveu.
+COLS = ["nome", "fonte", "categoria_orig", "confianca_classe", "endereco_completo",
         "telefone", "site", "data_atualizacao", "lat", "lon", "NOME_MUNICIPIO"]
 
 TEMPLATE = r'''<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -231,8 +234,8 @@ def construir(df):
     df["lat"] = pd.to_numeric(df["lat"], errors="coerce")
     df["lon"] = pd.to_numeric(df["lon"], errors="coerce")
     df = df.dropna(subset=["lat", "lon", "NOME_MUNICIPIO"])
-    segs = sorted(x for x in df["segmento"].dropna().unique())
-    cats = sorted(x for x in df["categoria_pt"].dropna().unique())
+    segs = sorted(str(x) for x in df["fonte"].dropna().unique())
+    cats = sorted(str(x) for x in df["categoria_orig"].dropna().unique())
     seg_i = {v: i for i, v in enumerate(segs)}
     cat_i = {v: i for i, v in enumerate(cats)}
     conf_nomes = ["alta", "média", "baixa", "sem"]
@@ -244,8 +247,8 @@ def construir(df):
         pts, info = [], []
         for r in grp.itertuples(index=False):
             pts.append([int(round((r.lat - la0) * 1e6)), int(round((r.lon - lo0) * 1e6)),
-                        seg_i.get(r.segmento, -1), conf_i.get(str(r.confianca_classe), 3)])
-            info.append([_s(r.nome), cat_i.get(r.categoria_pt, -1), _s(r.endereco_completo),
+                        seg_i.get(str(r.fonte), -1), conf_i.get(str(r.confianca_classe), 3)])
+            info.append([_s(r.nome), cat_i.get(str(r.categoria_orig), -1), _s(r.endereco_completo),
                          _s(r.telefone), _s(r.site), _s(r.data_atualizacao)[:10]])
         cidades[str(cid)] = {"pts": pts, "info": info, "base": [round(la0, 6), round(lo0, 6)],
                              "segs": sorted(set(p[2] for p in pts if p[2] >= 0)),

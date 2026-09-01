@@ -16,8 +16,7 @@ import os
 import geopandas as gpd
 import pandas as pd
 
-from .normalizacao import (PADRAO, carregar_observacoes, carregar_padronizado,
-                           carregar_rejeitados, carregar_vinculos)
+from .normalizacao import PADRAO, carregar_padronizado, carregar_rejeitados
 from .osm import bruto as bruto_osm
 from .vendor import tratar_pois as tp
 
@@ -108,21 +107,20 @@ def brutos(cfg, man):
 
 
 def auditoria(cfg, man):
-    """v3.0.0 — os dois artefatos que fechavam a pendencia de rastreabilidade.
+    """Rastreabilidade do que o passo 1 descartou, e de onde o dado veio.
 
-    `poi_dedup_vinculos`: par a par, o que foi fundido, por qual evidencia e o que
-    foi RECUSADO (veto de telefone, contexto, diametro). Sem ele, uma fusao indevida
-    e invisivel — sobra so o nome do sobrevivente.
-    `poi_rejeitados`: cada linha descartada em raw/territory/normalize, com motivo."""
-    vin = carregar_vinculos(cfg)
+    `poi_rejeitados`: cada linha descartada em raw/territory/normalize, com motivo.
+    `poi_source_snapshot`: uma linha por fonte, com a versao dela.
+
+    Sairam daqui em 01/09/2026 os artefatos de fusao — `poi_dedup_vinculos`
+    (41,7 milhoes de pares, 1,5 GB no RS) e `poi_observacoes`. Sem fusao no
+    passo 1 nao ha par para auditar, e a observacao seria 1:1 com o entregavel.
+    Quem os produz agora e a etapa da area, onde a fusao acontece."""
     rej = carregar_rejeitados(cfg)
-    obs = carregar_observacoes(cfg)
     saidas = []
-    saidas += _grava(cfg, vin, "poi_dedup_vinculos_%s" % cfg.rotulo.lower())
     saidas += _grava(cfg, rej, "poi_rejeitados_%s" % cfg.rotulo.lower())
-    saidas += _grava(cfg, obs, "poi_observacoes_%s" % cfg.rotulo.lower())
     saidas += _grava(cfg, _procedencia(cfg, man), "poi_source_snapshot_%s" % cfg.rotulo.lower())
-    return vin, rej, obs, saidas
+    return rej, saidas
 
 
 def _procedencia(cfg, man):
@@ -189,15 +187,13 @@ def executar(cfg, man):
     man.iniciar("export")
     df, saidas = padronizado(cfg, man)
     br = brutos(cfg, man)
-    vin, rej, obs, saidas_aud = auditoria(cfg, man)
+    rej, saidas_aud = auditoria(cfg, man)
     saidas += saidas_aud
-    fundidos = int(vin["aceito"].sum()) if len(vin) else 0
     man.concluir("export", padronizado=len(df), colunas=len(df.columns),
-                 vinculos=len(vin), fusoes_aceitas=fundidos, rejeitados=len(rej),
-                 observacoes=len(obs),
+                 rejeitados=len(rej),
                  **{"bruto_%s" % k: v["linhas"] for k, v in br.items()})
-    print("EXPORT: padronizado=%d x %d col | observacoes=%d | fusoes=%d | rejeitados=%d | bruto: %s"
-          % (len(df), len(df.columns), len(obs), fundidos, len(rej),
+    print("EXPORT: padronizado=%d x %d col | rejeitados=%d | bruto: %s"
+          % (len(df), len(df.columns), len(rej),
              ", ".join("%s=%d" % (k, v["linhas"]) for k, v in br.items()) or "-"))
     for p in saidas:
         print("  -> %s" % p)

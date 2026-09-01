@@ -53,23 +53,16 @@ def test_uf_diferente_no_mesmo_workspace_nao_se_mistura(tmp_path):
     sc = _cfg(tmp_path, uf="SC")
     assert rs.sig_ibge() != sc.sig_ibge()
     assert rs.dir_fonte("ibge", rs.sig_ibge()) != sc.dir_fonte("ibge", sc.sig_ibge())
-    for etapa in ("init", "raw", "territory", "normalize", "dedup"):
+    for etapa in ("init", "raw", "territory", "normalize"):
         assert rs.dir_proc(etapa) != sc.dir_proc(etapa)
     # RS e SC são da mesma macrorregião: o `.pbf` bruto PODE ser compartilhado
     assert rs.dir_fonte("osm", "pbf") == sc.dir_fonte("osm", "pbf")
     assert rs.sig_osm() == sc.sig_osm(), "nodes/ways da região Sul servem às duas UFs"
 
 
-def test_parametro_de_dedup_nao_move_normalize(tmp_path):
-    a = _cfg(tmp_path)
-    b = _cfg(tmp_path, dedup_jaccard_min=0.9)
-    assert a.dir_proc("normalize") == b.dir_proc("normalize")
-    assert a.dir_proc("dedup") != b.dir_proc("dedup")
-
-
 def test_hash_do_caminho_e_o_hash_da_etapa(tmp_path):
     c = _cfg(tmp_path)
-    for etapa in ("init", "raw", "territory", "normalize", "dedup"):
+    for etapa in ("init", "raw", "territory", "normalize"):
         assert c.dir_proc(etapa).endswith(os.sep + c.hash_etapa(etapa))
 
 

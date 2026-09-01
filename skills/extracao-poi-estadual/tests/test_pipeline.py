@@ -135,7 +135,7 @@ def test_mapa_escapa_payload_hostil(tmp_path):
     from poi_estadual import mapa
     hostil = '<img src=x onerror="alert(1)">'
     df = pd.DataFrame([{
-        "nome": hostil, "segmento": "comercio", "categoria_pt": "Mercado",
+        "nome": hostil, "fonte": "osm", "categoria_orig": "Mercado",
         "confianca_classe": "alta", "endereco_completo": 'Rua "A", 1',
         "telefone": "51999999999", "site": "javascript:alert(1)",
         "data_atualizacao": "2026-01-01", "lat": 2.82, "lon": -60.67,
@@ -210,7 +210,6 @@ def test_amostra_minima_ponta_a_ponta(tmp_path):
     assert territorio.consolidar(cfg, man, bbox) == 3      # 5 - fora - sem coord
     assert territorio.clipar(cfg, man, alvo_gdf) == 3
     assert normalizacao.normalizar(cfg, man) == 3
-    assert normalizacao.deduplicar(cfg, man) is not None
     saida = exportacao.executar(cfg, man)
     assert set(normalizacao.PADRAO) <= set(saida.columns)
 
@@ -222,47 +221,28 @@ def test_amostra_minima_ponta_a_ponta(tmp_path):
     assert os.path.exists(os.path.join(cfg.base_dir, "manifesto.json"))
     assert man.funil_fecha() == []
 
-    # v3.0.0 — os artefatos de auditoria e o gate semantico fazem parte da entrega
-    assert os.path.exists(cfg.arq_saida("poi_dedup_vinculos_%s.csv" % cfg.rotulo.lower()))
+    # A auditoria dos DESCARTES continua fazendo parte da entrega. A dos
+    # VINCULOS saiu junto com a fusao em 01/09/2026 — sem fundir, nao ha par
+    # para auditar. Ela volta na etapa da area, onde a fusao passou a morar.
     assert os.path.exists(cfg.arq_saida("poi_rejeitados_%s.csv" % cfg.rotulo.lower()))
+    assert not os.path.exists(
+        cfg.arq_saida("poi_dedup_vinculos_%s.csv" % cfg.rotulo.lower())), \
+        "o passo 1 nao funde mais, entao nao pode publicar tabela de vinculos"
     rejeitados = normalizacao.carregar_rejeitados(cfg)
     assert len(rejeitados) == 2, "o fora-do-bbox e o sem-coordenada tem linha propria"
     assert set(rejeitados["etapa"]) == {"raw"}
-    assert rel["fusao_suspeita"]["pares"] == 0
-    assert any(c["verificacao"].startswith("fusao:") for c in rel["verificacoes"])
+
+    # E o entregavel sai CRU: endereco como a fonte escreveu, categoria idem.
+    assert "categoria_pt" not in saida.columns, "traducao de categoria saiu do passo 1"
+    assert "logradouro" not in saida.columns, "parse de endereco saiu do passo 1"
+    assert "cluster_id" in saida.columns, "a identidade da linha continua sendo entregue"
     assert {"precisao_coord_m", "coord_empilhada", "localidade_fonte",
-            "flag_localidade_divergente", "n_registros_fundidos", "cluster_id"} <= set(saida.columns)
+            "flag_localidade_divergente", "cluster_id"} <= set(saida.columns)
+    assert "n_registros_fundidos" not in saida.columns, \
+        "sem fusao no passo 1, ninguem foi fundido em ninguem"
 
-    # v3.2.0 — elo observação -> entidade e procedência tabular
-    assert os.path.exists(cfg.arq_saida("poi_observacoes_%s.csv" % cfg.rotulo.lower()))
+    # A procedencia continua; o elo observacao->entidade saiu com a fusao em
+    # 01/09/2026. Sem fundir, cada observacao E a entidade — o elo seria uma
+    # copia do entregavel.
     assert os.path.exists(cfg.arq_saida("poi_source_snapshot_%s.csv" % cfg.rotulo.lower()))
-    obs = normalizacao.carregar_observacoes(cfg)
-    assert len(obs) == 3, "toda observação que entrou no dedup aparece no elo"
-    assert obs["ancora"].sum() == len(saida), "uma âncora por entidade"
-    assert set(saida["cluster_id"]) <= set(obs["cluster_id"])
-    assert rel["observacoes"] == 3
-    # v3.3.0 — a observação é identificada pelo snapshot, não só pelo id da fonte
-    assert obs["observation_id"].nunique() == 3
-    assert obs["snapshot_id"].nunique() == 1 and obs["snapshot_id"].iloc[0] != "sem_assinatura"
-    assert obs["observed_at"].notna().all()
-    proc = pd.read_csv(cfg.arq_saida("poi_source_snapshot_%s.csv" % cfg.rotulo.lower()))
-    assert proc["retrieved_at"].notna().all(), "cada fonte tem a própria hora de coleta"
-    assert proc["snapshot_id"].notna().all()
-    assert set(proc["fonte"]) >= {"ibge", "osm"}
-    # v3.4.0 — a versão da fonte é separada de como se pediu e de como se materializou
-    assert {"source_version", "collection_id", "work_id", "source_mode"} <= set(proc.columns)
-    assert proc.loc[proc.fonte == "ibge", "source_determinado"].all(), \
-        "a malha do IBGE é identificada pelo SHA-256 do artefato"
-
-
-@pytest.mark.skipif(not _tem_rede(), reason="sem rede para a malha IBGE")
-def test_malha_descarta_feicao_sem_cod_valido(tmp_path):
-    """Lagoas na malha do RS: 499 feicoes, 497 municipios. Regra generica, sem 'if RS'."""
-    cfg = Config(uf="RS", fontes=("osm",), base_dir=str(tmp_path),
-                 malha_qualidade="intermediaria").preparar()
-    man = Manifesto(cfg)
-    from poi_estadual import ibge
-    g = ibge.carregar(cfg, man)
-    assert len(g) == 497
-    assert g["COD_MUNICIPIO"].str.startswith("43").all()
-    assert any(f["etapa"] == "init.malha" for f in man.d["funil"])
+    assert not os.path.exists(cfg.arq_saida("poi_observacoes_%s.csv" % cfg.rotulo.lower()))

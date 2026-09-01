@@ -1,23 +1,28 @@
 # -*- coding: utf-8 -*-
-"""Tratamento PT (`normalize`) e dedup por evidencia (`dedup`), por municipio.
+"""Tratamento barato do passo 1 (`normalize`), em lotes retomaveis.
 
-`normalize` roda em lotes retomaveis: categoria->PT (com fallback pela hierarquia
-da fonte), Title Case, telefone, parser de endereco BR, sinais de precisao da
-coordenada e separacao entre `bairro` e `localidade_fonte`. `--min-conf` filtra
-Overture de baixa confianca — DESCARTE POR REGRA DE NEGOCIO, contabilizado no funil
-E gravado linha a linha em `rejeitados_normalize.parquet` (v3.0.0).
+Faz: Title Case no nome, telefone, classe de confianca, sinais de precisao da
+coordenada, separacao entre `bairro` e `localidade_fonte`, e o CEP. Guarda o
+endereco COMO A FONTE ESCREVEU e a categoria como ela veio. `--min-conf` filtra
+Overture de baixa confianca — DESCARTE POR REGRA DE NEGOCIO, contabilizado no
+funil e gravado linha a linha em `rejeitados_normalize.parquet`.
 
-`dedup` (v3.2.0) faz blocking por GRADE + halo e consolida GLOBALMENTE. Ate a v3.1.0
-a particao era o MUNICIPIO — eficiente, mas uma parede: o mesmo estabelecimento visto
-por duas fontes a 2 m e 3 m de lados opostos da divisa nunca entrava no mesmo universo
-de matching. Agora a grade decide so quais PARES sao avaliados; o cluster fecha uma vez,
-no global, e o municipio vira ATRIBUTO da entidade (herdado da ancora).
-Ordenacao estavel antes do dedup garante o mesmo sobrevivente para a mesma entrada.
+O QUE SAIU DAQUI EM 01/09/2026, e por que.
 
-v3.0.0 — o motor passou a ser o `dedup_v3` (contexto + telefone + trava de diametro)
-e cada municipio grava a TABELA DE VINCULOS par a par. A auditoria de Canoas e Santa
-Maria mediu 42 e 66 fusoes indevidas com o motor anterior; sem a tabela de vinculos
-elas eram invisiveis — sobrava so o nome do sobrevivente.
+A fase `dedup` fundia por evidencia com blocking em grade, no estado inteiro.
+Media na corrida do RS: 25 dos 32 minutos do passo, 41.716.356 pares avaliados,
+1,5 GB so de tabela de vinculos — para fundir 8,7% (1.065.064 -> 972.728). E o
+municipio que se ia usar em seguida tinha 27.527 linhas: 2,8% do estado.
+
+O parser de endereco e a traducao de categoria seguiram junto, pela mesma razao
+e com o mesmo destino: a etapa da AREA. La o trabalho custa uma fracao e e
+melhor informado — fundir com o POI do Google ja na mao vale mais que fundir
+tres fontes as cegas.
+
+O passo 1 ficou com o que e barato e serve de filtro: coordenada, CEP e o
+endereco da fonte. As funcoes pesadas continuam existindo em `vendor` —
+`parse_endereco`, `traduzir`, `dedup_pois_auditado` — e quem as chama agora e a
+etapa da area.
 """
 import glob
 import hashlib
@@ -32,18 +37,24 @@ from .territorio import TERR
 from .vendor import extrair_pois as ep
 from .vendor import tratar_pois as tp
 
+# O CONTRATO DE SAIDA DO PASSO 1, depois de 01/09/2026.
+#
+# Sairam as colunas que so o trabalho pesado preenchia: `categoria_pt` e
+# `segmento` (traducao), `logradouro`/`numero`/`quadra`/`lote` e o metodo de
+# parse (parser de endereco), e `n_registros_fundidos`/`dedup_motivos`/
+# `nucleo_discriminante` (fusao). Quem as produz agora e a etapa da area.
+#
+# `endereco_completo` continua, mas E O ENDERECO DA FONTE, sem remontagem.
+# `cep` continua, porque e filtro de municipio errado e sai de uma regex.
+# `cluster_id` continua e vale `fonte:id_fonte` — identidade da linha, que sem
+# fusao e o proprio registro. A etapa 2 o usa como place_id e nao muda.
 PADRAO = ["cluster_id", "id_fonte", "fonte", "fontes", "nome", "sem_nome",
-          "segmento", "categoria_pt", "categoria_orig", "categoria_hier",
+          "categoria_orig", "categoria_hier",
           "lat", "lon", "precisao_coord_m", "coord_empilhada",
-          "logradouro", "numero", "quadra", "lote", "bairro", "localidade_fonte",
-          "flag_localidade_divergente", "cep",
-          "endereco_completo", "endereco_parse_metodo", "endereco_nao_parseado",
+          "bairro", "localidade_fonte", "flag_localidade_divergente", "cep",
+          "endereco_completo",
           "telefone", "site", "email", "instagram", "marca",
-          "confianca", "confianca_classe", "status", "data_atualizacao",
-          "n_registros_fundidos", "dedup_motivos", "nucleo_discriminante"] + TERR
-
-OBSERVACAO = ["observation_id", "cluster_id", "id_fonte", "fonte", "snapshot_id",
-              "observed_at", "ancora", "lat", "lon", "precisao_coord_m", "COD_MUNICIPIO"]
+          "confianca", "confianca_classe", "status", "data_atualizacao"] + TERR
 
 REJEITADOS = ["id_fonte", "fonte", "nome", "lat", "lon", "etapa", "motivo", "valor"]
 
@@ -54,13 +65,6 @@ def _chave(s):
         return ""
     t = unicodedata.normalize("NFKD", str(s)).encode("ascii", "ignore").decode()
     return " ".join(t.lower().replace("-", " ").split())
-
-
-def _params_dedup(cfg):
-    return dict(raio_nome_m=float(cfg.dedup_raio_m), sim_min=float(cfg.dedup_sim_min),
-                sim_cross=float(cfg.dedup_sim_cross), jaccard_min=float(cfg.dedup_jaccard_min),
-                diam_max_m=float(cfg.dedup_diam_max_m), ctx_raio_m=float(cfg.dedup_ctx_raio_m),
-                ctx_min=int(cfg.dedup_ctx_min), semnome_modo=cfg.dedup_semnome_modo)
 
 
 def normalizar(cfg, man):
@@ -85,7 +89,7 @@ def normalizar(cfg, man):
             if c not in estreito.columns:
                 estreito[c] = None
         rej = []
-        tr = tp.tratar(estreito[ep.COMUNS], min_conf=cfg.min_conf, dedup=False,
+        tr = tp.tratar(estreito[ep.COMUNS], min_conf=cfg.min_conf,
                        rejeitados=rej).reset_index(drop=True)
         terr = ch[["id_fonte"] + [c for c in TERR if c in ch.columns]].drop_duplicates("id_fonte")
         tr = tr.merge(terr, on="id_fonte", how="left")
@@ -119,187 +123,6 @@ ARESTA = ["peso", "chave_a", "chave_b", "motivo", "dist_m", "tol_m"]
 VINCULO = ["chave_a", "chave_b", "motivo", "dist_m", "score", "aceito"]
 
 
-def _carregar_normalizado_ordenado(cfg):
-    partes = sorted(glob.glob(os.path.join(cfg.dir_proc("normalize"), "n_*.parquet")))
-    df = pd.concat([pd.read_parquet(p) for p in partes], ignore_index=True)
-    df["COD_MUNICIPIO"] = df["COD_MUNICIPIO"].astype(str).str.replace(r"\.0$", "", regex=True)
-    # ordem estável e independente do lote: mesma base -> mesmos índices internos
-    return df.sort_values(["fonte", "id_fonte"], kind="stable").reset_index(drop=True)
-
-
-def deduplicar(cfg, man):
-    """Dedup com blocking por GRADE + halo e consolidação GLOBAL.
-
-    Até a v3.1.0 a partição era o MUNICÍPIO. Isso é eficiente, mas cria uma parede:
-    o mesmo estabelecimento visto por duas fontes a 2 m e 3 m de lados opostos da
-    divisa nunca entrava no mesmo universo de matching. Aqui a grade decide apenas
-    quais PARES são avaliados; o cluster fecha uma vez só, no global, e o município
-    passa a ser ATRIBUTO da entidade — herdado da âncora — e não fronteira do
-    matching. `--dedup-celula-m 0` volta ao comportamento por município.
-    """
-    man.iniciar("dedup")
-    d = cfg.dir_proc("dedup")
-    dvin = cfg.dir_proc("dedup", "vinculos")
-    df = _carregar_normalizado_ordenado(cfg)
-    par = _params_dedup(cfg)
-    if cfg.dedup_modo != "evidencia" or float(cfg.dedup_celula_m) <= 0:
-        return _dedup_por_municipio(cfg, man, df, par, d, dvin)
-
-    dv = tp._dv()
-    ctx = dv.preparar(df, {**dv.PARAMS, **par})
-    halo = float(cfg.dedup_halo_m) or max(float(par.get("raio_forte_m", 200.0)), 250.0)
-    blocos = list(dv.blocos_grade(ctx, float(cfg.dedup_celula_m), halo))
-    dir_a = cfg.dir_proc("dedup", "arestas")
-    t0 = time.time()
-    for (gx, gy), _nucleo, bloco in blocos:
-        outp = os.path.join(dir_a, "a_%d_%d.parquet" % (gx, gy))
-        if os.path.exists(outp):
-            continue
-        if cfg.budget_s and time.time() - t0 > cfg.budget_s:
-            man.parcial("dedup", blocos_feitos=len(glob.glob(os.path.join(dir_a, "a_*.parquet"))),
-                        blocos_total=len(blocos))
-            print("DEDUP: parcial (budget) — reexecute")
-            return None
-        ar, vi = dv.arestas_do_bloco(ctx, bloco, {**dv.PARAMS, **par})
-        ch = df["fonte"].astype(str) + ":" + df["id_fonte"].astype(str)
-        ch = ch.to_numpy()
-        salvar_atomico(pd.DataFrame(
-            [(ch[i], ch[j], m, round(dd, 2), round(float(sc), 1), bool(ac))
-             for i, j, m, dd, sc, ac in vi], columns=VINCULO),
-            os.path.join(dir_a, "w_%d_%d.parquet" % (gx, gy)))
-        salvar_atomico(pd.DataFrame(
-            [(pe, ch[i], ch[j], m, round(dd, 2), float(to))
-             for pe, i, j, m, dd, to in ar], columns=ARESTA), outp)
-
-    feitos = sorted(glob.glob(os.path.join(dir_a, "a_*.parquet")))
-    if len(feitos) != len(blocos):
-        man.parcial("dedup", blocos_feitos=len(feitos), blocos_total=len(blocos))
-        raise RuntimeError("dedup incompleto: %d/%d blocos" % (len(feitos), len(blocos)))
-
-    pos = {c: i for i, c in enumerate(df["fonte"].astype(str) + ":" + df["id_fonte"].astype(str))}
-    arestas, vinc = [], []
-    for p_ in feitos:
-        a = pd.read_parquet(p_)
-        arestas += [(float(r.peso), pos[r.chave_a], pos[r.chave_b], r.motivo,
-                     float(r.dist_m), float(r.tol_m)) for r in a.itertuples(index=False)]
-    for p_ in sorted(glob.glob(os.path.join(dir_a, "w_*.parquet"))):
-        w = pd.read_parquet(p_)
-        vinc += [(pos[r.chave_a], pos[r.chave_b], r.motivo, float(r.dist_m),
-                  float(r.score), bool(r.aceito)) for r in w.itertuples(index=False)]
-
-    ded, dfv, obs = dv.consolidar(ctx, arestas, vinc, {**dv.PARAMS, **par})
-    obs = _identificar_observacoes(obs, man)
-    salvar_atomico(dfv, os.path.join(dvin, "v_global.parquet"))
-    salvar_atomico(obs, os.path.join(cfg.dir_proc("dedup", "observacoes"), "obs.parquet"))
-    # município da ENTIDADE = município da âncora; particiona a saída, não o matching
-    ded["COD_MUNICIPIO"] = ded["COD_MUNICIPIO"].astype(str).str.replace(r"\.0$", "", regex=True)
-    for cod, g in ded.groupby("COD_MUNICIPIO", sort=True):
-        salvar_atomico(g.reset_index(drop=True), os.path.join(d, "d_%s.parquet" % cod))
-
-    n = len(ded)
-    cruzam = _clusters_entre_municipios(obs)
-    man.funil("dedup.%s" % cfg.dedup_modo, len(df), n,
-              "registro fundido em duplicata (raio=%dm, sim=%d/%d, jaccard=%.2f, diam=%dm, "
-              "celula=%dm, halo=%dm)"
-              % (cfg.dedup_raio_m, cfg.dedup_sim_min, cfg.dedup_sim_cross,
-                 cfg.dedup_jaccard_min, cfg.dedup_diam_max_m, cfg.dedup_celula_m, halo))
-    man.concluir("dedup", entrada=len(df), saida=n, blocos=len(blocos), modo=cfg.dedup_modo,
-                 clusters_entre_municipios=cruzam, telefones_hub=ctx["hubs"])
-    print("DEDUP: %d -> %d | %d blocos de %dm (halo %dm) | %d cluster(s) cruzando divisa"
-          % (len(df), n, len(blocos), cfg.dedup_celula_m, halo, cruzam))
-    return n
-
-
-def _identificar_observacoes(obs, man):
-    """`fonte + id_fonte` identifica o OBJETO da fonte; `+ snapshot` identifica a
-    OBSERVACAO. `OSM node/123` em janeiro e em agosto nao fizeram necessariamente a
-    mesma afirmacao — sem o snapshot na chave não há como manter histórico."""
-    if not len(obs):
-        return obs
-    snap = obs["fonte"].astype(str).map(lambda f: man.snapshot(f).get("snapshot_id")
-                                        or "indeterminado")
-    vagas = sorted(set(obs.loc[snap == "indeterminado", "fonte"].astype(str)))
-    if vagas:
-        # `observation_id = f(fonte, id_fonte, snapshot_id)`. Com snapshot indeterminado
-        # a observacao nao e historica — e um registro sem epoca. Nao entra na base.
-        raise RuntimeError(
-            "observacao sob snapshot indeterminado nas fontes %s. Resolva a versao da "
-            "fonte (--source-mode latest) antes de gerar a entrega." % ", ".join(vagas))
-    obs = obs.copy()
-    obs["snapshot_id"] = snap
-    # `observed_at` e o `retrieved_at` DAQUELA fonte, nao o nascimento do workspace
-    obs["observed_at"] = obs["fonte"].astype(str).map(man.retrieved_at)
-    obs["observation_id"] = [
-        hashlib.sha256(("%s|%s|%s" % (f, i, s)).encode("utf-8")).hexdigest()[:16]
-        for f, i, s in zip(obs["fonte"].astype(str), obs["id_fonte"].astype(str), snap)]
-    return obs
-
-
-def _clusters_entre_municipios(obs):
-    """Quantas entidades reúnem observações de municípios diferentes — exatamente o
-    que a partição por município tornava impossível."""
-    if not len(obs) or "COD_MUNICIPIO" not in obs.columns:
-        return 0
-    g = obs.dropna(subset=["COD_MUNICIPIO"]).groupby("cluster_id")["COD_MUNICIPIO"].nunique()
-    return int((g > 1).sum())
-
-
-def _dedup_por_municipio(cfg, man, df, par, d, dvin):
-    """Caminho v3.1: partição por município (sem halo). Mantido para `--dedup legado`,
-    `exato`, `none` e para `--dedup-celula-m 0`."""
-    df = df.sort_values(["COD_MUNICIPIO", "fonte", "id_fonte"], kind="stable")
-    cods = sorted(c for c in df["COD_MUNICIPIO"].dropna().unique() if c and c != "nan")
-    t0 = time.time()
-    for cod in cods:
-        outp = os.path.join(d, "d_%s.parquet" % cod)
-        if os.path.exists(outp):
-            continue
-        if cfg.budget_s and time.time() - t0 > cfg.budget_s:
-            man.parcial("dedup", municipios_feitos=len(glob.glob(os.path.join(d, "d_*.parquet"))),
-                        municipios_total=len(cods))
-            print("DEDUP: parcial (budget) — reexecute")
-            return None
-        g = df[df["COD_MUNICIPIO"] == cod]
-        ded, vin = tp.dedup_pois_auditado(g, cfg.dedup_modo, **par)
-        salvar_atomico(pd.DataFrame(vin), os.path.join(dvin, "v_%s.parquet" % cod))
-        salvar_atomico(ded, outp)
-
-    feitos = sorted(glob.glob(os.path.join(d, "d_*.parquet")))
-    if len(feitos) != len(cods):
-        man.parcial("dedup", municipios_feitos=len(feitos), municipios_total=len(cods))
-        raise RuntimeError("dedup incompleto: %d/%d municipios" % (len(feitos), len(cods)))
-    n = sum(int(pd.read_parquet(p, columns=["id_fonte"]).shape[0]) for p in feitos)
-    man.funil("dedup.%s" % cfg.dedup_modo, len(df), n,
-              "registro fundido em duplicata (particao por municipio)")
-    man.concluir("dedup", entrada=len(df), saida=n, municipios=len(cods), modo=cfg.dedup_modo)
-    print("DEDUP: %d -> %d em %d municipios (modo=%s, particao por municipio)"
-          % (len(df), n, len(cods), cfg.dedup_modo))
-    return n
-
-
-def carregar_observacoes(cfg):
-    """Elo OBSERVAÇÃO -> ENTIDADE. Uma linha por registro de fonte que entrou no
-    dedup, com o `cluster_id` da entidade e quem é a âncora. É o que separa
-    "registro sobrevivente de uma fusão" de "entidade sustentada por N evidências"
-    sem perder nenhuma observação pelo caminho."""
-    p = os.path.join(cfg.dir_proc("dedup", "observacoes"), "obs.parquet")
-    if os.path.exists(p):
-        d = pd.read_parquet(p)
-        for c in OBSERVACAO:
-            if c not in d.columns:
-                d[c] = None
-        return d[OBSERVACAO]
-    return pd.DataFrame(columns=OBSERVACAO)
-
-
-def carregar_vinculos(cfg):
-    partes = sorted(glob.glob(os.path.join(cfg.dir_proc("dedup", "vinculos"), "v_*.parquet")))
-    frames = [pd.read_parquet(p) for p in partes]
-    frames = [f for f in frames if len(f)]
-    return (pd.concat(frames, ignore_index=True) if frames else
-            pd.DataFrame(columns=["id_a", "id_b", "motivo", "dist_m", "score", "aceito"]))
-
-
 def carregar_rejeitados(cfg):
     partes = (sorted(glob.glob(os.path.join(cfg.dir_proc("raw"), "r_*.parquet")))
               + sorted(glob.glob(os.path.join(cfg.dir_proc("territory"), "r_*.parquet")))
@@ -310,16 +133,11 @@ def carregar_rejeitados(cfg):
             else pd.DataFrame(columns=REJEITADOS))
 
 
-def carregar_normalizado(cfg):
-    """Base ANTES do dedup — necessaria para auditar o que a fusao consolidou."""
-    partes = sorted(glob.glob(os.path.join(cfg.dir_proc("normalize"), "n_*.parquet")))
-    return pd.concat([pd.read_parquet(p) for p in partes], ignore_index=True)
-
-
 def carregar_padronizado(cfg):
-    partes = sorted(glob.glob(os.path.join(cfg.dir_proc("dedup"), "d_*.parquet")))
+    """O entregavel do passo 1 sai do `normalize` — nao ha mais fase de fusao."""
+    partes = sorted(glob.glob(os.path.join(cfg.dir_proc("normalize"), "n_*.parquet")))
     if not partes:
-        raise RuntimeError("nenhuma parte de dedup — rode a etapa dedup")
+        raise RuntimeError("nenhuma parte de normalize — rode a etapa normalize")
     df = pd.concat([pd.read_parquet(p) for p in partes], ignore_index=True)
     for c in PADRAO:
         if c not in df.columns:

@@ -33,10 +33,10 @@ from categorias_pt import traduzir
 
 # ordem preferida das colunas harmonizadas/tratadas (nativas vêm depois)
 FRENTE = ["id_fonte", "fonte", "fontes", "nome", "sem_nome",
-          "segmento", "categoria_pt", "categoria_orig", "categoria_hier",
+          "categoria_orig", "categoria_hier",
           "lat", "lon", "precisao_coord_m", "coord_empilhada",
-          "logradouro", "numero", "quadra", "lote", "bairro", "localidade_fonte", "cep",
-          "endereco_completo", "endereco_parse_metodo", "endereco_nao_parseado", "endereco_raw",
+          "bairro", "localidade_fonte", "cep",
+          "endereco_completo", "endereco_raw",
           "telefone", "site", "email", "instagram", "marca",
           "confianca", "confianca_classe", "status", "data_atualizacao"]
 
@@ -270,9 +270,21 @@ def _isnull(v):
 
 
 # ----------------------------------------------------------------- tratar -----
-def tratar(df, min_conf, dedup="fuzzy", raio_m=30, sim_min=85, sim_cross=92, rejeitados=None):
-    """Trata para PT. `rejeitados` (lista) recebe o que o `min_conf` descarta —
-    descarte por regra de negócio deixa de ser apenas um número no funil."""
+def tratar(df, min_conf, rejeitados=None):
+    """Tratamento BARATO do passo 1. `rejeitados` (lista) recebe o que o
+    `min_conf` descarta — descarte por regra de negócio deixa de ser apenas um
+    número no funil.
+
+    O que este tratamento NÃO faz mais, desde 01/09/2026: não parseia endereço
+    e não traduz categoria. As duas coisas custavam o estado inteiro para
+    servir a um município — 972.728 linhas normalizadas para se aproveitar
+    27.527, 2,8%. `parse_endereco` e `traduzir` continuam neste módulo, e quem
+    as chama agora é a etapa da área.
+
+    Ficam: nome em Title Case, telefone, classe de confiança, CEP e o endereço
+    COMO A FONTE ESCREVEU. Coordenada, CEP e endereço bastam como filtro
+    inicial, que é para isso que o passo 1 serve.
+    """
     out = []
     for row in df.to_dict("records"):
         conf = row.get("confianca")
@@ -285,25 +297,24 @@ def tratar(df, min_conf, dedup="fuzzy", raio_m=30, sim_min=85, sim_cross=92, rej
                                    "motivo": "confianca < min_conf (%.2f)" % min_conf,
                                    "valor": conf})
             continue
-        cat_pt, seg = traduzir(row.get("categoria_orig"), row.get("categoria_hier"))
-        pe = parse_endereco(row.get("endereco_raw"))
+        cru = row.get("endereco_raw")
+        cru = str(cru).strip() if (not _isnull(cru) and str(cru).strip()
+                                   not in ("", "nan", "None")) else None
         # `bairro` é bairro; `localidade_fonte` é o que a fonte chamou de locality —
         # no Overture isso é o MUNICÍPIO em ~96% das linhas, não o bairro.
-        bairro_n = norm_nome(row.get("bairro")) or pe["bairro"]
+        bairro_n = norm_nome(row.get("bairro"))
         loc_fonte = norm_nome(row.get("localidade_fonte"))
         cv = row.get("cep")
         cep_src = str(cv).strip() if (not _isnull(cv) and str(cv).strip() not in ("", "nan", "None")) else None
-        cep_n = cep_src or pe["cep"]
-        num, qd, lt, lg = pe["numero"], pe["quadra"], pe["lote"], pe["logradouro"]
-        partes = [p for p in [lg, (f"nº {num}" if num else None),
-                              (f"Qd {qd}" if qd else None), (f"Lt {lt}" if lt else None),
-                              bairro_n, cep_n] if isinstance(p, str) and p.strip()]
+        if not cep_src and cru:
+            # O CEP fica: é o filtro de município errado, e uma regex sobre o
+            # texto custa uma fração do parser inteiro.
+            m = RE_CEP.search(cru)
+            cep_src = "%s-%s" % (m.group(1), m.group(2)) if m else None
         nome_n = norm_nome(row.get("nome"))
-        tratado = dict(nome=nome_n, sem_nome=not bool(nome_n), segmento=seg, categoria_pt=cat_pt,
-                       logradouro=lg, numero=num, quadra=qd, lote=lt, bairro=bairro_n,
-                       localidade_fonte=loc_fonte, cep=cep_n,
-                       endereco_completo=", ".join(partes) if partes else None,
-                       endereco_parse_metodo=pe["metodo"], endereco_nao_parseado=pe["nao_parseado"],
+        tratado = dict(nome=nome_n, sem_nome=not bool(nome_n),
+                       bairro=bairro_n, localidade_fonte=loc_fonte, cep=cep_src,
+                       endereco_completo=cru,
                        telefone=norm_tel(row.get("telefone")),
                        confianca=conf, confianca_classe=classe_conf(conf),
                        fontes=row.get("fonte"))
@@ -311,7 +322,9 @@ def tratar(df, min_conf, dedup="fuzzy", raio_m=30, sim_min=85, sim_cross=92, rej
     res = pd.DataFrame(out)
     if len(res):
         res = _dv().sinais_precisao(res)
-        res = dedup_pois(res, dedup, raio_m, sim_min, sim_cross)
+        # Sem fusão, a identidade da linha é o próprio registro da fonte:
+        # `cluster_id = fonte:id_fonte`. É o que a etapa 2 usa como place_id.
+        res = _cluster_id(res.reset_index(drop=True))
     front = [c for c in FRENTE if c in res.columns]
     resto = [c for c in res.columns if c not in front]
     return res[front + resto]

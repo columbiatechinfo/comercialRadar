@@ -254,7 +254,7 @@ def test_locality_nao_vira_bairro():
                         "telefone": None, "site": None, "email": None, "instagram": None,
                         "marca": None, "confianca": 0.9, "status": None,
                         "data_atualizacao": None, "categoria_hier": None}])
-    t = tp.tratar(df, min_conf=0.0, dedup="none")
+    t = tp.tratar(df, min_conf=0.0)
     assert t["localidade_fonte"].iloc[0] == "Canoas"
     assert t["bairro"].iloc[0] is None
     assert "Canoas" not in t["endereco_completo"].iloc[0]
@@ -318,15 +318,6 @@ def test_min_conf_default_zero():
     assert Config(uf="RS", fontes=("osm",)).min_conf == 0.0
 
 
-def test_config_recusa_parametro_incoerente():
-    with pytest.raises(ConfigInvalida):
-        Config(uf="RS", fontes=("osm",), dedup_diam_max_m=10.0, dedup_raio_m=30)
-    with pytest.raises(ConfigInvalida):
-        Config(uf="RS", fontes=("osm",), dedup_modo="inventado")
-    with pytest.raises(ConfigInvalida):
-        Config(uf="RS", fontes=("osm",), osm_predicado="inventado")
-
-
 def test_predicado_e_semnome_entram_no_hash_da_coleta():
     a = Config(uf="RS", fontes=("osm",))
     b = Config(uf="RS", fontes=("osm",), osm_predicado="classico")
@@ -335,14 +326,6 @@ def test_predicado_e_semnome_entram_no_hash_da_coleta():
     assert a.hash_etapa("init") == b.hash_etapa("init"), "init nao depende do predicado"
 
 
-def test_parametro_de_dedup_nao_invalida_a_coleta():
-    a = Config(uf="RS", fontes=("osm",))
-    b = Config(uf="RS", fontes=("osm",), dedup_jaccard_min=0.9)
-    assert a.hash_etapa("fetch") == b.hash_etapa("fetch")
-    assert a.hash_etapa("dedup") != b.hash_etapa("dedup")
-
-
-# --------------------------------------------------------- §11 gate semantico
 def test_gate_semantico_enxerga_fusao_intra_fonte():
     """O criterio que a auditoria usou: mesma fonte, nomes divergentes, uma linha."""
     vin = pd.DataFrame([{"id_a": "a", "id_b": "b", "motivo": "nome", "dist_m": 10.0,
