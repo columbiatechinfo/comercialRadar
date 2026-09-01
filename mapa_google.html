@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mapa Google — mesmo padrão da captura</title>
+
+<!--
+  O MESMO MAPA QUE A CAPTURA FOTOGRAFA, sem a máquina de captura em volta.
+
+  A etapa 4 da fase 1 monta um `_map.html` em `src/capture.ts`, serve por HTTP
+  local e abre num Chromium para fotografar tile por tile. Esta página é aquele
+  mesmo mapa — mesma biblioteca, mesmo `mapId`, mesmas opções — mas com os
+  controles ligados e dirigível pelo mouse.
+
+  O QUE FOI COPIADO DE LÁ, E POR QUÊ:
+
+    mapId '33696f50cbe8e2d228094f61'   o estilo vetorial "clean" que a captura
+                                       usa. É o que faz os ícones de comércio
+                                       aparecerem legíveis para o OCR. Outro
+                                       estilo muda o que a detecção enxerga.
+
+    mapTypeId 'roadmap'                idem.
+
+    loading=async                      a forma de carregar que o Google pede
+                                       hoje; a antiga imprime aviso no console.
+
+    window.gm_authFailure              o Google chama isto quando RECUSA a
+                                       chave — referrer não autorizado, chave
+                                       inválida, API desativada, faturamento
+                                       ausente. Sem isso a recusa aparece só
+                                       como um mapa que nunca fica pronto, e a
+                                       captura chegou a salvar a tela de erro
+                                       como se fosse um bairro sem comércio.
+
+  O QUE MUDOU: os controles voltaram (`disableDefaultUI: false`), o mouse
+  funciona, e há um marcador do quarteirão de Canoas usado no teste.
+
+  A CHAVE NÃO ESTÁ NESTE ARQUIVO. Cole no campo, ou passe `?key=...` na URL.
+  Ela fica só na memória da aba — não vai para localStorage, não é enviada a
+  lugar nenhum além do próprio Google.
+
+  A chave da Maps JS API é restrita por REFERRER. Abrindo o arquivo direto
+  (file://) o navegador manda referrer vazio e o Google pode recusar. Se isso
+  acontecer, sirva por HTTP local:
+
+      python -m http.server 8766
+      # e abra http://127.0.0.1:8766/mapa_google.html
+
+  É exatamente o que a captura faz, e o comentário dela diz o motivo:
+  "referrer real; a chave segue restrita".
+-->
+
+<style>
+  :root {
+    --ink:     #16202b;
+    --ink-2:   #46545f;
+    --surface: #ffffff;
+    --ground:  #eceff2;
+    --rule:    #ccd6de;
+    --accent:  #1f4f7a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ink: #e6edf3; --ink-2: #b3c0cb; --surface: #182029;
+      --ground: #10161c; --rule: #2b3945; --accent: #7fb2dd;
+    }
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--ground);
+    color: var(--ink);
+    display: flex;
+    flex-direction: column;
+  }
+
+  header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--rule);
+    padding: 10px 16px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+  }
+  h1 {
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    margin-right: 6px;
+    white-space: nowrap;
+  }
+  input, button, select {
+    font-family: inherit;
+    font-size: 13px;
+    padding: 6px 10px;
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    background: var(--surface);
+    color: var(--ink);
+  }
+  input { min-width: 260px; flex: 1 1 260px; }
+  button {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+    cursor: pointer;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  button.secundario {
+    background: var(--surface);
+    color: var(--ink);
+    border-color: var(--rule);
+    font-weight: 500;
+  }
+  #map { flex: 1; min-height: 0; width: 100%; background: var(--ground); }
+
+  #barra {
+    background: var(--surface);
+    border-top: 1px solid var(--rule);
+    padding: 7px 16px;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 12px;
+    color: var(--ink-2);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 18px;
+  }
+  #barra b { color: var(--ink); font-weight: 600; }
+
+  #aviso {
+    display: none;
+    padding: 14px 16px;
+    background: #fbeae8;
+    color: #8a2118;
+    border-bottom: 1px solid #e8bdb7;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  #aviso code {
+    font-family: ui-monospace, monospace;
+    background: #f6d9d5;
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Mapa Google — padrão da captura</h1>
+  <input id="chave" type="password" placeholder="Chave da Maps JavaScript API" autocomplete="off">
+  <select id="zoom" title="zoom">
+    <option value="17">zoom 17</option>
+    <option value="18">zoom 18</option>
+    <option value="19" selected>zoom 19 — o da captura</option>
+    <option value="20">zoom 20</option>
+  </select>
+  <button id="carregar">Carregar mapa</button>
+  <button id="quadra" class="secundario" disabled>Ir ao quarteirão do teste</button>
+</header>
+
+<div id="aviso"></div>
+<div id="map"></div>
+
+<div id="barra">
+  <span>centro <b id="centro">—</b></span>
+  <span>zoom <b id="zoomAtual">—</b></span>
+  <span>mapId <b>33696f50cbe8e2d228094f61</b></span>
+  <span id="estado">aguardando a chave</span>
+</div>
+
+<script>
+// A quadra do teste da fase 1: setor 430460605000002P, quadra 1, Canoas Centro.
+// O centro é a média das coordenadas dos 136 endereços do CNEFE daquela quadra.
+const QUADRA = { lat: -29.91943, lng: -51.18084 };
+
+// O mesmo estilo vetorial que a captura usa. Trocar isto muda o que os ícones
+// de comércio parecem, e portanto o que o OCR consegue ler.
+const MAP_ID = '33696f50cbe8e2d228094f61';
+
+let map = null;
+const $ = (id) => document.getElementById(id);
+
+function avisar(html) {
+  const a = $('aviso');
+  a.innerHTML = html;
+  a.style.display = 'block';
+}
+
+// O Google chama isto quando RECUSA a chave. Sem ele a recusa aparece só como
+// um mapa que nunca carrega — foi assim que a captura chegou a fotografar a
+// tela de erro achando que era um bairro vazio.
+window.gm_authFailure = function () {
+  avisar(
+    '<b>O Google recusou a chave.</b> As causas, em ordem de frequência: ' +
+    'o <b>referrer não está autorizado</b> para esta chave (abrir o arquivo por ' +
+    '<code>file://</code> manda referrer vazio — sirva por ' +
+    '<code>python -m http.server 8766</code> e abra por ' +
+    '<code>http://127.0.0.1:8766/mapa_google.html</code>); a chave está errada; ' +
+    'a <b>Maps JavaScript API</b> não está ativada no projeto; ou o faturamento ' +
+    'não está habilitado.'
+  );
+  $('estado').textContent = 'chave recusada';
+};
+
+function iniciar() {
+  map = new google.maps.Map($('map'), {
+    center: QUADRA,
+    zoom: Number($('zoom').value),
+    mapId: MAP_ID,
+    mapTypeId: 'roadmap',
+    // Aqui é onde esta página se separa da captura: lá tudo isto é `false`,
+    // porque um controle na tela vira pixel fotografado e confunde o detector.
+    disableDefaultUI: false,
+    gestureHandling: 'greedy',
+  });
+
+  const mostrar = () => {
+    const c = map.getCenter();
+    if (c) $('centro').textContent = c.lat().toFixed(5) + ', ' + c.lng().toFixed(5);
+    $('zoomAtual').textContent = map.getZoom();
+  };
+
+  google.maps.event.addListenerOnce(map, 'idle', () => {
+    $('estado').textContent = 'mapa pronto';
+    $('quadra').disabled = false;
+    mostrar();
+  });
+  map.addListener('idle', mostrar);
+
+  new google.maps.marker.AdvancedMarkerElement({
+    map, position: QUADRA, title: 'Quadra 430460605000002P/1 — Canoas Centro',
+  });
+}
+window.iniciar = iniciar;
+
+function carregar() {
+  const chave = $('chave').value.trim() ||
+                new URLSearchParams(location.search).get('key') || '';
+  if (!chave) {
+    avisar('<b>Falta a chave.</b> Cole no campo acima, ou abra a página com ' +
+           '<code>?key=SUA_CHAVE</code> na URL.');
+    return;
+  }
+  $('aviso').style.display = 'none';
+  $('estado').textContent = 'carregando…';
+  $('carregar').disabled = true;
+
+  // `loading=async` é a forma que o Google pede hoje; sem ela o console enche
+  // de aviso de depreciação. `marker` entra por causa do AdvancedMarkerElement,
+  // que é o único tipo de marcador que funciona com mapId vetorial.
+  const s = document.createElement('script');
+  s.src = 'https://maps.googleapis.com/maps/api/js?key=' + encodeURIComponent(chave) +
+          '&libraries=marker&callback=iniciar&loading=async';
+  s.async = true;
+  s.onerror = () => {
+    avisar('<b>Não consegui carregar a biblioteca do Google.</b> ' +
+           'Verifique a conexão — o erro aconteceu antes de a chave ser avaliada.');
+    $('carregar').disabled = false;
+  };
+  document.head.appendChild(s);
+}
+
+$('carregar').addEventListener('click', carregar);
+$('chave').addEventListener('keydown', (e) => { if (e.key === 'Enter') carregar(); });
+$('quadra').addEventListener('click', () => {
+  if (!map) return;
+  map.setCenter(QUADRA);
+  map.setZoom(19);
+});
+$('zoom').addEventListener('change', () => { if (map) map.setZoom(Number($('zoom').value)); });
+
+// A chave também pode vir pela URL, para não precisar colar toda vez.
+if (new URLSearchParams(location.search).get('key')) carregar();
+</script>
+
+</body>
+</html>
