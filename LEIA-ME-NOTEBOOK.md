@@ -24,15 +24,27 @@ que a pessoa faz no navegador dela.
 ## O que ficou aqui
 
 ```
+.git/                 a história — 276 arquivos .py, e é de onde o código volta
+.claude/  .agents/    memória de agente
+skills/               instruções de agente
 docs/                 a documentação, inclusive o que foi feito e onde retomar
-migrations_a2l/       as migrações versionadas
-*.py                  o código — versionado, e é a mesma cópia que roda no servidor
+*.md                  README, CHANGELOG, DOCUMENTACAO, PIPELINE, este arquivo
+.env                  credencial — não é código, e o servidor tem a dele
 mapa_google.html      um mapa solto, para teste (ver abaixo)
 ```
 
-O código continua aqui porque ele é o repositório: é daqui que sai o `scp` para o
-servidor, e é aqui que o `git log` conta a história. O que não existe mais é o
-que o faria **executar**.
+**O código saiu do disco, não do repositório.** Os 276 arquivos `.py`, os 8 `.ts`
+e as 13 migrações continuam no último commit, e no GitHub. Para trazê-los de
+volta:
+
+```bash
+git checkout -- .
+```
+
+E aqui está a única coisa perigosa desta arrumação: enquanto as remoções
+estiverem na árvore de trabalho, um `git add -A && git commit` **apagaria o
+código do repositório também**. Todo commit feito nesta pasta precisa nomear o
+caminho — `git commit --only <arquivo>`.
 
 ## Onde ler o que foi feito
 
