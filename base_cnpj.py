@@ -14,9 +14,12 @@ USO:
   .venv\\Scripts\\python base_cnpj.py                    # retoma (pula o que já carregou)
   .venv\\Scripts\\python base_cnpj.py --mes 2026-06 --so Cnaes,Municipios   # subset
 """
+import os
+import queue
 import re
 import sys
 import ssl
+import threading
 import time
 import argparse
 import urllib.request
@@ -196,7 +199,34 @@ def run(mes, recriar, so, indices):
         alvos = arquivos
     print(f"  {len(alvos)} arquivos a processar", flush=True)
 
+    # ── DUAS CONEXOES BAIXANDO A FRENTE, E DUAS E NAO QUATRO ────────────────
+    #
+    # A versao anterior era estritamente sequencial: baixa, COPY, baixa o
+    # proximo. Com o download levando 10 minutos por arquivo de 1,5 GB e o COPY
+    # rodando com a CPU em 1,3%, a maquina ficava parada esperando a rede na
+    # maior parte do tempo.
+    #
+    # MEDIDO em 31/08/2026 contra o servidor da Receita:
+    #
+    #     1 conexao   ->  2,4 MB/s
+    #     2 conexoes  ->  5,0 MB/s   (2,5 + 2,5 — dobrou exato)
+    #     4 conexoes  ->  TODAS deram timeout
+    #     8 conexoes  ->  TODAS deram timeout
+    #
+    # O teto e POR CONEXAO, nao do nosso link — por isso duas dobram. Mas o
+    # servidor para de responder a partir de quatro vindas do mesmo IP, e nao
+    # devolve erro: as conexoes penduram ate estourar o timeout. Subir este
+    # numero nao acelera, QUEBRA a carga. Por isso o limite e duro e nao
+    # configuravel para cima.
+    #
+    # Os downloads correm em duas threads; o COPY continua UM DE CADA VEZ na
+    # thread principal. Nao e limitacao: o banco nunca foi o gargalo, e
+    # serializar a escrita mantem a garantia que importa — cada arquivo grava
+    # dado e marca na mesma transacao, numa conexao so.
+    CONEXOES = min(2, max(1, int(os.environ.get("CR_CONEXOES", "2"))))
+
     colcache = {}
+    pendentes = []
     for i, nome in enumerate(alvos, 1):
         ref = f"{mes}/{nome}"
         if bc.ja_carregado(conn, "cnpj", ref):
@@ -206,12 +236,65 @@ def run(mes, recriar, so, indices):
         if not tab:
             print(f"  {i}/{len(alvos)} {nome:28} — sem mapeamento, ignora")
             continue
-        cols = colcache.setdefault(tab, _cols(tab))
-        destino = bc.TMP / nome
+        pendentes.append((i, nome, ref, tab))
+
+    if not pendentes:
+        print("  nada a baixar — tudo já carregado")
+    else:
+        print(f"  {len(pendentes)} a baixar, {CONEXOES} conexões em paralelo", flush=True)
+
+    a_fazer = queue.Queue()
+    for item in pendentes:
+        a_fazer.put(item)
+    # `maxsize` limita quantos arquivos BAIXADOS esperam em disco. Sem ele, os
+    # downloads correriam ate o fim da fila e 20 arquivos de 1,5 GB ocupariam
+    # 30 GB de temporario enquanto o COPY do primeiro ainda roda.
+    prontos = queue.Queue(maxsize=CONEXOES)
+
+    def baixador():
+        """Todo caminho de saida POE algo na fila. Nenhum item sai calado.
+
+        O consumidor faz exatamente `len(pendentes)` leituras. Se uma thread
+        morrer sem enfileirar — uma excecao fora do `try`, um erro montando o
+        caminho do arquivo —, o consumidor fica esperando um item que nunca vem
+        e a carga PENDURA, sem erro e sem log, parecendo um download lento.
+        Por isso o `try` cobre tudo, inclusive o que parece nao poder falhar.
+        """
+        while True:
+            try:
+                i, nome, ref, tab = a_fazer.get_nowait()
+            except queue.Empty:
+                return
+            destino = None
+            try:
+                destino = bc.TMP / nome
+                print(f"  {i}/{len(alvos)} {nome:28} baixando…", flush=True)
+                bc.baixar(WEBDAV + mes + "/" + nome, destino, auth=AUTH)
+                prontos.put((i, nome, ref, tab, destino, destino.stat().st_size, None))
+            except BaseException as e:      # BaseException: nem KeyboardInterrupt escapa
+                prontos.put((i, nome, ref, tab, destino, 0, e))
+
+    threads = [threading.Thread(target=baixador, daemon=True) for _ in range(CONEXOES)]
+    for th in threads:
+        th.start()
+
+    for _ in range(len(pendentes)):
+        # TIMEOUT NA ESPERA, e ele e a ultima rede de seguranca. O `baixador`
+        # ja enfileira em todo caminho de saida; se ainda assim faltar um item,
+        # e melhor a carga terminar reclamando do que ficar parada a noite toda
+        # parecendo que baixa. Uma hora e folgado para o maior arquivo.
         try:
-            print(f"  {i}/{len(alvos)} {nome:28} baixando…", flush=True)
-            bc.baixar(WEBDAV + mes + "/" + nome, destino, auth=AUTH)
-            tam = destino.stat().st_size
+            i, nome, ref, tab, destino, tam, erro = prontos.get(timeout=3600)
+        except queue.Empty:
+            print("      ✗ nenhum download respondeu em 1h — parando", flush=True)
+            break
+        if erro is not None:
+            print(f"      ✗ {nome}: {str(erro)[:120]}", flush=True)
+            if destino is not None:
+                bc.limpar_tmp(destino)
+            continue
+        cols = colcache.setdefault(tab, _cols(tab))
+        try:
             print(f"      COPY → {tab} ({tam/1e6:.0f} MB)…", flush=True)
             # O COPY E A MARCA NA MESMA TRANSAÇÃO.
             #
@@ -225,11 +308,14 @@ def run(mes, recriar, so, indices):
             # 31/08/2026 no meio de cargas longas.
             n = bc.copy_de_zip(conn, tab, destino, colunas=cols, commit=False)
             bc.marcar(conn, "cnpj", ref, tab, n, tam)   # `with conn` fecha as duas
-            print(f"      ✓ {n:,} linhas".replace(",", "."), flush=True)
+            print(f"      ✓ {nome}: {n:,} linhas".replace(",", "."), flush=True)
         except Exception as e:
             print(f"      ✗ erro: {str(e)[:140]}", flush=True)
         finally:
             bc.limpar_tmp(destino)
+
+    for th in threads:
+        th.join(timeout=5)
 
     if indices:
         print("  criando índices (pode demorar)…", flush=True)
