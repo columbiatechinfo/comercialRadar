@@ -358,7 +358,8 @@ def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--area", required=True)
-    p.add_argument("--empresa", default="Aegea - Corsan")
+    p.add_argument("--empresa", default="",
+                   help="nome da empresa dona do dado; sem ele, vale o RADAR_USUARIO_SERVICO do .env")
     p.add_argument("--workers", type=int, default=WORKERS_PADRAO)
     p.add_argument("--sem-proxy", dest="sem_proxy", action="store_true",
                    help="RISCO: varre pelo seu IP; o Google pode pedir CAPTCHA "
@@ -375,7 +376,10 @@ def main(argv=None) -> int:
     con = bc.conectar()
     con.autocommit = False
     cur = con.cursor()
-    bc.assumir_empresa(cur, a.empresa)
+    # `empresa_da_sessao`: sem `--empresa`, vale o RADAR_USUARIO_SERVICO
+    # do .env. Igual ao extracao_estadual, ao povoar_vinculo e ao
+    # cruzar_fontes — um so jeito de pedir identidade nos cinco.
+    bc.empresa_da_sessao(cur, a.empresa)
 
     termos = CATEGORIAS[:a.limite_cat] if a.limite_cat else CATEGORIAS
     print(f"  varrendo {len(termos)} categorias na área {a.area!r}...")

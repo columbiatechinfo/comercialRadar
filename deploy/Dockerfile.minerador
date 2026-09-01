@@ -26,6 +26,20 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# O NAVEGADOR DO PLAYWRIGHT DO PIP, pelo mesmo motivo do npm mais abaixo.
+#
+# A imagem `playwright/python:v1.60.0-jammy` ja traz os navegadores da versao
+# 1.60.0. So que o `pip install -r requirements.txt` roda DEPOIS do `FROM` e
+# pode instalar outra versao do pacote — e cada versao procura o navegador numa
+# pasta com o numero da revisao dela:
+#
+#     Executable doesn't exist at /ms-playwright/chromium_headless_shell-1223/...
+#
+# O 1223 e a revisao que o playwright instalado pede; a imagem traz outra. Sem
+# esta linha, todo caminho que abre navegador pelo Python falha — a etapa 6 e
+# a busca da etapa 4 morreram exatamente assim.
+RUN python -m playwright install chromium chromium-headless-shell
+
 # ── NODE, E ELE FALTAVA ─────────────────────────────────────────────────────
 #
 # A etapa 1 da captura NAO e Python: `minerar_captura.py` chama
@@ -62,6 +76,27 @@ RUN apt-get update \
 COPY package.json package-lock.json ./
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 RUN npm ci --no-audit --no-fund
+
+# O NAVEGADOR DO PLAYWRIGHT DO NPM, e ele nao e o mesmo do Python.
+#
+# A imagem traz os navegadores casados com o `playwright` do PIP (1.60.0). O
+# `playwright` do NPM, que e quem a captura de tiles usa, resolveu para 1.59.1
+# pelo package-lock — e cada versao procura o navegador na SUA pasta:
+#
+#     Executable doesn't exist at /ms-playwright/chromium_headless_shell-1217/...
+#     current: mcr.microsoft.com/playwright/python:v1.60.0-jammy
+#     required: mcr.microsoft.com/playwright/python:v1.59.1-jammy
+#
+# A mensagem sugere trocar a tag da imagem, e isso quebraria o lado Python.
+# Alinhar as duas versoes seria o ideal, mas exige regerar o package-lock, que
+# e decisao de quem mantem as dependencias JS.
+#
+# Instalar o navegador que o npm pede resolve sem tocar em nenhum dos dois: os
+# dois conjuntos convivem em /ms-playwright, cada um na sua pasta versionada.
+# So o `chromium` e o `chromium-headless-shell` — a captura nao usa Firefox nem
+# WebKit, e cada um deles pesaria mais uns 300 MB a toa.
+RUN PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=0 \
+    npx playwright install chromium chromium-headless-shell
 
 COPY . .
 
