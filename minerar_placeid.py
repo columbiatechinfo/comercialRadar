@@ -36,8 +36,10 @@ import json
 import math
 import os
 import random
+import socket
 import sys
 import time
+import zlib
 
 sys.path.insert(0, "/app")
 import config  # noqa: F401,E402
@@ -50,6 +52,9 @@ from playwright.async_api import async_playwright  # noqa: E402
 CHAVE = os.environ.get("MAPS_JS_KEY", "").strip()
 MAP_ID = os.environ.get("MAPS_MAP_ID", "33696f50cbe8e2d298796ada")
 ZOOM = 20
+# Quem esta trabalhando. Vai para `pois.detalhado_por`, e e o que permite
+# medir a divisao entre maquinas em vez de estima-la.
+MAQUINA = os.environ.get("RADAR_MAQUINA") or socket.gethostname()
 LARG, ALT = 1280, 900
 
 # `chrome-headless-shell` estoura com SIGSEGV ao subir e ainda se anuncia:
@@ -546,7 +551,11 @@ async def garantir_cookie(pw, pool, caminho, renovar):
               "(--renovar-cookie para trocar)" % (idade, n))
         return caminho
 
-    px = pool._proxies[random.randrange(len(pool._proxies))]
+    # So os do pais ativo: metade do pool e de outro pais e esta
+    # reservada, e um proxy reservado devolve pagina em branco.
+    bons = [p for p in pool._proxies
+            if not pool.pais or p.get("country") == pool.pais] or pool._proxies
+    px = bons[random.randrange(len(bons))]
     nav = await pw.chromium.launch(headless=False, args=ARGS, proxy={
         "server": px["server"], "username": px["username"],
         "password": px["password"]})
@@ -577,6 +586,51 @@ async def garantir_cookie(pw, pool, caminho, renovar):
     finally:
         await nav.close()
     return caminho
+
+
+async def validar_cookie(pw, pool, caminho, alvo):
+    """Abre UM POI e confere se o cookie ainda serve. Devolve True/False.
+
+    POR QUE ISTO EXISTE. Cookie vencido nao da erro: o Google devolve uma
+    pagina sem `h1`, e o minerador grava "SEM NOME · 0 aval" em tudo. Aconteceu
+    em 01/09/2026 — o i9 processou 40 POIs assim enquanto o Predator, com um
+    cookie recem-feito, trabalhava normalmente ao lado. Nada falhou, nada
+    avisou, e o resultado vazio parecia dado.
+
+    Uma pagina, cinco segundos. Barato demais para nao fazer antes de subir
+    vinte navegadores.
+    """
+    bons = [p for p in pool._proxies
+            if not pool.pais or p.get("country") == pool.pais] or pool._proxies
+    px = bons[random.randrange(len(bons))]
+    nav = None
+    try:
+        nav = await pw.chromium.launch(headless=False, args=ARGS, proxy={
+            "server": px["server"], "username": px["username"],
+            "password": px["password"]})
+        ctx = await nav.new_context(
+            viewport={"width": 1360, "height": 1000}, locale="pt-BR",
+            timezone_id="America/Sao_Paulo", storage_state=caminho)
+        pg = await ctx.new_page()
+        await pg.goto("https://www.google.com/maps/place/?q=place_id:" + alvo,
+                      wait_until="domcontentloaded", timeout=60000)
+        try:
+            await pg.wait_for_selector("h1", timeout=25000)
+        except Exception:
+            return False
+        nome = await pg.evaluate(
+            "() => { const h = document.querySelector('h1');"
+            "        return h ? h.textContent.trim() : null; }")
+        abas = await pg.evaluate(
+            """[...document.querySelectorAll('[role="tab"]')].length""")
+        print("  cookie conferido em um POI: %r · %d abas" % (nome, abas))
+        return bool(nome)
+    except Exception as e:
+        print("  cookie nao pode ser conferido: %s" % str(e)[:80])
+        return False
+    finally:
+        if nav:
+            await nav.close()
 
 
 def engordar_cookie(caminho, estados):
@@ -671,6 +725,117 @@ async def detalhar(ctx, alvo):
 
 # ------------------------------------------------------------------ gravacao --
 
+def reservar(con, sessao, maquina):
+    """Toma UM POI da fila. Devolve (id, place_id, lat, lng) ou None.
+
+    `FOR UPDATE SKIP LOCKED` e o que faz duas maquinas trabalharem na mesma
+    quadra sem combinarem nada: o banco entrega um POI diferente para cada
+    pedido, e quem chega depois PULA o que ja esta reservado em vez de esperar
+    por ele. Sem fila externa, sem coordenador, sem uma maquina mandando na
+    outra — se uma cair, a outra termina o servico sozinha.
+    """
+    with con.cursor() as k:
+        k.execute("""
+            update radar_comercial.pois p
+               set detalhado_em = now(), detalhado_por = %s
+              from (select id from radar_comercial.pois
+                     where fonte = 'maps' and sessao = %s
+                       and place_id is not null and detalhado_em is null
+                     order by id
+                     for update skip locked
+                     limit 1) q
+             where p.id = q.id
+         returning p.id, p.place_id, p.maps_lat, p.maps_lng""",
+                  (maquina, sessao))
+        linha = k.fetchone()
+    con.commit()
+    if not linha:
+        return None
+    i, pid, la, lo = linha
+    return {"poi_id": i, "placeId": pid,
+            "lat": float(la) if la is not None else None,
+            "lng": float(lo) if lo is not None else None}
+
+
+def devolver(con, poi_id):
+    """Devolve a fila o POI que nao deu certo, para outro tentar."""
+    try:
+        with con.cursor() as k:
+            k.execute("""update radar_comercial.pois
+                            set detalhado_em = null, detalhado_por = null
+                          where id = %s""", (poi_id,))
+        con.commit()
+    except Exception:
+        con.rollback()
+
+
+def gravar_um(con, poi_id, d):
+    """Grava UM POI, logo depois de colhe-lo.
+
+    Antes a gravacao era toda no fim: uma queda no minuto 10 jogava fora dez
+    minutos de coleta. Com duas maquinas isso piora — a que cai leva junto os
+    POIs que tinha reservado. Gravando na hora, o pior caso e perder o POI que
+    estava na tela.
+    """
+    hist = d.get("histograma") or {}
+    extra = json.dumps({"histograma_estrelas": hist,
+                        "horarios_de_pico": d.get("horariosDePico") or {},
+                        "assuntos": d.get("assuntos") or [],
+                        "localizado_em": d.get("dentroDe")},
+                       ensure_ascii=False)
+    with con.cursor() as k:
+        k.execute("""
+            update radar_comercial.pois set
+                   nome = coalesce(%s, nome),
+                   categoria = coalesce(%s, categoria),
+                   endereco = coalesce(%s, endereco),
+                   telefone = coalesce(%s, telefone),
+                   website = coalesce(%s, website),
+                   plus_code = coalesce(%s, plus_code),
+                   maps_url = coalesce(%s, maps_url),
+                   avaliacao = %s, total_avaliacoes = %s,
+                   resumo_avaliacoes = %s, status_horario = %s,
+                   ia_resposta = %s
+             where id = %s""",
+            (d.get("nome"), d.get("categoria"), d.get("endereco"),
+             d.get("telefone"), d.get("site"), d.get("plusCode"),
+             d.get("url"), d.get("nota"), d.get("totalAval"),
+             d.get("resumoIA"), d.get("statusHorario"), extra, poi_id))
+
+        k.execute("delete from radar_comercial.comentarios where poi_id=%s",
+                  (poi_id,))
+        n_com = 0
+        for a in (d.get("avaliacoes") or []):
+            texto = a.get("texto") or ""
+            if a.get("resposta"):
+                texto = (texto + "\n\n[RESPOSTA DO PROPRIETARIO] "
+                         + a["resposta"]).strip()
+            if not texto and a.get("nota") is None:
+                continue
+            k.execute("""insert into radar_comercial.comentarios
+                           (poi_id, autor, data, nota, texto)
+                         values (%s,%s,%s,%s,%s)""",
+                      (poi_id, a.get("autor"), a.get("quando"),
+                       a.get("nota"), texto or None))
+            n_com += 1
+
+        k.execute("delete from radar_comercial.horario_funcionamento "
+                  "where poi_id=%s", (poi_id,))
+        for dia, h in (d.get("horarioSemana") or {}).items():
+            k.execute("""insert into radar_comercial.horario_funcionamento
+                           (poi_id, dia, horario) values (%s,%s,%s)""",
+                      (poi_id, dia, h))
+
+        k.execute("delete from radar_comercial.images_urls where poi_id=%s",
+                  (poi_id,))
+        for i, u in enumerate(d.get("fotos") or []):
+            k.execute("""insert into radar_comercial.images_urls
+                           (poi_id, url, ordem) values (%s,%s,%s)""",
+                      (poi_id, u, i))
+    con.commit()
+    return n_com
+
+
 def gravar(con, empresa, registros, sessao, simular):
     placar = {"novos": 0, "atualizados": 0, "comentarios": 0,
               "horarios": 0, "fotos": 0, "sem_nome": 0}
@@ -764,9 +929,38 @@ def gravar(con, empresa, registros, sessao, simular):
 # ---------------------------------------------------------------------- main --
 
 async def principal(a):
+    # O BANCO PRIMEIRO, E COM O ERRO DE VERDADE.
+    #
+    # `carregar_area` engole a excecao e devolve None, entao QUALQUER falha de
+    # conexao virava "a area nao existe em area_trabalho". Foi o que apareceu
+    # quando as duas maquinas subiram juntas e estouraram o limite de conexoes:
+    # a mensagem mandou procurar a area, e o problema era outro. Mesmo vicio do
+    # `{FALHOU: 566}` de 31/08.
+    try:
+        _c = bc.conectar()
+        with _c.cursor() as _k:
+            _k.execute("select 1")
+        _c.close()
+        # UMA conexao por MAQUINA, nao por worker.
+        #
+        # A porta 7100 e o Supavisor em modo sessao com `pool_size: 20`. Nao
+        # adianta olhar `max_connections` do Postgres (100): o teto que vale e
+        # o do pooler, e 20 workers do i9 o consumiam inteiro — o Predator
+        # chegava e nao havia vaga.
+        #
+        # E nao precisa de uma por worker: reservar e gravar levam
+        # milissegundos, contra vinte segundos de navegacao. Uma conexao
+        # compartilhada com trava atende os 20 sem fila perceptivel.
+        print("  banco: ok · 1 conexao para os %d navegadores desta maquina"
+              % a.workers)
+    except Exception as e:
+        print("NAO CONSEGUI FALAR COM O BANCO: %s" % str(e)[:200])
+        return 3
+
     poligono = area_utils.carregar_area(a.area)
     if not poligono:
-        print("area '%s' nao existe em area_trabalho" % a.area)
+        print("area '%s' nao existe em area_trabalho — o banco respondeu, "
+              "entao e a area mesmo que falta" % a.area)
         return 2
     print("area '%s': %d vertices" % (a.area, len(poligono)))
 
@@ -779,45 +973,83 @@ async def principal(a):
     pool.start()
 
     t0 = time.time()
+    con0 = bc.conectar()
+    try:
+        if a.refazer:
+            with con0.cursor() as k:
+                k.execute("""update radar_comercial.pois
+                                set detalhado_em = null, detalhado_por = null
+                              where fonte = 'maps' and sessao = %s""",
+                          (a.sessao,))
+                n = k.rowcount
+            con0.commit()
+            print("  fila reaberta: %d POI(s) voltaram para o comeco" % n)
+        with con0.cursor() as k:
+            k.execute("""select count(*) from radar_comercial.pois
+                          where fonte = 'maps' and sessao = %s
+                            and place_id is not null and detalhado_em is null""",
+                      (a.sessao,))
+            na_fila = k.fetchone()[0]
+    finally:
+        con0.close()
+
     async with async_playwright() as pw:
+        t_colheita = 0.0
         if a.sem_colheita:
-            # Os placeId ja colhidos estao no banco. Repetir a varredura so
-            # para reprocessar o detalhe custa 8 min a toa.
-            con = bc.conectar()
-            try:
-                with con.cursor() as k:
-                    k.execute("""select place_id, maps_lat, maps_lng
-                                   from radar_comercial.pois
-                                  where fonte = 'maps' and sessao = %s
-                                    and place_id is not null""", (a.sessao,))
-                    alvos = {p: {"placeId": p, "lat": float(la), "lng": float(lo)}
-                             for p, la, lo in k.fetchall()}
-            finally:
-                con.close()
-            print("\n⟦A⟧ pulada: %d placeIds vindos do banco" % len(alvos))
-            t_colheita = 0.0
+            print("\n⟦A⟧ pulada — %d POI(s) esperando na fila" % na_fila)
         else:
             print("\n⟦A⟧ colheita de placeId (de graca)")
             alvos = await colher(pw, poligono, pasta, a.passo, a.workers,
                                  a.refinar_acima_de)
             t_colheita = time.time() - t0
-        if a.limite:
-            alvos = dict(list(alvos.items())[:a.limite])
-            print("  limitado a %d para o teste" % len(alvos))
-        if not alvos:
-            return 1
+            if not alvos:
+                return 1
+            # A colheita ainda entrega em memoria; a fila do banco so existe
+            # para POIs ja gravados. Enquanto a fila de placeId nao existir,
+            # a colheita grava primeiro e o detalhe consome depois.
+            print("  %d placeIds colhidos — gravando o esqueleto para a fila"
+                  % len(alvos))
+            con0 = bc.conectar()
+            try:
+                with con0.cursor() as k:
+                    for v in alvos.values():
+                        k.execute("""
+                            insert into radar_comercial.pois
+                              (fonte, fonte_dado, nome, place_id, maps_lat,
+                               maps_lng, cidade, uf, sessao, coord_fonte,
+                               coord_precisao)
+                            values ('maps','maps:place_id', %s, %s, %s, %s,
+                                    'Canoas','RS', %s, 'maps','porta')
+                            on conflict (id_empresa, place_id)
+                              where place_id is not null and place_id <> ''
+                            do update set detalhado_em = null,
+                                          detalhado_por = null""",
+                            (v["placeId"], v["placeId"], v["lat"], v["lng"],
+                             a.sessao))
+                con0.commit()
+            finally:
+                con0.close()
+            na_fila = len(alvos)
 
-        print("\n⟦B⟧ detalhe: %d navegadores, cada um num proxy, "
-              "todos com a MESMA sessao quente" % a.workers)
+        if not na_fila:
+            print("  a fila esta vazia — use --refazer para reabri-la")
+            return 0
+
+        print("\n⟦B⟧ detalhe: %d navegadores nesta maquina (%s), "
+              "cada um num proxy, todos com a MESMA sessao quente"
+              % (a.workers, MAQUINA))
+        print("  a fila e do BANCO: outras maquinas podem trabalhar junto")
         t1 = time.time()
-        registros, trava = [], asyncio.Lock()
-        fila = asyncio.Queue()
-        for v in alvos.values():
-            fila.put_nowait(v)
+        trava = asyncio.Lock()
 
         async def trabalhador(i):
-            """Um navegador, muitos POIs. Nunca fecha entre um e outro."""
-            px = pool._proxies[(i * 7) % len(pool._proxies)]
+            """Um navegador, muitos POIs. Nunca fecha entre um e outro.
+
+            Cada trabalhador tem a SUA conexao com o banco: ele reserva o
+            proximo POI, colhe, grava, e volta para a fila. Duas maquinas
+            rodando isto atendem a mesma quadra sem combinarem nada.
+            """
+            px = usaveis[(i * 7 + desloca) % len(usaveis)]
             nav = None
             try:
                 nav = await pw.chromium.launch(headless=False, args=ARGS, proxy={
@@ -828,28 +1060,49 @@ async def principal(a):
                 ctx = await nav.new_context(
                     viewport={"width": 1360, "height": 1000}, locale="pt-BR",
                     timezone_id="America/Sao_Paulo", storage_state=cookie)
+                seguidas = 0
                 while True:
-                    try:
-                        alvo = fila.get_nowait()
-                    except asyncio.QueueEmpty:
-                        return
+                    async with db:
+                        alvo = await asyncio.to_thread(reservar, conexao,
+                                                       a.sessao, MAQUINA)
+                    if not alvo:
+                        return                      # a fila secou
                     try:
                         d = await detalhar(ctx, alvo)
+                        seguidas = 0
                     except Exception as e:
+                        # Nao deu certo aqui: volta para a fila e outro tenta.
+                        async with db:
+                            await asyncio.to_thread(devolver, conexao,
+                                                    alvo["poi_id"])
+                        seguidas += 1
                         async with trava:
-                            registros.append(None)
-                            print("    %3d/%d ERRO %s"
-                                  % (len(registros), len(alvos), str(e)[:70]))
+                            feitos.append(None)
+                            print("    %3d %s ERRO(%d) %s"
+                                  % (len(feitos), MAQUINA[:12], seguidas,
+                                     str(e)[:55]))
+                        # NAVEGADOR MORTO NAO SE RECUPERA SOZINHO.
+                        #
+                        # Devolver o POI e tentar o proximo e certo quando a
+                        # falha e do POI. Quando e do NAVEGADOR, vira laco
+                        # infinito: reserva, falha, devolve, reserva o mesmo de
+                        # novo. Aconteceu — 13.798 erros em segundos, queimando
+                        # CPU e nao entregando nada.
+                        if seguidas >= 3:
+                            async with trava:
+                                print("    navegador %02d desiste apos %d "
+                                      "falhas seguidas" % (i, seguidas))
+                            return
                         continue
+                    async with db:
+                        n_com = await asyncio.to_thread(gravar_um, conexao,
+                                                        alvo["poi_id"], d)
                     async with trava:
-                        registros.append(d)
-                        print("    %3d/%d %-36s %-22s %3d aval%s"
-                              % (len(registros), len(alvos),
-                                 (d.get("nome") or "SEM NOME")[:36],
-                                 (d.get("categoria") or "-")[:22],
-                                 len(d.get("avaliacoes") or []),
-                                 "  FALHA:" + d["falha_avaliacoes"][:40]
-                                 if d.get("falha_avaliacoes") else ""))
+                        feitos.append(d)
+                        print("    %3d %-12s %-34s %-20s %3d aval"
+                              % (len(feitos), MAQUINA[:12],
+                                 (d.get("nome") or "SEM NOME")[:34],
+                                 (d.get("categoria") or "-")[:20], n_com))
                     # Intervalo aleatorio ENTRE POIs do mesmo navegador.
                     await asyncio.sleep(random.uniform(a.intervalo_min,
                                                        a.intervalo_max))
@@ -867,28 +1120,75 @@ async def principal(a):
                     await nav.close()
 
         cookie = await garantir_cookie(pw, pool, a.cookie, a.renovar_cookie)
-        colhidos = []
+
+        # Confere o cookie num POI antes de subir os navegadores. Se ele nao
+        # serve mais, faz um novo e confere de novo — uma vez so, para um
+        # bloqueio de verdade nao virar laco.
+        amostra = None
+        _c = bc.conectar()
+        try:
+            with _c.cursor() as _k:
+                _k.execute("""select place_id from radar_comercial.pois
+                               where fonte = 'maps' and sessao = %s
+                                 and place_id is not null limit 1""",
+                           (a.sessao,))
+                r = _k.fetchone()
+                amostra = r[0] if r else None
+        finally:
+            _c.close()
+        if amostra and not await validar_cookie(pw, pool, cookie, amostra):
+            print("  o cookie nao serve mais — fazendo um novo")
+            cookie = await garantir_cookie(pw, pool, a.cookie, True)
+            if not await validar_cookie(pw, pool, cookie, amostra):
+                print("  MESMO COM COOKIE NOVO a pagina volta sem nome. "
+                      "Nao e o cookie: pode ser bloqueio ou queda do Maps. "
+                      "Parando antes de gravar 90 POIs vazios.")
+                return 4
+
+        colhidos, feitos = [], []
+        # Uma conexao para a maquina inteira, com trava: o pooler da porta
+        # 7100 so aceita 20 sessoes NO TOTAL, entre todas as maquinas.
+        conexao = bc.conectar()
+        db = asyncio.Lock()
+        # Duas maquinas na mesma quadra nao podem cair nos MESMOS proxies. O
+        # deslocamento vem do nome da maquina, entao cada uma pega uma faixa
+        # diferente do pool sem ninguem coordenar nada.
+        #
+        # `crc32`, e nao `hash()`: o hash de string em Python e ALEATORIO por
+        # processo (PYTHONHASHSEED). Com ele, duas maquinas podiam sortear a
+        # mesma faixa, e a mesma maquina mudava de faixa a cada execucao — o
+        # oposto do que se queria.
+        desloca = (zlib.crc32(MAQUINA.encode("utf-8")) % 97) * 5
+
+        # SO OS PROXIES DO PAIS ATIVO. O pool tem 500 IPs, mas metade e de
+        # outro pais e esta reservada — usa-los devolve pagina em branco, e o
+        # sintoma vira "SEM NOME · 0 aval", que parece defeito de extracao.
+        #
+        # Isso passou despercebido enquanto o indice era `(i*7) % 500` com 20
+        # workers: nunca passava de 133, sempre dentro da metade boa. Bastou o
+        # deslocamento por maquina para cair na metade errada.
+        usaveis = [p for p in pool._proxies
+                   if not pool.pais or p.get("country") == pool.pais] \
+                  or pool._proxies
+        print("  proxies utilizaveis: %d de %d (pais %s) · faixa a partir de %d"
+              % (len(usaveis), len(pool._proxies), pool.pais or "qualquer",
+                 desloca % max(1, len(usaveis))))
         await asyncio.gather(*(trabalhador(i) for i in range(a.workers)))
+        conexao.close()
         cresceu = engordar_cookie(a.cookie, colhidos)
         if cresceu:
             print("    cookie engordado: %d → %d cookies" % cresceu)
+        registros = [d for d in feitos if d]
         t_detalhe = time.time() - t1
 
-    print("\n⟦C⟧ gravacao")
-    con = bc.conectar()
-    try:
-        # Resolve a identidade pelo mesmo caminho dos outros cinco scripts da
-        # fase 1: --empresa vence; senao o RADAR_USUARIO_SERVICO do .env.
-        with con.cursor() as k:
-            empresa = bc.empresa_da_sessao(k, a.empresa or "")
-        placar = gravar(con, empresa, registros, a.sessao, a.simular)
-    finally:
-        con.close()
-
+    # A gravacao nao acontece mais aqui: cada POI foi gravado logo depois de
+    # colhido, para uma queda no meio nao levar o trabalho junto — e porque com
+    # duas maquinas nao ha um "fim" comum onde gravar tudo.
     bons = [r for r in registros if r]
     cobradas = sum(r.get("cobradas", 0) for r in bons)
     print("\n" + "=" * 62)
-    print("  placeIds no poligono   : %d" % len(alvos))
+    print("  esta maquina           : %s" % MAQUINA)
+    print("  POIs que ELA detalhou  : %d" % len(bons))
     print("  detalhados com nome    : %d" % len([r for r in bons if r.get("nome")]))
     print("  com endereco           : %d" % len([r for r in bons if r.get("endereco")]))
     print("  com telefone           : %d" % len([r for r in bons if r.get("telefone")]))
@@ -907,11 +1207,26 @@ async def principal(a):
     for m, q in sorted(motivos.items(), key=lambda x: -x[1]):
         print("    sem avaliacao: %-38s %d" % (m, q))
     print("  CHAMADAS COBRADAS      : %d" % cobradas)
-    print("  gravado                : %s" % placar)
-    print("  tempo colheita/detalhe : %.0f min / %.0f min"
+    print("  tempo colheita/detalhe : %.1f min / %.1f min"
           % (t_colheita / 60, t_detalhe / 60))
-    if a.simular:
-        print("  (--simular: nada foi gravado)")
+    if bons:
+        print("  ritmo                  : %.1f s por POI nesta maquina"
+              % (t_detalhe / len(bons)))
+
+    # Quem fez o que, na quadra inteira — e como duas maquinas dividiram.
+    try:
+        con = bc.conectar()
+        with con.cursor() as k:
+            k.execute("""select coalesce(detalhado_por, '(pendente)'), count(*)
+                           from radar_comercial.pois
+                          where fonte = 'maps' and sessao = %s
+                          group by 1 order by 2 desc""", (a.sessao,))
+            print("  a quadra toda, por maquina:")
+            for m, n in k.fetchall():
+                print("    %-28s %d" % (m, n))
+        con.close()
+    except Exception:
+        pass
     return 0
 
 
@@ -928,8 +1243,11 @@ if __name__ == "__main__":
     p.add_argument("--limite", type=int, default=0,
                    help="so os N primeiros POIs, para teste")
     p.add_argument("--sem-tiles", action="store_true")
+    p.add_argument("--refazer", action="store_true",
+                   help="devolve TODOS os POIs desta sessao para a fila, para "
+                        "reprocessar do zero")
     p.add_argument("--sem-colheita", action="store_true",
-                   help="pula a varredura e usa os placeId ja gravados nesta sessao")
+                   help="pula a varredura e consome a fila que ja esta no banco")
     p.add_argument("--cookie", default="/app/estado/cookie_maps.json",
                    help="o cookie que faz o Google entregar a ficha inteira. "
                         "Sobrevive entre execucoes de proposito — sessao quente "
