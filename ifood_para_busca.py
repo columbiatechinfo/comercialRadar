@@ -1,8 +1,13 @@
 # -*- coding: utf-8 -*-
 """Ponte entre as lojas do iFood e o pipeline de busca que já existe.
 
-O iFood entrega nome, categoria e bairro — e para no endereço, porque o
+O iFood entrega nome, categoria e bairro — e parava no endereço, porque o
 `merchant-info/graphql` devolve 403 para automação (medido, cinco caminhos).
+
+DESDE 02/09/2026 ISSO VALE SÓ PARA QUEM NÃO TEM O ID. Com o id da loja, o
+`detalhar_ifood.py` traz rua, número, CEP, coordenada e CNPJ pelo endpoint
+público `/v1/merchants/{id}/extra`, sem navegador — e esta ponte para buscar
+endereço no Maps deixa de ser necessária nesse caso.
 Mas endereço a partir de nome é problema que este projeto já resolve, e resolve
 para os POIs todo dia: `search_from_sheet.py` busca no Google Maps com a
 metodologia v2, e o que o Maps não achar cai para o `minerar_web.py`.

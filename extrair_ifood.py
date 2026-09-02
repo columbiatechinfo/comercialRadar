@@ -1,18 +1,25 @@
 # -*- coding: utf-8 -*-
-"""Descoberta reproduzível de lojas do iFood, por bairro.
+"""Descoberta reproduzível de lojas do iFood, ponto a ponto por coordenada.
 
 O MÉTODO, e por que é este:
 
-O feed da home tem dois endereços. O primário, `POST site-api/v2/bm/home`,
-devolve 403 do PerimeterX em execução automatizada. O que o próprio site usa
-quando aquele falha, `GET site-api/v2/home:fallback?search_token=...`, devolve
-200 — e é ele que carrega a lista.
+O feed da home tem dois endereços. O que carrega a lista inteira é
+`GET site-api/v2/home:fallback?search_token=...`; o primário,
+`POST site-api/v2/bm/home`, traz só a primeira dobra. (Até 26/08/2026 o
+primário devolvia 403 do PerimeterX em execução automatizada. Em 02/09, com
+Camoufox e proxy, os dois respondem 200 — e a nota fica porque quem ler este
+arquivo vai encontrar o 403 escrito em outros lugares do repositório.)
 
 O `search_token` não é forjável de fora: quem o produz é a própria aplicação.
 Então este módulo NÃO monta requisição nenhuma. Ele abre o navegador, muda a
-localização como uma pessoa mudaria, e **escuta** a resposta que o site já ia
-buscar de qualquer jeito. É a diferença entre ler o que chegou e arrombar o que
-não chegou.
+localização como uma pessoa mudaria — clicando em "Usar minha localização" — e
+**escuta** a resposta que o site já ia buscar de qualquer jeito. É a diferença
+entre ler o que chegou e arrombar o que não chegou.
+
+DESDE 02/09/2026 A PRAÇA MUDA POR COORDENADA, e não por endereço digitado. O
+que morreu em 26/08 foi o Chromium contra o Turnstile interativo, não o método:
+o Camoufox atravessa. Ver `um_ponto` para o alvo do clique, que é a parte não
+óbvia.
 
 O QUE ESTE MÓDULO NÃO FAZ, E QUEM FAZ:
 
@@ -46,9 +53,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import os
-import shutil
-import tempfile
 import json
 import random
 import sys
@@ -61,13 +65,35 @@ from psycopg2.extras import execute_values
 import area_utils as au
 import base_comum as bc
 # Só o que este módulo usa. `trocar_bairro` saiu de propósito: uma sessão por
-# bairro nasce no lugar certo e nunca troca de localização — era esse o passo
+# ponto nasce no lugar certo e nunca troca de localização — era esse o passo
 # frágil que derrubava a varredura.
-from enriquecer_ifood import (BASE, abrir_navegador, entrar_no_app,
-                              tem_captcha, _humano, _n)
+#
+# `abrir_navegador`, `entrar_no_app`, `tem_captcha` e `_humano` saíram em
+# 02/09/2026 junto com o Chromium: os quatro serviam ao fluxo de endereço
+# digitado, que deixou de existir aqui. Continuam em `enriquecer_ifood`, que os
+# usa no sentido contrário (POI → link → id).
+from enriquecer_ifood import BASE
 
-# O endereço do feed que responde 200. O primário (`bm/home`) fica de fora de
-# propósito: ele devolve 403 e insistir nele só produz ruído no log.
+# O rótulo dentro do modal de endereço, e o que o cabeçalho da página passa a
+# exibir quando a praça muda. São os dois sinais do posicionamento: um para
+# clicar, outro para CONFERIR que pegou.
+ROTULO_LOCALIZACAO = "Usar minha localização"
+EXIBIDO = """() => {
+  const a = [...document.querySelectorAll("header button, [class*='address']")];
+  const t = a.map(e => (e.textContent||'').trim())
+             .filter(s => /Próximo de|Escolha um endereço/.test(s));
+  return t.length ? t[0] : null;
+}"""
+
+# O endereço do feed que carrega a lista inteira. O primário (`bm/home`) fica
+# de fora de propósito — mas o motivo mudou, e vale registrar: ele NÃO devolve
+# mais 403. Medido em 02/09/2026, com Camoufox e proxy, os dois respondem 200:
+#
+#     site-api/v2/bm/home?latitude=…&longitude=…    200 ·  20 lojas
+#     site-api/v2/home:fallback?search_token=…      200 · 480 lojas
+#
+# O primário traz só a primeira dobra. Ler os dois custaria uma linha e daria
+# zero loja nova, porque as 20 estão dentro das 480.
 ALVO_FEED = "home:fallback"
 CARD_LOJAS = "MERCHANT_LIST_V2"
 
@@ -78,11 +104,14 @@ ESPERA_FEED = 12.0
 
 # OS PONTOS DE BUSCA VÊM DO CNEFE, e não mais de uma lista escrita à mão.
 #
-# O iFood exige número da casa para salvar o endereço e não oferece "sem
-# número": o piloto registrou `address_number_required` em 2 de 9 pontos por
-# usar coordenada de centroide. A resposta, até 25/08/2026, foram dezesseis
-# endereços de Canoas dentro deste arquivo — que funcionavam para Canoas e para
-# mais nenhum lugar do Brasil.
+# Deles hoje se usa só a COORDENADA. O `endereco` continua vindo e continua
+# útil para ler o log, mas não entra mais em campo nenhum: desde 02/09/2026 a
+# praça muda pelo "Usar minha localização" do modal, e o `address_number_required`
+# que motivou o filtro de número da casa (`num_endereco ~ '^[1-9]'`, em
+# `pontos_de_busca`) deixou de poder acontecer.
+#
+# O filtro fica onde está, de propósito: afrouxá-lo aumentaria a cobertura de
+# células em área rural, e é mudança para medir sozinha, não de carona nesta.
 #
 # `pontos_de_busca` resolve isso para qualquer cidade OU área desenhada, tirando
 # endereços reais dos 111 milhões do CNEFE e espalhando-os numa grade, do mais
@@ -149,11 +178,13 @@ class Escuta:
         self.por_bairro: dict[str, int] = defaultdict(int)
         self.bairro = "?"
 
-    async def __call__(self, resp):
+    def __call__(self, resp):
+        # Síncrona desde 02/09/2026: quem dirige o navegador agora é o Camoufox
+        # pelo Scrapling, e o `page.on` dele chama retorno comum.
         if ALVO_FEED not in resp.url:
             return
         try:
-            corpo = json.loads(await resp.text())
+            corpo = json.loads(resp.text())
         except Exception:
             return
         self.respostas += 1
@@ -209,68 +240,126 @@ def gravar(con, lojas: list[dict]) -> int:
     return len(linhas)
 
 
-async def um_bairro(pw, nome: str, endereco: str, args, proxy: dict = None) -> tuple:
-    """Abre uma sessão só para este bairro, lê o feed e fecha.
+def um_ponto(nome: str, lat: float, lon: float, args, proxy: dict = None) -> tuple:
+    """Abre uma sessão só para este ponto, lê o feed e fecha.
 
     Devolve (lojas, motivo). `motivo` é None quando deu certo — e quando não
     deu, diz o que houve, para a rodada seguinte não ser às cegas.
+
+    O QUE MUDOU EM 02/09/2026, E POR QUE
+
+    Esta função abria o Chromium e DIGITAVA um endereço. Morreu em 26/08 e o
+    diagnóstico de então — "Turnstile interativo, navegador automatizado não
+    clica" — estava certo sobre o Chromium e errado sobre o problema: o
+    Camoufox resolve o Turnstile, e resolve em 4 segundos.
+
+    E o endereço digitado saiu junto, porque não era preciso. O modal "Onde você
+    quer receber seu pedido?" tem um "Usar minha localização" que ninguém tinha
+    achado — não está na landing, está no modal, e abre sozinho em /inicio. Com
+    ele, a praça muda por COORDENADA: nada de autocomplete, nada de depender de
+    o CNEFE ter número da casa, nada de `address_number_required`.
+
+    O alvo do clique é uma armadilha, e custou três rodadas. O rótulo é um
+    `span`; quem recebe clique é o `div.btn-address__container`, que não tem
+    `role` nem `tabindex` — `get_by_role("button")` não acha, `closest('button')`
+    volta vazio, e `.click()` do DOM não move nada, porque o componente escuta
+    evento de ponteiro. O que funciona é o clique de MOUSE por coordenada.
+
+    Medido em 02/09/2026, oito pontos de Canoas em paralelo, um IP cada:
+    8 de 8 posicionaram, 990 ids distintos, 30 segundos.
+
+    É SÍNCRONA de propósito. O laço de `rodar` continua assíncrono e chama por
+    `asyncio.to_thread`: o caminho síncrono é o que está medido, e a sessão do
+    Scrapling não precisa do laço de eventos para nada aqui.
     """
+    from scrapling.fetchers import StealthySession
+
     ouvinte = Escuta()
     ouvinte.bairro = nome
-    br = None
 
-    # PERFIL PRÓPRIO POR BAIRRO, descartado no fim.
-    #
-    # Sem isto as sessões compartilham o perfil persistente, que já tem um
-    # endereço salvo — e aí `entrar_no_app` encontra a landing sem o campo de
-    # busca, cai no atalho do /inicio e devolve True SEM TROCAR NADA. Foi o que
-    # aconteceu: três bairros, o mesmo feed, 0 lojas inéditas nos dois últimos.
-    #
-    # A sessão virgem é obrigada a percorrer o fluxo de endereço, que é o que
-    # de fato muda a praça do feed.
-    perfil = os.path.join(tempfile.gettempdir(),
-                          "cr_ifood_" + _n(nome).replace(" ", "_"))
-    shutil.rmtree(perfil, ignore_errors=True)
-    try:
-        # UM PROXY POR SESSÃO. A sessão já nasce descartável (perfil próprio,
-        # apagado no fim); com o proxy junto, o ponto seguinte não herda nem o
-        # perfil nem o IP do anterior. Uma varredura estadual são centenas de
-        # sessões contra o mesmo domínio que já devolve 403 do Akamai para IP
-        # repetido.
-        br, ctx, page = await abrir_navegador(pw, args.visivel, proxy=proxy,
-                                              perfil_path=perfil)
+    url_proxy = None
+    if proxy:
+        # O `to_playwright` do pool devolve dict; o Scrapling quer a URL. Sem
+        # usuário não se monta credencial: proxy de relay vem sem, e mandar
+        # usuário vazio joga o navegador no caminho de proxy autenticado.
+        servidor = str(proxy.get("server") or "").replace("http://", "")
+        if proxy.get("username"):
+            url_proxy = "http://%s:%s@%s" % (proxy["username"],
+                                             proxy.get("password") or "", servidor)
+        elif servidor:
+            url_proxy = "http://%s" % servidor
+
+    estado = {"motivo": None, "praca": None}
+
+    def acao(page):
         page.on("response", ouvinte)
 
-        await page.goto(f"{BASE}/", wait_until="domcontentloaded", timeout=60000)
-        await asyncio.sleep(3)
-        if await tem_captcha(page):
-            return [], "desafio na abertura"
-        if not await entrar_no_app(page, endereco):
-            return [], "não consegui salvar o endereço"
+        ctx = page.context
+        ctx.grant_permissions(["geolocation"], origin=BASE)
+        ctx.set_geolocation({"latitude": float(lat), "longitude": float(lon),
+                             "accuracy": 20})
 
-        # o feed é buscado sozinho ao entrar; só se espera por ele
+        try:
+            alvo = page.get_by_text(ROTULO_LOCALIZACAO, exact=False).first
+            alvo.wait_for(state="visible", timeout=60000)
+            alvo.scroll_into_view_if_needed(timeout=10000)
+            caixa = alvo.bounding_box()
+        except Exception:
+            caixa = None
+        if not caixa:
+            estado["motivo"] = "o modal de endereço não abriu"
+            return
+        page.mouse.click(caixa["x"] + caixa["width"] / 2,
+                         caixa["y"] + caixa["height"] / 2)
+        page.wait_for_timeout(8000)
+
+        # CONFERIR QUE PEGOU, e não supor. Sem endereço aplicado o site serve o
+        # feed de outra praça, e a lista errada não se distingue da certa —
+        # seria o mesmo vazio que parece dado do cookie do Maps.
+        estado["praca"] = page.evaluate(EXIBIDO)
+        if not estado["praca"] or "Escolha" in estado["praca"]:
+            estado["motivo"] = "a coordenada não aplicou (%r)" % estado["praca"]
+            return
+
+        # O feed vem ao recarregar já posicionado. `networkidle` NÃO serve: a
+        # página mantém tráfego de fundo e nunca fica ociosa — medido, sete de
+        # oito sessões estouravam 120 s DEPOIS de posicionar certo.
+        page.reload(wait_until="domcontentloaded", timeout=120000)
+
+        # ESPERAR O CARTÃO, e não só o relógio. Em 02/09 um ponto de três
+        # posicionou certo ("Próximo de Rio Branco") e foi dado como falho
+        # porque o feed levou mais que os 24 s do temporizador. O primeiro
+        # cartão no DOM é o sinal de que a lista renderizou — e é o mesmo
+        # seletor que a colheita por coordenada usa, com o mesmo prazo medido.
+        try:
+            page.wait_for_selector("a.merchant-v2__link", timeout=150000)
+        except Exception:
+            pass                     # sem cartão, o laço abaixo decide
+
         limite = time.time() + ESPERA_FEED + 12.0
         while time.time() < limite and not ouvinte.lojas:
-            await asyncio.sleep(0.5)
-        await asyncio.sleep(2.5)          # deixa chegar o resto das seções
-        await _humano(page)
+            page.wait_for_timeout(500)
+        page.wait_for_timeout(2500)          # deixa chegar o resto das seções
 
-        if not ouvinte.lojas and await tem_captcha(page):
-            return [], "desafio antes do feed"
-        return list(ouvinte.lojas.values()), None
-    except Exception as e:
-        return [], f"{type(e).__name__}"
-    finally:
-        if br:
-            try:
-                await br.close()
-            except Exception:
-                pass
-        shutil.rmtree(perfil, ignore_errors=True)
+    try:
+        with StealthySession(headless=not args.visivel, solve_cloudflare=True,
+                             network_idle=True, proxy=url_proxy, locale="pt-BR",
+                             timezone_id="America/Sao_Paulo") as s:
+            s.fetch(BASE + "/inicio", page_action=acao, timeout=420000)
+    except Exception as e:                                     # noqa: BLE001
+        return [], "%s" % type(e).__name__
+
+    # O Scrapling NÃO propaga exceção de `page_action`: ele registra e devolve a
+    # página assim mesmo. Sem esta conferência, ponto que não posicionou volta
+    # como sucesso de zero loja.
+    if estado["motivo"]:
+        return [], estado["motivo"]
+    if not ouvinte.lojas:
+        return [], "posicionou em %r mas o feed não chegou" % estado["praca"]
+    return list(ouvinte.lojas.values()), None
 
 
 async def rodar(args) -> int:
-    from playwright.async_api import async_playwright
     from pontos_de_busca import pontos as pontos_de_busca
 
     escopo = (f"área desenhada {args.area!r}" if args.area
@@ -300,47 +389,50 @@ async def rodar(args) -> int:
 
     print("⟦fase⟧ ifood-descoberta", flush=True)
     print(f"{escopo} · {len(pontos)} pontos do CNEFE · passo {args.passo_km} km · "
-          f"UMA SESSÃO POR PONTO · navegador "
-          f"{'visível' if args.visivel else 'oculto'}", flush=True)
+          f"UMA SESSÃO POR PONTO · Camoufox "
+          f"{'visível' if args.visivel else 'oculto'} · praça por coordenada",
+          flush=True)
 
     todas: dict[str, dict] = {}
     secos = 0
     t0 = time.time()
-    async with async_playwright() as pw:
-        for pt in pontos:
-            nome, endereco = pt["rotulo"], pt["endereco"]
-            antes = len(todas)
-            proxy = await pool.acquire() if pool else None
-            lojas, motivo = await um_bairro(pw, nome, endereco, args, proxy)
-            if pool and proxy:
-                # Proxy que tomou desafio vai para o DESCANSO, não para o fim da
-                # fila. Devolvê-lo à rotação queima o IP de vez: o próximo ponto
-                # o pega ainda marcado e toma o mesmo desafio.
-                if motivo and "desafio" in motivo:
-                    await pool.mark_cooldown(proxy)
-                else:
-                    await pool.release(proxy)
-            for lj in lojas:
-                todas.setdefault(lj["merchant_id"], lj)
-            novas = len(todas) - antes
+    for pt in pontos:
+        nome = pt["rotulo"]
+        antes = len(todas)
+        proxy = await pool.acquire() if pool else None
+        # A sessão é síncrona (ver `um_ponto`); o laço continua assíncrono por
+        # causa do pool, que é.
+        lojas, motivo = await asyncio.to_thread(
+            um_ponto, nome, pt["lat"], pt["lon"], args, proxy)
+        if pool and proxy:
+            # Proxy que tomou desafio vai para o DESCANSO, não para o fim da
+            # fila. Devolvê-lo à rotação queima o IP de vez: o próximo ponto
+            # o pega ainda marcado e toma o mesmo desafio.
+            if motivo and ("desafio" in motivo or "não aplicou" in motivo):
+                await pool.mark_cooldown(proxy)
+            else:
+                await pool.release(proxy)
+        for lj in lojas:
+            todas.setdefault(lj["merchant_id"], lj)
+        novas = len(todas) - antes
 
-            if motivo:
-                print(f"  {nome:<26}— {motivo}", flush=True)
-                continue
-            razao = novas / max(1, len(todas))
-            print(f"  {nome:<26}{novas:>5} novas · {len(todas):>5} no total "
-                  f"· inéditas {razao:.1%}", flush=True)
+        if motivo:
+            print(f"  {nome:<26}— {motivo}", flush=True)
+            continue
+        razao = novas / max(1, len(todas))
+        print(f"  {nome:<26}{novas:>5} novas · {len(todas):>5} no total "
+              f"· inéditas {razao:.1%}", flush=True)
 
-            # PARADA POR SATURAÇÃO: o feed cobre um raio grande e, passado certo
-            # ponto, cada bairro devolve o que já se tem. Insistir é gastar
-            # requisição no servidor deles e tempo seu. O piloto viu isso em
-            # Harmonia, que rendeu 0,6%.
-            secos = secos + 1 if razao < SATURADO else 0
-            if secos >= 2:
-                print(f"  ── saturado: dois bairros seguidos abaixo de "
-                      f"{SATURADO:.0%}. Parando por suficiência.", flush=True)
-                break
-            await asyncio.sleep(random.uniform(4.0, 9.0))
+        # PARADA POR SATURAÇÃO: o feed cobre um raio grande e, passado certo
+        # ponto, cada ponto devolve o que já se tem. Insistir é gastar
+        # requisição no servidor deles e tempo seu. O piloto viu isso em
+        # Harmonia, que rendeu 0,6%.
+        secos = secos + 1 if razao < SATURADO else 0
+        if secos >= 2:
+            print(f"  ── saturado: dois pontos seguidos abaixo de "
+                  f"{SATURADO:.0%}. Parando por suficiência.", flush=True)
+            break
+        await asyncio.sleep(random.uniform(4.0, 9.0))
 
     lojas = list(todas.values())
     print(f"{NL}{len(lojas)} lojas únicas · {(time.time()-t0)/60:.1f} min",

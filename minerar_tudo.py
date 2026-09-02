@@ -683,30 +683,45 @@ def main(argv=None) -> int:
     #
     # A etapa é tolerante de propósito: ela falha, diz por quê, e a mineração
     # segue. Perder o iFood custa CNPJ, não custa a rodada.
-    _etapa(6, "iFood — o CNPJ, partindo dos POIs que já achamos")
+    _etapa(6, "iFood — descobrir as lojas da área, e o CNPJ de cada uma")
     if a.pular_ifood:
         _log("  pulado por --pular-ifood")
     else:
-        # A INVERSÃO, e ela substitui o `extrair_ifood` que estava aqui.
+        # A ETAPA VOLTOU A TER DUAS METADES, em 02/09/2026.
         #
-        # `extrair_ifood` DESCOBRE: abre o feed de cada bairro no navegador e
-        # colhe a lista. Essa metade morreu em 26/08 — Turnstile interativo, que
-        # recusa até o clique humano quando o navegador é dirigido por
-        # automação. Deixá-lo aqui era manter uma etapa que só sabia falhar.
+        # Em 26/08 a descoberta saiu daqui, e o motivo registrado foi: "o
+        # Cloudflare passou de desafio automático para Turnstile interativo, e
+        # navegador automatizado não clica". Estava certo sobre o CHROMIUM e
+        # errado sobre o problema — o Camoufox resolve o Turnstile em 4 s.
         #
-        # `enriquecer_por_ifood` vai no sentido contrário e não abre o iFood:
+        # O endereço digitado, que era o outro ponto frágil, saiu junto: a praça
+        # do feed muda por COORDENADA, pelo "Usar minha localização" do modal de
+        # endereço. Não há mais autocomplete, nem dependência de o CNEFE ter
+        # número da casa.
         #
-        #     POI que já existe  →  busca web "nome cidade ifood"
-        #     link               →  o id está DENTRO da URL
-        #     /merchants/{id}/extra  →  CNPJ, rua, número, CEP, coordenada
+        # Medido em 02/09/2026, Canoas inteira:
         #
-        # O `/extra` responde 200 sem navegador (medido: 1.598 respostas, zero
-        # falhas, CNPJ em 99,7%). E alcança QUALQUER POI da base — antes o iFood
-        # só enriquecia o que ele mesmo tinha descoberto.
+        #     descoberta   1.537 lojas · 10,6 min · parou por saturação
+        #     detalhe      1.537 de 1.537 · 4,1 min · CNPJ em 99,5%
         #
-        # ESTA METADE NÃO PRECISA DE DESKTOP: usa o pool de busca (`SerpPool`),
-        # a mesma infraestrutura do `minerar_web`. É a que continua funcionando
-        # com a outra bloqueada.
+        # A ORDEM IMPORTA. Descobrir traz loja que NENHUM POI da base conhecia;
+        # o `enriquecer_por_ifood` alcança só o que já existe. Rodar o segundo
+        # primeiro não é errado, é menos: ele não teria o que a descoberta acha.
+        rc = _tolerante_i9(["extrair_ifood.py", "--area", a.area, "--oculto"],
+                           "iFood — descobrir as lojas da área")
+        if rc == 0:
+            # O detalhe é HTTP puro e sai de graça: `/v1/merchants/{id}/extra`,
+            # sem token e sem navegador. Só depois dele é que sobra trabalho
+            # para o caminho caro.
+            _tolerante_i9(["detalhar_ifood.py"],
+                          "iFood — CNPJ e endereço pelo endpoint público")
+        else:
+            _log("   sem descoberta nesta rodada; o detalhe fica para a próxima")
+
+        # E O CAMINHO INVERSO CONTINUA, para o POI que o iFood não listou:
+        # parte do que já está na base, acha o link por busca e tira o id da URL.
+        # As duas direções se completam — uma cobre a loja que a base não tem, a
+        # outra o POI que o feed não trouxe.
         rc = _tolerante_i9(["enriquecer_por_ifood.py", "--area", a.area,
                          "--empresa", a.empresa, "--aplicar"],
                         "iFood — CNPJ pelo link da loja")

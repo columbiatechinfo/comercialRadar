@@ -8,6 +8,15 @@ isso funciona. O que ele não entrega é CNPJ e endereço: eles vivem no
 `merchant-info/graphql`, que responde página de captcha do PerimeterX. Medido
 nesta sessão: IP virgem, perfil virgem, desafio na primeira loja.
 
+ESTE MÓDULO DEIXOU DE SER O PRIMEIRO RECURSO, em 02/09/2026. O `graphql`
+continua fechado, mas ele não era a única porta: `marketplace.ifood.com.br/v1/
+merchants/{id}/extra` responde 200 sem token e sem navegador, e o
+`detalhar_ifood.py` colhe por lá — 1.537 de 1.537, CNPJ em 99,5%, 4,1 min.
+
+O caminho web fica para o que sobrar dali, que é onde ele se paga: buscador,
+LLM e BrasilAPI custam por loja, e não faz sentido gastá-los onde um GET
+resolve.
+
 Mas o dado não é exclusivo do iFood. `Croc Frangos Canoas` no buscador devolve
 `Av. das Canoas, 142 - Mato Grande, Canoas - RS, 92323-270` e o telefone, no
 painel do próprio buscador. É público, e o `minerar_web.py` já sabe colher isso:
