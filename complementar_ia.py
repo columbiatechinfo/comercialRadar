@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""complementar_ia.py — CNPJ, telefone e redes: o SearXNG busca, a Spark lê.
+"""complementar_ia.py — CNPJ, telefone e redes: o navegador busca, a Spark lê.
 
 O QUE SAIU, E POR QUÊ
 
@@ -10,10 +10,19 @@ frágil — ele muda de tela, fecha o acesso sem login, e não avisa.
 
 O QUE ENTRA NO LUGAR
 
-    SearXNG    busca de verdade, local, na porta 7500
-    HTTP       as páginas que a busca achou, baixadas direto
+    Camoufox   a busca, pelo navegador do repositório, com o pool de proxies —
+               o mesmo que passa no Cloudflare do iFood e do Airbnb
+    HTTP       as páginas que a busca achou; quem recusa HTTP simples volta
+               pelo navegador
     Spark      lê o que veio e responde estruturado — o modelo da casa
     Receita    a conferência final, no banco, sem sair da rede
+
+O SEARXNG FICOU PELO CAMINHO, e vale registrar por quê: ele funcionava — devolvia
+20 resultados para `Habibs Canoas RS CNPJ` no começo de 02/09/2026 — e depois de
+algumas dezenas de consultas de teste passou a devolver 0 resultados em 0,0 s
+para toda pergunta. Não é lentidão: é resposta vazia instantânea, que é como um
+motor upstream diz que cortou. O navegador com proxy é o que o repositório já
+usa contra exatamente isso.
 
 Nada disso tem login, sessão que expira ou tela que muda. E o modelo é de
 VISÃO, então o mesmo caminho serve para o print do Airbnb.
@@ -62,6 +71,7 @@ from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 
 import base_comum as bc
+import busca_navegador as bn
 import sites_de_dados as sd
 
 SEARX = os.environ.get("SEARXNG_URL", "http://127.0.0.1:7500")
@@ -121,37 +131,39 @@ def conferir_na_receita(cur, cnpj: str, cod_municipio: str) -> dict:
 
 
 # ────────────────────────────────────────────────── busca e leitura ─────────
-def buscar(q: str, n: int = 8) -> list:
-    try:
-        req = urllib.request.Request(
-            "%s/search?q=%s&format=json&language=pt-BR"
-            % (SEARX, urllib.parse.quote(q)),
-            headers={"User-Agent": "radar/1.0"})
-        with urllib.request.urlopen(req, timeout=30) as h:
-            d = json.load(h)
-    except Exception:                                          # noqa: BLE001
-        return []
+def buscar(q: str, proxy=None, n: int = 8) -> list:
+    """A busca, pelo NAVEGADOR do repositorio.
+
+    O SearXNG funcionava e parou: passou a devolver 0 resultados em 0,0 s para
+    toda pergunta, que e como um motor upstream diz que cortou o acesso. O
+    Camoufox com o pool de proxies e o que passa — e o mesmo caminho que o Maps
+    e o iFood ja usam.
+    """
     saida = []
-    for r in (d.get("results") or []):
+    for r in bn.buscar(q, proxy, teto=n + 6):
         u = r.get("url") or ""
         if not u or sd.e_ruido(u):
             continue
-        saida.append({"titulo": r.get("title") or "", "url": u,
-                      "resumo": (r.get("content") or "")[:300]})
+        saida.append(r)
         if len(saida) >= n:
             break
     return saida
 
 
-def baixar(url: str, timeout: int = 18) -> str:
+def baixar(url: str, proxy=None, timeout: int = 18) -> str:
     """O texto da página, sem marcação.
 
     Quem precisa de navegador (medido: 403, 422, 429) é pulado aqui — o resumo
     que a busca já trouxe entra no lugar. Abrir navegador por página faria a
     etapa custar minutos por POI, e o resumo costuma bastar.
     """
+    # QUEM RECUSA HTTP SIMPLES VAI PELO NAVEGADOR, e nao e mais pulado.
+    #
+    # A versao anterior devolvia vazio e deixava so o resumo da busca. Mas
+    # `cnpj.biz` (422), `econodata` (403) e `cnpja` (429) sao justamente os que
+    # tem o dado — pular os tres era pular o que interessa.
     if sd.precisa_navegador(url):
-        return ""
+        return bn.baixar(url, proxy)
     try:
         req = urllib.request.Request(url, headers={
             "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
@@ -205,18 +217,30 @@ PROMPT = (
 )
 
 
-def investigar(poi: dict) -> dict:
+def investigar(poi: dict, proxy=None) -> dict:
     """Busca, filtra, baixa e pergunta. Devolve o que o modelo respondeu."""
+    # NOME QUE E SO O RAMO NAO SE BUSCA. `SALA DE COSTURA Canoas` devolveu o
+    # `Sala do Futuro Aluno`, o dicionario Dicio e a Wikipedia: o buscador casa
+    # a palavra, nao o estabelecimento. Sao nomes que o recenseador do IBGE
+    # anotou da fachada, e para eles a web nao tem o que dizer — gastar uma
+    # sessao de navegador neles e pagar por ruido.
+    if sd.nome_generico(poi["nome"]):
+        return {"paginas": 0, "resposta": None, "motivo": "nome generico"}
+
     consultas = sd.consultas(poi["nome"], poi["cidade"], poi.get("uf") or "",
                              poi.get("onde") or "")
+    # EM SERIE, e nao em paralelo: cada busca abre uma sessao de navegador, e
+    # quatro ao mesmo tempo pelo mesmo pool disputam IP. Para na primeira que
+    # trouxer o bastante — a mais larga costuma bastar.
     achados, vistos = [], set()
-    with ThreadPoolExecutor(max_workers=4) as ex:
-        for lote in ex.map(lambda c: buscar(c["q"], 6), consultas[:6]):
-            for a in lote:
-                if a["url"] in vistos:
-                    continue
-                vistos.add(a["url"])
-                achados.append(a)
+    for c in consultas[:3]:
+        for a in buscar(c["q"], proxy, 8):
+            if a["url"] in vistos:
+                continue
+            vistos.add(a["url"])
+            achados.append(a)
+        if len(achados) >= PAGINAS:
+            break
 
     # PREFERÊNCIA PELO CATÁLOGO: quem publica dado de empresa vai na frente, e é
     # quem sobra quando o teto de páginas corta.
@@ -227,7 +251,8 @@ def investigar(poi: dict) -> dict:
         return {"paginas": 0, "resposta": None}
 
     with ThreadPoolExecutor(max_workers=PAGINAS) as ex:
-        textos = list(ex.map(baixar, [a["url"] for a in escolhidas]))
+        textos = list(ex.map(lambda u: baixar(u, proxy),
+                             [a["url"] for a in escolhidas]))
 
     corpo = "\n\n".join(
         "FONTE: %s\nTITULO: %s\nTEXTO: %s"
@@ -351,13 +376,15 @@ def rodar(cidade="", cod="", limite=0, fontes=None, nome_min=12,
 
     placar = Counter()
     t0 = time.time()
-    # A busca é rede: várias ao mesmo tempo. A gravação é do laço principal,
-    # com um cursor só — cursor não atravessa thread.
-    with ThreadPoolExecutor(max_workers=THREADS) as ex:
-        for poi, achado in zip(lista, ex.map(investigar, lista)):
+    # UM IP POR POI, em rodizio. Sessao de navegador nao se paraleliza de graca:
+    # cada uma sobe um Camoufox, e varias pelo mesmo pool acabam no mesmo IP.
+    proximo = bn.rodizio()
+    for poi in lista:
+        achado = investigar(poi, proximo())
+        if True:
             d = achado.get("resposta")
             if not isinstance(d, dict):
-                placar["sem_resposta"] += 1
+                placar[achado.get("motivo") or "sem_resposta"] += 1
                 continue
             preenchidos = [k for k in ("cnpj", "telefone", "site", "instagram",
                                        "facebook", "ramo") if d.get(k)]

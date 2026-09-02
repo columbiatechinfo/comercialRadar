@@ -168,6 +168,43 @@ SITES = {
         "observacao": "idem telelistas, com mais comércio pequeno.",
     },
 
+    # ── guias que a BUSCA POR NAVEGADOR revelou, e que eu nao tinha ─────────
+    #
+    # Nao vieram de pesquisa sobre o assunto: apareceram buscando
+    # `"MECANICA DIESEL CRIATIVA" Canoas RS` com o Camoufox em 02/09/2026, e
+    # SEIS dos oito resultados eram deles, todos com telefone. Sao guias de
+    # comercio local — o tipo de fonte que tem a oficina de bairro que nenhuma
+    # base digital tem.
+    "paginaamarela": {
+        "grupo": "contato", "dominio": "paginaamarela.com.br",
+        "da": ["telefone", "endereco", "ramo", "horario"],
+        "consulta": "site:paginaamarela.com.br {nome} {cidade}",
+        "direto": None, "precisa_navegador": False,
+        "observacao": "MEDIDO 02/09/2026: apareceu duas vezes entre os oito "
+                      "resultados de uma oficina de bairro, com telefone.",
+    },
+    "applocal": {
+        "grupo": "contato", "dominio": "applocal.com.br",
+        "da": ["telefone", "endereco", "ramo"],
+        "consulta": "site:applocal.com.br {nome} {cidade}",
+        "direto": None, "precisa_navegador": False,
+        "observacao": "MEDIDO 02/09/2026: idem, duas vezes, com telefone.",
+    },
+    "locaisdobrasil": {
+        "grupo": "contato", "dominio": "locaisdobrasil.com.br",
+        "da": ["telefone", "endereco", "ramo", "horario"],
+        "consulta": "site:locaisdobrasil.com.br {nome} {cidade}",
+        "direto": None, "precisa_navegador": False,
+        "observacao": "MEDIDO 02/09/2026: organiza por ramo e cidade.",
+    },
+    "guiatelefone": {
+        "grupo": "contato", "dominio": "guiatelefone.com",
+        "da": ["telefone", "endereco", "ramo"],
+        "consulta": "site:guiatelefone.com {nome} {cidade}",
+        "direto": None, "precisa_navegador": False,
+        "observacao": "MEDIDO 02/09/2026: trouxe a categoria CNAE junto.",
+    },
+
     # ── redes sociais: onde o comércio pequeno de fato está ─────────────────
     "instagram": {
         "grupo": "rede", "dominio": "instagram.com",
@@ -320,6 +357,32 @@ def resumo() -> str:
         nomes = [k for k, v in SITES.items() if v["grupo"] == grupo]
         linhas.append("%-8s %s" % (grupo, ", ".join(sorted(nomes))))
     return "\n".join(linhas)
+
+
+# Nome que nao identifica ninguem. Buscar `SALA DE COSTURA Canoas` devolveu
+# `Sala do Futuro Aluno`, o dicionario Dicio e a Wikipedia — o buscador casa a
+# palavra, nao o estabelecimento. Sao nomes de RAMO que o recenseador do IBGE
+# anotou na fachada, e para eles a web nao tem o que dizer.
+GENERICOS = {
+    "loja", "mercado", "mercearia", "academia", "salao", "bar", "lancheria",
+    "restaurante", "padaria", "farmacia", "oficina", "borracharia", "igreja",
+    "escola", "posto", "deposito", "sala de costura", "costureira",
+    "lavagem carro", "lava jato", "sorveteria", "acougue", "papelaria",
+    "barbearia", "pet shop", "estacionamento", "quiosque", "bazar",
+}
+
+
+def nome_generico(nome: str) -> bool:
+    """O nome e so o ramo? Entao a busca vai trazer o assunto, nao o lugar."""
+    n = " ".join((nome or "").lower().split())
+    if n in GENERICOS:
+        return True
+    # duas palavras ou menos, todas genericas
+    partes = [p for p in n.split() if len(p) > 2]
+    return bool(partes) and len(partes) <= 2 and all(p in GENERICOS or
+                                                     any(p == g.split()[0]
+                                                         for g in GENERICOS)
+                                                     for p in partes)
 
 
 if __name__ == "__main__":
