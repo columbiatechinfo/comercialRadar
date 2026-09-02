@@ -352,7 +352,7 @@ def _importar_municipio(uf: str, cod: str, empresa: str,
 # nem base64 a mandar, nem CR do Windows para o bash do outro lado engolir.
 
 
-TOTAL_ETAPAS = 9
+TOTAL_ETAPAS = 10
 
 
 # DE QUAL ETAPA COMEÇAR — e o gate fica no ATO, não no cabeçalho.
@@ -469,6 +469,9 @@ def main(argv=None) -> int:
                    help="pula o Cadastur/MTur desta rodada")
     p.add_argument("--pular-ifood", dest="pular_ifood", action="store_true",
                    help="pula a descoberta do iFood desta rodada")
+    p.add_argument("--pular-airbnb", dest="pular_airbnb",
+                   action="store_true",
+                   help="não roda a etapa 7 (Airbnb)")
     p.add_argument("--pular-descoberta", dest="pular_descoberta",
                    action="store_true",
                    help="não varre as categorias do Maps nesta rodada")
@@ -729,7 +732,47 @@ def main(argv=None) -> int:
             _log("   A etapa é tolerante: perder o iFood custa CNPJ, não a")
             _log("   rodada. Pode ser repetida sozinha depois.")
 
-    # ── 7 · endereços ─────────────────────────────────────────────────────
+    # ── 7 · Airbnb ────────────────────────────────────────────────────────
+    #
+    # A ÚLTIMA FONTE DE TERCEIROS, e a única que não fala de estabelecimento:
+    # aqui o que existe é hospedagem — anfitrião, avaliações, comodidades e
+    # fotos, sem CNPJ nenhum. Por isso tabela própria, `airbnb_anuncio`, ao
+    # lado da `ifood_merchant`.
+    #
+    # A BUSCA É PELA CAIXA DELIMITADORA DA ÁREA, e não por "Perto de você".
+    # Medido em 02/09/2026 no mesmo retângulo: a caixa devolveu 18 de 18
+    # anúncios DENTRO do polígono; o "Perto de você" devolveu 0 de 18 — ele é
+    # busca regional, e trouxe cabanas a 30 km do desenho. A caixa ainda
+    # dispensa clique, que é a parte frágil de toda automação de página.
+    #
+    # O QUE CAI FORA DO DESENHO É GRAVADO ASSIM MESMO. A caixa é retângulo e o
+    # polígono não é; o excedente entra com `na_area = false`, pela mesma
+    # política de `area_utils` — achar custa busca, e descartar o que já foi
+    # achado é jogar fora trabalho pago. O que `na_area` decide é quem recebe a
+    # parte cara: só os de DENTRO são detalhados.
+    #
+    # Medido na quadra de Canoas (área `quadra-canoas-centro`, 44 vértices):
+    #
+    #     descoberta   1 anúncio · 1 dentro do desenho · 0,5 min
+    #     detalhe      51 comodidades · 55 fotos · 24 avaliações · print
+    #
+    # O PRINT DA FICHA não é enfeite: o Airbnb arredonda a coordenada em 92%
+    # dos anúncios (4 casas, ~11 m) e não publica endereço. É a captura que,
+    # levada ao assistente, vira "Avenida Getúlio Vargas, 4831" com CEP e nome
+    # do condomínio. Sem ela a hospedagem fica sem rua e sem número.
+    _etapa(7, "Airbnb — as hospedagens da área desenhada")
+    if a.pular_airbnb:
+        _log("  pulado por --pular-airbnb")
+    else:
+        rc = _tolerante_i9(["extrair_airbnb.py", "--area", a.area],
+                           "Airbnb — descobrir pela caixa da área")
+        if rc == 0:
+            _tolerante_i9(["detalhar_airbnb.py", "--area", a.area],
+                          "Airbnb — a ficha de quem está dentro do desenho")
+        else:
+            _log("   sem descoberta nesta rodada; o detalhe fica para a próxima")
+
+    # ── 8 · endereços ─────────────────────────────────────────────────────
     #
     # A NORMALIZAÇÃO VEM DEPOIS DE TUDO QUE GRAVA POI, e não antes.
     #
@@ -737,7 +780,7 @@ def main(argv=None) -> int:
     # a captura e o iFood entrarem depois e ficarem de fora — e o cruzamento do
     # passo 7, que depende do logradouro canônico, cruzaria menos sem que
     # ninguém entendesse por quê.
-    _etapa(7, "endereços — a IA lê o que está grudado, a skill prova a forma")
+    _etapa(8, "endereços — a IA lê o que está grudado, a skill prova a forma")
     if cod:
         # ESTA ETAPA É A EXCEÇÃO: ela roda a CIDADE, não a área.
         #
@@ -827,8 +870,8 @@ def main(argv=None) -> int:
     else:
         _log("  pulado — sem código IBGE do município")
 
-    # ── 8 · cruzamento ────────────────────────────────────────────────────
-    _etapa(8, "cruzamento — quem é o mesmo ponto vira UM, com várias abas")
+    # ── 9 · cruzamento ────────────────────────────────────────────────────
+    _etapa(9, "cruzamento — quem é o mesmo ponto vira UM, com várias abas")
     if a.empresa:
         _tolerante_i9(["povoar_vinculo.py", "--proprios",
                     "--empresa", a.empresa, "--aplicar"], "vínculo próprio")
@@ -864,7 +907,7 @@ def main(argv=None) -> int:
         _log("  comando (--empresa), nunca do .env")
 
     # ── 9 · o cadastro do cliente ─────────────────────────────────────────
-    _etapa(9, "cadastro do cliente — qual ligação é cada ponto")
+    _etapa(10, "cadastro do cliente — qual ligação é cada ponto")
     if cidade:
         # DEPOIS DO 8, E ISSO É DECISÃO DO DONO DO PRODUTO, 28/08/2026.
         #
