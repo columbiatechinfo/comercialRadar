@@ -291,6 +291,64 @@ def _airbnb(cur, cidade, limite, extra):
         }
 
 
+@fonte("ibge")
+def _ibge(cur, cidade, limite, extra):
+    """Os estabelecimentos que o recenseador viu, em 2022, na porta.
+
+    O CNEFE classifica cada endereco em `cod_especie`. As especies 1, 2 e 7 sao
+    domicilio e obra; as outras sao ESTABELECIMENTO, e `dsc_estabelecimento`
+    traz o nome que o recenseador anotou:
+
+        3  agropecuario        45
+        4  ensino             279
+        5  saude              325
+        6  outras finalidades  16.660
+        8  religioso          545
+
+    Sao 17.854 em Canoas, TODOS com nome, endereco e coordenada exata — o
+    recenseador esteve la. `COSTUREIRA`, `MECANICA DIESEL CRIATIVA`,
+    `LAVAGEM CARRO`: e o comercio pequeno que nao tem site, nao tem CNPJ ativo
+    e nao aparece em nenhuma das fontes digitais. Exatamente o que a
+    concessionaria nao cobra como comercio.
+
+    Ate agora o CNEFE servia so de autoridade de endereco. Ele tambem e fonte.
+
+    O NOME AS VEZES E O RAMO, e nao o nome do negocio — `MERCADO`, `LOJA`,
+    `ACADEMIA`. Isso nao e defeito do dado: e o que estava escrito na fachada
+    ou o que o morador respondeu. Vale como ponto e vale como ramo; quem
+    precisa do nome proprio cruza com as outras fontes depois.
+    """
+    ESPECIES = ("3", "4", "5", "6", "8")
+    cod = extra.get("cod_municipio")
+    sql = """
+        select cod_unico_endereco, dsc_estabelecimento, cod_especie,
+               btrim(regexp_replace(
+                 coalesce(nom_tipo_seglogr,'') || ' ' ||
+                 coalesce(nom_titulo_seglogr,'') || ' ' ||
+                 coalesce(nom_seglogr,''), '\s+', ' ', 'g')) as via,
+               num_endereco, dsc_localidade, cep,
+               latitude::float8, longitude::float8
+          from resources_root.ibge_cnefe
+         where cod_municipio = %s and cod_especie = any(%s)
+           and coalesce(dsc_estabelecimento,'') <> ''
+    """
+    if limite:
+        sql += " limit %d" % int(limite)
+    cur.execute(sql, (cod, list(ESPECIES)))
+    RAMO = {"3": "agropecuario", "4": "ensino", "5": "saude",
+            "6": "outras finalidades", "8": "religioso"}
+    for (chave, nome, especie, via, num, bairro, cep, lat, lon) in cur.fetchall():
+        yield {
+            "chave": str(chave), "nome": (nome or "").strip(),
+            "endereco": montar_endereco(via, num, bairro, cidade, "RS", cep),
+            "categoria": RAMO.get(str(especie), "estabelecimento"),
+            "lat": float(lat) if lat is not None else None,
+            "lng": float(lon) if lon is not None else None,
+            "cep": cep, "numero": num, "telefone": None, "cnpj": None,
+            "id_ligacao_base": None, "comercial": True,
+        }
+
+
 @fonte("receita")
 def _receita(cur, cidade, limite, extra):
     """Os estabelecimentos da Receita. Ativos por padrão.
@@ -492,6 +550,7 @@ def main(argv=None) -> int:
              % (b["id_base"], b["tabela"], len(b["tipos_comerciais"])))
 
     _log("▶ %s → POI · %s (%s)" % (a.fonte, a.cidade, a.municipio))
+    extra["cod_municipio"] = a.municipio
     r = do_municipio(a.fonte, a.cidade, a.municipio, a.uf, a.limite,
                      a.aplicar, extra)
     return 1 if r.get("erro") else 0
