@@ -236,3 +236,7 @@ yarl==1.23.0
 yaspin==3.4.0
 zipp==3.23.1
 pyflakes>=3.2         # tests/test_nome_indefinido.py — nome usado antes de existir
+
+# O relay do `relay_proxy` roda `python -m proxy`: sem isto ele nao
+# sobe, e o Maps com proxy falha parecendo bloqueio.
+proxy.py==2.4.4

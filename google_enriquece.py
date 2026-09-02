@@ -1,348 +1,80 @@
 # -*- coding: utf-8 -*-
-"""google_enriquece.py — o Google direto, em janela quente, sem IA no meio.
+"""google_enriquece.py — a última fonte de enriquecimento, pelo painel do Maps.
 
-O QUE SAIU, E POR QUÊ
+QUEM ENTRA AQUI
 
-O passo anterior buscava no Bing, baixava cinco páginas por POI e mandava tudo
-para o modelo da Spark ler. Medido em 02/09/2026 sobre oito POIs do dataset
-estadual, com nome próprio de verdade:
+Só o POI que não tem nada para oferecer ainda: sem telefone, sem CNPJ, sem rede
+social — e que não veio do próprio Google, porque desse a captura já trouxe o
+que havia. Para os outros, abrir navegador é gastar IP e tempo em quem já está
+atendido. Quem sai daqui sem nada fica marcado `esgotado`: as fontes de
+enriquecimento acabaram para ele, e a próxima rodada não repete a busca.
 
-    8 gravados · `ramo` em 3 · ZERO CNPJ · ZERO telefone · 8,9 s por POI
+POR QUE PELO CAMINHO DO PROJETO, E NÃO POR UM NOVO
 
-Muito trabalho para pouco retorno. O modelo lia bem — o problema era o que
-chegava até ele: o Bing não indexa os agregadores de CNPJ, então não havia o que
-extrair. Trocar o leitor não resolveria; trocar a fonte, sim.
+A primeira versão desta etapa abria o `/search` do Google com navegador
+próprio. Funcionou por uma rodada — 216 de 300 POIs, 54% com algum dado — e
+depois parou de funcionar por completo. O diagnóstico, medido em 02/09/2026:
 
-O QUE ENTRA NO LUGAR
+    do mesmo IP, na mesma hora        example.com    veio
+                                      duckduckgo     veio
+                                      google/search  CAPTCHA
+                                      google/maps    veio
 
-O Google, direto, na mesma janela quente que já serve ao Maps — com o
-`cookie_maps.json`, os mesmos 1,2 KB de três cookies que fazem o Maps mostrar
-três abas em vez de duas. E sem leitor no meio: a página de resultados do Google
-JÁ TRAZ o dado estruturado no painel lateral, com rótulo. Telefone é `Telefone:`,
-endereço é `Endereço:`. Não há o que interpretar.
+E do IP direto do i9, sem proxy nenhum, o mesmo par. O bloqueio não é do
+endereço, é do endpoint — o mesmo padrão do iFood, onde a listagem responde 200
+e o detalhe da loja responde 403 sempre. Rotacionar IP, renovar cookie ou
+espaçar as buscas não muda nada no `/search`: 12 tentativas com 8 IPs, três
+cookies e três ritmos deram 12 CAPTCHAs.
 
-VÁRIAS GUIAS NA MESMA JANELA. A janela é o caro — perfil, IP, cookie. A guia
-custa quase nada e é o que multiplica. Cada uma puxa da mesma fila e devolve o
-resultado; nenhuma espera a outra.
+O projeto nunca usou o `/search`, e as regras que o mantêm fora de bloqueio
+estão escritas no `search_from_sheet.worker` — que esta etapa repete, item por
+item, porque é a mesma máquina alimentada pelo banco em vez da planilha:
 
-`--disable-http2` NÃO É OPCIONAL. Chromium com proxy contra o Google trava sem
-ele, e o sintoma vira "IP queimado" — foi diagnosticado em 24/07/2026 e custou
-uma sondagem inteira.
+    lote por sessão        `_chunk(BATCH_MIN=8, BATCH_MAX=15)`, tamanho sorteado
+    um IP por lote         e não um IP por requisição, que é o que denuncia
+    `abrir_maps` falhou    devolve o lote e põe o IP de castigo por 600 s
+    `is_captcha()`         abandona o lote em vez de insistir e queimar o IP
+    `humanized_wait()`     entre um POI e o outro
+    perfil apagado         cada lote tem o seu, e ele morre com o lote
 
-O QUE É EXTRAÍDO, E COM QUE CERTEZA
+O proxy vai pelo `relay_proxy`, e não pelo `ProxyPool` direto: passar usuário e
+senha ao Chromium pendura o `google.com/maps` — 35,3 s falhando contra 1,7 s
+pelo relay, medido e escrito lá. O relay tem a mesma interface do pool.
 
-    do painel      telefone, endereço, site — vêm rotulados pelo próprio Google
-    do texto       CNPJ, quando aparece em algum resultado
-    das âncoras    instagram e facebook, pelo domínio do link
+A CONFERÊNCIA DE IDENTIDADE JÁ VEM PRONTA
 
-O CNPJ passa pelas mesmas três portas de sempre: dígitos verificadores, a
-`rf_estabelecimentos` local, e o município. CNPJ de outra cidade é a matriz da
-rede, e gravar a matriz no lugar da filial estraga o cruzamento.
+`buscar_linha` devolve `match_valido`, e recebe `target_uf` — o filtro de
+estado que impede o painel de outra cidade virar dado. Sem ele, uma busca por
+`Padaria Bela Vista, Canoas` devolveu uma padaria de Curitiba com semelhança
+0,78. Nada entra nas colunas sem `match_valido`; o que veio divergente fica em
+`ia_resposta` para conferência humana.
 
-QUEM NÃO FOR ENCONTRADO ESGOTOU AS FONTES. Não é falha da etapa: é a resposta.
-O POI recebe `{"esgotado": true}` em `ia_resposta` e não é perguntado de novo —
-insistir custaria uma janela por POI para chegar ao mesmo lugar.
+O QUE SE PERDE E O QUE SE GANHA
+
+O `/search` trazia CNPJ em 21% dos POIs; o painel do Maps não tem CNPJ. Em
+troca, traz telefone, site, endereço e perfil social sem CAPTCHA.
+
+    python google_enriquece.py --cidade Canoas --uf RS --limite 60 \
+        --trabalhadores 4 --aplicar
 """
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import os
 import re
-import sys
+import shutil
 import time
-import unicodedata
-import urllib.parse
 from collections import Counter
 
 import base_comum as bc
 
-COOKIE = "/app/estado/cookie_maps.json"
-# `--disable-http2` é o que impede o Chromium com proxy de travar no Google.
-ARGS = ["--disable-http2", "--no-sandbox", "--disable-dev-shm-usage",
-        "--disable-blink-features=AutomationControlled"]
-BUSCA = "https://www.google.com/search?q=%s&hl=pt-BR&gl=br"
-
-# O painel do Google rotula o que mostra, e é isso que dispensa um leitor. O
-# resto da página entra como texto para o CNPJ, que não tem rótulo fixo.
-JS_COLHER = r"""() => {
-  // `innerText`, NAO `textContent`.
-  //
-  // `textContent` devolve tambem o conteudo de <style> e <script>. Na pagina
-  // do Google isso e a maior parte do texto: a depuracao de 02/09/2026 leu
-  // `:root{--COEmY:#1f1f1f...}` e tirou dali quatro "telefones" que eram
-  // numeros de folha de estilo. `innerText` devolve o que esta na tela.
-  const texto = (document.body ? document.body.innerText || '' : '')
-                  .replace(/\s+/g, ' ');
-
-  // O painel lateral e o bloco local trazem `Telefone:` e `Endereço:` escritos.
-  const rotulado = (rot) => {
-    const re = new RegExp(rot + '\\s*:?\\s*([^|]{4,80}?)(?=\\s{2,}|$|[A-ZÀ-Ú][a-zà-ú]+:)', 'i');
-    const m = texto.match(re);
-    return m ? m[1].trim() : null;
-  };
-
-  // Telefone brasileiro, com ou sem DDD entre parênteses.
-  const fones = [...texto.matchAll(/\(?\b(\d{2})\)?\s?9?\d{4}[-\s]?\d{4}\b/g)]
-                  .map(m => m[0].trim());
-
-  // CNPJ com ou sem pontuação.
-  const cnpjs = [...texto.matchAll(/\b\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}\b/g)]
-                  .map(m => m[0]);
-
-  // As redes vêm dos próprios links, e não do texto: o domínio não mente.
-  const rede = {};
-  for (const a of document.querySelectorAll('a[href]')) {
-    const h = a.getAttribute('href') || '';
-    if (!rede.instagram && /instagram\.com\/[A-Za-z0-9_.]+/.test(h))
-      rede.instagram = (h.match(/https?:\/\/[^&"]*instagram\.com\/[A-Za-z0-9_.]+/) || [])[0];
-    if (!rede.facebook && /facebook\.com\/[A-Za-z0-9_.-]+/.test(h))
-      rede.facebook = (h.match(/https?:\/\/[^&"]*facebook\.com\/[A-Za-z0-9_.-]+/) || [])[0];
-  }
-
-  // O SITE PRECISA SER DAQUELA EMPRESA — E HA DUAS ORIGENS.
-  //
-  // Pegar "o primeiro link que nao e do Google" gravou `cna.oab.org.br`, o
-  // Cadastro Nacional dos Advogados, para um POI que e a escola de idiomas CNA
-  // do Canoas Shopping: o primeiro organico era outra entidade com a sigla.
-  //
-  // Mas o painel lateral tem um botao `Site` que aponta o site oficial DAQUELE
-  // lugar — esse nao precisa de conferencia, ja veio identificado. O organico
-  // precisa. Por isso a origem sobe junto: o Python confere so o que e organico.
-  let site = null, siteTitulo = null, siteOrigem = null;
-  for (const a of document.querySelectorAll('a[href^="http"]')) {
-    const h = a.getAttribute('href');
-    if (/google\.|gstatic|youtube\.|instagram\.|facebook\.|schema\.org/.test(h))
-      continue;
-    const h3 = a.querySelector('h3');
-    const rot = (a.textContent || '').trim();
-    site = h;
-    siteTitulo = h3 ? h3.textContent.trim() : rot.slice(0, 120);
-    siteOrigem = (!h3 && /^(site|website|site oficial)$/i.test(rot))
-                 ? 'painel' : 'organico';
-    break;
-  }
-
-  // O ROTULO ACHA O TRECHO; O PADRAO ACHA O NUMERO.
-  //
-  // `rotulado('Telefone')` devolve o texto que vem depois da palavra, e o
-  // Google nem sempre poe separador: veio `(51) 99161-8166Horario de` para o
-  // CNA. Guardar isso como telefone deixa o campo inutilizavel para discar.
-  // Entao do trecho rotulado extrai-se so o que tem forma de telefone.
-  const soFone = (t) => {
-    if (!t) return null;
-    const m = t.match(/\(?\b\d{2}\)?\s?9?\d{4}[-\s]?\d{4}\b/);
-    return m ? m[0].trim() : null;
-  };
-
-  return {telefone_rotulado: soFone(rotulado('Telefone')),
-          endereco_rotulado: rotulado('Endereço'),
-          telefones: [...new Set(fones)].slice(0, 4),
-          cnpjs: [...new Set(cnpjs)].slice(0, 4),
-          instagram: rede.instagram || null,
-          facebook: rede.facebook || null,
-          site: site,
-          site_titulo: siteTitulo,
-          site_origem: siteOrigem,
-          captcha: /nossos sistemas detectaram|unusual traffic|not a robot/i.test(texto),
-          amostra: texto.slice(0, 600)};
-}"""
-
-
-def _log(m: str) -> None:
-    print(m, flush=True)
-
-
-# ────────────────────────────────────────────────────────── o CNPJ ──────────
-def cnpj_valido(bruto) -> bool:
-    n = re.sub(r"\D", "", str(bruto or ""))
-    if len(n) != 14 or len(set(n)) == 1:
-        return False
-    # RAIZ ZERADA NAO EXISTE. `00000000477249` passou nos digitos verificadores
-    # e foi gravado como CNPJ de um POI chamado `Bairro Niteroi` — era um numero
-    # qualquer da pagina que por acaso fechou a conta. Empresa nenhuma tem
-    # cnpj_basico 00000000.
-    if n[:8] == "00000000":
-        return False
-    for tamanho in (12, 13):
-        pesos = list(range(tamanho - 7, 1, -1)) + list(range(9, 1, -1))
-        resto = sum(int(d) * p for d, p in zip(n[:tamanho], pesos)) % 11
-        if int(n[tamanho]) != (0 if resto < 2 else 11 - resto):
-            return False
-    return True
-
-
-def rf_do_ibge(cur, cod_ibge: str):
-    """O codigo do municipio na Receita NAO e o do IBGE.
-
-    A Receita numera municipio pelo proprio catalogo (`rf_municipios.codigo`),
-    e o IBGE pelo dele — 4304606 para Canoas. Comparar os dois direto dava
-    sempre diferente, e a etapa dizia "na Receita, mas em CANOAS" sobre um CNPJ
-    que ESTAVA em Canoas. A ponte e o nome.
-    """
-    if not cod_ibge:
-        return None
-    cur.execute("""
-        select r.codigo from resources_root.rf_municipios r
-          join resources_root.ibge_malha m
-            on translate(upper(m.nome), 'ÁÀÂÃÉÊÍÓÔÕÚÜÇ', 'AAAAEEIOOOUUC')
-             = translate(upper(r.descricao), 'ÁÀÂÃÉÊÍÓÔÕÚÜÇ', 'AAAAEEIOOOUUC')
-         where m.cod_municipio = %s limit 1
-    """, (str(cod_ibge),))
-    r = cur.fetchone()
-    return r[0] if r else None
-
-
-def na_receita(cur, cnpj: str) -> dict:
-    n = re.sub(r"\D", "", cnpj or "")
-    if len(n) != 14:
-        return {"existe": False}
-    cur.execute("""
-        select e.municipio, e.situacao_cadastral, em.razao_social, m.descricao
-          from resources_root.rf_estabelecimentos e
-          left join resources_root.rf_empresas em on em.cnpj_basico = e.cnpj_basico
-          left join resources_root.rf_municipios m on m.codigo = e.municipio
-         where e.cnpj_basico = %s and e.cnpj_ordem = %s and e.cnpj_dv = %s
-         limit 1
-    """, (n[:8], n[8:12], n[12:]))
-    r = cur.fetchone()
-    if not r:
-        return {"existe": False}
-    return {"existe": True, "municipio": r[0], "situacao": r[1],
-            "razao_social": r[2], "municipio_nome": r[3]}
-
-
-# ──────────────────────────────────────────────────────── as guias ──────────
-def consulta_de(poi: dict) -> str:
-    partes = ['"%s"' % poi["nome"]]
-    if poi.get("onde"):
-        partes.append(poi["onde"])
-    partes += [poi.get("cidade") or "", poi.get("uf") or ""]
-    return " ".join(x for x in partes if str(x).strip())
-
-
-async def uma_guia(sessao, fila, saidas, nome_guia: str, pausa: tuple) -> None:
-    """Uma guia consome a fila ate ela secar.
-
-    ASSINCRONO, E NAO THREAD. A primeira versao usava `threading.Thread` sobre a
-    API sincrona e morreu com "Cannot switch to a different thread": a sessao
-    sincrona pertence ao fio que a criou e nao atravessa nenhum outro. As oito
-    buscas viraram oito `TargetClosedError`.
-
-    A guia termina se o Google mostrar CAPTCHA: a sessao esta queimada e
-    insistir gasta o IP a toa. O POI volta para a fila e outra guia — com outro
-    IP, porque o rodizio troca a cada requisicao — tenta de novo.
-    """
-    import asyncio
-    import random
-
-    while True:
-        try:
-            poi = fila.get_nowait()
-        except asyncio.QueueEmpty:
-            return
-        alvo = BUSCA % urllib.parse.quote(consulta_de(poi))
-        caixa = {}
-
-        async def acao(pagina, _c=caixa, _p=pausa):
-            await pagina.wait_for_timeout(random.randint(*_p))
-            _c["d"] = await pagina.evaluate(JS_COLHER)
-            return pagina
-
-        try:
-            await sessao.fetch(alvo, page_action=acao, timeout=45000)
-            d = caixa.get("d") or {"erro": "sem retorno"}
-        except Exception as e:                                 # noqa: BLE001
-            d = {"erro": "%s" % type(e).__name__}
-        if d.get("captcha"):
-            fila.put_nowait(poi)
-            _log("      %s: CAPTCHA — guia encerrada" % nome_guia)
-            return
-        if d.get("erro"):
-            # ERRO NAO E FONTE ESGOTADA. Uma pagina que navegou no meio da
-            # leitura ("Execution context was destroyed") nao respondeu nada
-            # sobre o estabelecimento; marca-la como esgotada impediria a
-            # proxima rodada de tentar. Fica de fora do placar e volta depois.
-            _log("      %s: %s em %s — fica para a próxima"
-                 % (nome_guia, d["erro"], str(poi.get("nome"))[:28]))
-            continue
-        saidas.append((poi, d))
-
-
-async def _colher(pois: list, janelas: int, guias: int, proxies: list,
-                  pausa: tuple) -> list:
-    import asyncio
-    import json
-
-    from scrapling.fetchers import AsyncStealthySession
-
-    fila: "asyncio.Queue" = asyncio.Queue()
-    for x in pois:
-        fila.put_nowait(x)
-    saidas = []
-
-    # UM IP POR JANELA, FIXO — E NAO UM RODIZIO POR REQUISICAO.
-    #
-    # Medido em 02/09/2026, mesma busca, MESMO IP (104.165.145.72):
-    #
-    #     proxy_rotator=   CAPTCHA
-    #     proxy=           passou, com site e telefone
-    #
-    # Nao e o endereco que queima: e trocar de endereco no meio da sessao. O
-    # rotador do Scrapling troca a cada requisicao, entao as sub-requisicoes de
-    # uma mesma pagina saem de IPs diferentes, e isso o Google marca. Com um IP
-    # fixo por janela a sessao fica coerente do inicio ao fim.
-    #
-    # O paralelismo entao vem de VARIAS JANELAS, cada uma com o seu IP, e de
-    # guias dentro de cada uma. O IP direto do i9 ja esta queimado — o Google
-    # serve /sorry para ele —, entao sem proxy esta etapa nao roda.
-    biscoitos = None
-    if os.path.exists(COOKIE):
-        try:
-            biscoitos = json.load(open(COOKIE, encoding="utf-8")).get("cookies")
-        except Exception:                                      # noqa: BLE001
-            biscoitos = None
-
-    async def uma_janela(i):
-        sessao = AsyncStealthySession(
-            max_pages=guias, headless=True, google_search=True,
-            timezone_id="America/Sao_Paulo",
-            cookies=biscoitos or None,
-            proxy=proxies[i % len(proxies)] if proxies else None)
-        await sessao.start()
-        try:
-            await asyncio.gather(*[
-                uma_guia(sessao, fila, saidas,
-                         "janela %d/guia %d" % (i + 1, g + 1), pausa)
-                for g in range(guias)])
-        finally:
-            try:
-                await sessao.close()
-            except Exception:                                  # noqa: BLE001
-                pass
-
-    await asyncio.gather(*[uma_janela(i) for i in range(janelas)])
-    return saidas
-
-
-def colher(pois: list, janelas: int, guias: int, proxies: list,
-           pausa: tuple) -> list:
-    import asyncio
-    return asyncio.run(_colher(pois, janelas, guias, proxies, pausa))
-
-
-# QUEM ENTRA NESTA ETAPA.
-#
-# So o POI que nao tem NADA para oferecer ainda: sem telefone, sem CNPJ, sem
-# rede social — e que nao veio do proprio Google, porque desse a captura ja
-# trouxe o que o Google tem. Abrir o navegador para os outros e gastar IP e
-# tempo em quem ja esta atendido.
+# QUEM ENTRA NESTA ETAPA — a peneira em SQL, para não trazer POI que já está
+# atendido só para descobrir isso depois de abrir o navegador.
 SQL = """
-    select p.id, p.nome, p.cidade, p.uf,
-           coalesce(l.logradouro,'') as via, coalesce(l.numero,'') as numero,
-           coalesce(l.forca,'sem') as forca
+    select p.id, p.nome, p.cidade, p.uf
       from radar_comercial.pois p
-      left join radar_comercial.logradouro_resolvido l on l.poi_id = p.id
      where p.fundido_em is null and coalesce(p.nome,'') <> ''
        and coalesce(p.cnpj,'')      = ''
        and coalesce(p.telefone,'')  = ''
@@ -355,16 +87,13 @@ SQL = """
      order by p.id
 """
 
-VAZIAS = {
-    "ltda", "eireli", "epp", "sa", "mei", "com", "the", "and", "dos", "das",
-    "comercio", "servicos", "servico", "industria", "empresa", "loja", "casa",
-    "centro", "brasil", "brazil", "www", "http", "https", "site", "org", "net",
-    "canoas", "porto", "alegre", "rio", "grande", "sul", "shopping", "bairro",
-}
+
+def _log(m: str) -> None:
+    print(m, flush=True)
 
 
 def alvos(cur, cidade: str, limite: int, fontes: list, nome_min: int) -> list:
-    """Os POIs que ainda tem o que ganhar aqui, ja com o endereco pronto."""
+    """Os POIs, no formato de `item` que `buscar_linha` espera."""
     filtros, valores = "", [nome_min]
     if cidade:
         filtros += " and upper(coalesce(p.cidade,'')) = upper(%s)"
@@ -377,135 +106,178 @@ def alvos(cur, cidade: str, limite: int, fontes: list, nome_min: int) -> list:
         sql += " limit %s"
         valores.append(limite)
     cur.execute(sql, valores)
-    saida = []
-    for pid, nome, cid, uf, via, numero, forca in cur.fetchall():
-        # O endereco so entra na busca quando e PROVA: indicio veio da
-        # coordenada, e endereco chutado na consulta troca o resultado certo
-        # por outro estabelecimento da mesma rua.
-        onde = ""
-        if forca == "prova" and via:
-            onde = ("%s %s" % (via, numero)).strip()
-        saida.append({"id": pid, "nome": nome, "cidade": cid, "uf": uf,
-                      "onde": onde})
-    return saida
+    return [{"_row": i, "id": i, "nome": n, "endereco": "",
+             "lat": None, "lng": None, "cidade": c, "uf": u}
+            for i, n, c, u in cur.fetchall()]
 
 
-def _palavras(nome: str) -> set:
-    """As palavras do nome que servem para reconhecer a empresa.
+def gravar(con, cur, item: dict, rec: dict) -> tuple:
+    """Grava o painel do Maps num POI. Devolve (notas, campos_gravados).
 
-    Fora ficam as que qualquer empresa tem — LTDA, COMERCIO, o nome da cidade —
-    porque casar por elas aceita qualquer coisa. Sobra o que distingue.
+    NADA ENTRA SEM `match_valido`. O Maps responde alguma coisa para quase
+    qualquer texto: sem essa conferência, o telefone do estabelecimento vizinho
+    — ou de outra cidade — vira o telefone do POI. O divergente não se perde,
+    fica em `ia_resposta` com o nome que o painel devolveu.
     """
-    t = unicodedata.normalize("NFKD", str(nome or "").lower())
-    t = "".join(c for c in t if not unicodedata.combining(c))
-    return {p for p in re.split(r"[^a-z0-9]+", t)
-            if len(p) >= 3 and p not in VAZIAS}
+    import ferramenta_maps as fm
 
-
-def site_confere(nome: str, site: str, titulo: str, origem: str):
-    """O link organico e daquela empresa? Devolve (aceita, motivo).
-
-    O painel do Google ja diz de quem e o site — esse entra sem exame. O
-    organico e so o primeiro resultado da busca, e primeiro resultado nao e
-    prova: para `Cna - Canoas Shopping` o primeiro foi `cna.oab.org.br`, a
-    Ordem dos Advogados. Exige-se que uma palavra do nome apareca no dominio ou
-    no titulo do resultado.
-    """
-    if not site:
-        return False, "sem site"
-    if origem == "painel":
-        return True, "site do painel do Google"
-    palavras = _palavras(nome)
-    if not palavras:
-        return False, "nome sem palavra própria para conferir"
-    alvo = unicodedata.normalize("NFKD", ("%s %s" % (site, titulo or "")).lower())
-    alvo = "".join(c for c in alvo if not unicodedata.combining(c))
-    batem = sorted(p for p in palavras if p in alvo)
-    if batem:
-        return True, "orgânico, bate em %s" % ", ".join(batem[:3])
-    return False, "orgânico e nenhuma palavra do nome aparece no link"
-
-
-def gravar(con, cur, poi, d, cod_rf) -> list:
-    """Grava o que veio, e marca ESGOTADO quem não trouxe nada.
-
-    `esgotado` não é fracasso registrado por desencargo: é o que impede a
-    próxima rodada de abrir outra janela para o mesmo POI e chegar ao mesmo
-    lugar. As fontes de enriquecimento acabaram para ele.
-    """
     notas, campos, valores, gravados = [], [], [], []
-    d = d or {}
+    rec = rec or {}
+    valido = bool(rec.get("match_valido"))
 
-    # SO O TELEFONE ROTULADO VALE.
-    #
-    # A pagina do Google tem numeros de tudo: de outros resultados, de anuncios,
-    # do proprio Google. Pegar "o primeiro que parece telefone" deu telefone a 8
-    # de 8 POIs — inclusive a um chamado `Bairro Niteroi`, que e um bairro. O
-    # painel lateral escreve `Telefone:` na frente do numero DAQUELE lugar, e e
-    # so esse que se aproveita.
-    tel = d.get("telefone_rotulado")
-    if tel and len(re.sub(r"\D", "", tel)) >= 10:
-        campos.append("telefone = coalesce(nullif(btrim(telefone),''), %s)")
-        valores.append(tel.strip()[:60])
-        gravados.append("telefone")
+    if not valido and rec.get("nome"):
+        notas.append("o painel respondeu «%s» (%s) — não gravado"
+                     % (str(rec.get("nome"))[:40], rec.get("status")))
 
-    for cnpj in (d.get("cnpjs") or []):
-        n = re.sub(r"\D", "", cnpj)
-        if not cnpj_valido(n):
-            continue
-        r = na_receita(cur, n)
-        if not r["existe"]:
-            conf, nota = 0.3, "dígitos fecham, não está na Receita"
-        elif cod_rf and str(r.get("municipio") or "") == str(cod_rf):
-            conf, nota = 0.9, "confirmado na Receita, mesmo município"
-        else:
-            conf = 0.5
-            nota = "na Receita, mas em %s" % (r.get("municipio_nome") or "?")
-        notas.append("cnpj %s: %s" % (n, nota))
-        campos += ["cnpj = coalesce(nullif(btrim(cnpj),''), %s)",
-                   "cnpj_conf = coalesce(cnpj_conf, %s)"]
-        valores += [n, conf]
-        gravados.append("cnpj")
-        if r["existe"] and r.get("razao_social"):
-            campos.append("razao_social = coalesce(nullif(btrim(razao_social),''), %s)")
-            valores.append(str(r["razao_social"])[:300])
-        break                                   # o primeiro válido basta
+    social = fm._perfil_social(rec).get("perfil_social") or {}
+    if valido:
+        tel = re.sub(r"[^\d()+\- ]", "", str(rec.get("telefone") or "")).strip()
+        if tel and len(re.sub(r"\D", "", tel)) >= 10:
+            campos.append("telefone = coalesce(nullif(btrim(telefone),''), %s)")
+            valores.append(tel[:60])
+            gravados.append("telefone")
 
-    ok, motivo = site_confere(poi.get("nome"), d.get("site"),
-                              d.get("site_titulo"), d.get("site_origem"))
-    if d.get("site") and not ok:
-        notas.append("site descartado: %s" % motivo)
-
-    for coluna, chave in (("website", "site" if ok else "_nao"),
-                          ("instagram", "instagram"), ("facebook", "facebook")):
-        v = d.get(chave)
-        if v:
+        # O `website` do painel COSTUMA SER a rede social da loja, e o próprio
+        # `ferramenta_maps` já sabe separar isso. Gravar o Instagram na coluna
+        # `website` perderia a informação de que aquilo é um perfil.
+        rede, usuario = social.get("rede"), social.get("usuario")
+        if rede in ("instagram", "facebook") and usuario:
             campos.append("%s = coalesce(nullif(btrim(%s),''), %%s)"
-                          % (coluna, coluna))
-            valores.append(str(v)[:400])
-            gravados.append("site" if coluna == "website" else coluna)
+                          % (rede, rede))
+            valores.append(usuario[:200])
+            gravados.append(rede)
 
-    achou = bool(campos)
-    registro = {"fonte": "google", "achou": achou,
-                "telefone": tel, "cnpjs": d.get("cnpjs"),
-                "site": d.get("site") if ok else None,
-                "site_motivo": motivo,
-                "instagram": d.get("instagram"),
-                "facebook": d.get("facebook"),
-                "endereco_google": d.get("endereco_rotulado")}
-    if not achou:
+        site = str(rec.get("website_url") or rec.get("website") or "")
+        if site.startswith("http") and not rede:
+            campos.append("website = coalesce(nullif(btrim(website),''), %s)")
+            valores.append(site[:400])
+            gravados.append("site")
+
+    registro = {"fonte": "maps_painel", "achou": bool(campos),
+                "match_valido": valido, "status": rec.get("status"),
+                "similaridade": rec.get("similaridade"),
+                "nome_no_painel": rec.get("nome"),
+                "telefone": rec.get("telefone"),
+                "endereco": rec.get("endereco"),
+                "website": rec.get("website_url") or rec.get("website"),
+                "categoria": rec.get("categoria"),
+                "perfil_social": social or None,
+                "maps_url": rec.get("maps_url")}
+    if not campos:
         registro["esgotado"] = True
     campos.append("ia_resposta = %s")
     valores.append(json.dumps(registro, ensure_ascii=False))
     cur.execute("update radar_comercial.pois set %s where id = %%s"
-                % ", ".join(campos), valores + [poi["id"]])
+                % ", ".join(campos), valores + [item["id"]])
     con.commit()
     return notas, gravados
 
 
-def rodar(cidade="", cod="", limite=0, fontes=None, nome_min=12, guias=4,
-          sem_proxy=False, pausa=(1200, 2600), aplicar=False,
-          janelas=4, passadas=2) -> dict:
+async def _trabalhador(wid, fila, pw, pool, cidade, uf, con, cur, placar,
+                       usar_proxy, headless):
+    """Um lote por vez, um IP por lote — a forma do `search_from_sheet`."""
+    import config
+    import search_from_sheet as sfs
+    from human_browser import HumanSession
+
+    while True:
+        try:
+            bidx, lote = fila.get_nowait()
+        except asyncio.QueueEmpty:
+            return
+
+        proxy = await pool.acquire_blocking() if usar_proxy else None
+        if usar_proxy and not proxy:
+            fila.put_nowait((bidx, lote))
+            await asyncio.sleep(5)
+            continue
+
+        # O RELAY NAO DEVOLVE `address`/`port` COMO O ProxyPool. Ele devolve
+        # `server` apontando para o localhost — que e o motivo dele existir: o
+        # Chromium nao pode ver credencial. Copiei o rotulo do worker do
+        # pipeline sem conferir e a primeira rodada morreu em `KeyError`.
+        rotulo = ("vaga %s" % proxy.get("_vaga") if proxy else "direto")
+        perfil = config.BROWSER_PROFILES_DIR / ("radar_w%d_b%d" % (wid, bidx))
+        sess = None
+        try:
+            sess = await HumanSession.create(pw, proxy, perfil, layer="maps",
+                                             headless=headless)
+            if not await sfs.abrir_maps(sess):
+                # IP QUE NÃO ABRE O MAPS NÃO ABRE NA PRÓXIMA. Devolve o lote e
+                # põe o endereço de castigo: insistir nele é gastar o pool.
+                fila.put_nowait((bidx, lote))
+                if proxy:
+                    await pool.mark_cooldown(proxy, 600)
+                continue
+
+            for j, item in enumerate(lote):
+                if await sess.is_captcha():
+                    _log("      W%d lote %d (%s): CAPTCHA — lote abandonado"
+                         % (wid, bidx, rotulo))
+                    placar["captcha"] += 1
+                    break
+                rec = await sfs.buscar_linha(sess, item, cidade, "radar", uf)
+                notas, achou = gravar(con, cur, item, rec)
+                placar["achou_algo" if achou else "esgotado"] += 1
+                for k in achou:
+                    placar["campo_" + k] += 1
+                _log("      %-32s %s"
+                     % (str(item["nome"])[:32], ", ".join(achou) or "esgotado"))
+                for n in notas:
+                    _log("         %s" % n)
+                if j < len(lote) - 1:
+                    await sess.humanized_wait()
+        except Exception as e:                                 # noqa: BLE001
+            _log("      W%d lote %d: %s: %s"
+                 % (wid, bidx, type(e).__name__, str(e)[:80]))
+        finally:
+            if sess:
+                try:
+                    await sess.close()
+                except Exception:                              # noqa: BLE001
+                    pass
+            shutil.rmtree(perfil, ignore_errors=True)
+            if proxy:
+                try:
+                    await pool.release(proxy)
+                except Exception:                              # noqa: BLE001
+                    pass
+
+
+async def _colher(lista, cidade, uf, trabalhadores, con, cur, usar_proxy,
+                  headless):
+    import config
+    import search_from_sheet as sfs
+    from playwright.async_api import async_playwright
+    from relay_proxy import PiscinaRelay
+
+    lotes = sfs._chunk(lista, config.BATCH_MIN, config.BATCH_MAX)
+    fila: "asyncio.Queue" = asyncio.Queue()
+    for i, b in enumerate(lotes):
+        fila.put_nowait((i, b))
+    _log("   %d lotes de %d a %d POIs · um IP por lote"
+         % (len(lotes), config.BATCH_MIN, config.BATCH_MAX))
+
+    pool = PiscinaRelay(vagas=trabalhadores).start() if usar_proxy else None
+    config.BROWSER_PROFILES_DIR.mkdir(parents=True, exist_ok=True)
+    placar = Counter()
+    n = min(trabalhadores, config.MAX_WORKERS, len(lotes))
+    async with async_playwright() as pw:
+        await asyncio.gather(*[
+            _trabalhador(i, fila, pw, pool, cidade, uf, con, cur, placar,
+                         usar_proxy, headless)
+            for i in range(n)])
+    shutil.rmtree(config.BROWSER_PROFILES_DIR, ignore_errors=True)
+    if pool:
+        try:
+            pool.encerrar()
+        except Exception:                                      # noqa: BLE001
+            pass
+    return placar
+
+
+def rodar(cidade="", uf="", limite=0, fontes=None, nome_min=12,
+          trabalhadores=4, sem_proxy=False, aplicar=False) -> dict:
     con = bc.conectar()
     cur = con.cursor()
     lista = alvos(cur, cidade, limite, fontes or [], nome_min)
@@ -515,73 +287,30 @@ def rodar(cidade="", cod="", limite=0, fontes=None, nome_min=12, guias=4,
     if not lista:
         con.close()
         return {"alvos": 0}
+
+    # A UF ALVO SAI DOS PRÓPRIOS POIs quando não é declarada — é o que
+    # `search_from_sheet.run` faz com a coluna UF da planilha.
+    if not uf:
+        ufs = Counter(p["uf"] for p in lista if p.get("uf"))
+        uf = ufs.most_common(1)[0][0] if ufs else ""
+    _log("   UF alvo: %s" % (uf or "(qualquer — o painel de outra cidade passa)"))
+
     if not aplicar:
         _log("   (ensaio: nada buscado nem gravado. Use --aplicar)")
         for a in lista[:5]:
-            _log("      %s" % consulta_de(a)[:88])
+            _log("      %s · %s/%s" % (a["nome"][:42], a["cidade"] or "?",
+                                       a["uf"] or "?"))
         con.close()
-        return {"alvos": len(lista)}
+        return {"alvos": len(lista), "uf": uf}
 
-    cod_rf = rf_do_ibge(cur, cod)
-    if cod and not cod_rf:
-        _log("   ⚠️  não achei o código da Receita para o IBGE %s — a" % cod)
-        _log("      conferência de município do CNPJ fica sem base.")
-
-    # A GUIA QUE CAI LEVA OS POIS DELA JUNTO — POR ISSO HA MAIS DE UMA PASSADA.
-    #
-    # Quando o Google mostra CAPTCHA, aquela guia encerra: insistir com o mesmo
-    # IP so gasta o endereco. Na medicao de 300 POIs em 02/09/2026 caíram 13
-    # guias, e com elas 84 POIs ficaram sem resposta — 28% da rodada. Nao e
-    # perda de verdade: sao POIs que ninguem chegou a buscar.
-    #
-    # Cada passada abre janelas novas com IPS NOVOS, e so os pendentes entram.
-    # Duas passadas bastam porque o que sobra da segunda ja e residuo pequeno,
-    # e uma terceira custaria mais IP do que traz resposta.
-    placar = Counter()
-    pendentes = list(lista)
     t0 = time.time()
-    total = 0
-    for passada in range(1, max(1, passadas) + 1):
-        if not pendentes:
-            break
-        proxies = []
-        if not sem_proxy:
-            try:
-                import busca_navegador as bn
-                proxies = bn.lista_de_proxies(max(janelas * 2, 12))
-            except Exception as e:                             # noqa: BLE001
-                _log("   ⚠️  sem proxy (%s) — IP direto" % type(e).__name__)
-        if passada == 1:
-            _log("   %d IPs — um fixo por janela" % len(proxies))
-            _log("   %d janelas × %d guias no navegador do repositório%s"
-                 % (janelas, guias,
-                    " · com o cookie do Maps" if os.path.exists(COOKIE) else ""))
-        else:
-            _log("\n   passada %d: %d pendentes, IPs novos"
-                 % (passada, len(pendentes)))
-
-        saidas = colher(pendentes, janelas, guias, proxies, pausa)
-        respondidos = set()
-        for poi, d in saidas:
-            respondidos.add(poi["id"])
-            notas, achou = gravar(con, cur, poi, d, cod_rf)
-            placar["achou_algo" if achou else "esgotado"] += 1
-            for k in achou:
-                placar["campo_" + k] += 1
-            _log("      %-32s %s"
-                 % (str(poi["nome"])[:32], ", ".join(achou) or "esgotado"))
-            for n in notas:
-                _log("         %s" % n)
-        total += len(saidas)
-        pendentes = [p for p in pendentes if p["id"] not in respondidos]
-
+    placar = asyncio.run(_colher(lista, cidade, uf, trabalhadores, con, cur,
+                                 not sem_proxy, headless=True))
     dt = time.time() - t0
-    if pendentes:
-        _log("   %d não voltaram nem depois de %d passadas — ficam para a"
-             % (len(pendentes), max(1, passadas)))
-        _log("   próxima rodada, sem marca de esgotado.")
+    feitos = sum(v for k, v in placar.items()
+                 if k in ("achou_algo", "esgotado"))
     _log("\n   %d POIs · %.1f min · %.1f s por POI"
-         % (total, dt / 60.0, dt / max(1, total)))
+         % (feitos, dt / 60.0, dt / max(1, feitos)))
     for k, v in placar.most_common():
         _log("      %-18s %5d" % (k, v))
     con.close()
@@ -590,27 +319,23 @@ def rodar(cidade="", cod="", limite=0, fontes=None, nome_min=12, guias=4,
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(
-        description="Enriquece pelo Google, em janela quente, sem IA no meio.")
+        description="Enriquece pelo painel do Maps quem não tem telefone, "
+                    "CNPJ nem rede social")
     p.add_argument("--cidade", default="")
-    p.add_argument("--municipio", default="",
-                   help="código IBGE — confere o CNPJ contra a Receita local")
+    p.add_argument("--uf", default="", help="UF alvo; sem ela, a maioria dos POIs")
     p.add_argument("--fonte", action="append", default=[])
     p.add_argument("--limite", type=int, default=0)
-    p.add_argument("--guias", type=int, default=4,
-                   help="guias na mesma janela; a janela é o caro, a guia não")
-    p.add_argument("--nome-minimo", type=int, default=12)
-    p.add_argument("--passadas", type=int, default=2,
-                   help="tentativas para quem caiu em CAPTCHA")
-    p.add_argument("--janelas", type=int, default=4,
-                   help="janelas simultâneas, uma por IP")
+    p.add_argument("--nome-minimo", type=int, default=12,
+                   help="nome curto demais não identifica estabelecimento")
+    p.add_argument("--trabalhadores", type=int, default=4,
+                   help="lotes simultâneos, um IP cada")
     p.add_argument("--sem-proxy", action="store_true")
     p.add_argument("--aplicar", action="store_true")
     a = p.parse_args(argv)
-
-    _log("▶ Google, janela quente%s" % ((" · %s" % a.cidade) if a.cidade else ""))
-    rodar(a.cidade, a.municipio, a.limite, a.fonte, a.nome_minimo, a.guias,
-          a.sem_proxy, aplicar=a.aplicar, janelas=a.janelas,
-          passadas=a.passadas)
+    _log("▶ Maps, painel do estabelecimento%s"
+         % (" · " + a.cidade if a.cidade else ""))
+    rodar(a.cidade, a.uf, a.limite, a.fonte, a.nome_minimo, a.trabalhadores,
+          a.sem_proxy, aplicar=a.aplicar)
     return 0
 
 
