@@ -4678,3 +4678,145 @@ Maps **abria** e o navegador morria depois.
 
 Os navegadores ainda morrem. A diferença é que agora o sistema se recupera em vez
 de mentir no dado.
+
+---
+
+## 40. Em que rua está cada POI, e com que direito (02/09/2026)
+
+A seção 37 resolveu *como se escreve* uma rua: o endereço grudado vira campos, a
+skill marca a forma canônica. Esta resolve a pergunta seguinte, que é outra —
+**em que rua está este ponto** — e a resposta agora vem acompanhada de quanto ela
+vale.
+
+### A ordem das peneiras foi invertida, e isso é o principal
+
+A primeira versão começava pela coordenada: para cada POI, o endereço cadastrado
+mais próximo dentro de 120 m. Dava 96% de cobertura aparente e estava furada.
+
+O caso que fechou a discussão foi o **Cachorro do Rosário**. Ele fica no Canoas
+Shopping, na Avenida Guilherme Schell. O endereço do IBGE mais próximo do pin,
+a 139 m, é a **Rua Mathias Velho** — e era essa que ele recebia. Nada no dado
+denunciaria.
+
+A correção não é de limiar, é de princípio:
+
+> **CEP e endereço escrito são afirmações sobre o ponto. Coordenada é inferência
+> por proximidade.** Um pin cai no meio do terreno, no fundo do lote ou na quadra
+> vizinha; o CEP escrito na ficha, não.
+
+A cascata passou a ser, em `resolver_logradouro.py`:
+
+| # | peneira | o que pergunta | força |
+|---|---|---|---|
+| 1 | **CEP** | o CEP do POI existe no CNEFE? uma via só resolve; várias, a via escrita desempata | prova |
+| 2 | **endereço** | a via escrita existe entre as vias do município? | prova |
+| 3a | **Photon** | a via existe e o cadastro de 2022 não tem (loteamento novo) | prova |
+| 3b | **OSRM** | `nearest` encosta a coordenada na malha viária, até 20 m | indício |
+| 3c | **CNEFE** | o endereço cadastrado mais próximo, até 20 m | indício |
+| 4 | **humano** | o que sobrou — sem IA | — |
+
+### Medido em Canoas, sobre os 27.694 POIs, em 13 segundos
+
+| peneira | POIs | % | força |
+|---|---:|---:|---|
+| CEP | 18.464 | 66,7% | prova |
+| endereço escrito | 5.537 | 20,0% | prova |
+| Photon | 111 | 0,4% | prova |
+| OSRM ≤20 m | 1.799 | 6,5% | indício |
+| CNEFE ≤20 m | 439 | 1,6% | indício |
+| revisão humana | 1.344 | 4,9% | — |
+
+**24.112 (87,1%) por prova, 2.238 (8,1%) por indício.** Número da porta em 80%,
+CEP em 94%. Sem internet, sem IA, sem custo.
+
+### `forca` é a coluna que não podia faltar
+
+Migração [`0044`](migrations/0044_logradouro_resolvido.sql). Sem ela, os 2.238
+resolvidos por proximidade entrariam no cruzamento com o mesmo peso dos 24.112 —
+e é justamente neles que mora o erro que ninguém veria. O banco recusa a
+incoerência: `indicio` sem distância e `prova` com distância são as duas
+proibidas por `check`.
+
+O `logradouro_original` fica gravado ao lado do resolvido. Nada é sobrescrito e
+nada é apagado.
+
+### O raio: 120 m dava 440 na fila, 10 m dava 2.138
+
+A escolha foi medida antes de ser feita:
+
+| limite | resolvido pela coordenada | fila humana | o que cabe |
+|---|---:|---:|---|
+| 120 m | 3.272 · 11,8% | 440 · 1,6% | a quadra inteira, inclusive a rua de trás |
+| 10 m | 1.444 · 5,2% | 2.138 · 7,7% | só quem está em cima da via |
+| **20 m** | **2.238 · 8,1%** | **1.344 · 4,9%** | recuo de calçada e estacionamento pequeno |
+
+Metade da fila humana está a mais de 60 m de qualquer porta cadastrada: não há
+vizinho para herdar. São `Laguinho da ULBRA`, `BR-386`, `Canoas Shopping` sem
+rua, CEP solto.
+
+### O libpostal virou serviço, e substituiu a regex
+
+`libpostal_servico.py` responde em `127.0.0.1:7250`
+([compose](deploy/compose.libpostal.yml)). Fraciona os 27.694 endereços em
+**0,5 s — 51.736 por segundo** — e separa `house` de `road` mesmo sem pontuação
+entre os dois: `Canoas Shopping Avenida Guilherme Schell` sai correto.
+
+Antes dele, a quebra era regra escrita à mão. Cada correção nasceu de um exemplo
+que apareceu na tela — `Avenida Getúlio Vargas 3049` com o número colado, o
+shopping sem vírgula. Os exemplos seguintes ainda não tinham aparecido.
+
+Se o serviço estiver fora, a etapa **avisa e segue** sem fracionamento: a peneira
+do CEP continua valendo. Perde-se qualidade, não a mineração.
+
+### O ViaCEP saiu, e não por preferência
+
+A documentação dele diz, sobre o único limite publicado:
+
+> "Uso massivo para validação de bases de dados locais, poderá automaticamente
+> bloquear seu acesso por tempo indeterminado."
+
+Validar base local em massa é exatamente o que a etapa faz. O CNEFE responde
+offline em 6 s e ainda dá o número da porta, que o ViaCEP não dá.
+
+### Quatro coisas que pareciam certas e não eram
+
+**A IA não alucinou.** Ela respondeu `Rua Mathias Velho` e essa rua existe — 166
+endereços no Centro, CEP 92310-300. E ligou `Ulbra Campus Canoas` à `Rua
+Bolívia`, que tem 1.231 m e termina no campus. O defeito era da regra de
+conferência, que rebaixava toda via fora da lista de vizinhos: jogava fora
+resposta certa. A pergunta certa não é *"veio da lista?"* e sim *"existe no
+município?"*.
+
+**Nominatim e Photon concordarem não prova nada.** Leem o mesmo OSM.
+
+**A distância até o ponto que um buscador devolve para uma rua não mede nada.**
+Uma avenida de 4 km tem um ponto só: a Guilherme Schell apareceu a 7,5 km de um
+POI que está nela.
+
+**A IA não paga o próprio tempo aqui.** Chegou a rodar sobre os casos difíceis e
+levava 15 minutos por cidade. Com as peneiras na ordem certa o resíduo virou
+1.344 POIs pobres demais — nome de prédio, CEP solto, `Rua Projetada`. Foi
+desligada.
+
+### A aferição: como se sabe que a peneira 2 não erra
+
+Ela aceita `AVENIDA X` como `RUA X`, porque as fontes discordam do tipo o tempo
+todo. Isso rendeu 400 ruas a mais e pedia prova. O gabarito saiu de graça: os
+**12.643 POIs cujo CEP aponta uma via só**.
+
+| resultado | quantos | o que significa |
+|---|---:|---|
+| bateu com o CEP | 10.515 · 93,2% | chegou na mesma rua |
+| fiel ao texto, o CEP discorda | 751 · 6,6% | devolveu a rua escrita; o CEP do POI é que diverge |
+| traiu o texto | 22 · 0,19% | e são acerto de grafia: `ary → ARI`, `sadi → SADY` |
+
+Um único erro genuíno apareceu — `Rua 21 de Março` virando `RUA 25 DE MARÇO` — e
+virou trava: quando os dois lados carregam número, o número tem de ser igual.
+Não há grafia que justifique 21 virar 25.
+
+### Onde isso roda
+
+Etapa 8 do `minerar_tudo.py`, **depois** de `corrigir_coordenada` (senão as
+peneiras por proximidade herdariam o erro que aquele passo conserta) e **depois**
+de `conferir_municipio` (resolver a rua de quem vai ser apagado é trabalho
+jogado fora).

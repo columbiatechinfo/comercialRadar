@@ -5,6 +5,51 @@ versionamento [SemVer](https://semver.org/lang/pt-BR/).
 
 ## [Não lançado]
 
+### Endereço — a cascata inverteu a ordem, e o dado passou a dizer quanto vale
+
+`resolver_logradouro.py` responde em que rua está cada POI. A ordem das peneiras
+é **CEP, endereço escrito, e coordenada só no fim** — porque CEP e endereço são
+afirmações sobre o ponto e coordenada é inferência por proximidade.
+
+A primeira versão começava pela coordenada e o `Cachorro do Rosário`, que fica no
+Canoas Shopping na Guilherme Schell, recebia a `Rua Mathias Velho` a 139 m. Nada
+no dado denunciaria.
+
+**Canoas, 27.694 POIs, 13 segundos, sem internet e sem IA:**
+
+| peneira | POIs | % | força |
+|---|---:|---:|---|
+| CEP no CNEFE | 18.464 | 66,7% | prova |
+| via escrita existe no município | 5.537 | 20,0% | prova |
+| Photon, fiel ao texto | 111 | 0,4% | prova |
+| OSRM ≤20 m | 1.799 | 6,5% | indício |
+| CNEFE ≤20 m | 439 | 1,6% | indício |
+| revisão humana | 1.344 | 4,9% | — |
+
+Número da porta em 80%, CEP em 94%.
+
+**`forca` separa prova de indício** (migração `0044`). Sem ela os 2.238 inferidos
+por proximidade entrariam no cruzamento com o peso dos 24.112 afirmados. O banco
+recusa `indicio` sem distância e `prova` com distância.
+
+**O raio foi medido antes de escolhido:** 120 m deixava 440 na fila humana mas
+aceitava a rua de trás; 10 m subia a fila para 2.138; **20 m** ficou em 1.344 e
+cobre recuo de calçada e estacionamento pequeno.
+
+**libpostal virou serviço** (`libpostal_servico.py`, porta 7250): fraciona a
+cidade inteira em 0,5 s e separa `Canoas Shopping` de `Avenida Guilherme Schell`
+sem vírgula entre os dois. Fora do ar, a etapa avisa e segue pela peneira do CEP.
+
+**O ViaCEP saiu do fluxo** — a documentação dele diz que "uso massivo para
+validação de bases de dados locais, poderá automaticamente bloquear seu acesso
+por tempo indeterminado", que é exatamente o que a etapa faz.
+
+**Aferido contra 12.643 POIs de CEP inequívoco:** a peneira do endereço bate com
+o CEP em 93,2%; 6,6% são conflito entre o texto e o CEP do próprio POI; 0,19%
+são acerto de grafia que a régua rígida reprova. O único erro genuíno —
+`Rua 21 de Março` virando `RUA 25 DE MARÇO` — virou trava: com número dos dois
+lados, o número tem de ser igual.
+
 ### Validado em campo
 
 Duas minerações completas em Canoas, **09:19** e **09:35** de 28/08/2026, com

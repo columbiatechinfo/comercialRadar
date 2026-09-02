@@ -1,0 +1,35 @@
+# libpostal — o parser de endereços que não precisa de GPU nem de rede.
+#
+# POR QUE UMA IMAGEM PRÓPRIA, e não a `radar-minerador`
+#
+# O libpostal se instala compilando C e baixando ~2 GB de modelo. Colocar isso
+# na imagem do minerador faria toda mineração carregar esse peso, e um rebuild
+# da imagem principal passaria a levar meia hora. O `scrapling` já vive assim —
+# container de pé, chamado por `docker exec` — e este segue o mesmo padrão.
+#
+# `--datadir` FORA DA IMAGEM, num volume: o modelo é dado, não código. Assim um
+# rebuild não rebaixa os 2 GB de novo, e trocar de versão do modelo não obriga a
+# reconstruir a imagem.
+FROM python:3.11-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl ca-certificates git build-essential autoconf automake libtool \
+        pkg-config libsnappy-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# O `--disable-sse2` é o que permite rodar em qualquer CPU; sem ele o binário
+# fica preso ao conjunto de instruções da máquina que compilou.
+RUN git clone --depth 1 https://github.com/openvenues/libpostal /tmp/libpostal \
+    && cd /tmp/libpostal \
+    && ./bootstrap.sh \
+    && ./configure --datadir=/dados_libpostal \
+    && make -j"$(nproc)" \
+    && make install \
+    && ldconfig \
+    && rm -rf /tmp/libpostal
+
+# psycopg2 para ler o banco; postal é a ponte Python para a lib C.
+RUN pip install --no-cache-dir postal psycopg2-binary
+
+WORKDIR /app
+CMD ["sleep", "infinity"]

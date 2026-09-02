@@ -780,7 +780,7 @@ def main(argv=None) -> int:
     # a captura e o iFood entrarem depois e ficarem de fora — e o cruzamento do
     # passo 7, que depende do logradouro canônico, cruzaria menos sem que
     # ninguém entendesse por quê.
-    _etapa(8, "endereços — a IA lê o que está grudado, a skill prova a forma")
+    _etapa(8, "endereços — o texto vira campos, a skill prova a forma, e o IBGE diz a rua")
     if cod:
         # ESTA ETAPA É A EXCEÇÃO: ela roda a CIDADE, não a área.
         #
@@ -867,6 +867,44 @@ def main(argv=None) -> int:
         _tolerante_i9(["conferir_municipio.py", "--cidade", cidade,
                     "--municipio", cod, "--aplicar"],
                    "POIs de outro município")
+
+        # ── E SÓ ENTÃO: EM QUE RUA CADA POI ESTÁ, E COM QUE DIREITO ──────
+        #
+        # Último dentro da etapa porque depende de tudo acima. A coordenada já
+        # foi conferida contra o endereço — senão as peneiras por proximidade
+        # herdariam justamente o erro que o passo anterior conserta. E os POIs
+        # de outro município já saíram: resolver a rua de quem vai ser apagado
+        # é trabalho jogado fora.
+        #
+        # A ORDEM DENTRO DA CASCATA É O QUE IMPORTA AQUI: CEP, endereço
+        # escrito, e coordenada só no fim. CEP e endereço são AFIRMAÇÕES sobre
+        # o ponto; coordenada é inferência por proximidade — um pin cai no meio
+        # do terreno, no fundo do lote ou na quadra vizinha.
+        #
+        # O caso que decidiu a ordem: o `Cachorro do Rosário` fica no Canoas
+        # Shopping, na Guilherme Schell. Com a coordenada em primeiro lugar ele
+        # recebia a `Rua Mathias Velho`, a 139 m — e nada no dado denunciaria.
+        #
+        # MEDIDO em Canoas, 02/09/2026, sobre 27.694 POIs, em 13 segundos:
+        #
+        #     CEP          18.464 (66,7%)  prova
+        #     endereço      5.537 (20,0%)  prova
+        #     Photon          111 ( 0,4%)  prova
+        #     OSRM ≤20 m    1.799 ( 6,5%)  indício
+        #     CNEFE ≤20 m     439 ( 1,6%)  indício
+        #     revisão humana 1.344 ( 4,9%)
+        #
+        # O que sai por proximidade é gravado como `indicio`, nunca como
+        # `prova`: quem cruza depois precisa saber que aquela rua foi inferida.
+        #
+        # DEPENDE DO SERVIÇO DO LIBPOSTAL (`deploy/compose.libpostal.yml`), que
+        # fraciona a cidade inteira em meio segundo. Se ele estiver fora, a
+        # etapa AVISA e segue sem fracionamento — a peneira do CEP continua
+        # valendo e a do endereço fica pior, mas fica dito. Tolerante como as
+        # demais: perde-se qualidade de endereço, não a mineração.
+        _tolerante_i9(["resolver_logradouro.py", "--municipio", cod,
+                    "--cidade", cidade, "--aplicar"],
+                   "logradouro de cada POI contra o cadastro do IBGE")
     else:
         _log("  pulado — sem código IBGE do município")
 
