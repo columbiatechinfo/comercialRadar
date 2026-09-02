@@ -1,540 +1,404 @@
 # -*- coding: utf-8 -*-
-"""complementar_ia.py — CNPJ, telefone e redes pelo que os assistentes acham.
+"""complementar_ia.py — CNPJ, telefone e redes: o SearXNG busca, a Spark lê.
 
-O QUE ESTA ETAPA FAZ, E O QUE ELA NÃO FAZ
+O QUE SAIU, E POR QUÊ
 
-Ela pergunta a um assistente público — sem login, por proxy, no mesmo navegador
-que já serve ao Maps — onde fica um estabelecimento, qual o telefone, o CNPJ, a
-razão social e as redes sociais, **com a fonte de cada campo**. É a última
-peneira da fase 1: entra só o POI que as fontes estruturadas não completaram.
+A primeira versão abria ChatGPT e Gemini num navegador com proxy. Parou de
+devolver resposta em 02/09/2026: 152 s de espera, modal fechado, pergunta
+enviada, e nenhum bloco de volta. Depender de assistente público sempre foi
+frágil — ele muda de tela, fecha o acesso sem login, e não avisa.
 
-**O que sai daqui é PISTA, não verdade.** A sonda que provou o caminho registrou
-o motivo: `Kampeki Sushi 33.300.010/0001-00` tem cara de número redondo demais,
-e num outro caminho "Loft Maxplaza" virou "Loft Brasil Tecnologia Ltda" — que é
-uma proptech, não a hospedagem. Por isso três travas, nesta ordem:
+O QUE ENTRA NO LUGAR
 
-    1. o CNPJ só entra se os DÍGITOS VERIFICADORES fecharem. É conta, é local,
-       é de graça, e derruba número inventado na hora.
-    2. campo que o POI já tem NUNCA é sobrescrito. O dado da fonte estruturada
-       vence o do assistente, sempre.
-    3. `cnpj_conf` registra o quanto vale: 0,5 quando veio com link de fonte,
-       0,3 quando veio sem. Quem consumir decide o que fazer com isso.
+    SearXNG    busca de verdade, local, na porta 7500
+    HTTP       as páginas que a busca achou, baixadas direto
+    Spark      lê o que veio e responde estruturado — o modelo da casa
+    Receita    a conferência final, no banco, sem sair da rede
 
-CHATGPT É O PRIMÁRIO, GEMINI É SEGUNDA OPINIÃO
+Nada disso tem login, sessão que expira ou tela que muda. E o modelo é de
+VISÃO, então o mesmo caminho serve para o print do Airbnb.
 
-Medido em 02/09/2026, lote de cinco numa pergunta só: 5 de 5 completos em 22,5 s,
-com CNPJ, telefone e fonte com link em quase tudo. O ChatGPT devolve endereço com
-número, telefone, CNPJ, razão social e fonte por campo; o Gemini erra mais a
-entidade e preenche menos. O Gemini entra só para o que voltar incompleto — duas
-opiniões com fonte valem mais que uma, e discordância entre elas é informação.
+DOIS FILTROS ENTRE A BUSCA E O MODELO, e os dois nasceram de medição
 
-AS TRÊS ARMADILHAS QUE CUSTARAM A SONDA, e que este arquivo já traz resolvidas:
+Buscando `LANCHERIA XIS LENA Canoas` na web aberta, dos sete resultados um era
+um dicionário no academia.edu, outro um vocabulário no huggingface, outro um
+PDF do Ministério de Minas e Energia. A IA leu isso e tirou um telefone de um
+vídeo do TikTok.
 
-    o banner de cookies da OpenAI trava a primeira aba, e a tela fica esperando
-    resposta de uma pergunta que está atrás de um modal — 150 s por nada. Ele é
-    fechado, e pela opção que RECUSA o não essencial.
+    ruído        `sites_de_dados.e_ruido` corta enciclopédia, dicionário,
+                 repositório de código e diário oficial. Um PDF de diário
+                 CONTÉM CNPJs — de outras empresas, e o modelo pega o mais
+                 próximo.
+    preferência  o que está no catálogo vai primeiro. Na mesma rodada,
+                 `MECANICA DIESEL CRIATIVA` saiu completa porque a busca trouxe
+                 o `advdinamico` por acaso. O catálogo existe para tirar o acaso.
 
-    a caixa precisa estar PRONTA, não só visível. Digitar antes de o campo
-    aceitar foco fazia o primeiro lote de cada aba voltar vazio. Confere-se que
-    o texto entrou antes de enviar.
+A CONFERÊNCIA DO CNPJ É LOCAL, e é a melhor parte
 
-    conversa NOVA a cada lote. Na mesma, o Gemini trata a pergunta seguinte como
-    "complete a anterior" e devolve os itens do lote passado com mais campos —
-    parece dado novo e não é.
+CNPJ que a web devolve passa por três portas, nesta ordem:
 
-E duas que continuam valendo: **o Enter não envia no ChatGPT** (só o botão), e a
-resposta vive em `code`/`pre`, não em `[data-message-author-role]`.
+    1. dígitos verificadores — conta, local, derruba número inventado
+    2. `rf_estabelecimentos` — os 72,7 milhões da Receita já estão no banco.
+       Se o CNPJ existe, sabe-se a razão social, o município e a situação.
+    3. o município bate com o do POI? Se o CNPJ é de outra cidade, é da rede ou
+       é de outro estabelecimento — e isso vira aviso, não dado.
 
-ONDE ISTO RODA. No container `scrapling`, que tem Playwright e navegador. O
-`radar-minerador` puro não serve.
+`cnpj_conf` guarda o que sobrou dessa peneira: 0,9 quando a Receita confirma no
+mesmo município, 0,5 quando confirma noutro, 0,3 quando só os dígitos fecham.
+
+NADA É SOBRESCRITO. Campo que o POI já tem vence o que a web disser.
 """
 from __future__ import annotations
 
 import argparse
 import json
 import os
-import random
 import re
 import sys
 import time
+import urllib.parse
+import urllib.request
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 
 import base_comum as bc
+import sites_de_dados as sd
 
-COOKIE = "/app/estado/cookie_maps.json"
-ARGS = ["--disable-http2", "--no-sandbox", "--disable-dev-shm-usage",
-        "--disable-blink-features=AutomationControlled"]
-
-ASSISTENTES = {
-    "chatgpt": {
-        "url": "https://chatgpt.com/",
-        "caixa": ("#prompt-textarea", "textarea", 'div[contenteditable="true"]',
-                  '[role="textbox"]'),
-        "botao": ('button[data-testid="send-button"]',
-                  'button[aria-label*="nviar"]', 'button[aria-label*="end"]'),
-    },
-    "gemini": {
-        "url": "https://gemini.google.com/app",
-        "caixa": ('div[contenteditable="true"]',
-                  'rich-textarea div[contenteditable]', '[role="textbox"]'),
-        "botao": None,          # aqui o Enter envia
-    },
-}
-
-# A ordem importa: recusar o não essencial vem antes de "aceitar tudo", que fica
-# só como último recurso para não ficar preso atrás do modal.
-CONSENTIMENTO = ("Rejeitar não essenciais", "Reject non-essential", "Recusar",
-                 "Reject all", "Rejeitar tudo", "Continuar sem aceitar",
-                 "Aceitar tudo", "Accept all", "Fechar", "Close", "OK",
-                 "Entendi", "Got it", "Agora não", "Not now", "Dispensar")
-
-CHAVES = ("n", "nome", "endereco", "numero", "bairro", "cep", "telefone",
-          "whatsapp", "cnpj", "razao_social", "situacao_cadastral", "site",
-          "instagram", "instagram_seguidores", "facebook",
-          "facebook_seguidores", "fontes")
-
-ESSENCIAIS = ("endereco", "numero", "telefone", "cnpj", "razao_social")
+SEARX = os.environ.get("SEARXNG_URL", "http://127.0.0.1:7500")
+SPARK = os.environ.get("SPARK_LLM_URL", "http://192.168.3.20:7400/v1")
+MODELO = os.environ.get("SPARK_MODELO", "ia-principal")
+THREADS = int(os.environ.get("IA_THREADS", "4"))
+PAGINAS = int(os.environ.get("IA_PAGINAS", "5"))       # quantas baixar por POI
+TETO_TEXTO = 14000                                     # o que cabe no contexto
 
 
 def _log(m: str) -> None:
     print(m, flush=True)
 
 
-# ------------------------------------------------------------ o CNPJ --------
+# ─────────────────────────────────────────────────────── o CNPJ ─────────────
 def cnpj_valido(bruto) -> bool:
-    """Os dígitos verificadores fecham?
-
-    Não diz que a empresa existe nem que é ESTA — diz que o número não foi
-    inventado ao acaso. É conta de somar, roda em microssegundos e derruba a
-    maior parte do que um modelo produz quando não sabe e não quer dizer que
-    não sabe.
-    """
+    """Os dígitos verificadores fecham? Não diz que a empresa existe — diz que
+    o número não foi inventado ao acaso."""
     n = re.sub(r"\D", "", str(bruto or ""))
     if len(n) != 14 or len(set(n)) == 1:
         return False
     for tamanho in (12, 13):
         pesos = list(range(tamanho - 7, 1, -1)) + list(range(9, 1, -1))
-        soma = sum(int(d) * p for d, p in zip(n[:tamanho], pesos))
-        resto = soma % 11
-        digito = 0 if resto < 2 else 11 - resto
-        if int(n[tamanho]) != digito:
+        resto = sum(int(d) * p for d, p in zip(n[:tamanho], pesos)) % 11
+        if int(n[tamanho]) != (0 if resto < 2 else 11 - resto):
             return False
     return True
 
 
-def so_digitos(s):
-    d = re.sub(r"\D", "", str(s or ""))
-    return d or None
+def conferir_na_receita(cur, cnpj: str, cod_municipio: str) -> dict:
+    """A Receita já está no banco. Perguntar a ela é instantâneo e definitivo.
 
-
-# ------------------------------------------------------- o navegador --------
-def montar(lote):
-    """Pergunta natural primeiro; as regras curtas no fim.
-
-    Prompt defensivo demais faz o modelo se recolher: numa rodada o Gemini
-    devolveu null em tudo e escreveu na fonte que os dados vieram "obtidos
-    diretamente do prompt" — não foi procurar nada.
+    Devolve o que ela sabe, e — o que mais importa — se o CNPJ é DESTE
+    município. CNPJ de outra cidade quase sempre é a matriz da rede, e gravar a
+    matriz no lugar da filial estraga o cruzamento inteiro.
     """
-    def uma(i, a):
-        partes = [a["nome"]]
-        if a.get("onde"):
-            partes.append(a["onde"])
-        if a.get("bairro"):
-            partes.append(a["bairro"])
-        partes.append("%s %s" % (a.get("cidade") or "", a.get("uf") or ""))
-        if a.get("cep"):
-            partes.append("CEP %s" % a["cep"])
-        return "%d) %s" % (i, " - ".join(str(x).strip() for x in partes
-                                         if str(x).strip()))
-
-    linhas = "\n".join(uma(i, a) for i, a in enumerate(lote, 1))
-    return (
-        "Para cada estabelecimento da lista, me diz onde fica (rua e número), o "
-        "telefone, o WhatsApp, o CNPJ, a razão social, a situação cadastral, o "
-        "site e as redes sociais com o total de seguidores em cada uma:\n"
-        + linhas + "\n"
-        "Manda em JSON, um array com um objeto por estabelecimento, com as "
-        "chaves: " + ", ".join(CHAVES) + " — 'n' é o número da lista. "
-        "Em 'fontes', um objeto com uma entrada por campo preenchido, cujo valor "
-        "é o LINK (URL completa) de onde tirou; sem link, o nome da fonte. "
-        "Só o que souber e tiver confirmação, não inventa nada: null no que não "
-        "tiver. Não usa CNPJ, telefone ou perfil da rede, da matriz ou de outra "
-        "unidade — se for da rede, diz isso na fonte."
-    )
+    n = re.sub(r"\D", "", cnpj or "")
+    if len(n) != 14:
+        return {"existe": False}
+    cur.execute("""
+        select e.municipio, e.situacao_cadastral,
+               coalesce(nullif(btrim(e.nome_fantasia),''), em.razao_social),
+               em.razao_social, m.descricao
+          from resources_root.rf_estabelecimentos e
+          left join resources_root.rf_empresas em on em.cnpj_basico = e.cnpj_basico
+          left join resources_root.rf_municipios m on m.codigo = e.municipio
+         where e.cnpj_basico = %s and e.cnpj_ordem = %s and e.cnpj_dv = %s
+         limit 1
+    """, (n[:8], n[8:12], n[12:]))
+    r = cur.fetchone()
+    if not r:
+        return {"existe": False}
+    mun, sit, fantasia, razao, nome_mun = r
+    return {"existe": True, "municipio": mun, "municipio_nome": nome_mun,
+            "situacao": sit, "nome_fantasia": fantasia, "razao_social": razao,
+            "mesmo_municipio": None}
 
 
-BLOCOS = r"""(corte) => {
-  const s = [];
-  for (const e of document.querySelectorAll('code, pre')) {
-    const t = (e.textContent || '').trim();
-    if (t.length > 60) s.push(t);
-  }
-  return s.slice(corte);
-}"""
-CONTAR = """() => [...document.querySelectorAll('code, pre')]
-    .filter(e => (e.textContent || '').trim().length > 60).length"""
-
-
-def extrair(textos):
-    for t in reversed(textos or []):
-        b = t.strip()
-        for abre, fecha in (("[", "]"), ("{", "}")):
-            i, j = b.find(abre), b.rfind(fecha)
-            if i < 0 or j <= i:
-                continue
-            try:
-                return json.loads(b[i:j + 1])
-            except Exception:                                  # noqa: BLE001
-                continue
-    return None
-
-
-def fechar_modais(pg):
-    fechou = []
-    for _ in range(3):                     # podem vir empilhados
-        achou = False
-        for texto in CONSENTIMENTO:
-            try:
-                b = pg.get_by_role("button", name=texto)
-                if b.count():
-                    b.first.click(timeout=4000)
-                    fechou.append(texto)
-                    pg.wait_for_timeout(2000)
-                    achou = True
-                    break
-            except Exception:                                  # noqa: BLE001
-                continue
-        if not achou:
-            break
-    return fechou
-
-
-def escrever(pg, seletores, texto):
-    """Digita e CONFERE que entrou. Campo visível nem sempre aceita foco ainda."""
-    for _ in range(3):
-        alvo = sel = None
-        for s in seletores:
-            try:
-                e = pg.locator(s).first
-                e.wait_for(state="visible", timeout=12000)
-                alvo, sel = e, s
-                break
-            except Exception:                                  # noqa: BLE001
-                continue
-        if alvo is None:
-            pg.wait_for_timeout(4000)
-            continue
-        try:
-            alvo.click(timeout=10000)
-            pg.wait_for_timeout(600)
-            alvo.type(texto, delay=4)
-            pg.wait_for_timeout(900)
-            entrou = pg.evaluate(
-                """(sel) => {
-                     const e = document.querySelector(sel);
-                     if (!e) return 0;
-                     return ((e.value || e.textContent || '') + '').trim().length;
-                   }""", sel)
-            if entrou and entrou > 40:
-                return True, sel
-        except Exception:                                      # noqa: BLE001
-            pass
-        pg.wait_for_timeout(3000)
-    return False, None
-
-
-def perguntar(pg, cfg, pergunta, teto=150):
-    ok, _ = escrever(pg, cfg["caixa"], pergunta)
-    if not ok:
-        return None, "o texto não entrou na caixa", 0
-
-    antes_n = pg.evaluate(CONTAR) or 0
-    enviou = False
-    if cfg["botao"]:
-        # O ENTER NÃO ENVIA no ChatGPT. O botão é obrigatório.
-        for s in cfg["botao"]:
-            try:
-                pg.locator(s).first.click(timeout=6000)
-                enviou = True
-                break
-            except Exception:                                  # noqa: BLE001
-                continue
-    if not enviou:
-        pg.keyboard.press("Enter")
-
-    t0 = time.time()
-    blocos, anterior, estavel = [], -1, 0
-    while time.time() - t0 < teto:
-        if (pg.evaluate(CONTAR) or 0) > antes_n:
-            blocos = pg.evaluate(BLOCOS, antes_n) or []
-            tam = sum(len(b) for b in blocos)
-            if tam and tam == anterior:
-                estavel += 1
-                if estavel >= 2:
-                    break
-            else:
-                estavel = 0
-            anterior = tam
-        pg.wait_for_timeout(2500)
-    return extrair(blocos), None, round(time.time() - t0, 1)
-
-
-def abrir(nav, qual):
-    cfg = ASSISTENTES[qual]
-    ctx = nav.new_context(viewport={"width": 1360, "height": 1000},
-                          locale="pt-BR", timezone_id="America/Sao_Paulo",
-                          storage_state=COOKIE if os.path.exists(COOKIE) else None)
-    pg = ctx.new_page()
-    pg.goto(cfg["url"], timeout=90000, wait_until="domcontentloaded")
-    pg.wait_for_timeout(random.randint(9000, 12000))
-    return ctx, pg, fechar_modais(pg)
-
-
-def consultar(pw, proxy, qual, lotes, visivel=True):
-    """Vários lotes na MESMA janela, cada um em ABA e conversa NOVAS.
-
-    A janela é o caro — perfil, IP e cookie ficam de pé. A aba custa ~10 s e é
-    o que garante conversa nova: recarregar a mesma deixava a caixa num estado
-    em que o envio não sai, e o lote seguinte ficava 150 s sem resposta.
-    """
-    cfg = ASSISTENTES[qual]
-    saidas = []
-    nav = pw.chromium.launch(headless=not visivel, args=ARGS, proxy=proxy)
+# ────────────────────────────────────────────────── busca e leitura ─────────
+def buscar(q: str, n: int = 8) -> list:
     try:
-        for n, lote in enumerate(lotes, 1):
-            ctx, pg, fechados = abrir(nav, qual)
-            if n == 1 and fechados:
-                _log("      modais fechados: %s" % fechados)
-            dados, erro, dt = perguntar(pg, cfg, montar(lote))
-            saidas.append({"lote": n, "itens": lote, "dados": dados,
-                           "erro": erro, "segundos": dt})
-            ctx.close()
-    finally:
-        nav.close()
-    return saidas
+        req = urllib.request.Request(
+            "%s/search?q=%s&format=json&language=pt-BR"
+            % (SEARX, urllib.parse.quote(q)),
+            headers={"User-Agent": "radar/1.0"})
+        with urllib.request.urlopen(req, timeout=30) as h:
+            d = json.load(h)
+    except Exception:                                          # noqa: BLE001
+        return []
+    saida = []
+    for r in (d.get("results") or []):
+        u = r.get("url") or ""
+        if not u or sd.e_ruido(u):
+            continue
+        saida.append({"titulo": r.get("title") or "", "url": u,
+                      "resumo": (r.get("content") or "")[:300]})
+        if len(saida) >= n:
+            break
+    return saida
 
 
-def incompletos(dados):
-    return [d.get("nome") for d in (dados or [])
-            if isinstance(d, dict) and any(not d.get(c) for c in ESSENCIAIS)]
+def baixar(url: str, timeout: int = 18) -> str:
+    """O texto da página, sem marcação.
+
+    Quem precisa de navegador (medido: 403, 422, 429) é pulado aqui — o resumo
+    que a busca já trouxe entra no lugar. Abrir navegador por página faria a
+    etapa custar minutos por POI, e o resumo costuma bastar.
+    """
+    if sd.precisa_navegador(url):
+        return ""
+    try:
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                          "(KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+            "Accept-Language": "pt-BR,pt;q=0.9"})
+        with urllib.request.urlopen(req, timeout=timeout) as h:
+            bruto = h.read(400000)
+    except Exception:                                          # noqa: BLE001
+        return ""
+    t = bruto.decode("utf-8", "ignore")
+    t = re.sub(r"(?is)<(script|style|noscript|svg|head)[^>]*>.*?</\1>", " ", t)
+    t = re.sub(r"(?s)<[^>]+>", " ", t)
+    return re.sub(r"\s+", " ", t.replace("&nbsp;", " ")).strip()
 
 
-# ---------------------------------------------------------- o banco ---------
-# O ENDEREÇO JÁ RESOLVIDO VAI NA PERGUNTA, e isso muda a qualidade da resposta.
-#
-# Perguntar por "Locadora Gold, Canoas" faz o assistente escolher entre homônimos
-# da região metropolitana. Perguntar por "Locadora Gold — RUA HUMAITA, 1258,
-# Canoas RS" ancora a entidade — e desancorar foi exatamente o erro que a sonda
-# registrou: "Loft Maxplaza" virou "Loft Brasil Tecnologia Ltda", uma proptech,
-# porque o nome sozinho não dizia de qual lugar se falava.
-#
-# A etapa 7 já deixou esse endereço em `logradouro_resolvido`, provado. Usá-lo é
-# de graça; não usá-lo seria pagar duas vezes pela mesma pergunta.
+def perguntar(conteudo, teto: int = 1400):
+    dados = json.dumps({"model": MODELO,
+                        "messages": [{"role": "user", "content": conteudo}],
+                        "temperature": 0, "max_tokens": teto}).encode()
+    req = urllib.request.Request(SPARK + "/chat/completions", data=dados,
+                                 headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=600) as h:
+        t = h.read().decode("utf-8", "ignore")
+    try:
+        t = json.loads(t)["choices"][0]["message"]["content"]
+    except Exception:                                          # noqa: BLE001
+        return None
+    i, j = t.find("{"), t.rfind("}")
+    if i < 0 or j <= i:
+        return None
+    try:
+        return json.loads(t[i:j + 1])
+    except json.JSONDecodeError:
+        return None
+
+
+PROMPT = (
+    "Estes são resultados de busca sobre um estabelecimento em {cidade}/{uf}.\n"
+    "Estabelecimento: {nome}\n"
+    "Endereço já confirmado: {onde}\n\n{corpo}\n\n"
+    "Diz o que estes textos CONFIRMAM sobre ESTE estabelecimento — não sobre "
+    "outro de nome parecido, não sobre a matriz da rede, não sobre uma unidade "
+    "em outra cidade.\n"
+    "Responde APENAS um JSON com as chaves: cnpj, razao_social, telefone, "
+    "whatsapp, site, instagram, facebook, ramo, fontes.\n"
+    "'fontes' é um objeto com uma entrada por campo preenchido, cujo valor é a "
+    "URL de onde saiu aquele campo.\n"
+    "Usa null no que os textos não disserem. Não completa com conhecimento "
+    "próprio e não inventa: dizer que não achou é a resposta certa quando não "
+    "achou."
+)
+
+
+def investigar(poi: dict) -> dict:
+    """Busca, filtra, baixa e pergunta. Devolve o que o modelo respondeu."""
+    consultas = sd.consultas(poi["nome"], poi["cidade"], poi.get("uf") or "",
+                             poi.get("onde") or "")
+    achados, vistos = [], set()
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        for lote in ex.map(lambda c: buscar(c["q"], 6), consultas[:6]):
+            for a in lote:
+                if a["url"] in vistos:
+                    continue
+                vistos.add(a["url"])
+                achados.append(a)
+
+    # PREFERÊNCIA PELO CATÁLOGO: quem publica dado de empresa vai na frente, e é
+    # quem sobra quando o teto de páginas corta.
+    achados.sort(key=lambda a: 0 if any(
+        s["dominio"] in a["url"] for s in sd.SITES.values()) else 1)
+    escolhidas = achados[:PAGINAS]
+    if not escolhidas:
+        return {"paginas": 0, "resposta": None}
+
+    with ThreadPoolExecutor(max_workers=PAGINAS) as ex:
+        textos = list(ex.map(baixar, [a["url"] for a in escolhidas]))
+
+    corpo = "\n\n".join(
+        "FONTE: %s\nTITULO: %s\nTEXTO: %s"
+        % (a["url"], a["titulo"], (t or a["resumo"])[:2600])
+        for a, t in zip(escolhidas, textos))[:TETO_TEXTO]
+
+    d = perguntar(PROMPT.format(
+        cidade=poi["cidade"], uf=poi.get("uf") or "", nome=poi["nome"],
+        onde=poi.get("onde") or "(sem endereço confirmado)", corpo=corpo))
+    return {"paginas": len(escolhidas), "resposta": d,
+            "urls": [a["url"] for a in escolhidas]}
+
+
+# ─────────────────────────────────────────────────────────── o banco ────────
 SQL_ALVOS = """
-    select p.id, p.nome, p.cidade, p.uf,
-           coalesce(l.logradouro, '') as via,
-           coalesce(l.numero, '')     as numero,
-           coalesce(l.bairro, '')     as bairro,
-           coalesce(l.cep, '')        as cep,
-           coalesce(l.forca, 'sem')   as forca
+    select p.id, p.nome, p.cidade, p.uf, p.cnpj, p.telefone,
+           coalesce(l.logradouro,'') as via, coalesce(l.numero,'') as numero,
+           coalesce(l.bairro,'') as bairro, coalesce(l.forca,'sem') as forca
       from radar_comercial.pois p
       left join radar_comercial.logradouro_resolvido l on l.poi_id = p.id
-     where p.fundido_em is null
-       and coalesce(p.nome,'') <> ''
+     where p.fundido_em is null and coalesce(p.nome,'') <> ''
        and (coalesce(p.cnpj,'') = '' or coalesce(p.telefone,'') = '')
        and p.ia_resposta is null
+       and length(coalesce(p.nome,'')) >= %s
        %s
      order by p.id
 """
 
 
-def alvos(cur, cidade: str, limite: int) -> list:
-    filtro, args = "", []
+def alvos(cur, cidade: str, limite: int, fontes: list, nome_min: int) -> list:
+    filtro, args = "", [nome_min]
     if cidade:
-        filtro = ("and translate(upper(coalesce(p.cidade,'')), "
-                  "'ÁÀÂÃÉÊÍÓÔÕÚÜÇ', 'AAAAEEIOOOUUC') = "
-                  "translate(upper(%s), 'ÁÀÂÃÉÊÍÓÔÕÚÜÇ', 'AAAAEEIOOOUUC')")
+        filtro += (" and translate(upper(coalesce(p.cidade,'')), "
+                   "'ÁÀÂÃÉÊÍÓÔÕÚÜÇ','AAAAEEIOOOUUC') = "
+                   "translate(upper(%s), 'ÁÀÂÃÉÊÍÓÔÕÚÜÇ','AAAAEEIOOOUUC')")
         args.append(cidade)
-    sql = SQL_ALVOS % filtro
+    if fontes:
+        filtro += " and p.fonte = any(%s)"
+        args.append(fontes)
+    sql = SQL_ALVOS % ("%s", filtro)
     if limite:
         sql += " limit %d" % int(limite)
     cur.execute(sql, args)
     saida = []
-    for pid, nome, cid, uf, via, numero, bairro, cep, forca in cur.fetchall():
-        d = re.sub(r"\D", "", cep or "")
-        # ENDEREÇO INFERIDO POR PROXIMIDADE NÃO ENTRA NA PERGUNTA.
-        #
-        # `indicio` é o que a etapa 7 obteve da coordenada, a até 20 m — pode
-        # ser a rua vizinha. Ancorar o assistente num indício errado faz dele
-        # uma máquina de confirmar o erro, com fonte e tudo. Sem âncora ele ao
-        # menos hesita; com âncora errada, não.
+    for pid, nome, cid, uf, cnpj, tel, via, num, bairro, forca in cur.fetchall():
+        # ENDEREÇO INFERIDO NÃO ANCORA A BUSCA. `indicio` veio da coordenada e
+        # pode ser a rua vizinha; buscar por ele faria o modelo confirmar o erro.
         onde = ""
         if forca == "prova" and via:
-            onde = via + ((", %s" % numero) if numero else "")
+            onde = via + ((", %s" % num) if num else "")
+            if bairro:
+                onde += " - %s" % bairro
         saida.append({"id": pid, "nome": nome, "cidade": cid, "uf": uf,
-                      "onde": onde, "bairro": bairro,
-                      "cep": ("%s-%s" % (d[:5], d[5:])) if len(d) == 8 else None})
+                      "onde": onde, "tem_cnpj": bool(cnpj),
+                      "tem_telefone": bool(tel)})
     return saida
 
 
-def gravar(con, cur, poi, resposta) -> dict:
-    """Escreve só onde está vazio, e só o que passou nas travas."""
-    fontes = resposta.get("fontes") or {}
-    tem_link = any(isinstance(v, str) and v.startswith("http")
-                   for v in fontes.values())
+def gravar(con, cur, poi: dict, d: dict, cod_municipio: str) -> dict:
+    campos, valores, notas = [], [], []
+    fontes = d.get("fontes") or {}
 
-    campos, valores, recusas = [], [], []
-
-    cnpj = so_digitos(resposta.get("cnpj"))
+    cnpj = re.sub(r"\D", "", str(d.get("cnpj") or ""))
     if cnpj:
-        if cnpj_valido(cnpj):
-            campos += ["cnpj = coalesce(nullif(btrim(cnpj), ''), %s)",
-                       "cnpj_conf = coalesce(cnpj_conf, %s)"]
-            valores += [cnpj, 0.5 if tem_link else 0.3]
+        if not cnpj_valido(cnpj):
+            notas.append("cnpj com dígito verificador inválido: %s" % cnpj)
         else:
-            recusas.append("cnpj com dígito verificador inválido: %s" % cnpj)
+            r = conferir_na_receita(cur, cnpj, cod_municipio)
+            if not r["existe"]:
+                conf, nota = 0.3, "não está na Receita"
+            elif str(r.get("municipio") or "") == str(cod_municipio or ""):
+                conf, nota = 0.9, "confirmado na Receita, mesmo município"
+            else:
+                conf = 0.5
+                nota = ("na Receita, mas em %s — pode ser a matriz da rede"
+                        % (r.get("municipio_nome") or r.get("municipio")))
+            notas.append("cnpj %s: %s" % (cnpj, nota))
+            campos += ["cnpj = coalesce(nullif(btrim(cnpj),''), %s)",
+                       "cnpj_conf = coalesce(cnpj_conf, %s)"]
+            valores += [cnpj, conf]
+            if r["existe"] and r.get("razao_social"):
+                campos.append("razao_social = coalesce(nullif(btrim(razao_social),''), %s)")
+                valores.append(str(r["razao_social"])[:300])
 
-    for coluna, chave in (("telefone", "telefone"),
-                          ("razao_social", "razao_social"),
-                          ("situacao_cadastral", "situacao_cadastral"),
-                          ("website", "site"),
-                          ("instagram", "instagram"),
-                          ("facebook", "facebook")):
-        v = resposta.get(chave)
-        if v and str(v).strip() and str(v).strip().lower() != "null":
-            campos.append("%s = coalesce(nullif(btrim(%s), ''), %%s)"
+    for coluna, chave in (("telefone", "telefone"), ("website", "site"),
+                          ("instagram", "instagram"), ("facebook", "facebook")):
+        v = d.get(chave)
+        if v and str(v).strip().lower() not in ("", "null", "none"):
+            campos.append("%s = coalesce(nullif(btrim(%s),''), %%s)"
                           % (coluna, coluna))
             valores.append(str(v).strip()[:400])
 
-    # A resposta inteira fica gravada — inclusive quando nada foi aproveitado.
-    # É ela que impede a mesma pergunta de ser feita de novo, e é onde se
-    # confere depois de onde veio cada campo.
     campos.append("ia_resposta = %s")
-    valores.append(json.dumps(resposta, ensure_ascii=False)[:8000])
+    valores.append(json.dumps(d, ensure_ascii=False)[:8000])
     if fontes:
-        campos.append("fontes_web = coalesce(nullif(btrim(fontes_web), ''), %s)")
+        campos.append("fontes_web = coalesce(nullif(btrim(fontes_web),''), %s)")
         valores.append(json.dumps(fontes, ensure_ascii=False)[:2000])
 
     cur.execute("update radar_comercial.pois set %s where id = %%s"
                 % ", ".join(campos), valores + [poi["id"]])
     con.commit()
-    return {"recusas": recusas, "com_link": tem_link}
+    return {"notas": notas, "campos": len(campos) - 1}
 
 
-def rodar(cidade="", limite=0, lote=5, aplicar=False, visivel=True) -> dict:
+def rodar(cidade="", cod="", limite=0, fontes=None, nome_min=12,
+          aplicar=False) -> dict:
     con = bc.conectar()
     cur = con.cursor()
-    lista = alvos(cur, cidade, limite)
+    lista = alvos(cur, cidade, limite, fontes or [], nome_min)
     _log("   %d POIs sem CNPJ ou sem telefone, ainda não perguntados" % len(lista))
+    _log("   catálogo: %s" % sd.resumo().replace("\n", " · "))
     if not lista:
         con.close()
         return {"alvos": 0}
-
-    lotes = [lista[i:i + lote] for i in range(0, len(lista), lote)]
-    _log("   %d lotes de até %d" % (len(lotes), lote))
     if not aplicar:
-        _log("   (ensaio: nada perguntado nem gravado. Use --aplicar)")
+        _log("   (ensaio: nada buscado nem gravado. Use --aplicar)")
         for a in lista[:5]:
-            _log("      %s" % montar([a]).splitlines()[-2][:98])
+            _log("      %-34s %s" % (a["nome"][:34], a["onde"][:44]))
         con.close()
         return {"alvos": len(lista), "gravados": 0}
 
-    from playwright.sync_api import sync_playwright
-
-    from proxy_pool import ProxyPool
-    import asyncio
-
-    # DOIS PROXIES DE UMA VEZ, num `asyncio.run` só.
-    #
-    # O `acquire` é async e guarda os IPs em uso num lock que não atravessa
-    # event loop. Chamar duas vezes em `asyncio.run` separados devolve o MESMO
-    # IP as duas vezes — o segundo processo começa com a lista de usados vazia.
-    pool = ProxyPool(pais="BR")
-    pool.start()
-
-    async def pegar(n):
-        return [await pool.acquire() for _ in range(n)]
-
-    px = [{"server": p["server"], "username": p.get("username"),
-           "password": p.get("password")} for p in asyncio.run(pegar(2)) if p]
-    if not px:
-        _log("   ⚠️  sem proxy disponível — a etapa não roda pelo IP da casa")
-        con.close()
-        return {"alvos": len(lista), "erro": "sem proxy"}
-
     placar = Counter()
     t0 = time.time()
-    with sync_playwright() as pw:
-        _log("   ChatGPT (primário)")
-        respostas = consultar(pw, px[0], "chatgpt", lotes, visivel)
-
-        faltando = []
-        for r in respostas:
-            dados = r["dados"] if isinstance(r["dados"], list) else []
-            _log("      lote %d · %ss · %d respostas · erro=%s"
-                 % (r["lote"], r["segundos"], len(dados), r["erro"]))
-            por_n = {}
-            for d in dados:
-                try:
-                    por_n[int(d.get("n"))] = d
-                except (TypeError, ValueError):
-                    pass
-            for i, poi in enumerate(r["itens"], 1):
-                d = por_n.get(i)
-                if not isinstance(d, dict):
-                    placar["sem_resposta"] += 1
-                    continue
-                info = gravar(con, cur, poi, d)
-                placar["gravados"] += 1
-                if info["com_link"]:
-                    placar["com_fonte_com_link"] += 1
-                for motivo in info["recusas"]:
-                    placar["cnpj_recusado"] += 1
-                    _log("         recusado em %s: %s" % (poi["nome"][:24], motivo))
-            faltando += [poi for i, poi in enumerate(r["itens"], 1)
-                         if isinstance(por_n.get(i), dict)
-                         and any(not por_n[i].get(c) for c in ESSENCIAIS)]
-
-        if faltando and len(px) > 1:
-            _log("   Gemini (segunda opinião: %d incompletos)" % len(faltando))
-            g_lotes = [faltando[i:i + lote]
-                       for i in range(0, len(faltando), lote)]
-            for r in consultar(pw, px[1], "gemini", g_lotes, visivel):
-                dados = r["dados"] if isinstance(r["dados"], list) else []
-                por_n = {}
-                for d in dados:
-                    try:
-                        por_n[int(d.get("n"))] = d
-                    except (TypeError, ValueError):
-                        pass
-                for i, poi in enumerate(r["itens"], 1):
-                    d = por_n.get(i)
-                    if isinstance(d, dict):
-                        gravar(con, cur, poi, d)
-                        placar["gemini_completou"] += 1
+    # A busca é rede: várias ao mesmo tempo. A gravação é do laço principal,
+    # com um cursor só — cursor não atravessa thread.
+    with ThreadPoolExecutor(max_workers=THREADS) as ex:
+        for poi, achado in zip(lista, ex.map(investigar, lista)):
+            d = achado.get("resposta")
+            if not isinstance(d, dict):
+                placar["sem_resposta"] += 1
+                continue
+            preenchidos = [k for k in ("cnpj", "telefone", "site", "instagram",
+                                       "facebook", "ramo") if d.get(k)]
+            if not preenchidos:
+                placar["nada_confirmado"] += 1
+            info = gravar(con, cur, poi, d, cod)
+            placar["gravados"] += 1
+            for k in preenchidos:
+                placar["campo_" + k] += 1
+            _log("      %-30s %d páginas · %s"
+                 % (poi["nome"][:30], achado["paginas"],
+                    ", ".join(preenchidos) or "nada"))
+            for n in info["notas"]:
+                _log("         %s" % n)
 
     dt = time.time() - t0
-    _log("\n   %d POIs · %.1f min" % (len(lista), dt / 60.0))
+    _log("\n   %d POIs · %.1f min · %.1f s por POI"
+         % (len(lista), dt / 60.0, dt / max(1, len(lista))))
     for k, v in placar.most_common():
         _log("      %-22s %5d" % (k, v))
     con.close()
-    return {"alvos": len(lista), **dict(placar), "segundos": dt}
+    return {"alvos": len(lista), **dict(placar)}
 
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(
-        description="CNPJ, telefone e redes pelos assistentes públicos.")
+        description="CNPJ, telefone e redes: SearXNG busca, a Spark lê.")
     p.add_argument("--cidade", default="")
+    p.add_argument("--municipio", default="",
+                   help="código IBGE — usado para conferir o CNPJ na Receita")
+    p.add_argument("--fonte", action="append", default=[],
+                   help="restringe a POIs desta fonte; pode repetir")
     p.add_argument("--limite", type=int, default=0)
-    p.add_argument("--lote", type=int, default=5,
-                   help="quantos estabelecimentos por pergunta (medido: 5)")
-    p.add_argument("--headless", action="store_true",
-                   help="sem janela; use onde não há sessão gráfica")
+    p.add_argument("--nome-minimo", type=int, default=12,
+                   help="ignora nome curto demais para buscar: 'LOJA' e "
+                        "'MERCADO' trazem a cidade inteira")
     p.add_argument("--aplicar", action="store_true")
     a = p.parse_args(argv)
 
-    _log("▶ complemento por IA%s" % ((" · %s" % a.cidade) if a.cidade else ""))
-    rodar(a.cidade, a.limite, a.lote, a.aplicar, visivel=not a.headless)
+    _log("▶ complemento pela web%s" % ((" · %s" % a.cidade) if a.cidade else ""))
+    rodar(a.cidade, a.municipio, a.limite, a.fonte, a.nome_minimo, a.aplicar)
     return 0
 
 
