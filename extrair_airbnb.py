@@ -367,8 +367,8 @@ def _poligono_do_municipio(cidade, uf):
     try:
         with con.cursor() as k:
             k.execute("""select st_asgeojson(geom)
-                           from ibge_malha
-                          where unaccent(lower(nome)) = unaccent(lower(%s))
+                           from resources_root.ibge_malha
+                          where translate(lower(nome), 'ÁÀÂÃÉÊÍÓÔÕÚÜÇáàâãéêíóôõúüç', 'AAAAEEIOOOUUCaaaaeeiooouuc') = translate(lower(%s), 'ÁÀÂÃÉÊÍÓÔÕÚÜÇáàâãéêíóôõúüç', 'AAAAEEIOOOUUCaaaaeeiooouuc')
                             and (%s is null or upper(uf) = upper(%s))
                           limit 1""", (cidade, uf, uf))
             linha = k.fetchone()
