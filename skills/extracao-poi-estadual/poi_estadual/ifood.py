@@ -247,12 +247,32 @@ def _linha(d):
     return {**comum, **nativas}
 
 
-def detalhar(ids, proxies=(), threads=8, tentativas=3, ao_vivo=None):
+def detalhar(ids, proxies=(), threads=8, tentativas=3, ao_vivo=None,
+             pausa=(0.4, 1.6)):
     """Busca o `/extra` de cada id. Devolve (linhas, falhas).
 
     `falhas` NAO e ruido de log: e a lista de ids que ficaram sem dado, e ela
     precisa sobreviver ate o relatorio. Loja que deu 500 tres vezes e diferente
     de loja que deu 404 — a primeira volta na proxima rodada, a segunda nao.
+
+    `pausa` e um par (min, max) de segundos sorteado ANTES de cada chamada, e
+    existe porque ate 02/09/2026 so havia recuo DEPOIS do erro. No caminho feliz
+    as threads disparavam encostadas — 0,05 s por loja, medido em 25/08 — e um
+    endpoint que hoje responde 200 nao promete responder 200 para dezenas de
+    milhares de requisicoes seguidas do mesmo punhado de IPs. O Akamai ja
+    devolve 403 no `home:fallback` do mesmo dominio; descobrir o limite no meio
+    de uma UF custa a UF inteira.
+
+    O sorteio e por chamada, e nao um intervalo fixo: passo constante e assinatura
+    de robo, e threads que partem juntas continuam juntas para sempre.
+
+    O que ela custa, com 8 threads e media de 1 s:
+
+        antes   0,05 s/loja      1.000 lojas em ~1 min     100 mil em ~1,4 h
+        agora   0,125 s/loja     1.000 lojas em ~2 min     100 mil em ~3,5 h
+
+    `pausa=None` desliga e restaura o comportamento anterior — para quando a
+    lista e curta e a pressa e real.
     """
     linhas, falhas = [], []
     ids = list(ids)
@@ -261,6 +281,8 @@ def detalhar(ids, proxies=(), threads=8, tentativas=3, ao_vivo=None):
         erro = "sem_tentativa"
         for t in range(max(1, int(tentativas))):
             px = random.choice(proxies) if proxies else None
+            if pausa:
+                time.sleep(random.uniform(float(pausa[0]), float(pausa[1])))
             try:
                 with _abrir(BASE % i, px) as h:
                     return i, json.load(h), None
