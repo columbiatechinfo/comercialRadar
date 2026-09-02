@@ -676,6 +676,24 @@ def main(argv=None) -> int:
             # para o caminho caro.
             _tolerante_i9(["detalhar_ifood.py"],
                           "iFood — CNPJ e endereço pelo endpoint público")
+
+            # E AGORA A LOJA VIRA PONTO — o passo que faltava desde sempre.
+            #
+            # `ifood_merchant.poi_id` existe desde a criação da tabela e ficou
+            # com 0 linhas preenchidas até 02/09/2026. Enquanto isso, o iFood
+            # tinha 1.529 CNPJs no banco e a lista de POIs tinha 77: a fonte
+            # mais rica de identificação era invisível para o resto do sistema.
+            #
+            # NÃO HÁ CRUZAMENTO AQUI. A loja entra como ponto próprio, com
+            # `fonte = 'ifood'`. Se o mesmo estabelecimento já existe vindo do
+            # estadual, passam a existir os dois — nesta fase nenhuma etapa
+            # compara uma base com as outras, e o cruzamento resolve depois.
+            #
+            # Medido em Canoas: 908 lojas, 907 viraram ponto em 0,2 s. A única
+            # recusada tinha nome E endereço idênticos aos de um ponto já
+            # existente, e o índice `pois_sem_duplicata` proíbe a cópia.
+            _tolerante_i9(["ifood_para_poi.py", "--cidade", cidade,
+                        "--aplicar"], "iFood — as lojas viram ponto")
         else:
             _log("   sem descoberta nesta rodada; o detalhe fica para a próxima")
 
