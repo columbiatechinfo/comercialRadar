@@ -505,7 +505,7 @@ def gravar(con, cur, poi, d, cod_rf) -> list:
 
 def rodar(cidade="", cod="", limite=0, fontes=None, nome_min=12, guias=4,
           sem_proxy=False, pausa=(1200, 2600), aplicar=False,
-          janelas=4) -> dict:
+          janelas=4, passadas=2) -> dict:
     con = bc.conectar()
     cur = con.cursor()
     lista = alvos(cur, cidade, limite, fontes or [], nome_min)
@@ -522,44 +522,66 @@ def rodar(cidade="", cod="", limite=0, fontes=None, nome_min=12, guias=4,
         con.close()
         return {"alvos": len(lista)}
 
-    proxies = []
-    if not sem_proxy:
-        try:
-            import busca_navegador as bn
-            proxies = bn.lista_de_proxies(max(janelas * 2, 12))
-        except Exception as e:                                 # noqa: BLE001
-            _log("   ⚠️  sem proxy (%s) — IP direto" % type(e).__name__)
-    _log("   %d IPs — um fixo por janela" % len(proxies))
-
-    _log("   %d janelas × %d guias no navegador do repositório%s"
-         % (janelas, guias,
-            " · com o cookie do Maps" if os.path.exists(COOKIE) else ""))
-    t0 = time.time()
-    saidas = colher(lista, janelas, guias, proxies, pausa)
-    dt = time.time() - t0
     cod_rf = rf_do_ibge(cur, cod)
     if cod and not cod_rf:
-        _log("   ⚠️  não achei o código da Receita para o IBGE %s — a"
-             % cod)
+        _log("   ⚠️  não achei o código da Receita para o IBGE %s — a" % cod)
         _log("      conferência de município do CNPJ fica sem base.")
 
+    # A GUIA QUE CAI LEVA OS POIS DELA JUNTO — POR ISSO HA MAIS DE UMA PASSADA.
+    #
+    # Quando o Google mostra CAPTCHA, aquela guia encerra: insistir com o mesmo
+    # IP so gasta o endereco. Na medicao de 300 POIs em 02/09/2026 caíram 13
+    # guias, e com elas 84 POIs ficaram sem resposta — 28% da rodada. Nao e
+    # perda de verdade: sao POIs que ninguem chegou a buscar.
+    #
+    # Cada passada abre janelas novas com IPS NOVOS, e so os pendentes entram.
+    # Duas passadas bastam porque o que sobra da segunda ja e residuo pequeno,
+    # e uma terceira custaria mais IP do que traz resposta.
     placar = Counter()
-    for poi, d in saidas:
-        notas, achou = gravar(con, cur, poi, d, cod_rf)
-        placar["achou_algo" if achou else "esgotado"] += 1
-        for k in achou:
-            placar["campo_" + k] += 1
-        _log("      %-32s %s" % (poi["nome"][:32], ", ".join(achou) or "esgotado"))
-        for n in notas:
-            _log("         %s" % n)
+    pendentes = list(lista)
+    t0 = time.time()
+    total = 0
+    for passada in range(1, max(1, passadas) + 1):
+        if not pendentes:
+            break
+        proxies = []
+        if not sem_proxy:
+            try:
+                import busca_navegador as bn
+                proxies = bn.lista_de_proxies(max(janelas * 2, 12))
+            except Exception as e:                             # noqa: BLE001
+                _log("   ⚠️  sem proxy (%s) — IP direto" % type(e).__name__)
+        if passada == 1:
+            _log("   %d IPs — um fixo por janela" % len(proxies))
+            _log("   %d janelas × %d guias no navegador do repositório%s"
+                 % (janelas, guias,
+                    " · com o cookie do Maps" if os.path.exists(COOKIE) else ""))
+        else:
+            _log("\n   passada %d: %d pendentes, IPs novos"
+                 % (passada, len(pendentes)))
 
-    nao_voltaram = len(lista) - len(saidas)
-    if nao_voltaram:
-        _log("   %d não voltaram (CAPTCHA ou guia encerrada) — ficam para a"
-             % nao_voltaram)
+        saidas = colher(pendentes, janelas, guias, proxies, pausa)
+        respondidos = set()
+        for poi, d in saidas:
+            respondidos.add(poi["id"])
+            notas, achou = gravar(con, cur, poi, d, cod_rf)
+            placar["achou_algo" if achou else "esgotado"] += 1
+            for k in achou:
+                placar["campo_" + k] += 1
+            _log("      %-32s %s"
+                 % (str(poi["nome"])[:32], ", ".join(achou) or "esgotado"))
+            for n in notas:
+                _log("         %s" % n)
+        total += len(saidas)
+        pendentes = [p for p in pendentes if p["id"] not in respondidos]
+
+    dt = time.time() - t0
+    if pendentes:
+        _log("   %d não voltaram nem depois de %d passadas — ficam para a"
+             % (len(pendentes), max(1, passadas)))
         _log("   próxima rodada, sem marca de esgotado.")
     _log("\n   %d POIs · %.1f min · %.1f s por POI"
-         % (len(saidas), dt / 60.0, dt / max(1, len(saidas))))
+         % (total, dt / 60.0, dt / max(1, total)))
     for k, v in placar.most_common():
         _log("      %-18s %5d" % (k, v))
     con.close()
@@ -577,6 +599,8 @@ def main(argv=None) -> int:
     p.add_argument("--guias", type=int, default=4,
                    help="guias na mesma janela; a janela é o caro, a guia não")
     p.add_argument("--nome-minimo", type=int, default=12)
+    p.add_argument("--passadas", type=int, default=2,
+                   help="tentativas para quem caiu em CAPTCHA")
     p.add_argument("--janelas", type=int, default=4,
                    help="janelas simultâneas, uma por IP")
     p.add_argument("--sem-proxy", action="store_true")
@@ -585,7 +609,8 @@ def main(argv=None) -> int:
 
     _log("▶ Google, janela quente%s" % ((" · %s" % a.cidade) if a.cidade else ""))
     rodar(a.cidade, a.municipio, a.limite, a.fonte, a.nome_minimo, a.guias,
-          a.sem_proxy, aplicar=a.aplicar, janelas=a.janelas)
+          a.sem_proxy, aplicar=a.aplicar, janelas=a.janelas,
+          passadas=a.passadas)
     return 0
 
 

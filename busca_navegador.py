@@ -35,6 +35,7 @@ navegador leva segundos, contra milissegundos do `urllib`. Vale para o que o
 """
 from __future__ import annotations
 
+import random
 import re
 import sys
 import time
@@ -163,10 +164,24 @@ def lista_de_proxies(quantos: int = 12) -> list:
     async def _pegar(pool, n):
         return [await pool.acquire() for _ in range(n)]
 
+    # SORTEIO, E NAO OS PRIMEIROS DA FILA.
+    #
+    # `acquire()` devolve o proxy "menos usado recentemente", mas esse registro
+    # so existe na memoria do processo: um processo novo comeca zerado e o
+    # `min` cai sempre no primeiro da lista, entao duas rodadas seguidas
+    # recebiam exatamente os mesmos IPs. O sorteio conserta isso.
+    #
+    # O QUE O SORTEIO NAO CONSERTA, e foi medido em 02/09/2026: os 250 IPs
+    # utilizaveis do pool estao TODOS na faixa 104.165.145.x — uma /24 so. O
+    # Google limita por faixa, nao por endereco. Depois de algumas centenas de
+    # buscas a faixa inteira passa a responder CAPTCHA, e trocar de IP dentro
+    # dela nao adianta: uma rodada de 300 POIs caiu com 24 CAPTCHAs e zero
+    # resposta, tanto com os primeiros da fila quanto com IPs sorteados.
+    # Diversidade de faixa e compra de proxy, nao ajuste de codigo.
     try:
         pool = ProxyPool(pais="BR")
         pool.start()
-        escolhidos = asyncio.run(_pegar(pool, quantos))
+        escolhidos = asyncio.run(_pegar(pool, max(quantos * 6, 60)))
     except Exception as e:                                     # noqa: BLE001
         _log("   ⚠️  pool falhou (%s) — IP direto" % type(e).__name__)
         return []
@@ -184,6 +199,8 @@ def lista_de_proxies(quantos: int = 12) -> list:
                         % (cfg["username"], cfg.get("password") or "", servidor))
         else:
             urls.append("http://%s" % servidor)
+    if len(urls) > quantos:
+        urls = random.sample(urls, quantos)
     return urls
 
 
