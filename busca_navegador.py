@@ -144,6 +144,49 @@ def _log(m: str) -> None:
     print(m, flush=True)
 
 
+def lista_de_proxies(quantos: int = 12) -> list:
+    """Os IPs crus, em lista — para quem faz o proprio rodizio.
+
+    `rodizio()` devolve uma FUNCAO, que e o que a busca por engenho usa. O
+    `ProxyRotator` do Scrapling quer a LISTA, porque ele mesmo roda a troca a
+    cada requisicao. As duas formas saem da mesma tomada de IPs: um `asyncio.run`
+    so, pelo motivo explicado em `rodizio`.
+    """
+    try:
+        import asyncio
+
+        from proxy_pool import ProxyPool
+    except Exception as e:                                     # noqa: BLE001
+        _log("   ⚠️  pool indisponível (%s) — IP direto" % type(e).__name__)
+        return []
+
+    async def _pegar(pool, n):
+        return [await pool.acquire() for _ in range(n)]
+
+    try:
+        pool = ProxyPool(pais="BR")
+        pool.start()
+        escolhidos = asyncio.run(_pegar(pool, quantos))
+    except Exception as e:                                     # noqa: BLE001
+        _log("   ⚠️  pool falhou (%s) — IP direto" % type(e).__name__)
+        return []
+
+    urls = []
+    for px in escolhidos:
+        if not px:
+            continue
+        cfg = ProxyPool.to_playwright(px)
+        servidor = str(cfg.get("server") or "").replace("http://", "")
+        if not servidor:
+            continue
+        if cfg.get("username"):
+            urls.append("http://%s:%s@%s"
+                        % (cfg["username"], cfg.get("password") or "", servidor))
+        else:
+            urls.append("http://%s" % servidor)
+    return urls
+
+
 def rodizio(sem_proxy: bool = False, quantos: int = 12):
     """Uma função que devolve o PRÓXIMO proxy a cada chamada.
 
