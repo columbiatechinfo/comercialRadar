@@ -43,6 +43,25 @@ services:
       # tambem escuta na LAN, e e por la que este conteiner chega.
       A2L_DB_HOST: "192.168.3.10"
 
+      # O DESPACHO DA MINERACAO.
+      #
+      # `server.py` monta o comando e, com estas variaveis, o embrulha num
+      # `docker run` da imagem do minerador — a unica que tem navegador do
+      # Playwright, `scrapling` e `proxy`. Sem elas a API tenta rodar local, com
+      # o `.venv/Scripts/python.exe` do Windows, e o job morre na etapa 4.
+      #
+      # `RADAR_JOB_REPO` e o caminho NO HOST porque quem monta o volume e o
+      # daemon do Docker, nao este processo.
+      RADAR_JOB_DOCKER: "radar-minerador:latest"
+      RADAR_JOB_REPO: "/home/a2l/Documentos/sistemas/radarComercial"
+      # O daemon por TCP, atraves do proxy abaixo — o socket NAO entra neste
+      # conteiner. Ele e `read_only` e `cap_drop: [ALL]`, e montar o socket aqui
+      # entregaria o host inteiro a quem furasse a API.
+      DOCKER_HOST: "tcp://radar-docker-proxy:2375"
+      # O cliente do Docker escreve config em $HOME; aqui o sistema de arquivos
+      # e somente-leitura e /tmp e o unico lugar gravavel.
+      DOCKER_CONFIG: "/tmp/.docker"
+
     ports:
       # 7740 FORA, 7720 DENTRO. O Dockerfile fixa a porta do uvicorn em
       # 7720 e nao le `PORTA_API`; publicar 7740:7740 abria uma porta em
@@ -110,6 +129,34 @@ services:
 #   docker volume create radar-crops
 #   docker volume create radar-capturas
 #   docker volume create radar-logs
+  # ── o intermediario entre a API e o daemon ─────────────────────────────────
+  #
+  # A API precisa criar e derrubar conteineres de mineracao, e nada alem disso.
+  # Este proxy expoe SO o que serve para isso: `CONTAINERS` para listar e criar,
+  # `POST` para as escritas. Imagens, volumes, redes, `exec`, `swarm` e o resto
+  # ficam recusados — o padrao da imagem e negar tudo que nao for ligado.
+  #
+  # HONESTIDADE SOBRE O QUE ISTO NAO RESOLVE: quem pode criar conteiner pode
+  # montar o que quiser do host dentro dele. O proxy reduz a superficie, nao a
+  # elimina. O que segura de verdade e a API exigir login e viver so na tailnet.
+  radar-docker-proxy:
+    image: tecnativa/docker-socket-proxy:0.3.0
+    container_name: radar-docker-proxy
+    restart: unless-stopped
+    environment:
+      CONTAINERS: "1"
+      POST: "1"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    mem_limit: 64m
+    # Sem `ports:` DE PROPOSITO: so quem esta na rede deste compose alcanca.
+    # Publicar 2375 no host seria abrir o daemon para a maquina inteira.
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+
 volumes:
   radar-anexos:
   radar-crops:
