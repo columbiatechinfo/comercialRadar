@@ -52,6 +52,9 @@ import realtime_ingest
 import base_comum
 import auth as _auth          # o portao e a identidade do usuario da requisicao
 from chat_api import registrar_chat   # rotas do chat com historico
+# O cadastro de bases do cliente: e ele que declara qual coluna e o que,
+# e sem essa declaracao escolher area e trabalhar no escuro.
+from base_api import registrar_bases
 from pydantic import BaseModel, Field
 
 BASE = Path(__file__).resolve().parent
@@ -83,6 +86,7 @@ app = FastAPI(title="ComercialRadar", lifespan=_lifespan)
 # O chat vive em modulo proprio: o servidor ja e grande, e assim da para
 # mexer nas rotas de conversa sem tocar no que atende o mapa.
 registrar_chat(app)
+registrar_bases(app)
 
 # ──────────────────────────────────────────────────────────────────────────
 # WebSocket — broadcast de eventos pro frontend
