@@ -148,34 +148,6 @@ def test_o_cnefe_responde_de_verdade():
 # ==========================================================================
 # A LIGAÇÃO COM A INGESTÃO — de nada adianta o módulo existir e ninguém chamar
 # ==========================================================================
-def test_a_descoberta_por_categoria_gera_o_endereco_antes_de_gravar():
-    """A varredura do Maps devolve nome e coordenada, NUNCA endereço — a lista
-    do Maps não o traz. Antes desta ligação ela inseria POI sem endereço, e o
-    trigger `poi_comparavel` passou a recusar cada um deles: a etapa inteira
-    pararia de gravar sem ninguém entender por quê."""
-    s = io.open(os.path.join(RAIZ, "descobrir_maps.py"), encoding="utf-8").read()
-    i = s.index("insert into pois")
-    antes = s[max(0, i - 2600):i]
-    assert "endereco_reverso" in antes, \
-        "a descoberta voltou a inserir sem gerar o endereço pela coordenada"
-    assert "endereco_gerado_por" in s, "o endereço gerado deixou de ser marcado"
-    assert "sem_endereco" in antes, \
-        "quem não obteve endereço voltou a ser inserido — a regra diz que não entra"
-
-
-def test_o_codigo_ibge_vem_do_poligono_e_nao_do_nome():
-    """"Santana" existe em nove estados, e o CNEFE é indexado por CÓDIGO. Casar
-    por nome traria as portas do município errado — e endereço do município
-    errado é pior que endereço nenhum, porque parece certo."""
-    import area_utils as au
-    assert hasattr(au, "codigo_ibge_da_area"), "o código IBGE da área sumiu"
-    s = io.open(os.path.join(RAIZ, "descobrir_maps.py"), encoding="utf-8").read()
-    assert "codigo_ibge_da_area" in s, \
-        "a descoberta voltou a resolver o município por outro caminho"
-    # e ela ABORTA sem o código, em vez de procurar no município errado
-    i = s.index("codigo_ibge_da_area")
-    assert "SystemExit" in s[i:i + 400], \
-        "sem código IBGE a etapa deixou de abortar — procuraria porta em qualquer lugar"
 
 
 def test_o_resgate_funciona_contra_o_banco():

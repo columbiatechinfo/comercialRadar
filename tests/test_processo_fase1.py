@@ -57,12 +57,11 @@ def test_todas_as_etapas_novas_estao_na_mineracao():
     medido; fora do `minerar_tudo` nenhuma roda sozinha."""
     s = _ler("minerar_tudo.py")
     for etapa, porque in (
-            ("descobrir_maps.py", "descoberta por categoria — substituiu o iFood"),
             ("normalizar_bases.py", "base fixa normalizada antes da área"),
             ("ajuste_logradouro.py", "logradouro canônico, a chave de junção"),
             ("corrigir_coordenada.py", "endereço certo com coordenada absurda"),
             ("conferir_municipio.py", "CEP de outro município"),
-            ("cruzar_fontes.py", "a fusão"),
+            ("resolver_logradouro.py", "em que rua está cada POI, e com que direito"),
     ):
         assert etapa in s, f"{etapa} saiu da mineração — {porque}"
 
@@ -168,11 +167,9 @@ def test_toda_etapa_com_navegador_roda_no_i9():
     não há como separá-los pelo nome do processo.
     """
     s = _ler("minerar_tudo.py")
-    for etapa in ("descobrir_maps.py", "enriquecer_por_ifood.py",
-                  "normalizar_bases.py", "segmentar_endereco.py",
+    for etapa in ("normalizar_bases.py", "segmentar_endereco.py",
                   "ajuste_logradouro.py", "corrigir_coordenada.py",
-                  "conferir_municipio.py", "povoar_vinculo.py",
-                  "cruzar_fontes.py"):
+                  "conferir_municipio.py", "resolver_logradouro.py"):
         assert f'_tolerante_i9(["{etapa}"' in s, \
             f"{etapa} voltou a rodar no notebook do operador"
         assert f'[PYTHON, "{etapa}"' not in s, \

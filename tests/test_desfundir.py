@@ -225,8 +225,7 @@ def test_ninguem_mais_usa_status_para_saber_quem_e_ponto():
     estar olhando quase nada."""
     import io
     for arq in ("server.py", "cruzar_fontes.py", "povoar_vinculo.py",
-                "corrigir_coordenada.py", "conferir_municipio.py",
-                "enriquecer_por_ifood.py"):
+                "corrigir_coordenada.py", "conferir_municipio.py"):
         s = io.open(os.path.join(RAIZ, arq), encoding="utf-8").read()
         codigo = "\n".join(l for l in s.splitlines()
                            if not l.lstrip().startswith("#"))
