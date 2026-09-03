@@ -63,17 +63,14 @@ SQL_CANDIDATOS = """
            p.id, coalesce(p.fonte,''), coalesce(p.nome,''),
            coalesce(p.endereco,''),
            coalesce(lr.logradouro,''), coalesce(lr.numero,''),
-           st_distance(l.geom, p.pt::geography) as metros,
+           st_distance(l.geom, p.pt) as metros,
            st_y(l.geom::geometry), st_x(l.geom::geometry),
-           st_y(p.pt), st_x(p.pt)
-      from (select id, fonte, nome, endereco,
-                   st_setsrid(st_makepoint(
-                       coalesce(maps_lng, lng_origem),
-                       coalesce(maps_lat, lat_origem)), 4326) as pt
+           st_y(p.pt::geometry), st_x(p.pt::geometry)
+      from (select id, fonte, nome, endereco, pt_geo as pt
               from radar_comercial.pois
              where fundido_em is null
                and upper(coalesce(cidade,'')) = upper(%s)
-               and coalesce(maps_lat, lat_origem) is not null
+               and pt_geo is not null
              {corte}) p
       join lateral (
             select c.num_ligacao, c.{via}, c.{numero}, c.{tipo}, c.geom
@@ -87,7 +84,7 @@ SQL_CANDIDATOS = """
                -- converter. (A primeira versao supunha geometry e caiu em
                -- `st_y(geography) does not exist`, que e o banco dizendo qual
                -- dos dois tipos ele guarda.)
-               and st_dwithin(c.geom, p.pt::geography, %s)
+               and st_dwithin(c.geom, p.pt, %s)
            ) l on true
       left join radar_comercial.logradouro_resolvido lr on lr.poi_id = p.id
      order by l.num_ligacao, metros
@@ -223,6 +220,30 @@ def cruzar(base_id: int, cidade: str, aplicar: bool, raio: float,
            limite: int) -> dict:
     con = bc.conectar()
     cur = con.cursor()
+
+    # ATRAVESSAR AS DUAS EMPRESAS — E SO AQUI.
+    #
+    # Este e o unico passo cross-tenant do radar: os POIs sao da empresa que
+    # opera (A2L) e as ligacoes sao da empresa do cliente (Corsan - Aegea RS), e
+    # a RLS isola cada uma na sua. Numa conexao com `empresa_atual()` de uma so
+    # empresa, o join nunca ve os dois lados: foi o que deu 0 pares em
+    # 03/09/2026, com o pipeline rodando como o usuario de servico nivel 1 da
+    # A2L, que enxerga A2L e mais nada.
+    #
+    # A saida nao e furar a RLS — e o ramo que a propria politica ja preve:
+    # `core.eh_suporte() OR id_empresa = empresa_atual()`. Um usuario nivel 9 e
+    # suporte e ve todas as empresas. O radar ja tem um: o de servico da A2L. O
+    # resto do pipeline segue nivel 1 de proposito (privilegio minimo); so ESTA
+    # leitura se eleva, e so para ler o cadastro do cliente e gravar o vinculo.
+    #
+    # `false` no set_config para valer a sessao inteira, igual a
+    # `assumir_empresa` — a conexao roda milhares de transacoes.
+    _sup = os.environ.get("RADAR_USUARIO_SUPORTE", "").strip()
+    if _sup:
+        cur.execute("select set_config('request.jwt.claim.sub', %s, false)", (_sup,))
+    else:
+        _log("   RADAR_USUARIO_SUPORTE nao definido no .env — sem ele a RLS "
+             "esconde as ligacoes do cliente e o cruzamento vem vazio")
 
     cur.execute("""
         select nome, tabela_dados, mapa_colunas, tipos_comerciais, estado

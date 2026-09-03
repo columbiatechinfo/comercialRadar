@@ -355,6 +355,27 @@ def _importar_municipio(uf: str, cod: str, empresa: str,
 TOTAL_ETAPAS = 9
 
 
+def _base_pronta():
+    """O id da base do cliente confirmada (`pronta`), ou None.
+
+    O pipeline recebe a empresa, não a base; é a base `pronta` que vale para o
+    cruzamento por ligação. Havendo mais de uma, a de confirmação mais recente
+    — reconfirmar troca qual manda. Sem nenhuma, o vínculo por ligação é pulado
+    em silêncio: é uma etapa a mais, não um pré-requisito da mineração."""
+    try:
+        import base_comum as _bc
+        _con = _bc.conectar()
+        with _con.cursor() as _k:
+            _k.execute("select id from radar_comercial.base_cliente "
+                       "where estado = 'pronta' "
+                       "order by confirmado_em desc nulls last, id desc limit 1")
+            _r = _k.fetchone()
+        _con.close()
+        return _r[0] if _r else None
+    except Exception:
+        return None
+
+
 # DE QUAL ETAPA COMEÇAR — e o gate fica no ATO, não no cabeçalho.
 #
 # Nasceu de duas rodadas perdidas no meio. Em 29/08/2026 a de Rio Grande caiu no
@@ -1105,6 +1126,22 @@ def main(argv=None) -> int:
         # ligação nenhuma, para vinculação humana.
         _tolerante_i9(["cadastro_cliente.py", "--cruzar", "--cidade", cidade],
                       "cadastro do cliente")
+
+        # E O VÍNCULO ANCORADO NA LIGAÇÃO — o que enxerga IRMÃOS.
+        #
+        # O cruzamento acima dá UMA ligação por POI e lê a `cadastro_cliente`,
+        # que só existe se a base tiver sido materializada. Este lê a
+        # `tabela_dados` (o staging da base `pronta`) direto e, para cada
+        # LIGAÇÃO, reúne até 5 POIs candidatos — os irmãos. É o que faz a etapa
+        # 9 poder pular quem divide ligação com um irmão já informado, sem
+        # copiar nada de um POI para o outro.
+        _idbase = _base_pronta()
+        if _idbase:
+            _tolerante_i9(["cruzar_ligacao.py", "--base", str(_idbase),
+                           "--cidade", cidade, "--aplicar"],
+                          "vínculo por ligação")
+        else:
+            _log("  vínculo por ligação pulado — nenhuma base do cliente confirmada")
     else:
         _log("  pulado — sem cidade não há cadastro a cruzar")
 

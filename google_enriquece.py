@@ -84,6 +84,23 @@ SQL = """
        and p.ia_resposta is null
        and length(coalesce(p.nome,'')) >= %s
        %s
+       -- IRMÃO NA MESMA LIGAÇÃO JÁ RESOLVE.
+       -- Se outro POI amarrado à mesma ligação do cliente já tem CNPJ,
+       -- telefone ou rede social, a ligação está identificada e não vale
+       -- abrir um navegador por este. Nada é copiado — só não se gasta a
+       -- busca. Sem base confirmada a `ligacao_poi` está vazia e este NOT
+       -- EXISTS é sempre verdadeiro: não muda nada até haver vínculo.
+       and not exists (
+           select 1
+             from radar_comercial.ligacao_poi lp_self
+             join radar_comercial.ligacao_poi lp_irmao
+                  on lp_irmao.ligacao = lp_self.ligacao
+                 and lp_irmao.id_base = lp_self.id_base
+             join radar_comercial.pois irmao on irmao.id = lp_irmao.poi_id
+            where lp_self.poi_id = p.id and irmao.id <> p.id
+              and (coalesce(irmao.cnpj,'') <> '' or coalesce(irmao.telefone,'') <> ''
+                   or coalesce(irmao.instagram,'') <> '' or coalesce(irmao.facebook,'') <> '')
+       )
      order by p.id
 """
 

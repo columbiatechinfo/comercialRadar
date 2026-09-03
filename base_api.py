@@ -30,8 +30,9 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, Body, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
 
+import auth as _auth
 import base_comum as bc
 
 rotas = APIRouter(prefix="/api/base-cliente", tags=["base do cliente"])
@@ -134,7 +135,8 @@ def detalhe(base_id: int):
 
 
 @rotas.post("/{base_id}/confirmar")
-def confirmar(base_id: int, corpo: dict = Body(...)):
+def confirmar(base_id: int, corpo: dict = Body(...),
+              usuario: _auth.Usuario = Depends(_auth.usuario_atual)):
     """O único caminho para `pronta`.
 
     NÃO CONFIA NO QUE CHEGA. Uma coluna que não existe na base passaria aqui e
@@ -145,7 +147,15 @@ def confirmar(base_id: int, corpo: dict = Body(...)):
     """
     mapa = corpo.get("mapa_colunas") or {}
     tipos = corpo.get("tipos_comerciais") or []
-    quem = (corpo.get("confirmado_por") or "").strip() or None
+    # A ASSINATURA VEM DO TOKEN, E NÃO DO CORPO.
+    #
+    # Antes era `corpo.get("confirmado_por")` — e o front nunca mandava esse
+    # campo, então `confirmado_por` ficava NULL mesmo com a base virando
+    # `pronta`. É pior que cosmético: um campo que diz "quem assinou" não pode
+    # depender de o cliente lembrar de se identificar, nem aceitar o nome que
+    # ele digitar. Quem confirma é quem está logado, e o servidor já sabe disso
+    # pelo JWT — é o mesmo princípio que o resto da identidade segue aqui.
+    quem = usuario.nome or usuario.email or usuario.id
 
     faltam = [c for c in OBRIGATORIAS if not mapa.get(c)]
     if faltam:
