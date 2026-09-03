@@ -577,13 +577,42 @@ def main(argv=None) -> int:
     # trabalha às cegas sobre a lista de ontem, que foi o que aconteceu na run
     # de Bento Gonçalves. Se a mineração voltar a rodar de outro lugar, este é
     # o primeiro item a conferir.
-    _etapa(4, "captura + OCR do Maps — a única que traz painel e foto")
+    _etapa(4, "Maps pelo placeId — abre cada ponto pelo id, sem OCR")
 
-    cmd = ["minerar_captura.py", "--area", a.area, "--sessao", a.sessao,
-           "--zoom", str(a.zoom), "--workers", str(a.workers),
-           "--capture-workers", str(a.capture_workers)]
+    # `minerar_placeid.py`, E NAO `minerar_captura.py`.
+    #
+    # O proprio `minerar_placeid` declara que substitui o outro, e a diferenca
+    # nao e de implementacao — e de caminho:
+    #
+    #     antes   tile -> OCR le o nome -> BUSCA esse nome no Maps -> torce
+    #     agora   tile -> placeId sai no evento de clique -> ABRE aquele POI
+    #
+    # Ler nome em pixel erra de um jeito que nao da para auditar: os baldes
+    # `Match valido`, `Distancia alta` e `Nao encontrado`. Na rodada de
+    # 03/09/2026, com o caminho velho, 1 dos 7 POIs da quadra saiu
+    # `nao_encontrado` por "nenhum card com similaridade suficiente" — o nome
+    # lido era parcial. Navegando por id nao ha o que errar.
+    #
+    # E nao custa: o `placeId` chega no proprio evento de clique, antes de
+    # qualquer requisicao. O cartao nao chega a abrir, e e ele que dispara o
+    # `GetPlace` cobrado.
+    #
+    # ESTA ETAPA E A QUE AS DUAS MAQUINAS DIVIDEM. `minerar_placeid` reserva POI
+    # com `for update skip locked` em `pois`: cada worker pede o proximo livre e
+    # o banco entrega um diferente para cada um. Basta rodar o MESMO `--sessao`
+    # na outra maquina — sem broker, sem coordenador, e se uma cair a outra
+    # termina sozinha. `RADAR_MAQUINA` identifica quem pegou o que.
+    # `minerar_placeid` NAO TEM `--no-proxy`. A colheita do placeId depende do
+    # rodizio de IP para varrer o poligono em grade; rodar sem proxy nao e uma
+    # opcao que ele oferece, e passar a flag mataria a etapa com "unrecognized
+    # arguments". Quando `--no-proxy` vier da tela, isto e dito em voz alta em
+    # vez de ignorado em silencio.
+    cmd = ["minerar_placeid.py", "--area", a.area, "--sessao", a.sessao,
+           "--workers", str(a.workers)]
     if a.no_proxy:
-        cmd.append("--no-proxy")
+        _log("  ⚠️  --no-proxy nao vale para a etapa 4: a colheita do placeId")
+        _log("     roda sempre com rodizio de IP. A flag segue valendo para as")
+        _log("     outras etapas.")
 
     # O MAPA AO VIVO PRECISA DO ARQUIVO AQUI.
     #
@@ -607,7 +636,7 @@ def main(argv=None) -> int:
     rc_captura = 0 if _etapa_pulada() else _rodar([PYTHON] + cmd)
 
     if rc_captura != 0:
-        _log(f"⚠️  A captura terminou com código {rc_captura}. As etapas de")
+        _log(f"⚠️  A etapa 4 terminou com código {rc_captura}. As etapas de")
         _log("   endereço e cruzamento seguem sobre o que já entrou.")
 
     # ── 5 · iFood ─────────────────────────────────────────────────────────
