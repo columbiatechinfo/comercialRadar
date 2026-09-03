@@ -675,7 +675,21 @@ def _comando_no_minerador(cmd: list, env: dict) -> tuple:
         montagens += ["-v", "%s:%s:ro" % (_JOB_SSH, _JOB_SSH)]
     novo = (["docker", "run", "--rm", "--name", nome, "--network", "host"]
             + montagens + ["-w", "/app", "-e", "HOME=/tmp"]
-            + passar + [_JOB_DOCKER, "python"] + list(cmd[1:]))
+            + passar + [_JOB_DOCKER]
+            # TELA VIRTUAL, E NAO E OPCIONAL.
+            #
+            # A etapa 4 abre o navegador com `headless=False` de proposito: o
+            # `chrome-headless-shell` estoura com SIGSEGV ao subir e ainda se
+            # anuncia como automatizado. Navegador com tela precisa de display,
+            # e um conteiner nao tem nenhum — as 45 posicoes da colheita
+            # falharam todas com "BrowserType.launch: Target page, context or
+            # browser has been closed", que nao diz uma palavra sobre display.
+            #
+            # `xvfb-run` sobe um servidor X descartavel para o comando e o
+            # derruba no fim. E o mesmo arranjo do conteiner de trabalho, que
+            # roda com `DISPLAY=:99`. Nas etapas sem navegador nao atrapalha.
+            + ["xvfb-run", "-a", "--server-args=-screen 0 1920x1080x24",
+               "python"] + list(cmd[1:]))
     return novo, nome
 
 

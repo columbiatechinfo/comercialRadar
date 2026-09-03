@@ -417,6 +417,8 @@ def _acordar_predator(area: str, sessao: str, workers: int) -> str:
         "nohup docker run -d --rm --name %s --network host --env-file .env "
         "-v $PWD:/app -v /app/node_modules -w /app -e HOME=/tmp "
         "-e RADAR_MAQUINA=predator radar-minerador:latest "
+        # tela virtual tambem la: o navegador da etapa 4 nao e headless
+        "xvfb-run -a --server-args='-screen 0 1920x1080x24' "
         "python minerar_placeid.py --area %s --sessao %s --workers %d "
         "--sem-colheita >/dev/null 2>&1"
     ) % (nome, nome, shlex.quote(area), shlex.quote(sessao), workers)
