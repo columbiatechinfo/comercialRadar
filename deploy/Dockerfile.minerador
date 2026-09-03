@@ -12,10 +12,12 @@
 # sistema na versão certa. Instalar Chromium à mão sobre um `slim` é onde nasce
 # o "funciona aqui e não lá": a versão do Playwright e a do navegador têm de
 # casar, e o `playwright install` sozinho não instala as libs do sistema.
-# A TAG TEM DE CASAR COM `playwright==` DO requirements.txt. Hoje 1.60.0. Se uma
+# A TAG TEM DE CASAR COM `playwright==` DO requirements.txt. Hoje 1.62.0
+# — subiu de 1.60.0 em 02/09/2026 junto com a entrada do `scrapling`, que
+# traz o playwright novo consigo. As duas sobem juntas ou nenhuma. Se uma
 # das duas subir sozinha, o Playwright procura um navegador que a imagem não
 # tem, e o erro fala de executável ausente em vez de falar de versão.
-FROM mcr.microsoft.com/playwright/python:v1.60.0-jammy
+FROM mcr.microsoft.com/playwright/python:v1.62.0-jammy
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONUTF8=1 \

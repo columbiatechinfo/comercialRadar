@@ -350,7 +350,7 @@ def _importar_municipio(uf: str, cod: str, empresa: str,
 # nem base64 a mandar, nem CR do Windows para o bash do outro lado engolir.
 
 
-TOTAL_ETAPAS = 8
+TOTAL_ETAPAS = 9
 
 
 # DE QUAL ETAPA COMEÇAR — e o gate fica no ATO, não no cabeçalho.
@@ -901,6 +901,23 @@ def main(argv=None) -> int:
                       "cadastro do cliente")
     else:
         _log("  pulado — sem cidade não há cadastro a cruzar")
+
+    _etapa(9, "Maps — telefone e site de quem não tem nada, pelo painel")
+    if cidade:
+        # POR ÚLTIMO, E ISSO IMPORTA.
+        #
+        # A peneira desta etapa é "quem não tem telefone, nem CNPJ, nem rede
+        # social". Rodá-la antes das outras faria abrir navegador para POIs que
+        # a Receita, o iFood ou o Cadastur iam preencher de graça logo em
+        # seguida — e navegador é o recurso mais caro da rodada.
+        #
+        # Depois da 8 também porque o 8 funde duplicatas: enriquecer antes seria
+        # gastar duas buscas no que vira um ponto só.
+        _tolerante_i9(["google_enriquece.py", "--cidade", cidade,
+                       "--uf", uf, "--trabalhadores", "4", "--aplicar"],
+                      "enriquecimento pelo Maps")
+    else:
+        _log("  pulado — sem cidade não há o que buscar no painel")
 
     _log("─" * 62)
     _log("✅ Mineração completa. Filtre por 🔗 Multiorigem no mapa para revisar")
