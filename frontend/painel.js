@@ -1292,6 +1292,44 @@
     $("job-pct").textContent = rodando && pct ? pct + "%" : "";
     $("job-bar").style.width = (rodando ? pct : 0) + "%";
     if (j.mensagem) $("job-cap").textContent = j.mensagem;
+    // OS BOTOES DE PARAR SO APARECEM COM RUN VIVA. Sem run, nao ha o que parar.
+    const acoes = $("job-acoes");
+    if (acoes) acoes.classList.toggle("hidden", !rodando);
+    if (acoes) acoes.classList.toggle("flex", rodando);
+  }
+
+  // PARAR A RUN — e, se pedido, APAGAR o que ela gerou no banco.
+  //
+  // O backend sabe qual e a sessao corrente (`JOB.sessao`) e apaga os POIs dela
+  // e tudo que aponta para eles. "Parar" so derruba; "Parar e apagar" derruba e
+  // limpa — foi o pedido de quem desenhou a area errada e nao tinha como
+  // desfazer.
+  async function pararRun(limpar) {
+    if (limpar && !confirm("Parar a extração e APAGAR do banco tudo que ela "
+                           + "gerou? Isso não pode ser desfeito.")) return;
+    if (!limpar && !confirm("Parar a extração? O que já foi gravado fica.")) return;
+    $("btn-parar-run").disabled = true;
+    $("btn-parar-limpar").disabled = true;
+    try {
+      const r = await fetch("/api/jobs/parar", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ limpar: !!limpar }),
+      });
+      const d = await r.json().catch(() => ({}));
+      const ap = (d && d.apagados) || {};
+      if (limpar) {
+        linhaLog(ap.erro ? ("Parado, mas a limpeza falhou: " + ap.erro)
+                 : ("Extração parada e apagada — " + (ap.pois || 0) + " POIs removidos"),
+                 ap.erro ? "text-red-400" : "text-amber-300");
+      } else {
+        linhaLog("Extração parada — o que já foi gravado permanece.", "text-amber-300");
+      }
+    } catch (e) {
+      linhaLog("Não consegui falar com o servidor para parar.", "text-red-400");
+    } finally {
+      $("btn-parar-run").disabled = false;
+      $("btn-parar-limpar").disabled = false;
+    }
   }
 
   function linhaLog(texto, classe) {
@@ -1904,6 +1942,8 @@
     $("px-filtro").addEventListener("change", pxLista);
 
     $("busca-municipio").addEventListener("input", agendarBuscaMunicipio);
+    $("btn-parar-run").addEventListener("click", () => pararRun(false));
+    $("btn-parar-limpar").addEventListener("click", () => pararRun(true));
     $("busca").addEventListener("input", desenharPois);
 
     $("btn-limpar").addEventListener("click", async () => {

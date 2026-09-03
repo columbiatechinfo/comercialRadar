@@ -2856,8 +2856,61 @@ def job_atual():
     return job_status()
 
 
+def _limpar_sessao(sessao: str) -> dict:
+    """Apaga TUDO que uma run gerou: os POIs da sessao e o que os referencia.
+
+    E a limpeza que o botao "Parar e apagar" dispara. Uma run cria POIs
+    (`sessao`), e penduram neles comentarios, fotos, horarios, vinculos. Some
+    com os POIs e com cada linha que aponta para eles — varrendo o schema por
+    qualquer tabela com `poi_id`, para nao esquecer nenhuma quando surgir uma
+    nova. Depois, as tabelas que tem `sessao` propria (iFood, Airbnb) perdem as
+    linhas desta run.
+
+    Roda como SUPORTE (o operador do painel, A2L nivel 9): os POIs sao da A2L e
+    a RLS de escrita pede nivel alto. `set_config` LOCAL a esta transacao.
+    """
+    if not sessao:
+        return {}
+    from psycopg2 import sql as _sql
+    con = base_comum.conectar()
+    apagados = {}
+    try:
+        sup = os.environ.get("RADAR_USUARIO_SUPORTE", "").strip()
+        with con.cursor() as cur:
+            if sup:
+                cur.execute("select set_config('request.jwt.claim.sub', %s, true)",
+                            (sup,))
+            cur.execute("select id from radar_comercial.pois where sessao = %s",
+                        (sessao,))
+            ids = [r[0] for r in cur.fetchall()]
+            apagados["pois"] = len(ids)
+            if ids:
+                cur.execute("""select table_name from information_schema.columns
+                                where table_schema = 'radar_comercial'
+                                  and column_name = 'poi_id'""")
+                for (tb,) in cur.fetchall():
+                    cur.execute(_sql.SQL("delete from radar_comercial.{} "
+                                         "where poi_id = any(%s)")
+                                .format(_sql.Identifier(tb)), (ids,))
+                cur.execute("delete from radar_comercial.pois where id = any(%s)",
+                            (ids,))
+            # tabelas com `sessao` propria (menos a `pois`, ja limpa)
+            cur.execute("""select table_name from information_schema.columns
+                            where table_schema = 'radar_comercial'
+                              and column_name = 'sessao' and table_name <> 'pois'""")
+            for (tb,) in cur.fetchall():
+                cur.execute(_sql.SQL("delete from radar_comercial.{} where sessao = %s")
+                            .format(_sql.Identifier(tb)), (sessao,))
+        con.commit()
+    finally:
+        con.close()
+    return apagados
+
+
 @app.post("/api/jobs/parar")
-def parar_job():
+def parar_job(body: dict = Body(default=None)):
+    limpar = bool((body or {}).get("limpar"))
+    sessao = (body or {}).get("sessao") or JOB.get("sessao")
     proc = JOB.get("proc")
     if proc and proc.poll() is None:
         JOB["status"] = "parado"
@@ -2878,9 +2931,17 @@ def parar_job():
             proc.terminate()
         except Exception:
             pass
-        manager.broadcast({"tipo": "job", "dados": job_status()})
-        return {"ok": True, "status": "parado"}
-    return {"ok": True, "status": JOB.get("status", "ocioso")}
+    # A LIMPEZA VALE MESMO COM O JOB JA PARADO. Quem apertou "Parar e apagar"
+    # depois que a run terminou sozinha ainda quer o banco limpo.
+    apagados = {}
+    if limpar and sessao:
+        try:
+            apagados = _limpar_sessao(sessao)
+        except Exception as e:                                 # noqa: BLE001
+            apagados = {"erro": str(e)[:160]}
+    manager.broadcast({"tipo": "job", "dados": job_status()})
+    return {"ok": True, "status": "parado" if proc else JOB.get("status", "ocioso"),
+            "sessao": sessao, "apagados": apagados}
 
 
 # ──────────────────────────────────────────────────────────────────────────
