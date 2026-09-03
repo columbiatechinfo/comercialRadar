@@ -355,6 +355,8 @@ def main() -> int:
     p.add_argument("--sem-print", dest="sem_print", action="store_true")
     p.add_argument("--sem-proxy", dest="sem_proxy", action="store_true")
     p.add_argument("--simular", action="store_true")
+    p.add_argument("--trabalhadores", type=int, default=6,
+                   help="lotes em paralelo; cada um tem a sua sessao e o seu IP")
     a = p.parse_args()
 
     con = bc.conectar()
@@ -376,32 +378,89 @@ def main() -> int:
     proximo = _rodizio(a.sem_proxy)
     from scrapling.fetchers import StealthySession
 
+    # EM LOTES, EM PARALELO, E COM A SESSAO REAPROVEITADA DENTRO DO LOTE.
+    #
+    # Isto era um laco sequencial que abria uma `StealthySession` NOVA por
+    # anuncio: subir o Camoufox, atravessar o Cloudflare, buscar a ficha,
+    # buscar as avaliacoes, e derrubar tudo. Medido em 03/09/2026, ~30 s por
+    # anuncio, dos quais boa parte era a sessao — e um de cada vez.
+    #
+    # A regra de lote e a MESMA que `search_from_sheet` documenta e que a etapa
+    # 4 segue: 8 a 15 por sessao, UM IP POR LOTE. Ela nao e burocracia, e o que
+    # mantem o ritmo parecido com o de gente: trocar de IP a cada pagina chama
+    # mais atencao do que ficar um tempo com o mesmo, e reaproveitar a sessao
+    # dentro do lote paga o Cloudflare uma vez em vez de quinze.
+    #
+    # O paralelismo e seguro justamente por causa dessa regra: cada trabalhador
+    # tem o SEU lote e o SEU IP, entao subir trabalhador nao aumenta a pressao
+    # sobre nenhum IP — so usa mais IPs ao mesmo tempo.
+    #
+    # `ThreadPoolExecutor` e nao `asyncio` porque `uma_ficha` e sincrona: o
+    # `sessao.fetch` bloqueia, e thread e exatamente o que serve para isso.
+    import concurrent.futures
+    import random
+    import threading
+
+    LOTE_MIN, LOTE_MAX = 8, 15
+    lotes, resto = [], list(ids)
+    while resto:
+        n = min(random.randint(LOTE_MIN, LOTE_MAX), len(resto))
+        lotes.append(resto[:n])
+        resto = resto[n:]
+
     fichas, mortos = [], []
     t0 = time.time()
-    for i, anuncio_id in enumerate(ids, 1):
+    trava = threading.Lock()
+    feitos = [0]
+
+    def um_lote(lote):
+        """Um IP, uma sessao, os 8 a 15 anuncios do lote."""
         try:
             with StealthySession(headless=True, solve_cloudflare=True,
                                  wait_selector="h1", wait_selector_state="attached",
                                  proxy=proximo(), locale="pt-BR",
-                                 timezone_id="America/Sao_Paulo") as s:
-                f = uma_ficha(s, anuncio_id, com_print=not a.sem_print)
+                                 timezone_id="America/Sao_Paulo") as ses:
+                for anuncio_id in lote:
+                    try:
+                        f = uma_ficha(ses, anuncio_id, com_print=not a.sem_print)
+                    except Exception as e:                     # noqa: BLE001
+                        with trava:
+                            print("  %-16s %s: %s"
+                                  % (anuncio_id, type(e).__name__, str(e)[:60]),
+                                  flush=True)
+                        continue
+                    with trava:
+                        feitos[0] += 1
+                        if f.get("erro") or not f.get("titulo"):
+                            mortos.append(anuncio_id)
+                            print("  %-16s sem payload — SEM_RETORNO"
+                                  % anuncio_id, flush=True)
+                        else:
+                            fichas.append(f)
+                            print("  %-16s %-40s %d comodidades · %d fotos · "
+                                  "%d avaliações%s"
+                                  % (anuncio_id, str(f.get("titulo"))[:40],
+                                     len(f.get("comodidades") or []),
+                                     len(f.get("fotos") or []),
+                                     len(f.get("avaliacoes") or []),
+                                     " · print" if f.get("print_ficha") else ""),
+                                  flush=True)
+                        if feitos[0] % 20 == 0:
+                            print("    %d de %d · %.1f min"
+                                  % (feitos[0], len(ids),
+                                     (time.time() - t0) / 60), flush=True)
         except Exception as e:                                 # noqa: BLE001
-            print("  %-16s %s: %s" % (anuncio_id, type(e).__name__, str(e)[:60]),
-                  flush=True)
-            continue
-        if f.get("erro") or not f.get("titulo"):
-            mortos.append(anuncio_id)
-            print("  %-16s sem payload — SEM_RETORNO" % anuncio_id, flush=True)
-            continue
-        fichas.append(f)
-        print("  %-16s %-40s %d comodidades · %d fotos · %d avaliações%s"
-              % (anuncio_id, str(f.get("titulo"))[:40],
-                 len(f.get("comodidades") or []), len(f.get("fotos") or []),
-                 len(f.get("avaliacoes") or []),
-                 " · print" if f.get("print_ficha") else ""), flush=True)
-        if i % 20 == 0:
-            print("    %d de %d · %.1f min" % (i, len(ids), (time.time() - t0) / 60),
-                  flush=True)
+            # LOTE INTEIRO PERDIDO E UM SO AVISO, e nao quinze iguais: quando a
+            # sessao nem sobe, o motivo e um — o IP, ou o Cloudflare.
+            with trava:
+                print("  lote de %d perdido na sessao — %s: %s"
+                      % (len(lote), type(e).__name__, str(e)[:60]), flush=True)
+
+    print("  %d lotes de %d a %d anuncios · %d em paralelo · um IP por lote"
+          % (len(lotes), LOTE_MIN, LOTE_MAX, a.trabalhadores), flush=True)
+    with concurrent.futures.ThreadPoolExecutor(
+            max_workers=max(1, a.trabalhadores)) as piscina:
+        list(piscina.map(um_lote, lotes))
 
     print("%s%d detalhados · %d sem retorno · %.1f min"
           % (chr(10), len(fichas), len(mortos), (time.time() - t0) / 60), flush=True)

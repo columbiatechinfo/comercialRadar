@@ -777,6 +777,29 @@ def engordar_cookie(caminho, estados):
     return len(antes.get("cookies", []) or []), len(novo["cookies"])
 
 
+# TITULOS QUE NAO SAO POI.
+#
+# O nome do POI sai do `h1` do painel. Quando o Maps nao abre — sem rede, aba
+# recriada, bloqueio — a PROPRIA pagina de erro tem um `h1`, e ele entrava como
+# nome: "Maps sem acesso a Internet" gravou 3 POIs fantasma em Canoas
+# (03/09/2026), com categoria e endereco vazios. Sao poucos titulos e fixos; a
+# comparacao e sem acento e sem caixa, porque o navegador roda em pt-BR mas a
+# mensagem varia com o idioma que o Google resolver servir.
+_TITULOS_DE_ERRO = frozenset({
+    "maps sem acesso a internet", "sem acesso a internet",
+    "sem conexao com a internet", "voce esta offline",
+    "no internet", "youre offline", "you re offline",
+})
+
+
+def _e_titulo_de_erro(nome) -> bool:
+    import unicodedata
+    n = unicodedata.normalize("NFKD", (nome or "").strip().lower())
+    n = "".join(c for c in n if not unicodedata.combining(c))
+    n = n.replace("'", "").replace("`", "")
+    return n in _TITULOS_DE_ERRO
+
+
 async def detalhar(ctx, alvo):
     pg = await ctx.new_page()
     cobradas = []
@@ -939,7 +962,9 @@ def gravar(con, empresa, registros, sessao, simular):
               "horarios": 0, "fotos": 0, "sem_nome": 0}
     with con.cursor() as k:
         for d in registros:
-            if not d or not d.get("nome"):
+            if not d or not d.get("nome") or _e_titulo_de_erro(d.get("nome")):
+                # Titulo de pagina de erro nao e POI — nao grava, e conta como
+                # sem_nome (o POI volta para a fila numa proxima passada).
                 placar["sem_nome"] += 1
                 continue
             hist = d.get("histograma") or {}
