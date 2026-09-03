@@ -205,8 +205,20 @@ def uma_caixa(sessao, cx, paginas):
                 if i < len(ids):
                     achado.setdefault(ids[i], item)
 
+    # O TETO ERA DE SETE MINUTOS, E ELE FOI GASTO INTEIRO.
+    #
+    # Em 03/09/2026 a etapa ficou nove minutos sem escrever uma linha, com
+    # ZERO conexao de rede e dois `chrome_crashpad <defunct>` dentro do
+    # conteiner: o navegador morreu e o `fetch` esperou o teto acabar. De
+    # fora, isso e indistinguivel de travamento — e numa cidade inteira,
+    # com varias caixas, vira horas de espera por nada.
+    #
+    # As buscas que deram certo responderam em 10 a 20 s. Cento e vinte
+    # segundos e seis a doze vezes isso: folgado para uma pagina lenta ou
+    # um Cloudflare demorado, e curto o bastante para um navegador morto
+    # ser percebido enquanto ainda ha rodada.
     sessao.fetch(url_da_caixa(sw_lat, sw_lng, ne_lat, ne_lng),
-                 page_action=acao, timeout=420000)
+                 page_action=acao, timeout=120000)
     return achado
 
 

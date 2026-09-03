@@ -95,16 +95,27 @@ def metros_por_pixel(lat, zoom):
     return 156543.03392 * math.cos(math.radians(lat)) / (2 ** zoom)
 
 
-async def varrer_tile(pw, lat, lng, passo_px, pasta, rotulo):
-    """Uma posicao: colhe os placeId visiveis e fotografa o tile."""
+async def varrer_tile(nav, lat, lng, passo_px, pasta, rotulo):
+    """Uma posicao: colhe os placeId visiveis e fotografa o tile.
+
+    RECEBE O NAVEGADOR, NAO O PLAYWRIGHT — e a diferenca custa horas.
+
+    A versao anterior fazia `pw.chromium.launch()` aqui dentro: um navegador
+    NOVO por posicao, aberto e fechado. Subir Chromium leva alguns segundos, e
+    a varredura de uma cidade tem dezenas de milhares de posicoes — sao dias
+    gastos abrindo e fechando o mesmo programa.
+
+    O contexto continua sendo novo a cada posicao, e e ele que importa para o
+    isolamento: cookie, cache e estado de pagina nao atravessam. Contexto e
+    barato; processo nao.
+    """
     arq = "/tmp/mp_%s.html" % rotulo
     open(arq, "w", encoding="utf-8").write(
         MAPA_HTML % {"l": LARG, "a": ALT, "lat": lat, "lng": lng,
                      "zoom": ZOOM, "mapid": MAP_ID, "chave": CHAVE})
-    nav = await pw.chromium.launch(headless=False, args=ARGS)
+    ctx = await nav.new_context(viewport={"width": LARG, "height": ALT})
     try:
-        pg = await (await nav.new_context(
-            viewport={"width": LARG, "height": ALT})).new_page()
+        pg = await ctx.new_page()
         cobradas = []
         pg.on("request", lambda r: cobradas.append(r.url)
               if "places.googleapis.com" in r.url else None)
@@ -123,15 +134,36 @@ async def varrer_tile(pw, lat, lng, passo_px, pasta, rotulo):
             except Exception:
                 open(os.path.join(pasta, "%s.png" % rotulo), "wb").write(bruto)
 
+        # A GRADE, SEM ESPERA ENTRE CLIQUES.
+        #
+        # Havia um `wait_for_timeout(15)` aqui. Com 1.504 cliques por posicao
+        # ele sozinho somava 23 s, e uma posicao custava 27,5 s — era ELE o
+        # motivo de a cidade inteira projetar 161 h.
+        #
+        # Medido no mesmo ponto, mesma grade, mesmo mapa (03/09/2026):
+        #
+        #     com 15 ms   25,2 s   27 placeIds
+        #     sem espera   1,2 s   27 placeIds   <- o MESMO conjunto
+        #
+        # Nao e "quase o mesmo": o conjunto e identico, nenhum perdido e nenhum
+        # a mais. A espera nao era necessaria porque o ouvinte de `click` roda
+        # dentro da pagina e os eventos ficam na fila; quem os recolhe e a
+        # espera de 1.800 ms LOGO ABAIXO, e essa continua onde estava — tirar
+        # ela, sim, perderia POI.
+        #
+        # E NAO ADIANTA DISPARAR OS CLIQUES POR JAVASCRIPT. Foi medido junto:
+        # despachar a grade inteira com PointerEvent/MouseEvent de dentro da
+        # pagina leva 0,7 s e devolve ZERO placeId — o Maps ignora evento
+        # sintetico. O clique tem de vir do navegador de verdade.
         for x in range(50, LARG - 30, passo_px):
             for y in range(50, ALT - 30, passo_px):
                 await pg.mouse.click(x, y)
-                await pg.wait_for_timeout(15)
         await pg.wait_for_timeout(1800)
         ids = await pg.evaluate("window.__ids")
         return {i["placeId"]: i for i in ids}, len(cobradas)
     finally:
-        await nav.close()
+        # SO O CONTEXTO. O navegador e da vaga, e serve a proxima posicao.
+        await ctx.close()
 
 
 async def colher(pw, poligono, pasta, passo_px, paralelo, refinar_acima_de):
@@ -163,18 +195,42 @@ async def colher(pw, poligono, pasta, passo_px, paralelo, refinar_acima_de):
 
     achados, cobradas_total = {}, 0
     trava = asyncio.Lock()
-    sem = asyncio.Semaphore(paralelo)
     a_refinar = []
+
+    # UMA FILA DE NAVEGADORES NO LUGAR DO SEMAFORO.
+    #
+    # O semaforo so contava vagas; quem pegava a vaga abria o proprio navegador
+    # e o fechava no fim. Agora a vaga E o navegador: sao `paralelo` deles,
+    # abertos uma vez, e cada posicao pega um da fila e devolve.
+    #
+    # O `Queue` faz o papel do semaforo — pegar da fila vazia espera — e ainda
+    # carrega o objeto, que era o que faltava.
+    vagas: "asyncio.Queue" = asyncio.Queue()
+    for _ in range(paralelo):
+        vagas.put_nowait(await pw.chromium.launch(headless=False, args=ARGS))
 
     async def uma(i, lat, lng, marca):
         nonlocal cobradas_total
-        async with sem:
+        nav = await vagas.get()
+        try:
             try:
-                ids, cob = await varrer_tile(pw, lat, lng, passo_px, pasta,
+                ids, cob = await varrer_tile(nav, lat, lng, passo_px, pasta,
                                              "%s_%03d" % (marca, i))
             except Exception as e:
                 async with trava:
                     print("    %s %03d FALHOU: %s" % (marca, i, str(e)[:70]))
+                # NAVEGADOR QUE FALHOU PODE ESTAR MORTO, e devolve-lo assim
+                # contaminaria a vaga para sempre: as posicoes seguintes que a
+                # pegassem falhariam todas, e o log culparia cada uma delas.
+                # Troca-se por um novo.
+                try:
+                    await nav.close()
+                except Exception:
+                    pass
+                try:
+                    nav = await pw.chromium.launch(headless=False, args=ARGS)
+                except Exception:
+                    nav = None
                 return
             async with trava:
                 cobradas_total += cob
@@ -185,6 +241,9 @@ async def colher(pw, poligono, pasta, passo_px, paralelo, refinar_acima_de):
                 # Adaptativo: so refina onde a varredura ainda esta rendendo.
                 if len(novos) >= refinar_acima_de:
                     a_refinar.append((lat, lng))
+        finally:
+            if nav is not None:
+                vagas.put_nowait(nav)
 
     await asyncio.gather(*(uma(i, la, lo, "t") for i, (la, lo) in enumerate(pos)))
 
@@ -198,6 +257,18 @@ async def colher(pw, poligono, pasta, passo_px, paralelo, refinar_acima_de):
                     finos.append((la + dy * alt_graus, lo + dx * lar_graus))
         await asyncio.gather(*(uma(i, la, lo, "r")
                                for i, (la, lo) in enumerate(finos)))
+
+    # OS NAVEGADORES SAO DE `colher`, E MORREM COM ELA.
+    #
+    # Antes cada posicao fechava o seu no `finally`, e nao havia o que limpar
+    # no fim. Agora eles sobrevivem a posicao de proposito — entao alguem
+    # precisa fecha-los, ou ficam `paralelo` processos Chromium vivos depois
+    # que a colheita termina, cada um segurando a sua memoria.
+    while not vagas.empty():
+        try:
+            await vagas.get_nowait().close()
+        except Exception:
+            pass
 
     dentro = {k: v for k, v in achados.items()
               if area_utils.ponto_no_poligono(v["lat"], v["lng"], poligono)}

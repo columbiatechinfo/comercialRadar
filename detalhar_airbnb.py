@@ -299,8 +299,11 @@ def uma_ficha(sessao, anuncio_id, com_print=True):
             except Exception:
                 saida["print_ficha"] = None
 
+    # TETO CURTO DE PROPOSITO — ver a nota em `extrair_airbnb`: teto longo
+    # nao espera pagina lenta, espera navegador morto. Sete minutos de
+    # silencio com zero conexao foi o que aconteceu em 03/09/2026.
     sessao.fetch("https://www.airbnb.com.br/rooms/%s" % anuncio_id,
-                 page_action=acao, timeout=300000)
+                 page_action=acao, timeout=120000)
 
     # As avaliações têm rota própria; caçar o botão que as abre erra o alvo em
     # fichas diferentes.
@@ -313,7 +316,7 @@ def uma_ficha(sessao, anuncio_id, com_print=True):
 
     try:
         sessao.fetch("https://www.airbnb.com.br/rooms/%s/reviews" % anuncio_id,
-                     page_action=acao_rev, timeout=300000)
+                     page_action=acao_rev, timeout=120000)
     except Exception:
         pass
     saida["avaliacoes"] = avaliacoes_de(corpos)
