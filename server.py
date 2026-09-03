@@ -86,6 +86,13 @@ PYTHON = str(BASE / ".venv" / "Scripts" / "python.exe")
 # local, com o `PYTHON` de sempre.
 _JOB_DOCKER = os.environ.get("RADAR_JOB_DOCKER", "").strip()
 _JOB_REPO = os.environ.get("RADAR_JOB_REPO", "").strip()
+# AS CHAVES SSH DO HOST, para a etapa 4 acordar a segunda maquina.
+#
+# Caminho NO HOST, como o repo: quem monta o volume e o daemon do
+# Docker. `os.path.expanduser("~")` daqui seria o home do conteiner da
+# API, que roda sem home — daria o diretorio errado, e o `ssh` diria
+# apenas "Permission denied (publickey)".
+_JOB_SSH = os.environ.get("RADAR_JOB_SSH", "").strip()
 
 for d in (UPLOADS, AREAS, MINERACAO, CAPTURAS, MALHAS):
     d.mkdir(exist_ok=True)
@@ -649,9 +656,25 @@ def _comando_no_minerador(cmd: list, env: dict) -> tuple:
     # dependencia nenhuma: `Cannot read properties of undefined (reading
     # 'fileExists')`. O volume anonimo devolve o conteudo da imagem naquele
     # ponto, que e o mesmo arranjo do conteiner de trabalho.
-    novo = (["docker", "run", "--rm", "--name", nome, "--network", "host",
-             "-v", "%s:/app" % _JOB_REPO, "-v", "/app/node_modules",
-             "-w", "/app", "-e", "HOME=/tmp"]
+    # `HOME=/tmp` faz o ssh procurar as chaves em `/tmp/.ssh`, que e onde o
+    # volume cai. O `config` do host vem junto, e com ele os apelidos
+    # `predator` e `spark`. Somente leitura: o conteiner usa, nao administra.
+    montagens = ["-v", "%s:/app" % _JOB_REPO, "-v", "/app/node_modules"]
+    if _JOB_SSH:
+        # NO MESMO CAMINHO DO HOST, e nao em `/tmp/.ssh`.
+        #
+        # Duas razoes, as duas medidas em 03/09/2026:
+        #   · o OpenSSH le o home do `/etc/passwd`, NAO de `$HOME` — com
+        #     `HOME=/tmp` ele continuava procurando em `/home/pwuser/.ssh` e
+        #     dizia "Could not resolve hostname predator", como se o apelido
+        #     nao existisse;
+        #   · o `config` do i9 aponta `IdentityFile /home/a2l/.ssh/...` por
+        #     caminho ABSOLUTO. Montado noutro lugar, o ssh acha o apelido e
+        #     nao acha a chave: "no such identity".
+        # Montando no mesmo caminho, as duas somem de uma vez.
+        montagens += ["-v", "%s:%s:ro" % (_JOB_SSH, _JOB_SSH)]
+    novo = (["docker", "run", "--rm", "--name", nome, "--network", "host"]
+            + montagens + ["-w", "/app", "-e", "HOME=/tmp"]
             + passar + [_JOB_DOCKER, "python"] + list(cmd[1:]))
     return novo, nome
 

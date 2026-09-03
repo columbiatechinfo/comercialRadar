@@ -54,6 +54,8 @@ services:
       # daemon do Docker, nao este processo.
       RADAR_JOB_DOCKER: "radar-minerador:latest"
       RADAR_JOB_REPO: "/home/a2l/Documentos/sistemas/radarComercial"
+      # As chaves do host, para a etapa 4 acordar o Predator.
+      RADAR_JOB_SSH: "/home/a2l/.ssh"
       # O daemon por TCP, atraves do proxy abaixo — o socket NAO entra neste
       # conteiner. Ele e `read_only` e `cap_drop: [ALL]`, e montar o socket aqui
       # entregaria o host inteiro a quem furasse a API.

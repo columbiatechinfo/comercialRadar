@@ -46,6 +46,8 @@ from __future__ import annotations
 import argparse
 import os
 import subprocess
+import re
+import shlex
 import sys
 import time
 from pathlib import Path
@@ -379,6 +381,79 @@ def _etapa_pulada() -> bool:
     return _ETAPA_ATUAL < _DE_ETAPA
 
 
+# ── a segunda maquina na etapa 4 ─────────────────────────────────────────────
+#
+# O ADR 0006 desenha 20 navegadores no i9 e 15 no Predator. O que divide o
+# trabalho nao e um coordenador: e o `for update skip locked` em `pois`. Cada
+# worker, de qualquer maquina, pede o proximo POI livre e o banco entrega um
+# diferente para cada um. Por isso a chamada aqui e SOLTA — dispara e segue.
+#
+# POR QUE ISTO NAO REPETE O ERRO DO `_tolerante_i9`. Aquilo mandava a etapa
+# INTEIRA para outra maquina e ficava esperando: matar o processo local nao
+# matava o remoto, o SSH pendurava sem timeout, e um processo orfao segurou a
+# porta 8766 e derrubou a rodada seguinte. Aqui o remoto e um AJUDANTE: ele nao
+# faz colheita (`--sem-colheita`), so consome a fila. Se nao subir, se cair, ou
+# se o SSH falhar, a rodada continua e o i9 termina sozinho — e e isso que o
+# `finally` embaixo garante quando a etapa acaba.
+PREDATOR = os.environ.get("RADAR_PREDATOR_HOST", "predator")
+# O `-F` E OBRIGATORIO AQUI. O OpenSSH procura o `config` no home do
+# `/etc/passwd`, e dentro do conteiner esse usuario nao e o dono das
+# chaves. Sem apontar o arquivo, o apelido `predator` nao existe e o
+# erro fala de resolucao de nome, nao de configuracao.
+SSH_CONFIG = os.environ.get("RADAR_SSH_CONFIG", "/home/a2l/.ssh/config")
+
+
+def _acordar_predator(area: str, sessao: str, workers: int) -> str:
+    """Poe o Predator a consumir a mesma fila. Devolve o nome do conteiner.
+
+    Devolve "" quando nao deu — e nao levanta. Perder o ajudante custa metade da
+    vazao, nao a rodada.
+    """
+    nome = "radar-etapa4-%s" % re.sub(r"[^a-zA-Z0-9_.-]", "-", sessao)[:40]
+    remoto = (
+        "cd ~/Documentos/sistemas/radarComercial && "
+        "git pull -q --ff-only 2>/dev/null; "
+        "docker rm -f %s >/dev/null 2>&1; "
+        "nohup docker run -d --rm --name %s --network host --env-file .env "
+        "-v $PWD:/app -v /app/node_modules -w /app -e HOME=/tmp "
+        "-e RADAR_MAQUINA=predator radar-minerador:latest "
+        "python minerar_placeid.py --area %s --sessao %s --workers %d "
+        "--sem-colheita >/dev/null 2>&1"
+    ) % (nome, nome, shlex.quote(area), shlex.quote(sessao), workers)
+    try:
+        r = subprocess.run(
+            ["ssh", "-F", SSH_CONFIG, "-o", "BatchMode=yes",
+             "-o", "ConnectTimeout=10", PREDATOR, remoto],
+            capture_output=True, text=True, timeout=180)
+        if r.returncode != 0:
+            _log("  ⚠️  o Predator não entrou (%s). A rodada segue só no i9."
+                 % (r.stderr or "").strip().splitlines()[-1:] or "sem detalhe")
+            return ""
+        _log("  🤝 Predator consumindo a mesma fila (%d workers, sem colheita)"
+             % workers)
+        return nome
+    except Exception as e:                                     # noqa: BLE001
+        _log("  ⚠️  o Predator não entrou (%s). A rodada segue só no i9."
+             % type(e).__name__)
+        return ""
+
+
+def _dispensar_predator(nome: str) -> None:
+    """Derruba o ajudante quando a etapa acaba — inclusive se ela quebrou."""
+    if not nome:
+        return
+    try:
+        subprocess.run(["ssh", "-F", SSH_CONFIG, "-o", "BatchMode=yes",
+                        "-o", "ConnectTimeout=10", PREDATOR,
+                        "docker rm -f %s >/dev/null 2>&1" % nome],
+                       capture_output=True, timeout=60)
+        _log("  🤝 Predator dispensado")
+    except Exception:                                          # noqa: BLE001
+        _log("  ⚠️  não consegui dispensar o Predator; o contêiner %s pode ter"
+             % nome)
+        _log("     ficado de pé lá. Ele para sozinho quando a fila secar.")
+
+
 def _etapa(n: int, titulo: str) -> None:
     global _ETAPA_ATUAL
     _ETAPA_ATUAL = n
@@ -475,6 +550,10 @@ def main(argv=None) -> int:
     p.add_argument("--produzir-bases", dest="produzir_bases", action="store_true",
                    help="produz o dataset da UF. São horas de CPU e disco, e "
                         "nesse tempo a captura não anda.")
+    p.add_argument("--sem-predator", action="store_true",
+                   help="não acorda a segunda máquina na etapa 4")
+    p.add_argument("--workers-predator", type=int, default=15,
+                   help="navegadores no Predator (ADR 0006: 15)")
     a = p.parse_args(argv)
     global _DE_ETAPA
     _DE_ETAPA = max(1, min(int(a.de_etapa or 1), TOTAL_ETAPAS))
@@ -633,7 +712,13 @@ def main(argv=None) -> int:
     # no cabeçalho: ela dispara direto, e por isso atravessou o `--de-etapa` na
     # primeira versão — o cabeçalho dizia "PULADA" e a captura rodava assim
     # mesmo. Gate por FUNÇÃO só cobre quem passa por ela.
-    rc_captura = 0 if _etapa_pulada() else _rodar([PYTHON] + cmd)
+    ajudante = ""
+    if not _etapa_pulada() and not a.sem_predator:
+        ajudante = _acordar_predator(a.area, a.sessao, a.workers_predator)
+    try:
+        rc_captura = 0 if _etapa_pulada() else _rodar([PYTHON] + cmd)
+    finally:
+        _dispensar_predator(ajudante)
 
     if rc_captura != 0:
         _log(f"⚠️  A etapa 4 terminou com código {rc_captura}. As etapas de")
