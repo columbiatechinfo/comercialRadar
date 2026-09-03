@@ -898,6 +898,13 @@ def gravar_um(con, poi_id, d):
     POIs que tinha reservado. Gravando na hora, o pior caso e perder o POI que
     estava na tela.
     """
+    if _e_titulo_de_erro(d.get("nome")):
+        # PAGINA DE ERRO DO MAPS, nao POI. O `gravar` em lote tinha esta guarda,
+        # mas o caminho VIVO e este (grava um a um, em streaming), e ele nao
+        # tinha — "Maps sem acesso a Internet" entrou como nome de POI no teste.
+        # Nao grava o titulo de erro; devolve o POI para a fila tentar de novo.
+        devolver(con, poi_id)
+        return 0
     hist = d.get("histograma") or {}
     extra = json.dumps({"histograma_estrelas": hist,
                         "horarios_de_pico": d.get("horariosDePico") or {},
@@ -1132,6 +1139,14 @@ async def principal(a):
             # a colheita grava primeiro e o detalhe consome depois.
             print("  %d placeIds colhidos — gravando o esqueleto para a fila"
                   % len(alvos))
+            # A CIDADE VEM DO DESENHO, E NAO E FIXA.
+            #
+            # Ate 03/09/2026 este insert gravava 'Canoas','RS' HARDCODED — a
+            # colheita nasceu para Canoas e ninguem parametrizou. Minerar
+            # qualquer outra cidade rotulava TODOS os POIs como Canoas; o teste
+            # ponta-a-ponta em Gravatai pegou 132 POIs marcados Canoas. A cidade
+            # sai do municipio do proprio desenho, como no resto do pipeline.
+            _cid_area, _uf_area = area_utils.municipio_da_area(poligono)
             con0 = bc.conectar()
             try:
                 with con0.cursor() as k:
@@ -1142,13 +1157,13 @@ async def principal(a):
                                maps_lng, cidade, uf, sessao, coord_fonte,
                                coord_precisao)
                             values ('maps','maps:place_id', %s, %s, %s, %s,
-                                    'Canoas','RS', %s, 'maps','porta')
+                                    %s, %s, %s, 'maps','porta')
                             on conflict (id_empresa, place_id)
                               where place_id is not null and place_id <> ''
                             do update set detalhado_em = null,
                                           detalhado_por = null""",
                             (v["placeId"], v["placeId"], v["lat"], v["lng"],
-                             a.sessao))
+                             _cid_area, _uf_area, a.sessao))
                 con0.commit()
             finally:
                 con0.close()
