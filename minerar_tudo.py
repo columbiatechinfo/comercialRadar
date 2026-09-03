@@ -425,8 +425,17 @@ def _acordar_predator(area: str, sessao: str, workers: int) -> str:
         # detalhes que ela resolve: `xvfb-run` pendura, o Xvfb exige root, e
         # o display :99 colide com o do host.
         "sh -c '" + TELA_VIRTUAL_REMOTA + " "
+        # EM CICLO, PORQUE A FILA NASCE VAZIA.
+        # 
+        # O i9 comeca pela COLHEITA e so depois enche a fila. Acordado no
+        # inicio da etapa, o ajudante encontrava "0 POI(s) esperando na fila",
+        # saia com codigo 0 e sumia — parecia que nunca tinha subido, porque
+        # o `--rm` levava o conteiner junto. Voltando a cada 15 s ele pega o
+        # trabalho assim que aparece, e vai drenando enquanto a colheita
+        # continua. Quem o dispensa e o `finally` do i9, quando a etapa acaba.
+        "for i in $(seq 1 240); do "
         "python minerar_placeid.py --area %s --sessao %s --workers %d "
-        "--sem-colheita'"
+        "--sem-colheita; sleep 15; done'"
     ) % (nome, nome, shlex.quote(area), shlex.quote(sessao), workers)
     try:
         r = subprocess.run(
@@ -913,14 +922,51 @@ def main(argv=None) -> int:
         _tolerante_i9(["normalizar_bases.py", "--municipio", cod],
                    "normalização da base fixa do município")
 
-        _tolerante_i9(["segmentar_endereco.py", "--municipio", cod,
-                    "--so-novos", "--aplicar"], "segmentação de endereço")
+        # `segmentar_endereco` SAIU: era o caminho da IA, e ele foi aposentado.
+        #
+        # Ele mandava cada endereco para o modelo da Spark fracionar. Quem faz
+        # isso hoje e o `libpostal`, no servico da 7250, chamado pelo
+        # `resolver_logradouro` mais abaixo — sem IA, sem fila de GPU, e a
+        # 51.736 enderecos por segundo. A descricao da propria etapa ja dizia
+        # "enderecos (libpostal + skill + cadastro do IBGE)"; o passo da IA e
+        # que tinha ficado para tras.
+        #
+        # O QUE ISSO MUDA NO `ajuste_logradouro` LOGO ABAIXO: ele conta os POIs
+        # "que a IA ja leu" e avisa quantos ficam de fora — na rodada de
+        # 03/09/2026 foram 76.677 de fora contra 9.126 dentro. Esse aviso vai
+        # continuar, e agora e esperado: quem resolve endereco e o passo do
+        # libpostal, que grava em `logradouro_resolvido`. O ajuste segue valendo
+        # para o que ja esta segmentado e para a normalizacao do CNEFE.
         # `--so-novos`, e NÃO `--area`. Regra do dono do produto: normaliza
         # todos os POIs ainda não normalizados da cidade foco, mesmo minerando
         # um pedaço — assim nenhum fica para trás. Na prática quase todos já
         # estão feitos, então só os que a mineração acabou de descobrir passam.
-        _tolerante_i9(["ajuste_logradouro.py", "--municipio", cod,
-                    "--so-novos", "--aplicar"], "ajuste de logradouro")
+        # `ajuste_logradouro` TAMBEM SAIU DA RODADA, e pelo mesmo motivo.
+        #
+        # A skill fraciona endereco chamando o modelo, e em Canoas isso deu
+        # 2.446 lotes de 20 enderecos. Na rodada de 03/09/2026 ela estava no
+        # lote 60 depois de dez minutos — nesse ritmo a etapa 7 sozinha levaria
+        # horas, e o resto do pipeline ficaria esperando por um trabalho que o
+        # `libpostal` faz a 51.736 enderecos por segundo, sem GPU.
+        #
+        # Quem carrega o endereco agora e `resolver_logradouro`, mais abaixo:
+        # CEP, depois endereco escrito, depois Photon, depois OSRM ate 20 m,
+        # depois CNEFE ate 20 m — e o que sobra vai para revisao humana, com
+        # `forca` dizendo se a resposta foi afirmada pelo POI (prova) ou
+        # deduzida da coordenada (indicio).
+        #
+        # A SKILL NAO FOI APAGADA. Ela continua util para reprocessar um
+        # municipio inteiro com cuidado, e roda sozinha:
+        #
+        #     python ajuste_logradouro.py --municipio <cod> --so-novos --aplicar
+        #
+        # O que saiu foi a obrigacao de esperar por ela em toda mineracao.
+        #
+        # NAO VERIFICADO: se `corrigir_coordenada` e `conferir_municipio`, logo
+        # abaixo, dependiam do logradouro que a skill normalizava. O grep nao
+        # achou referencia, mas eles montam SQL de um jeito que o grep nao
+        # alcanca. A proxima rodada mostra — e se mostrar, o conserto e fazer os
+        # dois lerem `logradouro_resolvido`.
 
         # E SÓ AGORA A COORDENADA PODE SER CONFERIDA CONTRA O ENDEREÇO.
         #
