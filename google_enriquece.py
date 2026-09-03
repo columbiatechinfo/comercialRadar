@@ -69,6 +69,7 @@ import time
 from collections import Counter
 
 import base_comum as bc
+import area_utils
 
 # QUEM ENTRA NESTA ETAPA — a peneira em SQL, para não trazer POI que já está
 # atendido só para descobrir isso depois de abrir o navegador.
@@ -109,10 +110,27 @@ def _log(m: str) -> None:
     print(m, flush=True)
 
 
-def alvos(cur, cidade: str, limite: int, fontes: list, nome_min: int) -> list:
-    """Os POIs, no formato de `item` que `buscar_linha` espera."""
+def alvos(cur, cidade: str, limite: int, fontes: list, nome_min: int,
+          poligono=None) -> list:
+    """Os POIs, no formato de `item` que `buscar_linha` espera.
+
+    `poligono` RECORTA PELA AREA SELECIONADA. A regra e uma so: se veio um
+    poligono, so entra quem esta DENTRO dele. Em modo municipio o poligono e o
+    do municipio inteiro (mesmo efeito que filtrar pela cidade); num desenho
+    manual, e so o que cai dentro do desenho. Sem poligono, cai no filtro por
+    cidade — a cidade toda."""
     filtros, valores = "", [nome_min]
-    if cidade:
+    if poligono:
+        anel = list(poligono)
+        if anel and anel[0] != anel[-1]:
+            anel = anel + [anel[0]]
+        wkt = "POLYGON((" + ", ".join("%.7f %.7f" % (lo, la)
+                                      for la, lo in anel) + "))"
+        filtros += (" and p.pt_geo is not null"
+                    " and ST_Covers(ST_SetSRID(ST_GeomFromText(%s), 4326)::geography,"
+                    " p.pt_geo)")
+        valores.append(wkt)
+    elif cidade:
         filtros += " and upper(coalesce(p.cidade,'')) = upper(%s)"
         valores.append(cidade)
     if fontes:
@@ -294,10 +312,13 @@ async def _colher(lista, cidade, uf, trabalhadores, con, cur, usar_proxy,
 
 
 def rodar(cidade="", uf="", limite=0, fontes=None, nome_min=12,
-          trabalhadores=4, sem_proxy=False, aplicar=False) -> dict:
+          trabalhadores=4, sem_proxy=False, aplicar=False, area="") -> dict:
     con = bc.conectar()
     cur = con.cursor()
-    lista = alvos(cur, cidade, limite, fontes or [], nome_min)
+    poligono = area_utils.carregar_area(area) if area else None
+    if poligono:
+        _log("   recorte pela area %r: so POIs dentro do desenho" % area)
+    lista = alvos(cur, cidade, limite, fontes or [], nome_min, poligono)
     _log("   %d POIs sem telefone, sem CNPJ, sem rede social e que não vieram"
          % len(lista))
     _log("   do Google — os únicos que ainda têm o que ganhar aqui")
@@ -339,6 +360,8 @@ def main(argv=None) -> int:
         description="Enriquece pelo painel do Maps quem não tem telefone, "
                     "CNPJ nem rede social")
     p.add_argument("--cidade", default="")
+    p.add_argument("--area", default="",
+                   help="nome da area; recorta pelo desenho. Sem ela, a cidade toda.")
     p.add_argument("--uf", default="", help="UF alvo; sem ela, a maioria dos POIs")
     p.add_argument("--fonte", action="append", default=[])
     p.add_argument("--limite", type=int, default=0)
@@ -352,7 +375,7 @@ def main(argv=None) -> int:
     _log("▶ Maps, painel do estabelecimento%s"
          % (" · " + a.cidade if a.cidade else ""))
     rodar(a.cidade, a.uf, a.limite, a.fonte, a.nome_minimo, a.trabalhadores,
-          a.sem_proxy, aplicar=a.aplicar)
+          a.sem_proxy, aplicar=a.aplicar, area=a.area)
     return 0
 
 

@@ -1138,7 +1138,7 @@ def main(argv=None) -> int:
         _idbase = _base_pronta()
         if _idbase:
             _tolerante_i9(["cruzar_ligacao.py", "--base", str(_idbase),
-                           "--cidade", cidade, "--aplicar"],
+                           "--cidade", cidade, "--area", a.area, "--aplicar"],
                           "vínculo por ligação")
         else:
             _log("  vínculo por ligação pulado — nenhuma base do cliente confirmada")
@@ -1157,6 +1157,7 @@ def main(argv=None) -> int:
         # Depois da 8 também porque o 8 funde duplicatas: enriquecer antes seria
         # gastar duas buscas no que vira um ponto só.
         _tolerante_i9(["google_enriquece.py", "--cidade", cidade,
+                       "--area", a.area,
                        "--uf", uf, "--trabalhadores", "4", "--aplicar"],
                       "enriquecimento pelo Maps")
     else:

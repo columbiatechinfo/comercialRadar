@@ -44,6 +44,7 @@ import time
 import unicodedata
 from collections import Counter, defaultdict
 
+import area_utils
 import base_comum as bc
 
 # O RAIO DE BUSCA É MAIOR QUE O CRITÉRIO, de propósito. `ate_20m` é um dos cinco
@@ -229,9 +230,12 @@ class Telhado:
 
 
 def cruzar(base_id: int, cidade: str, aplicar: bool, raio: float,
-           limite: int) -> dict:
+           limite: int, area: str = "") -> dict:
     con = bc.conectar()
     cur = con.cursor()
+    # RECORTE PELA AREA. Mesma regra da etapa 9: com poligono, so ligacoes e
+    # POIs dentro dele; em modo municipio o poligono e a cidade inteira.
+    poligono = area_utils.carregar_area(area) if area else None
 
     # ATRAVESSAR AS DUAS EMPRESAS — E SO AQUI.
     #
@@ -381,6 +385,18 @@ def cruzar(base_id: int, cidade: str, aplicar: bool, raio: float,
     cur.execute(_sql_poi, [cidade])
     pois = cur.fetchall()
 
+    if poligono is not None:
+        _n_lig, _n_poi = len(ligs), len(pois)
+        # ligs: (lig, via, num, tipo, LAT, LON); pois: (id,fonte,nome,end,via,num,LAT,LON)
+        # `_n_poi` e nao `_np`: `_np` e o numpy importado nesta funcao — um local
+        # com esse nome o sombreava e estourava em `_np.empty` logo abaixo.
+        ligs = [r for r in ligs
+                if area_utils.ponto_no_poligono(r[4], r[5], poligono)]
+        pois = [r for r in pois
+                if area_utils.ponto_no_poligono(r[6], r[7], poligono)]
+        _log("   recorte pela area %r: %d→%d ligacoes · %d→%d POIs"
+             % (area, _n_lig, len(ligs), _n_poi, len(pois)))
+
     linhas = []
     if ligs and pois:
         lat0 = _math.radians(sum(r[6] for r in pois) / len(pois))
@@ -519,9 +535,11 @@ def main(argv=None) -> int:
                    help="raio de busca em metros (o critério de perto é 20 m)")
     p.add_argument("--limite", type=int, default=0)
     p.add_argument("--aplicar", action="store_true")
+    p.add_argument("--area", default="",
+                   help="nome da area; recorta pelo desenho. Sem ela, a cidade toda.")
     a = p.parse_args(argv)
     _log("▶ vínculo ancorado na ligação · %s" % a.cidade)
-    saida = cruzar(a.base, a.cidade, a.aplicar, a.raio, a.limite)
+    saida = cruzar(a.base, a.cidade, a.aplicar, a.raio, a.limite, a.area)
     for k, v in sorted(saida.items()):
         if isinstance(v, int):
             _log("      %-26s %7d" % (k, v))
