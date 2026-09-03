@@ -341,19 +341,34 @@ def cruzar(base_id: int, cidade: str, aplicar: bool, raio: float,
     _lig = mapa.get("ligacao", "num_ligacao")
     _corte = (" limit %d" % int(limite)) if limite else ""
 
+    # CIDADE COMPARADA SEM ACENTO, DOS DOIS LADOS.
+    #
+    # A corsan grava a cidade SEM acento ("GRAVATAI"); o `municipio_da_area`
+    # devolve COM acento ("Gravatai"), da malha do IBGE. Um `upper(cidade) =
+    # upper(%s)` falhava para toda cidade acentuada — deu 0 candidatos em
+    # Gravatai no teste ponta-a-ponta de 03/09/2026, e so nao aparecera em
+    # Canoas porque "CANOAS" nao tem acento. `translate` tira o acento nas duas
+    # pontas; e o mesmo remedio do seletor de municipio.
+    _AC_DE = "'áàâãäéèêëíìîïóòôõöúùûüçñ'"
+    _AC_PARA = "'aaaaaeeeeiiiiooooouuuucn'"
+
+    def _sa(expr):
+        return "translate(lower(" + expr + "), " + _AC_DE + ", " + _AC_PARA + ")"
+
     t0 = time.time()
-    # Ligacoes comerciais da cidade — sem coalesce: `upper(col)` de NULL da NULL,
-    # que nao casa, exatamente o que se quer (tipo/cidade nulo nao entra).
-    cur.execute(
-        'select "%s"::text, "%s", "%s", "%s", '
+    # Ligacoes comerciais da cidade. Sem coalesce no tipo: lower(NULL) da NULL,
+    # que nao casa — tipo/cidade nulo nao entra, que e o certo.
+    _sql_lig = (
+        'select "' + _lig + '"::text, "' + _cvia + '", "' + _cnum + '", "' + _tip + '", '
         'st_y(geom::geometry), st_x(geom::geometry) '
-        'from %s where geom is not null '
-        'and upper("%s") = upper(%%s) and upper("%s") = any(%%s)'
-        % (_lig, _cvia, _cnum, _tip, tabela, _cid, _tip),
-        [cidade, tipos])
+        'from ' + tabela + ' where geom is not null '
+        'and ' + _sa('"' + _cid + '"') + ' = ' + _sa('%s') + ' '
+        'and upper("' + _tip + '") = any(%s)'
+    )
+    cur.execute(_sql_lig, [cidade, tipos])
     ligs = cur.fetchall()
 
-    cur.execute(
+    _sql_poi = (
         "select p.id, coalesce(p.fonte,''), coalesce(p.nome,''), "
         "       coalesce(p.endereco,''), coalesce(lr.logradouro,''), "
         "       coalesce(lr.numero,''), st_y(p.pt_geo::geometry), "
@@ -361,8 +376,9 @@ def cruzar(base_id: int, cidade: str, aplicar: bool, raio: float,
         "  from radar_comercial.pois p "
         "  left join radar_comercial.logradouro_resolvido lr on lr.poi_id = p.id "
         " where p.fundido_em is null and p.pt_geo is not null "
-        "   and upper(p.cidade) = upper(%s)" + _corte,
-        [cidade])
+        "   and " + _sa("p.cidade") + " = " + _sa("%s") + _corte
+    )
+    cur.execute(_sql_poi, [cidade])
     pois = cur.fetchall()
 
     linhas = []
