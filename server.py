@@ -32,6 +32,7 @@ import secrets
 import sys
 import time
 import asyncio
+import shlex
 import threading
 import subprocess
 import urllib.error      # explícito: `urllib.request` só o expõe por efeito colateral
@@ -622,6 +623,34 @@ def _thread_watcher(proc: subprocess.Popen, out_json: Path, poligono, baseline: 
     manager.broadcast({"tipo": "job", "dados": job_status()})
 
 
+# A TELA VIRTUAL, E OS TRES DETALHES QUE ELA EXIGE.
+#
+# A etapa 4 abre o navegador com `headless=False` de proposito — o
+# `chrome-headless-shell` estoura com SIGSEGV e ainda se anuncia como
+# automatizado. Sem X, ele morre com "Missing X server or $DISPLAY", que foi o
+# que derrubou as 45 posicoes da colheita. Por um X de pe num conteiner custou
+# tres achados, e cada um produzia um erro que nao apontava para a causa:
+#
+#   `xvfb-run` NAO SERVE NESTA IMAGEM. Ele espera o X ficar pronto sondando com
+#   `xdpyinfo`, que a imagem nao tem: o Xvfb sobe, o laco nunca sai, e o comando
+#   jamais e executado. Dentro do conteiner ficavam so o `xvfb-run` e o `Xvfb`,
+#   sem processo `python` nenhum, e sem uma linha de log dizendo por que.
+#
+#   PRECISA SER ROOT. O Dockerfile termina com `USER pwuser`, e o Xvfb recusa
+#   servir para quem nao e root: "Owner of /tmp/.X11-unix should be set to
+#   root". Por isso o `--user 0` no `docker run`.
+#
+#   O DISPLAY :99 JA ESTA TOMADO. Com `--network host` o namespace de sockets
+#   abstratos e o do host, e o `:99` de outro conteiner colide com
+#   "server already running". O laco procura um livre entre 200 e 260 — o que
+#   tambem deixa duas rodadas conviverem, cada uma no seu display.
+#
+# Medido: display :200 escolhido, navegador com tela subiu e navegou.
+TELA_VIRTUAL = (
+    "mkdir -p /tmp/.X11-unix; D=0; for n in $(seq 200 260); do if [ ! -e /tmp/.X$n-lock ]; then Xvfb :$n -screen 0 1920x1080x24 -nolisten tcp > /tmp/xvfb.err 2>&1 & sleep 2; if [ -e /tmp/.X$n-lock ] && ! grep -q already /tmp/xvfb.err; then D=$n; break; fi; fi; done; export DISPLAY=:$D; exec "
+)
+
+
 def _comando_no_minerador(cmd: list, env: dict) -> tuple:
     """Reescreve o comando para rodar dentro da imagem do minerador.
 
@@ -673,23 +702,20 @@ def _comando_no_minerador(cmd: list, env: dict) -> tuple:
         #     nao acha a chave: "no such identity".
         # Montando no mesmo caminho, as duas somem de uma vez.
         montagens += ["-v", "%s:%s:ro" % (_JOB_SSH, _JOB_SSH)]
-    novo = (["docker", "run", "--rm", "--name", nome, "--network", "host"]
+    # COMO ROOT, IGUAL AO CONTEINER DE TRABALHO.
+    #
+    # A imagem troca para `pwuser` no fim do Dockerfile, e o Xvfb recusa
+    # servir para quem nao e root: "Owner of /tmp/.X11-unix should be set
+    # to root". Sem X, o navegador da etapa 4 morre com "Missing X server
+    # or $DISPLAY" — que foi o erro que derrubou as 45 posicoes da
+    # colheita. O conteiner `scrapling`, que sempre funcionou, roda como
+    # root; e so replicar.
+    novo = (["docker", "run", "--rm", "--name", nome, "--user", "0",
+             "--network", "host"]
             + montagens + ["-w", "/app", "-e", "HOME=/tmp"]
             + passar + [_JOB_DOCKER]
-            # TELA VIRTUAL, E NAO E OPCIONAL.
-            #
-            # A etapa 4 abre o navegador com `headless=False` de proposito: o
-            # `chrome-headless-shell` estoura com SIGSEGV ao subir e ainda se
-            # anuncia como automatizado. Navegador com tela precisa de display,
-            # e um conteiner nao tem nenhum — as 45 posicoes da colheita
-            # falharam todas com "BrowserType.launch: Target page, context or
-            # browser has been closed", que nao diz uma palavra sobre display.
-            #
-            # `xvfb-run` sobe um servidor X descartavel para o comando e o
-            # derruba no fim. E o mesmo arranjo do conteiner de trabalho, que
-            # roda com `DISPLAY=:99`. Nas etapas sem navegador nao atrapalha.
-            + ["xvfb-run", "-a", "--server-args=-screen 0 1920x1080x24",
-               "python"] + list(cmd[1:]))
+            + ["sh", "-c", TELA_VIRTUAL + "python "
+               + " ".join(shlex.quote(x) for x in cmd[1:])])
     return novo, nome
 
 

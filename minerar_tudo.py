@@ -396,6 +396,9 @@ def _etapa_pulada() -> bool:
 # se o SSH falhar, a rodada continua e o i9 termina sozinho — e e isso que o
 # `finally` embaixo garante quando a etapa acaba.
 PREDATOR = os.environ.get("RADAR_PREDATOR_HOST", "predator")
+TELA_VIRTUAL_REMOTA = (
+    "mkdir -p /tmp/.X11-unix; D=0; for n in $(seq 200 260); do if [ ! -e /tmp/.X$n-lock ]; then Xvfb :$n -screen 0 1920x1080x24 -nolisten tcp > /tmp/xvfb.err 2>&1 & sleep 2; if [ -e /tmp/.X$n-lock ] && ! grep -q already /tmp/xvfb.err; then D=$n; break; fi; fi; done; export DISPLAY=:$D; exec"
+)
 # O `-F` E OBRIGATORIO AQUI. O OpenSSH procura o `config` no home do
 # `/etc/passwd`, e dentro do conteiner esse usuario nao e o dono das
 # chaves. Sem apontar o arquivo, o apelido `predator` nao existe e o
@@ -414,13 +417,16 @@ def _acordar_predator(area: str, sessao: str, workers: int) -> str:
         "cd ~/Documentos/sistemas/radarComercial && "
         "git pull -q --ff-only 2>/dev/null; "
         "docker rm -f %s >/dev/null 2>&1; "
-        "nohup docker run -d --rm --name %s --network host --env-file .env "
+        # como root, pelo mesmo motivo do i9: o Xvfb so serve para root
+        "nohup docker run -d --rm --name %s --user 0 --network host --env-file .env "
         "-v $PWD:/app -v /app/node_modules -w /app -e HOME=/tmp "
         "-e RADAR_MAQUINA=predator radar-minerador:latest "
-        # tela virtual tambem la: o navegador da etapa 4 nao e headless
-        "xvfb-run -a --server-args='-screen 0 1920x1080x24' "
+        # A MESMA TELA VIRTUAL DO i9. Ver `server.TELA_VIRTUAL` para os tres
+        # detalhes que ela resolve: `xvfb-run` pendura, o Xvfb exige root, e
+        # o display :99 colide com o do host.
+        "sh -c '" + TELA_VIRTUAL_REMOTA + " "
         "python minerar_placeid.py --area %s --sessao %s --workers %d "
-        "--sem-colheita >/dev/null 2>&1"
+        "--sem-colheita'"
     ) % (nome, nome, shlex.quote(area), shlex.quote(sessao), workers)
     try:
         r = subprocess.run(
