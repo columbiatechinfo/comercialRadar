@@ -180,18 +180,45 @@ async def colher(pw, poligono, pasta, passo_px, paralelo, refinar_acima_de):
     lar_graus = (LARG * mpp) / (111320.0 * math.cos(math.radians(lat_c)))
 
     passo_lat, passo_lng = alt_graus / 2.0, lar_graus / 2.0
-    pos = []
+
+    def toca_o_desenho(la, lo):
+        """O tile centrado aqui encosta no poligono?
+
+        A grade e montada sobre a CAIXA do desenho, que e um retangulo — e um
+        municipio nao e retangular. Em Canoas, 23% das posicoes da caixa caem
+        inteiras fora da divisa: 8.399 posicoes que eram varridas por completo
+        para o resultado ser descartado no fim, quando `ponto_no_poligono`
+        finalmente rodava. Sao 2,7 h de clique jogadas fora.
+
+        Testa nove pontos — o centro, os quatro cantos e o meio de cada lado.
+        Bastar UM dentro ja mantem a posicao, entao um tile que so encosta na
+        divisa continua sendo varrido, e o POI da esquina nao se perde. O caso
+        que escaparia e uma lingua de terra mais estreita que meio tile (58 m)
+        atravessando o quadro sem tocar nenhum dos nove — margem de rio, onde
+        nao ha POI.
+        """
+        for dy in (0.0, -0.5, 0.5):
+            for dx in (0.0, -0.5, 0.5):
+                if area_utils.ponto_no_poligono(la + dy * alt_graus,
+                                                lo + dx * lar_graus, poligono):
+                    return True
+        return False
+
+    pos, caixa = [], 0
     y = s
     while y <= n + passo_lat:
         x = o
         while x <= l + passo_lng:
-            pos.append((y, x))
+            caixa += 1
+            if toca_o_desenho(y, x):
+                pos.append((y, x))
             x += passo_lng
         y += passo_lat
 
     print("  area %.0f m x %.0f m · tile %.0f m x %.0f m · %d posicoes"
+          "  (%d da caixa, %d fora do desenho)"
           % ((n - s) * 111320, (l - o) * 111320 * math.cos(math.radians(lat_c)),
-             ALT * mpp, LARG * mpp, len(pos)))
+             ALT * mpp, LARG * mpp, len(pos), caixa, caixa - len(pos)))
 
     achados, cobradas_total = {}, 0
     trava = asyncio.Lock()
