@@ -37,12 +37,41 @@ import config  # noqa: F401  (carrega o .env)
 import endpoints
 
 _GW = endpoints.SUPABASE
-_ANON = (os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or "").strip()
+# A CHAVE DO LOGIN É A `anon`, E O NOME DA VARIÁVEL ESTAVA ERRADO.
+#
+# Este valor entra só como cabeçalho `apikey` na chamada ao GoTrue — e o
+# docstring do `/api/login` já dizia "a chave `anon`". Mesmo assim a variável
+# lida era `SUPABASE_SERVICE_ROLE_KEY`, a de superusuário: ela ignora RLS e vale
+# para o banco inteiro. Guardar isso no `.env` de uma API web é pôr o Supabase
+# todo atrás de um arquivo que só precisava conter a chave pública.
+#
+# A queda para o nome antigo fica por compatibilidade: onde só existir a
+# variável velha, nada quebra. Storage e scripts continuam com o service_role,
+# porque lá o privilégio é usado de fato.
+#
+# O SINTOMA DE NÃO TER NENHUMA DAS DUAS, medido em 02/09/2026: o envoy responde
+# 401 a tudo, o `/api/login` traduz qualquer HTTPError em "e-mail ou senha
+# inválidos", e a tela acusa credencial errada com a senha certa.
+_ANON = ((os.environ.get("SUPABASE_ANON_KEY")
+          or os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or "").strip())
 
 CACHE_S = 60
 _cache: dict[str, tuple[float, str]] = {}     # token -> (expira_em, user_id)
 
-NIVEIS = ("user", "supervisor", "admin", "root")   # do menos para o mais amplo
+# A ESCADA, NA ORDEM QUE O BANCO DECLARA.
+#
+# `core.tb_niveis_user` guarda a hierarquia em número: user 20, editor 40,
+# supervisor 60, administrator 80, root 100. `editor` faltava aqui, e nível que
+# não está na tupla estoura `ValueError` no `NIVEIS.index()` — ou seja, um
+# usuário editor derrubava o portão inteiro em vez de ser recusado com 403.
+NIVEIS = ("user", "editor", "supervisor", "admin", "root")
+
+# O BANCO CHAMA DE `administrator`; ESTE CÓDIGO CHAMA DE `admin`.
+#
+# São 11 usos de "admin" no `server.py` e mais no frontend. Traduzir na
+# fronteira — aqui, onde o crachá é montado — é uma linha; renomear os dois
+# lados seria mexer em trinta pontos para o mesmo efeito.
+_TRADUZ_NIVEL = {"administrator": "admin"}
 
 
 @dataclass(frozen=True)
@@ -94,12 +123,37 @@ def usuario_atual(authorization: str = Header(default="")) -> Usuario:
     uid = _validar(authorization.split(" ", 1)[1].strip())
 
     # O crachá vem do BANCO, não do token.
-    import base_comum as bc
-    con = bc.conectar()
+    #
+    # E A CONEXAO PRECISA DIZER QUEM ESTA PERGUNTANDO. `core.tb_users` tem RLS
+    # com `force`, e a politica de leitura e
+    # `core.eh_suporte() or (id_empresa = core.empresa_atual())`. Uma conexao
+    # anonima faz as duas funcoes responderem nulo, a politica nega, o `select`
+    # volta vazio — e o codigo abaixo conclui "usuario sem vinculo com empresa".
+    #
+    # Foi o que a tela mostrou em 03/09/2026: login 200, e logo em seguida
+    # "Conta sem vinculo com empresa. Fale com o root." para um usuario root,
+    # ativo e com empresa. Nao faltava vinculo; faltava a conexao se apresentar.
+    con = conectar_como(uid)
     try:
         with con.cursor() as cur:
-            cur.execute("""select id_empresa, nivel, nome, email, ativo
-                             from usuarios where id = %s""", (uid,))
+            # `core.tb_users`, E NAO `usuarios`.
+            #
+            # A tabela `usuarios` nao existe mais: a migracao para o padrao A2L
+            # (identidade em `core`) a substituiu por `core.tb_users`, e este
+            # ponto do codigo ficou apontando para o nome antigo. O sintoma era
+            # cruel — `POST /api/login` respondia 200, o token era valido, e a
+            # chamada seguinte, `/api/eu`, morria com 500 e
+            # `relation "usuarios" does not exist`. A tela caia de volta no
+            # login dizendo "e-mail ou senha invalidos", com a senha certa.
+            #
+            # O nivel vem por juncao: `tb_users` guarda so o id do nivel.
+            cur.execute("""
+                select u.id_empresa, coalesce(n.codigo, 'user'),
+                       u.name, u.email, u.ativo
+                  from core.tb_users u
+                  left join core.tb_niveis_user n on n.id = u.id_nivel_user
+                 where u.id = %s
+            """, (uid,))
             r = cur.fetchone()
     finally:
         con.close()
@@ -107,8 +161,14 @@ def usuario_atual(authorization: str = Header(default="")) -> Usuario:
         raise HTTPException(403, "usuário autenticado mas sem vínculo com empresa")
     if not r[4]:
         raise HTTPException(403, "usuário desativado")
+    nivel = _TRADUZ_NIVEL.get(str(r[1] or "user"), str(r[1] or "user"))
+    if nivel not in NIVEIS:
+        # NIVEL DESCONHECIDO E RECUSA, NAO ESTOURO. Se o banco ganhar um nivel
+        # novo antes deste codigo, `pode()` levantaria `ValueError` e o portao
+        # devolveria 500 para todo mundo daquele nivel. 403 diz o que houve.
+        raise HTTPException(403, "nível de acesso desconhecido: %s" % r[1])
     return Usuario(id=uid, id_empresa=str(r[0]) if r[0] else None,
-                   nivel=r[1], nome=r[2], email=r[3])
+                   nivel=nivel, nome=r[2], email=r[3])
 
 
 def exige(minimo: str):
@@ -138,7 +198,7 @@ USUARIO_DA_REQUISICAO: contextvars.ContextVar[Usuario | None] = \
     contextvars.ContextVar("usuario_da_requisicao", default=None)
 
 
-def conectar_como(u: Usuario):
+def conectar_como(u):
     """Conexao com o cracha do usuario — e ela que a RLS filtra.
 
     UM PAPEL SO, e nao dois. Ate 30/08/2026 havia `app_user` (com
@@ -165,6 +225,14 @@ def conectar_como(u: Usuario):
     requisicao seguinte. Com o pooler em modo transacao isso deixou de ser
     cuidado e virou obrigacao — a conexao volta ao pool a cada transacao.
     """
+    # ACEITA O CRACHA OU SO O UUID.
+    #
+    # `usuario_atual` precisa desta conexao ANTES de ter um `Usuario` — e para
+    # montar o `Usuario` ele precisa ler `core.tb_users`, que so responde a quem
+    # ja se declarou. Ovo e galinha. O uuid do token e suficiente: as funcoes da
+    # policy sao `SECURITY DEFINER` e descobrem empresa e nivel sozinhas.
+    uid = u if isinstance(u, str) else u.id
+
     dsn = (os.environ.get("A2L_DB_URL") or "").strip()
     if not dsn:
         raise RuntimeError(
@@ -192,5 +260,5 @@ def conectar_como(u: Usuario):
         # sozinho, lendo `core.tb_users`. Mandar nivel na conexao seria mandar
         # ao banco uma segunda versao de um dado que ele ja tem — e duas versoes
         # de uma verdade divergem no dia em que alguem muda uma so.
-        cur.execute("select set_config('request.jwt.claim.sub', %s, true)", (u.id,))
+        cur.execute("select set_config('request.jwt.claim.sub', %s, true)", (uid,))
     return con

@@ -151,7 +151,7 @@ def coletar(poi_id: int, con) -> dict:
 
         cur.execute("""select a.status, a.motivo_generico, a.motivo_escrito,
                               a.observacao, a.decidido_em, us.nome, us.email
-                         from atribuicao a left join usuarios us on us.id = a.supervisor_id
+                         from atribuicao a left join core.tb_users us on us.id = a.supervisor_id
                         where a.poi_id = %s and a.status <> 'pendente'
                         order by a.decidido_em desc limit 1""", (poi_id,))
         dec = cur.fetchone()

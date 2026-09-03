@@ -3185,9 +3185,11 @@ def fila_atribuir(e: AtribuirEntrada, u: _auth.Usuario = Depends(_auth.exige("ad
         with con.cursor() as cur:
             # Só supervisores DESTA empresa — a policy de `usuarios` já barra o
             # resto, e o `nivel` evita mandar ponto para quem não decide nada.
-            cur.execute("""select id from usuarios
-                            where id = any(%s::uuid[]) and ativo
-                              and nivel in ('supervisor','admin')""",
+            cur.execute("""select us.id from core.tb_users us
+                             join core.tb_niveis_user nu
+                                  on nu.id = us.id_nivel_user
+                            where us.id = any(%s::uuid[]) and us.ativo
+                              and nu.codigo in ('supervisor','administrator')""",
                         ([str(s) for s in e.supervisor_ids],))
             validos = [r[0] for r in cur.fetchall()]
             if not validos:
@@ -3230,7 +3232,7 @@ def fila_listar(status: str = "pendente", limite: int = 200,
                                   f.veredito_comercial, f.nota_comercial
                              from atribuicao a
                              join pois p     on p.id  = a.poi_id
-                             left join usuarios us on us.id = a.supervisor_id
+                             left join core.tb_users us on us.id = a.supervisor_id
                              left join fachada_anotacao f on f.poi_id = a.poi_id
                             where (%s = 'todos' or a.status::text = %s)
                             order by a.atribuido_em desc
@@ -3287,7 +3289,7 @@ def divergentes_listar(status: str = "pendente", limite: int = 200,
                                   d.atribuido_em, us.nome, f.confianca
                              from atribuicao_divergente d
                              join pois p on p.id = d.poi_id
-                             left join usuarios us on us.id = d.supervisor_id
+                             left join core.tb_users us on us.id = d.supervisor_id
                              left join fachada_anotacao f on f.id = d.anotacao_id
                             where (%s = 'todos' or d.status = %s)
                             order by d.atribuido_em desc
@@ -3389,7 +3391,7 @@ def fila_ficha(item_id: int, u: _auth.Usuario = Depends(_auth.usuario_atual)):
                                   a.motivo_generico, a.motivo_escrito, a.observacao,
                                   a.atribuido_em, us.nome
                              from atribuicao a
-                             left join usuarios us on us.id = a.supervisor_id
+                             left join core.tb_users us on us.id = a.supervisor_id
                             where a.id = %s""", (item_id,))
             r = cur.fetchone()
             if not r:
@@ -3548,11 +3550,14 @@ def usuarios_listar(u: _auth.Usuario = Depends(_auth.exige("admin"))):
     con = _auth.conectar_como(u)
     try:
         with con.cursor() as cur:
-            cur.execute("""select us.id, us.nome, us.email, us.nivel, us.cargo,
-                                  us.telefone, us.ativo, t.nome, us.criado_em
-                             from usuarios us
+            cur.execute("""select us.id, us.name, us.email,
+                                  coalesce(nu.codigo,'user'), null::text,
+                                  us.phone, us.ativo, t.name, us.criado_em
+                             from core.tb_users us
+                             left join core.tb_niveis_user nu
+                                    on nu.id = us.id_nivel_user
                              left join core.tb_empresas t on t.id = us.id_empresa
-                            order by t.nome nulls first, us.nivel, us.nome""")
+                            order by t.name nulls first, nu.hierarquia, us.name""")
             return {"usuarios": [
                 {"id": str(i), "nome": n, "email": e, "nivel": nv, "cargo": c,
                  "telefone": tel, "ativo": a, "empresa": emp,
@@ -3601,9 +3606,18 @@ def usuarios_criar(novo: UsuarioEntrada, u: _auth.Usuario = Depends(_auth.exige(
     con = _auth.conectar_como(u)
     try:
         with con.cursor() as cur:
-            cur.execute("""insert into usuarios
-                             (id, id_empresa, nivel, nome, email, cargo, telefone)
-                           values (%s,%s,%s,%s,%s,%s,%s)""",
+            # CRIAR USUARIO E DA API DE IDENTIDADE (7710), NAO DAQUI.
+            #
+            # `core.tb_users` pertence a `supabase_admin`, e criar alguem
+            # exige tambem criar a conta no GoTrue — que SQL nao faz. A rota
+            # fica de pe para nao sumir do catalogo, e recusa dizendo onde ir.
+            raise HTTPException(
+                501, "criar usuário é da API de identidade (7710): "
+                     "POST /usuarios. Esta rota ficou do desenho antigo, "
+                     "quando a identidade morava no banco do radar.")
+            cur.execute("""insert into core.tb_users
+                             (id, id_empresa, id_nivel_user, name, email, phone)
+                           values (%s,%s,%s,%s,%s,%s)""",
                         (uid, destino, novo.nivel, novo.nome.strip(), email,
                          novo.cargo, novo.telefone))
         con.commit()
@@ -3627,19 +3641,32 @@ def usuarios_editar(usuario_id: str, alt: UsuarioEdicao,
         with con.cursor() as cur:
             # A policy já impede alcançar usuário de outra empresa; este SELECT
             # existe para responder 404 em vez de "0 linhas afetadas".
-            cur.execute("select nivel from usuarios where id=%s", (usuario_id,))
+            cur.execute("""select coalesce(nu.codigo, 'user')
+                             from core.tb_users us
+                             left join core.tb_niveis_user nu
+                                    on nu.id = us.id_nivel_user
+                            where us.id = %s""", (usuario_id,))
             atual = cur.fetchone()
             if not atual:
                 raise HTTPException(404, "usuário não encontrado")
             if atual[0] == "root" and u.nivel != "root":
                 raise HTTPException(403, "apenas root altera um root")
-            cur.execute("""update usuarios
-                              set nome=coalesce(%s,nome), nivel=coalesce(%s,nivel),
-                                  cargo=coalesce(%s,cargo), telefone=coalesce(%s,telefone),
-                                  ativo=coalesce(%s,ativo), atualizado_em=now()
-                            where id=%s
-                        returning nome, nivel, ativo""",
-                        (alt.nome, alt.nivel, alt.cargo, alt.telefone, alt.ativo,
+            # `cargo` NAO EXISTE em `core.tb_users`, e o parametro e engolido de
+            # proposito: recusar a alteracao inteira por causa de um campo
+            # que a identidade nova nao tem seria pior que perde-lo.
+            cur.execute("""update core.tb_users
+                              set name = coalesce(%s, name),
+                                  id_nivel_user = coalesce(
+                                      (select id from core.tb_niveis_user
+                                        where codigo = %s), id_nivel_user),
+                                  phone = coalesce(%s, phone),
+                                  ativo = coalesce(%s, ativo),
+                                  atualizado_em = now()
+                            where id = %s
+                        returning name,
+                                  (select codigo from core.tb_niveis_user
+                                    where id = id_nivel_user), ativo""",
+                        (alt.nome, alt.nivel, alt.telefone, alt.ativo,
                          usuario_id))
             r = cur.fetchone()
         con.commit()
@@ -3657,13 +3684,17 @@ def usuarios_desativar(usuario_id: str, u: _auth.Usuario = Depends(_auth.exige("
     con = _auth.conectar_como(u)
     try:
         with con.cursor() as cur:
-            cur.execute("select nivel from usuarios where id=%s", (usuario_id,))
+            cur.execute("""select coalesce(nu.codigo, 'user')
+                             from core.tb_users us
+                             left join core.tb_niveis_user nu
+                                    on nu.id = us.id_nivel_user
+                            where us.id = %s""", (usuario_id,))
             atual = cur.fetchone()
             if not atual:
                 raise HTTPException(404, "usuário não encontrado")
             if atual[0] == "root" and u.nivel != "root":
                 raise HTTPException(403, "apenas root desativa um root")
-            cur.execute("update usuarios set ativo=false, atualizado_em=now() where id=%s",
+            cur.execute("update core.tb_users set ativo=false, atualizado_em=now() where id=%s",
                         (usuario_id,))
         con.commit()
         return {"id": usuario_id, "ativo": False}
@@ -3680,9 +3711,9 @@ def quem_sou_eu(u: _auth.Usuario = Depends(_auth.usuario_atual)):
     con = _auth.conectar_como(u)
     try:
         with con.cursor() as cur:
-            cur.execute("""select us.nome, us.email, us.telefone, us.cargo,
-                                  us.foto_path, t.nome, t.logo_path
-                             from usuarios us
+            cur.execute("""select us.name, us.email, us.phone, null::text,
+                                  us.img_perfil, t.name, null::text
+                             from core.tb_users us
                              left join core.tb_empresas t on t.id = us.id_empresa
                             where us.id = %s""", (u.id,))
             r = cur.fetchone() or (None,) * 7
@@ -3787,13 +3818,12 @@ def editar_perfil(p: PerfilEntrada, u: _auth.Usuario = Depends(_auth.usuario_atu
     con = _auth.conectar_como(u)
     try:
         with con.cursor() as cur:
-            cur.execute("""update usuarios
-                              set nome     = coalesce(%s, nome),
-                                  telefone = coalesce(%s, telefone),
-                                  cargo    = coalesce(%s, cargo),
+            cur.execute("""update core.tb_users
+                              set name  = coalesce(%s, name),
+                                  phone = coalesce(%s, phone),
                                   atualizado_em = now()
                             where id = %s
-                        returning nome, telefone, cargo""",
+                        returning name, phone, null::text""",
                         (p.nome, p.telefone, p.cargo, u.id))
             r = cur.fetchone()
             if not r:
@@ -3825,7 +3855,7 @@ async def enviar_foto(arquivo: UploadFile = File(...),
     con = _auth.conectar_como(u)
     try:
         with con.cursor() as cur:
-            cur.execute("update usuarios set foto_path=%s, atualizado_em=now() where id=%s",
+            cur.execute("update core.tb_users set img_perfil=%s, atualizado_em=now() where id=%s",
                         (caminho, u.id))
         con.commit()
     finally:
@@ -3838,7 +3868,7 @@ def ler_foto(u: _auth.Usuario = Depends(_auth.usuario_atual)):
     con = _auth.conectar_como(u)
     try:
         with con.cursor() as cur:
-            cur.execute("select foto_path from usuarios where id=%s", (u.id,))
+            cur.execute("select img_perfil from core.tb_users where id=%s", (u.id,))
             r = cur.fetchone()
     finally:
         con.close()
@@ -3947,7 +3977,7 @@ def bancada_dataset(limite: int = 40, poi: int | None = None,
                                    a.motivo_escrito, a.decidido_em,
                                    a.prioridade::text, a.pauta::text[], us.nome
                               from atribuicao a
-                              left join usuarios us on us.id = a.supervisor_id
+                              left join core.tb_users us on us.id = a.supervisor_id
                              where true {so_meus}
                              order by (a.status = 'pendente') desc,
                                       a.prioridade desc, a.id
