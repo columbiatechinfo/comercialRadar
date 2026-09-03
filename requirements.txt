@@ -35,7 +35,12 @@ annotated-doc==0.0.4
 annotated-types==0.7.0
 ansicon==1.89.0
 anthropic==0.37.1
-anyio==4.13.0
+# SUBIU DE 4.13.0 POR CAUSA DO `scrapling[fetchers]`, que exige >=4.14.0.
+# Os outros consumidores — anthropic, httpx, openai, starlette, watchfiles —
+# pedem apenas `anyio<5`, entao a subida nao aperta nenhum deles. Com o pino
+# antigo o build da imagem morria em `ResolutionImpossible`, e o erro nao
+# dizia qual pacote estava apertando quem.
+anyio==4.14.2
 astor==0.8.1
 asttokens==3.0.1
 async-timeout==5.0.1
@@ -158,7 +163,13 @@ playwright==1.62.0
 # Sem isto, um conteiner NOVO do minerador nasce sem `scrapling`, e as etapas 5
 # e 6 morrem em `ModuleNotFoundError` — funcionava so no conteiner de trabalho,
 # onde o pacote tinha sido instalado a mao.
-scrapling==0.4.15
+#
+# `[fetchers]` E OBRIGATORIO, e nao enfeite. O pacote nu instala o parser e
+# nada mais; quem faz requisicao vem no extra: `curl_cffi`, `patchright`,
+# `browserforge`, `msgspec` e outros cinco. Sem ele as etapas 5 e 6 morrem em
+# `No module named 'curl_cffi'` — que nao menciona scrapling em lugar nenhum.
+# O `playwright>=1.62.0` que o extra exige e exatamente o pino acima.
+scrapling[fetchers]==0.4.15
 polars-runtime-32==1.42.1
 polars==1.42.1
 prompt_toolkit==3.0.52
