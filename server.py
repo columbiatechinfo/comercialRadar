@@ -933,17 +933,55 @@ def ufs_carregadas():
         conn.close()
 
 
+# Acentos fora, dos dois lados da comparação: quem digita "sao gabriel" tem de
+# achar "São Gabriel". `unaccent` resolveria, mas é extensão — e o `translate`
+# não depende de nada estar instalado no banco de referência.
+_SEM_ACENTO = ("translate(lower(%s), "
+               "'áàâãäéèêëíìîïóòôõöúùûüçñ', 'aaaaaeeeeiiiiooooouuuucn')")
+
+
 @app.get("/api/municipios")
-def municipios_da_uf(uf: str):
-    """Municípios de uma UF, para o seletor — sem geometria, que é pesada."""
+def municipios_da_uf(uf: str = "", q: str = "", limite: int = 60):
+    """Municípios para o seletor — sem geometria, que é pesada.
+
+    A BUSCA É POR NOME, E NÃO EXIGE SABER A UF ANTES.
+
+    `uf` era obrigatório, e a tela então montava a lista assim: pedia
+    `/api/ufs`, e para cada UF de lá pedia os municípios. Só que `/api/ufs`
+    responde as UFs QUE JÁ TÊM POI — é a visão operacional de onde se trabalhou,
+    e é para isso que ela existe. Em base nova ela vem vazia, o laço não roda
+    nenhuma vez, e o seletor ficava sem nenhum município: para escolher a cidade
+    a minerar era preciso já ter minerado a cidade.
+
+    Agora `q` procura na malha inteira pelo nome, que é o que a caixa de busca
+    da tela sempre pareceu fazer. `uf` continua aceito, para restringir.
+
+    Sem `q` e sem `uf` a resposta é vazia de propósito: são 5.570 municípios, e
+    despejar todos num seletor não ajuda ninguém a achar Canoas.
+
+    A tabela tem 5.570 linhas e não cresce — o país não ganha municípios em
+    volume. Varredura sequencial aqui é custo fixo e pequeno; o que não pode é
+    a TELA varrer, que era o desenho anterior.
+    """
+    uf, q = (uf or "").strip().upper(), (q or "").strip()
+    if not uf and not q:
+        return JSONResponse([])
+    onde, args = ["nome IS NOT NULL"], []
+    if uf:
+        onde.append("uf = %s")
+        args.append(uf)
+    if q:
+        onde.append(_SEM_ACENTO % "nome" + " LIKE " + _SEM_ACENTO % "%s")
+        args.append("%" + q + "%")
+    args.append(max(1, min(int(limite or 60), 400)))
     # `ibge_malha` e base publica: banco de REFERENCIA (ADR 0003).
     conn = base_comum.conectar_referencia()
     try:
         with conn.cursor() as cur:
-            cur.execute("""SELECT cod_municipio, nome FROM ibge_malha
-                            WHERE uf = %s AND nome IS NOT NULL ORDER BY nome""",
-                        ((uf or "").strip().upper(),))
-            return JSONResponse([{"cod": c, "nome": n} for c, n in cur.fetchall()])
+            cur.execute("SELECT cod_municipio, nome, uf FROM ibge_malha WHERE "
+                        + " AND ".join(onde) + " ORDER BY nome LIMIT %s", args)
+            return JSONResponse([{"cod": c, "nome": n, "uf": u}
+                                 for c, n, u in cur.fetchall()])
     finally:
         conn.close()
 

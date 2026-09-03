@@ -1104,22 +1104,43 @@
 
   let municipios = [];
 
+  // QUEM PROCURA É O BANCO, E NÃO A TELA.
+  //
+  // Isto aqui montava a lista pedindo `/api/ufs` e, para cada UF de lá, os
+  // municípios daquela UF. Mas `/api/ufs` responde as UFs QUE JÁ TÊM POI — em
+  // base nova ela vem vazia, o laço não roda nenhuma vez, e digitar "canoas"
+  // não achava nada: para escolher a cidade a minerar era preciso já ter
+  // minerado a cidade. O sintoma era "Nenhum município com esse texto", que
+  // culpa o texto.
+  //
+  // Agora a caixa de busca pergunta ao servidor, que procura na malha inteira
+  // pelo nome. São 5.570 municípios do país inteiro, e nenhum deles precisa
+  // atravessar a rede antes de alguém digitar.
+  let buscaTimer = null;
+
   async function carregarMunicipios() {
-    if (municipios.length) return;
-    const ufs = await pegar("/api/ufs") || [];
-    for (const u of ufs) {
-      const lista = await pegar("/api/municipios?uf=" + encodeURIComponent(u.uf)) || [];
-      lista.forEach((m) => municipios.push({ ...m, uf: u.uf }));
-    }
+    // Sem texto não há o que listar — a malha inteira num seletor não ajuda a
+    // achar Canoas. A tela abre com o convite a digitar.
+    pintarMunicipios();
+  }
+
+  function agendarBuscaMunicipio() {
+    clearTimeout(buscaTimer);
+    buscaTimer = setTimeout(buscarMunicipios, 250);   // não uma busca por tecla
+  }
+
+  async function buscarMunicipios() {
+    const texto = ($("busca-municipio").value || "").trim();
+    if (texto.length < 2) { municipios = []; pintarMunicipios(); return; }
+    municipios = await pegar("/api/municipios?q=" + encodeURIComponent(texto)) || [];
     pintarMunicipios();
   }
 
   function pintarMunicipios() {
-    const q = ($("busca-municipio").value || "").trim().toLowerCase();
+    const q = ($("busca-municipio").value || "").trim();
     const alvo = $("lista-municipios");
     alvo.innerHTML = "";
-    const filtrados = municipios.filter((m) =>
-      !q || m.nome.toLowerCase().includes(q) || m.uf.toLowerCase().includes(q));
+    const filtrados = municipios;
     filtrados.slice(0, 400).forEach((m) => {
       const b = document.createElement("button");
       const ativo = estado.cod === m.cod;
@@ -1133,7 +1154,12 @@
       alvo.appendChild(b);
     });
     if (!filtrados.length) {
-      alvo.innerHTML = '<p class="px-3 py-2 text-[12px] text-gray-400">Nenhum município com esse texto.</p>';
+      // A MENSAGEM DIZ O ESTADO CERTO. "Nenhum município com esse texto" com a
+      // caixa vazia culpava um texto que não existe, e foi assim que a lista
+      // vazia passou por defeito de busca.
+      alvo.innerHTML = q.length < 2
+        ? '<p class="px-3 py-2 text-[12px] text-gray-400">Digite ao menos duas letras do nome do município.</p>'
+        : '<p class="px-3 py-2 text-[12px] text-gray-400">Nenhum município com esse texto.</p>';
     }
   }
 
@@ -1877,7 +1903,7 @@
     $("px-busca").addEventListener("input", pxLista);
     $("px-filtro").addEventListener("change", pxLista);
 
-    $("busca-municipio").addEventListener("input", pintarMunicipios);
+    $("busca-municipio").addEventListener("input", agendarBuscaMunicipio);
     $("busca").addEventListener("input", desenharPois);
 
     $("btn-limpar").addEventListener("click", async () => {
