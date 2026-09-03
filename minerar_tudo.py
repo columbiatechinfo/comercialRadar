@@ -418,13 +418,32 @@ def _acordar_predator(area: str, sessao: str, workers: int) -> str:
         "git pull -q --ff-only 2>/dev/null; "
         "docker rm -f %s >/dev/null 2>&1; "
         # como root, pelo mesmo motivo do i9: o Xvfb so serve para root
-        "nohup docker run -d --rm --name %s --user 0 --network host --env-file .env "
+        # SEM `--rm`, E ISSO E DE PROPOSITO.
+        #
+        # Com `--rm`, um ajudante que morre ao subir some sem deixar log
+        # nem conteiner parado: do lado do i9 so aparecia o "🤝" e nada
+        # do outro lado, e a unica forma de descobrir o motivo era subir
+        # o comando a mao. Sem `--rm` o conteiner fica em `Exited` e o
+        # `docker logs` conta o que houve. O `docker rm -f` da linha
+        # acima limpa o da rodada anterior antes de comecar.
+        "nohup docker run -d --name %s --user 0 --network host --env-file .env "
         "-v $PWD:/app -v /app/node_modules -w /app -e HOME=/tmp "
         "-e RADAR_MAQUINA=predator radar-minerador:latest "
         # A MESMA TELA VIRTUAL DO i9. Ver `server.TELA_VIRTUAL` para os tres
         # detalhes que ela resolve: `xvfb-run` pendura, o Xvfb exige root, e
         # o display :99 colide com o do host.
-        "sh -c '" + TELA_VIRTUAL_REMOTA + " "
+        # SEM O `exec` DO FINAL DA TELA_VIRTUAL.
+        #
+        # `TELA_VIRTUAL_REMOTA` termina com `exec`, para o python substituir o
+        # shell e receber os sinais direto. Aqui o que vem depois nao e o
+        # python: e um `for`. O resultado era `exec for i in ...`, e o conteiner
+        # morria em menos de um segundo com
+        #
+        #     sh: 1: Syntax error: "do" unexpected
+        #
+        # que o `--rm` da versao anterior apagava antes de alguem ler. Com o
+        # laco, o `exec` nao tem o que substituir e sai.
+        "sh -c '" + TELA_VIRTUAL_REMOTA.rstrip().removesuffix("exec") + " "
         # EM CICLO, PORQUE A FILA NASCE VAZIA.
         # 
         # O i9 comeca pela COLHEITA e so depois enche a fila. Acordado no
@@ -443,8 +462,14 @@ def _acordar_predator(area: str, sessao: str, workers: int) -> str:
              "-o", "ConnectTimeout=10", PREDATOR, remoto],
             capture_output=True, text=True, timeout=180)
         if r.returncode != 0:
-            _log("  ⚠️  o Predator não entrou (%s). A rodada segue só no i9."
-                 % (r.stderr or "").strip().splitlines()[-1:] or "sem detalhe")
+            # O ERRO INTEIRO, e nao a ultima linha. A versao anterior fazia
+            # `splitlines()[-1:] or "sem detalhe"` — que devolve uma LISTA, e o
+            # `%s` imprimia `['...']`. Pior: quando o stderr vinha vazio, o
+            # `or` escolhia "sem detalhe" e a causa sumia.
+            detalhe = (r.stderr or r.stdout or "").strip() or "sem saida"
+            _log("  ⚠️  o Predator não entrou. A rodada segue só no i9.")
+            for linha in detalhe.splitlines()[-3:]:
+                _log("      %s" % linha[:110])
             return ""
         _log("  🤝 Predator consumindo a mesma fila (%d workers, sem colheita)"
              % workers)
@@ -460,10 +485,16 @@ def _dispensar_predator(nome: str) -> None:
     if not nome:
         return
     try:
-        subprocess.run(["ssh", "-F", SSH_CONFIG, "-o", "BatchMode=yes",
-                        "-o", "ConnectTimeout=10", PREDATOR,
-                        "docker rm -f %s >/dev/null 2>&1" % nome],
-                       capture_output=True, timeout=60)
+        # O PLACAR DELE ANTES DE DERRUBAR. Sem isto, o que a segunda maquina
+        # fez so aparecia no banco, e um erro dela morria junto com o conteiner.
+        r = subprocess.run(
+            ["ssh", "-F", SSH_CONFIG, "-o", "BatchMode=yes",
+             "-o", "ConnectTimeout=10", PREDATOR,
+             "docker logs --tail 3 %s 2>&1; docker rm -f %s >/dev/null 2>&1"
+             % (nome, nome)],
+            capture_output=True, text=True, timeout=60)
+        for linha in (r.stdout or "").strip().splitlines()[-3:]:
+            _log("      predator: %s" % linha.strip()[:100])
         _log("  🤝 Predator dispensado")
     except Exception:                                          # noqa: BLE001
         _log("  ⚠️  não consegui dispensar o Predator; o contêiner %s pode ter"
