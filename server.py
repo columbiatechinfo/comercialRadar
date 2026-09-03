@@ -2866,8 +2866,18 @@ def _limpar_sessao(sessao: str) -> dict:
     nova. Depois, as tabelas que tem `sessao` propria (iFood, Airbnb) perdem as
     linhas desta run.
 
-    Roda como SUPORTE (o operador do painel, A2L nivel 9): os POIs sao da A2L e
-    a RLS de escrita pede nivel alto. `set_config` LOCAL a esta transacao.
+    RODA COMO O USUARIO QUE PEDIU, e nao mais elevada a suporte. Ate a migracao
+    0050 os POIs eram da A2L e a limpeza assumia `RADAR_USUARIO_SUPORTE` para
+    alcanca-los; agora eles sao da empresa do cliente, o operador ja esta dentro
+    dela, e a variavel esta aposentada.
+
+    O QUE ELA CONTA MUDOU, E ESSE ERA UM DEFEITO DE VERDADE. Antes o retorno era
+    `len(ids)` — quantos POIs a consulta ENCONTROU. Com a trava de nivel da
+    migracao 0051 isso vira mentira: clausula `USING` de RLS nao recusa o
+    comando, ela FILTRA a linha. Um usuario sem nivel 4 executa o `delete` com
+    sucesso, apaga zero, e a API respondia "apagados 1.240 POIs". Agora o numero
+    e o `rowcount` do proprio delete, e quem nao apagou nada recebe 403 em vez
+    de um placar inventado.
     """
     if not sessao:
         return {}
@@ -2875,15 +2885,12 @@ def _limpar_sessao(sessao: str) -> dict:
     con = base_comum.conectar()
     apagados = {}
     try:
-        sup = os.environ.get("RADAR_USUARIO_SUPORTE", "").strip()
         with con.cursor() as cur:
-            if sup:
-                cur.execute("select set_config('request.jwt.claim.sub', %s, true)",
-                            (sup,))
             cur.execute("select id from radar_comercial.pois where sessao = %s",
                         (sessao,))
             ids = [r[0] for r in cur.fetchall()]
-            apagados["pois"] = len(ids)
+            achados = len(ids)
+            apagados["pois"] = 0
             if ids:
                 cur.execute("""select table_name from information_schema.columns
                                 where table_schema = 'radar_comercial'
@@ -2892,8 +2899,19 @@ def _limpar_sessao(sessao: str) -> dict:
                     cur.execute(_sql.SQL("delete from radar_comercial.{} "
                                          "where poi_id = any(%s)")
                                 .format(_sql.Identifier(tb)), (ids,))
+                    if cur.rowcount:
+                        apagados[tb] = cur.rowcount
                 cur.execute("delete from radar_comercial.pois where id = any(%s)",
                             (ids,))
+                apagados["pois"] = cur.rowcount
+                if achados and not apagados["pois"]:
+                    con.rollback()
+                    raise HTTPException(
+                        status_code=403,
+                        detail=("Encontrei %d POIs desta run, e a politica de "
+                                "acesso nao deixou apagar nenhum. Apagar POI "
+                                "exige nivel Administrador na empresa dona do "
+                                "dado." % achados))
             # tabelas com `sessao` propria (menos a `pois`, ja limpa)
             cur.execute("""select table_name from information_schema.columns
                             where table_schema = 'radar_comercial'
