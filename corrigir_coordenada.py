@@ -135,18 +135,34 @@ def avaliar(con, cod_ibge: str, cidade: str) -> dict:
     """
     portas = _portas_do_municipio(cod_ibge)
     cur = con.cursor()
+    # O LOGRADOURO VEM DE `logradouro_resolvido`, E NAO MAIS DA SKILL.
+    #
+    # `logradouro_ajustado` e a saida do `ajuste_logradouro`, que fracionava
+    # endereco chamando o modelo — 2.446 lotes so em Canoas. Ele saiu da rodada
+    # em 03/09/2026 e quem carrega o endereco agora e o `resolver_logradouro`,
+    # pelo libpostal. As colunas mudam de nome e a juncao fica mais simples:
+    # uma linha por POI, sem `fonte`/`record_id`/`scope_id`.
+    #
+    # `forca = 'prova'` NAO E FILTRO DE QUALIDADE — E DE CIRCULARIDADE.
+    #
+    # `resolver_logradouro` marca como `indicio` o logradouro que ele deduziu da
+    # COORDENADA do POI (pelas peneiras do Photon, do OSRM e do CNEFE). Usar um
+    # indicio aqui seria perguntar a coordenada onde ela deveria estar: ela
+    # responderia "onde eu ja estou", e a etapa confirmaria o erro que existe
+    # para desfazer. So `prova` — logradouro que o proprio POI afirma, por CEP
+    # ou pelo endereco escrito — serve de referencia independente.
     cur.execute("""
         select p.id, p.nome, coalesce(p.maps_lat, p.lat_origem),
                coalesce(p.maps_lng, p.lng_origem),
-               la.logradouro_marcado, la.numero_canonico, p.endereco
+               lr.logradouro, lr.numero, p.endereco
           from pois p
-          join logradouro_ajustado la on la.fonte = 'pois'
-                                     and la.record_id = p.id::text
-                                     and la.scope_id = %s
-         where p.cidade = %s and p.fundido_em is null
+          join logradouro_resolvido lr on lr.poi_id = p.id
+         where lr.cod_municipio = %s
+           and p.cidade = %s and p.fundido_em is null
            and coalesce(p.maps_lat, p.lat_origem) is not null
-           and coalesce(trim(la.logradouro_marcado), '') <> ''
-           and coalesce(trim(la.numero_canonico), '') <> ''""", (cod_ibge, cidade))
+           and lr.forca = 'prova'
+           and coalesce(trim(lr.logradouro), '') <> ''
+           and coalesce(trim(lr.numero), '') <> ''""", (cod_ibge, cidade))
 
     mover, revisar = [], []
     for pid, nome, plat, plng, via, num, endereco in cur.fetchall():
