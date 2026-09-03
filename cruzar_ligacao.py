@@ -230,36 +230,36 @@ class Telhado:
 
 
 def cruzar(base_id: int, cidade: str, aplicar: bool, raio: float,
-           limite: int, area: str = "") -> dict:
+           limite: int, area: str = "", tipos_over: str = "",
+           situacao: str = "") -> dict:
     con = bc.conectar()
     cur = con.cursor()
     # RECORTE PELA AREA. Mesma regra da etapa 9: com poligono, so ligacoes e
     # POIs dentro dele; em modo municipio o poligono e a cidade inteira.
     poligono = area_utils.carregar_area(area) if area else None
 
-    # ATRAVESSAR AS DUAS EMPRESAS — E SO AQUI.
+    # O CRUZAMENTO E INTRA-EMPRESA DESDE 03/09/2026.
     #
-    # Este e o unico passo cross-tenant do radar: os POIs sao da empresa que
-    # opera (A2L) e as ligacoes sao da empresa do cliente (Corsan - Aegea RS), e
-    # a RLS isola cada uma na sua. Numa conexao com `empresa_atual()` de uma so
-    # empresa, o join nunca ve os dois lados: foi o que deu 0 pares em
-    # 03/09/2026, com o pipeline rodando como o usuario de servico nivel 1 da
-    # A2L, que enxerga A2L e mais nada.
+    # Ate a migracao 0050 este era o unico passo cross-tenant do radar. Os POIs
+    # eram da A2L e as ligacoes da Corsan, e a RLS isolava cada uma na sua; para
+    # o join enxergar os dois lados, esta funcao assumia aqui um usuario nivel 9
+    # e passava a sessao inteira sob `core.eh_suporte()`.
     #
-    # A saida nao e furar a RLS — e o ramo que a propria politica ja preve:
-    # `core.eh_suporte() OR id_empresa = empresa_atual()`. Um usuario nivel 9 e
-    # suporte e ve todas as empresas. O radar ja tem um: o de servico da A2L. O
-    # resto do pipeline segue nivel 1 de proposito (privilegio minimo); so ESTA
-    # leitura se eleva, e so para ler o cadastro do cliente e gravar o vinculo.
+    # FUNCIONAVA, E ERA O MODO ERRADO DE FUNCIONAR. Nao era um passo elevado: a
+    # elevacao valia a conexao toda, entao todo o cruzamento — milhares de
+    # transacoes — rodava com a trava de isolamento desligada. Um engano em
+    # qualquer consulta daqui para baixo enxergaria as tres empresas do banco em
+    # vez de uma, e nada no resultado denunciaria isso.
     #
-    # `false` no set_config para valer a sessao inteira, igual a
-    # `assumir_empresa` — a conexao roda milhares de transacoes.
-    _sup = os.environ.get("RADAR_USUARIO_SUPORTE", "").strip()
-    if _sup:
-        cur.execute("select set_config('request.jwt.claim.sub', %s, false)", (_sup,))
-    else:
-        _log("   RADAR_USUARIO_SUPORTE nao definido no .env — sem ele a RLS "
-             "esconde as ligacoes do cliente e o cruzamento vem vazio")
+    # A 0050 consertou onde estava o defeito, que era a modelagem e nao a
+    # permissao: o POI mineirado PARA um cliente E do cliente. POI e ligacao
+    # passaram a ser da mesma empresa, e o pipeline ganhou identidade dentro
+    # dela (`pipeline@corsan.servico.invalido`, nivel 4 — Administrador, porque
+    # alterar POI exige isso). Sem fronteira, a travessia perdeu o motivo.
+    #
+    # `RADAR_USUARIO_SUPORTE` ficou aposentada no .env. Se um dia voltar a
+    # existir POI de uma empresa com ligacao de outra, o conserto e a modelagem
+    # de novo — nao a elevacao.
 
     cur.execute("""
         select nome, tabela_dados, mapa_colunas, tipos_comerciais, estado
@@ -293,6 +293,12 @@ def cruzar(base_id: int, cidade: str, aplicar: bool, raio: float,
         _log("      ainda não confirmado por ninguém.")
 
     tipos = [str(t).upper() for t in (tipos or [])]
+    if tipos_over:
+        # CATEGORIA POR FORA DA BASE — para auditar o que a base nao declara como
+        # comercial. Ex.: `--tipos RESIDENCIAL` acha comercio numa ligacao
+        # residencial (subfaturacao). Nao muda o pipeline; e escolha de quem roda.
+        tipos = [t.strip().upper() for t in tipos_over.split(",") if t.strip()]
+        _log("   tipos por --tipos: %s" % ", ".join(tipos))
     if not tipos:
         # ENSAIO SEM TIPOS DECLARADOS. `tipos_comerciais` só é obrigatório para
         # marcar a base como pronta; num rascunho ele costuma estar vazio. Para
@@ -362,14 +368,18 @@ def cruzar(base_id: int, cidade: str, aplicar: bool, raio: float,
     t0 = time.time()
     # Ligacoes comerciais da cidade. Sem coalesce no tipo: lower(NULL) da NULL,
     # que nao casa — tipo/cidade nulo nao entra, que e o certo.
+    # `sit_ligacao` e coluna direta da corsan (nao vem do mapa): so entra quando
+    # `--situacao` e passado, e so faz sentido em base que a tenha.
+    _sit = " and upper(coalesce(sit_ligacao, '')) = upper(%s)" if situacao else ""
     _sql_lig = (
         'select "' + _lig + '"::text, "' + _cvia + '", "' + _cnum + '", "' + _tip + '", '
         'st_y(geom::geometry), st_x(geom::geometry) '
         'from ' + tabela + ' where geom is not null '
         'and ' + _sa('"' + _cid + '"') + ' = ' + _sa('%s') + ' '
-        'and upper("' + _tip + '") = any(%s)'
+        'and upper("' + _tip + '") = any(%s)' + _sit
     )
-    cur.execute(_sql_lig, [cidade, tipos])
+    _par_lig = [cidade, tipos] + ([situacao] if situacao else [])
+    cur.execute(_sql_lig, _par_lig)
     ligs = cur.fetchall()
 
     _sql_poi = (
@@ -537,9 +547,15 @@ def main(argv=None) -> int:
     p.add_argument("--aplicar", action="store_true")
     p.add_argument("--area", default="",
                    help="nome da area; recorta pelo desenho. Sem ela, a cidade toda.")
+    p.add_argument("--tipos", default="",
+                   help="categorias a cruzar, separadas por virgula (ex.: RESIDENCIAL). "
+                        "Sem ela, os tipos_comerciais declarados da base.")
+    p.add_argument("--situacao", default="",
+                   help="filtra sit_ligacao da base (ex.: Ativa).")
     a = p.parse_args(argv)
     _log("▶ vínculo ancorado na ligação · %s" % a.cidade)
-    saida = cruzar(a.base, a.cidade, a.aplicar, a.raio, a.limite, a.area)
+    saida = cruzar(a.base, a.cidade, a.aplicar, a.raio, a.limite, a.area,
+                   a.tipos, a.situacao)
     for k, v in sorted(saida.items()):
         if isinstance(v, int):
             _log("      %-26s %7d" % (k, v))
