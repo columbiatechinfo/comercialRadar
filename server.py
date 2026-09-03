@@ -831,8 +831,19 @@ def mapa_config():
     real aqui.
 
     Cobrança: Dynamic Maps é por CARREGAMENTO de mapa, não por tile."""
-    return {"key": os.environ.get("GOOGLE_TILES_KEY", "").strip(),
-            "mapId": os.environ.get("GOOGLE_MAP_ID", "").strip()}
+    # OS MESMOS NOMES QUE O RESTO DO PROJETO USA.
+    #
+    # Esta rota lia `GOOGLE_TILES_KEY` e `GOOGLE_MAP_ID` — nomes que nao existem
+    # em `.env` nenhum. A captura (`minerar_placeid.py`) sempre usou
+    # `MAPS_JS_KEY` e `MAPS_MAP_ID`. Resultado: a rota devolvia chave vazia, a
+    # pagina carregava a Maps JavaScript API sem chave e o mapa ficava CINZA,
+    # sem erro visivel na tela. Os nomes antigos ficam como queda, para nao
+    # quebrar instalacao que porventura os tenha.
+    return {"key": (os.environ.get("MAPS_JS_KEY")
+                    or os.environ.get("GOOGLE_TILES_KEY") or "").strip(),
+            "mapId": (os.environ.get("MAPS_MAP_ID")
+                      or os.environ.get("GOOGLE_MAP_ID")
+                      or "33696f50cbe8e2d298796ada").strip()}
 
 
 @app.get("/api/ufs")
