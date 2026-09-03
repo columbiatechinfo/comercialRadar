@@ -432,9 +432,26 @@ def garantir_malha(uf: str, log=print) -> int:
         log(f"  malha de {uf} ainda não está no banco — baixando do IBGE")
         base = "https://servicodados.ibge.gov.br/api/v3/malhas/estados"
         url = (f"{base}/{uf}?formato=application/vnd.geo+json"
-               f"&qualidade=intermediaria&intrarregiao=municipio")
-        # `intermediaria` e não `minima`: na mínima as divisas são generalizadas
-        # e Itambé-PE, a 2 km da fronteira, caía na Paraíba.
+               f"&qualidade=maxima&intrarregiao=municipio")
+        # `maxima`, E O MOTIVO É O MESMO QUE JÁ TIROU A `minima` DAQUI.
+        #
+        # Com `minima` as divisas eram tão generalizadas que Itambé-PE, a 2 km
+        # da fronteira, caía na Paraíba. `intermediaria` corrigiu aquele caso e
+        # ficou — mas continua sendo uma divisa desenhada por cima. Medido em
+        # Canoas contra o shapefile oficial da Malha Municipal 2022:
+        #
+        #     shapefile oficial     287 vértices   130,79 km²   (a referência)
+        #     API `maxima`           96 vértices   130,77 km²   erra 0,14 km², 47 m
+        #     API `intermediaria`    25 vértices   131,24 km²   erra 2,35 km², 272 m
+        #     API `minima`            8 vértices   126,71 km²
+        #
+        # 272 m de desvio numa conurbação — Canoas encosta em Porto Alegre,
+        # Esteio e Sapucaia — são quarteirões comerciais inteiros entrando ou
+        # saindo do recorte por engano.
+        #
+        # Este caminho é o SOB DEMANDA, e continua sendo a API porque precisa
+        # responder dentro de uma requisição. Quando a divisa precisa estar
+        # exata, `carregar_malha_ibge.py --uf XX` regrava do shapefile oficial.
         def _json(u, timeout):
             """O IBGE responde GZIP mesmo sem `Accept-Encoding`.
 

@@ -1173,13 +1173,31 @@
       return;
     }
 
-    const malha = await pegar("/api/malha?cod=" + encodeURIComponent(m.cod));
-    if (malha && malha.polygon && malha.polygon.length) {
-      const poly = ligarFichaDaArea(L.polygon(malha.polygon, {
+    // O POLÍGONO VEM DA RESPOSTA QUE ACABOU DE GRAVAR A ÁREA.
+    //
+    // Aqui havia `pegar("/api/malha?cod=" + cod)`. Essa rota declara `uf`,
+    // `lat` e `lng` — `cod` não existe nela, e o FastAPI ignora parâmetro de
+    // query que não declarou. Ela respondia 200 com a UF INTEIRA (um
+    // FeatureCollection), `malha.polygon` vinha `undefined`, o `if` era falso
+    // e NENHUM polígono era desenhado. Escolher a cidade não mostrava a divisa
+    // — só o realce, e só para quem tivesse ligado a camada de divisas no menu
+    // do mapa. A área ia certa para o banco; a tela é que ficava muda.
+    //
+    // O `POST /api/area/municipio` já devolve o anel que gravou, na resolução
+    // oficial. É a mesma geometria que a mineração vai recortar, o que é
+    // exatamente a garantia que se quer ver na tela — e custa zero requisição.
+    const dados = await r.json().catch(() => null);
+    const anel = (dados && dados.polygon) || [];
+    if (anel.length) {
+      const poly = ligarFichaDaArea(L.polygon(anel, {
         pane: "paneArea", className: "area-poly",
         color: INDIGO, weight: 2, fillColor: INDIGO, fillOpacity: 0.1,
       })).addTo(camadaDesenho);
       mapa.fitBounds(poly.getBounds(), { padding: [30, 30] });
+      // O desenho manual guarda o anel aqui, e a ficha do polígono o lê para
+      // dizer quantos vértices tem. O do município passa a guardar também:
+      // para a tela, os dois são a mesma coisa — inclusive na hora de apagar.
+      estado.anel = anel;
     }
     realcarMalha(m.cod);
     pintarMunicipios();
@@ -1868,6 +1886,23 @@
       estado.anel = null;
       camadaDesenho.clearLayers();
       realcarMalha(null);
+
+      // APAGAR APAGA NO BANCO, e não só na tela.
+      //
+      // Este botão limpava as camadas e o estado, e a área continuava gravada
+      // em `area_trabalho`. Quem apagasse e mandasse minerar rodaria a área
+      // que acabara de apagar, sem nada na tela sugerindo isso — é o mesmo
+      // defeito que já custou uma run de Rio Grande minerando Canoas, do outro
+      // lado: lá a tela mudava e o banco não, aqui a tela limpa e o banco não.
+      //
+      // `polygon: []` é como `/api/area` apaga, e apagar não exige empresa —
+      // a própria rota diz isso, para que o root também consiga limpar.
+      await fetch("/api/area", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ polygon: [] }),
+      }).catch(() => {});
+
       abrirPainel(null);
       pintarEstado();
       await carregarTudo();

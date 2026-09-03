@@ -1009,7 +1009,24 @@ def malha(uf: str = "", lat: float | None = None, lng: float | None = None):
         conn = base_comum.conectar_referencia()
         try:
             with conn.cursor() as cur:
-                cur.execute("""SELECT cod_municipio, nome, ST_AsGeoJSON(geom)
+                # SIMPLIFICA PARA DESENHAR — e so para desenhar.
+                #
+                # Esta rota devolve a UF INTEIRA para o front pintar o mapa de
+                # escolha. Com a malha na resolucao oficial isso e 18 MB no RS,
+                # contra 1,4 MB de antes: 499 municipios somam 632.623 vertices.
+                #
+                # Medido em Canoas, tolerancia contra peso do RS:
+                #     0,0002 -> 6,2 MB · linha desloca  20 m
+                #     0,0005 -> 4,3 MB · linha desloca  54 m
+                #     0,001  -> 2,7 MB · linha desloca 111 m   <- esta
+                #     0,002  -> 1,6 MB · linha desloca 204 m
+                #
+                # No zoom em que se ve um estado inteiro, 111 m nao chegam a um
+                # pixel. E o recorte de trabalho NAO passa por aqui: quem define
+                # a area e `/api/area/municipio`, que devolve a geometria exata.
+                cur.execute("""SELECT cod_municipio, nome,
+                                      ST_AsGeoJSON(
+                                        ST_SimplifyPreserveTopology(geom, 0.001))
                                  FROM ibge_malha WHERE uf = %s""", (uf,))
                 fs = [{"type": "Feature",
                        "properties": {"codarea": cod, "nome": nome or cod},
@@ -1021,8 +1038,11 @@ def malha(uf: str = "", lat: float | None = None, lng: float | None = None):
     try:
         fs = _do_banco()
         if not fs:
+            # `maxima`, e nao `intermediaria` — ver `area_utils.garantir_malha`
+            # para os numeros. Este e o caminho de emergencia: a fonte boa e
+            # `carregar_malha_ibge.py`, que le o shapefile oficial.
             url_malha = (f"https://servicodados.ibge.gov.br/api/v3/malhas/estados/{uf}"
-                         f"?formato=application/vnd.geo+json&qualidade=intermediaria"
+                         f"?formato=application/vnd.geo+json&qualidade=maxima"
                          f"&intrarregiao=municipio")
             gj = _http_json(url_malha)
             url_nomes = (f"https://servicodados.ibge.gov.br/api/v1/localidades/"
