@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import pathlib
 import queue
 import threading
@@ -40,8 +41,19 @@ import base_comum as bc
 
 # Os originais ficam fora do banco. Um PDF de 20 MB numa tabela que o painel lê
 # a cada troca de conversa é peso puro — o que a conversa precisa é do texto.
-PASTA_ANEXOS = pathlib.Path.home() / ".comercialradar" / "anexos_chat"
-PASTA_ANEXOS.mkdir(parents=True, exist_ok=True)
+# `ANEXOS_DIR` primeiro, `~` como padrao. Num container com `read_only: true`
+# o HOME e somente leitura, e este `mkdir` — que roda no IMPORT — derrubava a
+# API inteira antes da primeira rota, com `Errno 30` apontando para /home/radar.
+PASTA_ANEXOS = pathlib.Path(
+    os.environ.get("ANEXOS_DIR")
+    or (pathlib.Path.home() / ".comercialradar" / "anexos_chat"))
+try:
+    PASTA_ANEXOS.mkdir(parents=True, exist_ok=True)
+except OSError as erro:
+    # Sem lugar para gravar, o chat perde o anexo — e so ele. Derrubar a API
+    # por causa disso troca uma funcao por todas.
+    print("[chat] anexos indisponiveis em %s (%s)" % (PASTA_ANEXOS, erro),
+          flush=True)
 
 rotas = APIRouter(prefix="/api/chat", tags=["chat"])
 

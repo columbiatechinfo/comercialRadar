@@ -1,0 +1,49 @@
+# libpostal — o parser de endereços, de pé como serviço.
+#
+# POR QUE UM COMPOSE PRÓPRIO, e não uma entrada no do minerador
+#
+# O ciclo de vida é outro. O minerador sobe, roda uma mineração e desce; este
+# fica de pé o tempo todo, como o Photon e o Nominatim, porque carregar 2 GB de
+# modelo a cada chamada custa mais que a própria consulta.
+#
+# A IMAGEM É CARA DE CONSTRUIR (compila C, baixa ~2 GB). Por isso `image:` tem
+# tag fixa: `docker compose up` reaproveita a imagem que já existe e só
+# reconstrói quando alguém pedir `--build`.
+#
+# O CÓDIGO VEM MONTADO, NÃO COPIADO. Assim corrigir o serviço é editar o arquivo
+# e reiniciar o container — não reconstruir 3,6 GB. É leitura apenas: o serviço
+# não escreve no repositório.
+#
+# A PORTA NÃO SAI DA MÁQUINA para a internet. Só loopback e a LAN de casa, como
+# o Photon (7210) e o OSRM (7300). Quem consome é o pipeline, que roda aqui.
+
+services:
+  libpostal:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.libpostal
+    image: libpostal:latest
+    container_name: libpostal
+    restart: unless-stopped
+    command: ["python", "-u", "/app/libpostal_servico.py"]
+    environment:
+      LIBPOSTAL_PORTA: "7250"
+    volumes:
+      - ..:/app:ro
+    ports:
+      - "127.0.0.1:7250:7250"
+      - "192.168.3.10:7250:7250"
+    healthcheck:
+      # O modelo leva alguns segundos para carregar; `start_period` cobre isso
+      # para que o container não seja marcado doente antes de estar pronto.
+      test: ["CMD", "python", "-c",
+             "import urllib.request;urllib.request.urlopen('http://127.0.0.1:7250/saude',timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

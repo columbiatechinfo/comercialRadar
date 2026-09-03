@@ -36,7 +36,9 @@ if RAIZ not in sys.path:
     sys.path.insert(0, RAIZ)
 
 BUSCA = os.path.join(RAIZ, "search_pois_v2.py")
-DESCOBRE = os.path.join(RAIZ, "descobrir_maps.py")
+# `descobrir_maps` saiu do projeto em 02/09/2026 (etapa 5 removida a pedido do
+# dono do produto). O que estes testes guardam continua valendo para a busca:
+# trocar o perfil ANTES de culpar o IP, e ter teto para as duas curas.
 
 
 def _ler(p):
@@ -78,7 +80,7 @@ def test_a_busca_troca_o_perfil_antes_de_culpar_o_ip():
 def test_a_cura_tem_teto_nos_dois_modulos():
     """Se três perfis novos e três IPs não abriram, o que está errado não é
     nenhum dos dois — insistir só gasta proxy."""
-    for caminho, nome in ((BUSCA, "search_pois_v2"), (DESCOBRE, "descobrir_maps")):
+    for caminho, nome in ((BUSCA, "search_pois_v2"),):
         py = _codigo(caminho)
         assert "MAX_CURAS" in py, "%s ficou sem teto de curas" % nome
         assert "= 3" in py, "%s mudou o teto de curas sem avisar" % nome
@@ -87,26 +89,9 @@ def test_a_cura_tem_teto_nos_dois_modulos():
 def test_a_cura_troca_perfil_E_ip():
     """Refazer a sessão com o MESMO proxy falha idêntico quando o problema é o
     IP. Os dois trocam juntos."""
-    for caminho, nome in ((BUSCA, "search_pois_v2"), (DESCOBRE, "descobrir_maps")):
+    for caminho, nome in ((BUSCA, "search_pois_v2"),):
         py = _codigo(caminho)
         assert "mark_cooldown" in py, "%s parou de tirar o IP de circulação" % nome
         assert "rmtree" in py, "%s parou de trocar o perfil" % nome
 
 
-def test_os_dois_modulos_nao_dividem_o_diretorio_de_perfil():
-    """FOI ISSO QUE SALVOU O PASSO 5 na run das 14:44.
-
-    O passo 4 usa `.browser_profiles/wN`; o 5 usa `/tmp/cr_descobre_N`. Quando
-    uma run cancelada deixou navegadores vivos segurando os primeiros, o passo 4
-    entregou 0 de 14 e o 5 entregou 41 de 46 categorias. Se um dia passarem a
-    dividir o mesmo diretório, os dois caem juntos.
-    """
-    busca = _codigo(BUSCA)
-    descobre = _codigo(DESCOBRE)
-    assert "BROWSER_PROFILES_DIR" in busca, \
-        "a busca mudou de diretório de perfil sem avisar"
-    assert "cr_descobre_" in descobre, \
-        "a descoberta mudou de diretório de perfil sem avisar"
-    assert "BROWSER_PROFILES_DIR" not in descobre, (
-        "os dois passos passaram a dividir o diretório de perfil: uma run "
-        "cancelada agora derruba os dois de uma vez")

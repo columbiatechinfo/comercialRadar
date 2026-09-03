@@ -52,6 +52,9 @@ import realtime_ingest
 import base_comum
 import auth as _auth          # o portao e a identidade do usuario da requisicao
 from chat_api import registrar_chat   # rotas do chat com historico
+# O cadastro de bases do cliente: e ele que declara qual coluna e o que,
+# e sem essa declaracao escolher area e trabalhar no escuro.
+from base_api import registrar_bases
 from pydantic import BaseModel, Field
 
 BASE = Path(__file__).resolve().parent
@@ -65,6 +68,24 @@ MALHAS = BASE / "malhas"
 # arquivo: ela é compartilhada entre o servidor e os coletores, que rodam
 # como subprocessos separados.
 PYTHON = str(BASE / ".venv" / "Scripts" / "python.exe")
+
+# ONDE O JOB REALMENTE RODA.
+#
+# `PYTHON` acima aponta para `.venv/Scripts/python.exe` — um caminho de Windows,
+# da máquina de desenvolvimento. Dentro do contêiner da API esse executável não
+# existe, e nem adiantaria: a imagem da API é `python:3.10-slim`, sem navegador
+# do Playwright, sem `scrapling` e sem `proxy`. Um job disparado pela tela
+# morria na etapa 4, que é a captura do Maps.
+#
+# Quem tem tudo isso é a imagem do minerador, 15,5 GB. Então a API não executa:
+# ela DESPACHA. `RADAR_JOB_DOCKER` diz em que imagem, `RADAR_JOB_REPO` diz onde
+# o repositório vive NO HOST — o caminho é do host porque quem monta o volume é
+# o daemon do Docker, não este processo.
+#
+# Sem as duas variáveis nada muda: em desenvolvimento o job continua rodando
+# local, com o `PYTHON` de sempre.
+_JOB_DOCKER = os.environ.get("RADAR_JOB_DOCKER", "").strip()
+_JOB_REPO = os.environ.get("RADAR_JOB_REPO", "").strip()
 
 for d in (UPLOADS, AREAS, MINERACAO, CAPTURAS, MALHAS):
     d.mkdir(exist_ok=True)
@@ -83,6 +104,7 @@ app = FastAPI(title="ComercialRadar", lifespan=_lifespan)
 # O chat vive em modulo proprio: o servidor ja e grande, e assim da para
 # mexer nas rotas de conversa sem tocar no que atende o mapa.
 registrar_chat(app)
+registrar_bases(app)
 
 # ──────────────────────────────────────────────────────────────────────────
 # WebSocket — broadcast de eventos pro frontend
@@ -593,6 +615,38 @@ def _thread_watcher(proc: subprocess.Popen, out_json: Path, poligono, baseline: 
     manager.broadcast({"tipo": "job", "dados": job_status()})
 
 
+def _comando_no_minerador(cmd: list, env: dict) -> tuple:
+    """Reescreve o comando para rodar dentro da imagem do minerador.
+
+    Devolve `(cmd, nome_do_conteiner)`. Sem `RADAR_JOB_DOCKER` devolve o
+    comando intacto e nome vazio — é o caminho de desenvolvimento.
+
+    `docker run` e não `docker exec`: contêiner novo por job, com nome próprio,
+    é o que deixa `/api/jobs/parar` funcionar. Terminar um `docker exec` mata só
+    o cliente, e o processo segue vivo lá dentro — o operador veria "parado" na
+    tela com a mineração ainda queimando IP.
+
+    `--network host` porque o pipeline fala com o pooler, o Photon, o OSRM e o
+    Nominatim por `127.0.0.1` do host, como o compose do minerador já faz.
+    """
+    if not _JOB_DOCKER or not cmd or cmd[0] != PYTHON:
+        return cmd, ""
+    if not _JOB_REPO:
+        raise RuntimeError(
+            "RADAR_JOB_DOCKER está definido mas RADAR_JOB_REPO não. Sem o "
+            "caminho do repositório NO HOST não há o que montar em /app.")
+    nome = "radar-job-%d" % int(time.time() * 1000)
+    passar = []
+    for k in ("CR_TENANT_ID", "PYTHONUTF8", "PYTHONIOENCODING",
+              "PYTHONUNBUFFERED", "A2L_DB_HOST"):
+        if env.get(k):
+            passar += ["-e", "%s=%s" % (k, env[k])]
+    novo = (["docker", "run", "--rm", "--name", nome, "--network", "host",
+             "-v", "%s:/app" % _JOB_REPO, "-w", "/app", "-e", "HOME=/tmp"]
+            + passar + [_JOB_DOCKER, "python"] + list(cmd[1:]))
+    return novo, nome
+
+
 def _iniciar_subprocess(cmd: list, out_json: Path, poligono):
     import os
     # Baseline ANTES do Popen: fotografa o estado do arquivo para o watcher contar
@@ -609,6 +663,8 @@ def _iniciar_subprocess(cmd: list, out_json: Path, poligono):
     u = _auth.USUARIO_DA_REQUISICAO.get()
     if u is not None and u.id_empresa:
         env["CR_TENANT_ID"] = u.id_empresa
+    cmd, nome_cont = _comando_no_minerador(cmd, env)
+    JOB["container"] = nome_cont
     proc = subprocess.Popen(
         cmd, cwd=str(BASE), env=env,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -2664,6 +2720,19 @@ def parar_job():
     proc = JOB.get("proc")
     if proc and proc.poll() is None:
         JOB["status"] = "parado"
+        # O CONTEINER PRIMEIRO, DEPOIS O CLIENTE.
+        #
+        # Quando o job roda no minerador, `proc` e o cliente do `docker run`.
+        # Termina-lo derruba a conexao e nao o processo la dentro: a tela diria
+        # "parado" com a mineracao ainda rodando e queimando IP.
+        nome = JOB.get("container")
+        if nome:
+            try:
+                subprocess.run(["docker", "rm", "-f", nome], timeout=30,
+                               stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL)
+            except Exception:
+                pass
         try:
             proc.terminate()
         except Exception:

@@ -26,6 +26,17 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# O CLIENTE DO DOCKER, E SO ELE.
+#
+# A API nao executa a mineracao — ela despacha para a imagem do minerador, que
+# e a unica com navegador, `scrapling` e `proxy`. Para despachar precisa do
+# cliente; o daemon continua sendo o do host, alcancado por TCP (`DOCKER_HOST`),
+# nunca pelo socket montado aqui dentro.
+#
+# Vem de `docker:cli` por copia: sao ~50 MB de binario estatico, contra ~200 MB
+# do pacote `docker.io` do Debian, que arrasta o daemon junto sem necessidade.
+COPY --from=docker:27-cli /usr/local/bin/docker /usr/local/bin/docker
+
 COPY . .
 
 # NÃO roda como root. `read_only` no compose impede escrita no sistema de

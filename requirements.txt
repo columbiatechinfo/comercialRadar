@@ -145,7 +145,20 @@ parso==0.8.7
 pillow==12.2.0
 platformdirs==4.9.6
 playwright-stealth==2.0.3
-playwright==1.60.0
+playwright==1.62.0
+
+# O NAVEGADOR COM IMPRESSAO DIGITAL TRATADA, para iFood e Airbnb.
+#
+# `StealthySession` abre CHROMIUM — nao Camoufox, apesar do nome que a
+# documentacao do projeto usa: nao existe um arquivo de Camoufox na imagem, e o
+# controlador do scrapling chama `chromium.launch`. Por isso nao ha navegador
+# extra para baixar; o que precisa casar e a versao do playwright com a tag da
+# imagem base, e e por isso que ela subiu junto para 1.62.0.
+#
+# Sem isto, um conteiner NOVO do minerador nasce sem `scrapling`, e as etapas 5
+# e 6 morrem em `ModuleNotFoundError` — funcionava so no conteiner de trabalho,
+# onde o pacote tinha sido instalado a mao.
+scrapling==0.4.15
 polars-runtime-32==1.42.1
 polars==1.42.1
 prompt_toolkit==3.0.52
@@ -236,3 +249,7 @@ yarl==1.23.0
 yaspin==3.4.0
 zipp==3.23.1
 pyflakes>=3.2         # tests/test_nome_indefinido.py — nome usado antes de existir
+
+# O relay do `relay_proxy` roda `python -m proxy`: sem isto ele nao
+# sobe, e o Maps com proxy falha parecendo bloqueio.
+proxy.py==2.4.4

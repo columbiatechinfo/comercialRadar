@@ -69,6 +69,34 @@ def _assumir(con) -> None:
     con.commit()
 
 
+def _trocar_host(dsn: str) -> str:
+    """Troca SO o host da URL, quando `A2L_DB_HOST` existir.
+
+    Serve ao contêiner de rede-ponte, que não alcança o `127.0.0.1` do host.
+    Trocar aqui evita uma segunda URL no `.env` — e portanto uma segunda cópia
+    da senha, que é um lugar a mais para esquecer no dia da rotação.
+
+    Sem a variável devolve a URL como veio.
+    """
+    novo = (os.environ.get("A2L_DB_HOST") or "").strip()
+    if not novo or not dsn:
+        return dsn
+    try:
+        import urllib.parse as _up
+        p = _up.urlsplit(dsn)
+        autoridade = p.netloc
+        # `usuario:senha@host:porta` — só o pedaço depois do @ é reescrito, e a
+        # porta é preservada. A senha não passa por aqui: fica no prefixo.
+        prefixo, arroba, hostporta = autoridade.rpartition("@")
+        porta = ""
+        if ":" in hostporta and not hostporta.endswith("]"):
+            porta = ":" + hostporta.rsplit(":", 1)[1]
+        return _up.urlunsplit(p._replace(
+            netloc="%s%s%s%s" % (prefixo, arroba, novo, porta)))
+    except Exception:                                          # noqa: BLE001
+        return dsn
+
+
 def conectar():
     """Conexão com o banco do PRODUTO.
 
@@ -131,6 +159,7 @@ def conectar():
     # Uma variavel esquecida no `.env` transformaria isso num vazamento entre
     # clientes, calado. Melhor recusar a subir.
     dsn = (os.environ.get("A2L_PIPELINE_DB_URL") or "").strip()
+    dsn = _trocar_host(dsn)
     if dsn:
         con = psycopg2.connect(
             dsn, options=_opcoes(),

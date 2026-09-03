@@ -305,22 +305,30 @@ def test_a_fusao_enxerga_quem_so_tem_coordenada_de_origem():
     assert " where p.maps_lat is not null" not in s
 
 
-def test_a_mineracao_usa_a_INVERSAO_do_ifood():
-    """`extrair_ifood` DESCOBRE pelo feed, e essa metade morreu com o Turnstile
-    interativo — deixá-la na etapa era manter algo que só sabia falhar.
+def test_a_etapa_do_ifood_descobre_e_so_entao_detalha():
+    """ESTE TESTE AFIRMAVA O CONTRÁRIO, e estava errado desde 02/09/2026.
 
-    `enriquecer_por_ifood` vai no sentido contrário e não abre o iFood: parte do
-    POI, acha o link por busca, tira o id da URL e chama `/extra`, que responde
-    200 sem navegador (1.598 respostas, zero falhas, CNPJ em 99,7%).
+    Ele exigia que `extrair_ifood` NÃO estivesse na etapa, porque em 26/08 o
+    Turnstile interativo matou a descoberta pelo feed. O Camoufox passou a
+    resolver o desafio em 4 s e a descoberta voltou: 1.537 lojas de Canoas em
+    10,6 min. O `enriquecer_por_ifood`, que era o caminho inverso, saiu do
+    pipeline — ele alcança só o POI que já existe, e nesta fase nenhuma etapa
+    compara uma base com as outras.
+
+    A ordem é o que este teste guarda: descobrir traz loja que nenhum POI
+    conhecia; detalhar só tem o que a descoberta achou.
     """
     import io
     s = io.open(os.path.join(RAIZ, "minerar_tudo.py"), encoding="utf-8").read()
-    i = s.index('_etapa(6, "iFood')
-    j = s.index("_etapa(7,", i)
+    i = s.index('_etapa(5, "iFood')
+    j = s.index("_etapa(6,", i)
     corpo = s[i:j]
-    assert "enriquecer_por_ifood.py" in corpo, "a etapa 6 não usa a inversão"
-    assert "extrair_ifood.py" not in corpo, \
-        "a descoberta pelo feed voltou — ela está bloqueada por fora"
+    assert "extrair_ifood.py" in corpo, "a etapa do iFood parou de descobrir"
+    assert "detalhar_ifood.py" in corpo, "a etapa do iFood parou de detalhar"
+    assert corpo.index("extrair_ifood.py") < corpo.index("detalhar_ifood.py"), \
+        "o detalhe passou à frente da descoberta — ele não teria o que detalhar"
+    assert "enriquecer_por_ifood.py" not in corpo, \
+        "a inversão voltou: ela compara a base com as outras, e nesta fase não se cruza"
 
 
 def test_mesmo_nome_e_mesma_rua_e_confianca_maxima():
@@ -491,17 +499,3 @@ def test_o_par_ja_cruzado_nao_e_refeito():
         "POIs ficariam marcados como cruzados sem terem sido")
 
 
-def test_a_varredura_por_categoria_usa_varios_IPs():
-    """Cada worker pega proxy e perfil próprios, então mais workers é mais IPs
-    consultando ao mesmo tempo — o Google vê clientes separados, não um cliente
-    insistente. Medido: 46 categorias em ~3,7 min com 3 workers."""
-    import io
-    s = io.open(os.path.join(RAIZ, "descobrir_maps.py"), encoding="utf-8").read()
-    i = s.index("WORKERS_PADRAO = ")
-    n = int(s[i:i + 24].split("=")[1].split()[0])
-    assert n >= 4, f"a varredura voltou a {n} workers — o dono do produto pediu ao menos 4"
-    assert n <= 10, "mais workers que a busca: cada um segura um IP do mesmo pool"
-    # e o proxy é POR WORKER, senão aumentar o número não aumenta os IPs
-    j = s.index("async def _worker(")
-    assert "pool.acquire_blocking()" in s[j:j + 400], \
-        "o worker deixou de pegar proxy próprio — mais workers não seriam mais IPs"

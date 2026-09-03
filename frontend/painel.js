@@ -440,6 +440,7 @@
     $("faixa-desenho").classList.add("hidden");
     $("faixa-desenho").classList.remove("flex");
     pintarEstado();
+    await carregarBases();
     await carregarTudo();
   }
 
@@ -1490,11 +1491,160 @@
   }
 
   function fecharModais() {
-    ["m-stats", "m-perfil", "m-org"].forEach((id) => {
+    ["m-stats", "m-perfil", "m-org", "m-bases"].forEach((id) => {
       const m = $(id);
       m.classList.add("hidden");
       m.classList.remove("flex");
     });
+  }
+
+
+  // ── bases do cliente: a declaração que libera a extração ────────────────
+  //
+  // O fluxo da fase 1 começa aqui. Enquanto ninguém declarar qual coluna é a
+  // latitude, qual é a ligação e quais tipos são comércio, escolher área é
+  // trabalhar no escuro — e errar a coluna de tipo faz o produto inteiro
+  // classificar comércio como residência.
+
+  let basesEstado = { lista: [], atual: null, detalhe: null };
+
+  async function carregarBases() {
+    try {
+      const r = await pegar("/api/base-cliente");
+      basesEstado.lista = r.bases || [];
+      aplicarTravaDeBase(!!r.alguma_pronta);
+    } catch (e) {
+      // Sem a rota, a trava não pode ser aplicada às cegas: travar tudo por um
+      // erro de rede deixaria a tela inútil sem explicar.
+      aplicarTravaDeBase(true);
+    }
+  }
+
+  function aplicarTravaDeBase(liberado) {
+    const motivo = "Declare as colunas da base do cliente antes: sem saber " +
+      "qual coluna é o tipo de cliente, o Radar não sabe o que é comércio.";
+    ["btn-desenhar", "btn-municipio"].forEach((id) => {
+      const b = $(id);
+      if (!b) return;
+      b.disabled = !liberado;
+      b.title = liberado ? "" : motivo;
+      b.classList.toggle("cursor-not-allowed", !liberado);
+      b.classList.toggle("opacity-50", !liberado);
+    });
+    const marca = $("sel-bases-marca");
+    if (marca) marca.textContent = liberado ? "" : "declare";
+    const dica = $("dica-modo");
+    if (dica && !liberado) dica.textContent = "Declare a base do cliente primeiro";
+  }
+
+  async function abrirBases() {
+    abrirModal("m-bases");
+    await carregarBases();
+    const sel = $("bases-lista");
+    sel.innerHTML = basesEstado.lista.map(
+      (b) => `<option value="${b.id}">${b.nome} — ${b.estado}</option>`).join("");
+    if (!basesEstado.lista.length) {
+      $("bases-info").textContent = "nenhuma base cadastrada";
+      $("bases-aviso").textContent =
+        "Rode `base_cliente_mapear.py --tabela schema.tabela --aplicar` para a IA ler a base.";
+      return;
+    }
+    sel.onchange = () => carregarDetalheBase(sel.value);
+    await carregarDetalheBase(basesEstado.lista[0].id);
+  }
+
+  async function carregarDetalheBase(id) {
+    const d = await pegar(`/api/base-cliente/${id}`);
+    basesEstado.atual = id;
+    basesEstado.detalhe = d;
+
+    const b = d.base;
+    $("bases-info").textContent =
+      `${(b.linhas || 0).toLocaleString("pt-BR")} linhas · ${b.tabela_dados}`;
+    $("bases-sub").textContent = b.estado === "pronta"
+      ? "Confirmada. A extração está liberada."
+      : "Confira o que a IA sugeriu. A extração só libera depois de confirmar.";
+
+    // A planilha: títulos reais e linhas reais.
+    const cols = b.colunas_brutas || [];
+    $("bases-cabecalho").innerHTML =
+      "<tr>" + cols.map((c) =>
+        `<th class="border-b border-gray-200 px-2 py-1.5 text-left font-semibold text-gray-600">${c}</th>`
+      ).join("") + "</tr>";
+    $("bases-corpo").innerHTML = (d.amostra || []).map((linha) =>
+      "<tr>" + linha.map((v) =>
+        `<td class="border-b border-gray-100 px-2 py-1 text-gray-500">${v === null ? "" : v}</td>`
+      ).join("") + "</tr>").join("");
+
+    const opcoes = (sel) => "<option value=''>— não tem —</option>" +
+      cols.map((c) => `<option value="${c}" ${c === sel ? "selected" : ""}>${c}</option>`).join("");
+    const linha = (campo, rotulo, valor) =>
+      `<label class="flex flex-col gap-y-1">
+         <span class="text-[12.5px] font-medium text-gray-700">${rotulo}</span>
+         <select data-campo="${campo}" class="rounded-md border-gray-300 py-1.5 text-[13px]">${opcoes(valor)}</select>
+       </label>`;
+
+    const mapa = b.mapa_colunas || {};
+    const ROT = {
+      latitude: "Latitude", longitude: "Longitude",
+      ligacao: "Instalação / número da ligação",
+      endereco: "Endereço (logradouro)", tipo_cliente: "Tipo de cliente",
+      numero: "Número", bairro: "Bairro", cep: "CEP", cidade: "Cidade",
+    };
+    $("bases-obrigatorias").innerHTML =
+      (d.obrigatorias || []).map((c) => linha(c, ROT[c] || c, mapa[c])).join("");
+    $("bases-complementares").innerHTML =
+      (d.complementares || []).map((c) => linha(c, ROT[c] || c, mapa[c])).join("");
+
+    // Os valores do tipo, com contagem: sem ela ninguém sabe o que pesa.
+    const jaMarcados = new Set((b.tipos_comerciais || []).map(String));
+    const sugeridos = new Set(((d.sugestao || {}).tipos || {}).comerciais || []);
+    const duvidosos = new Set(((d.sugestao || {}).tipos || {}).duvidosos || []);
+    $("bases-tipos").innerHTML = (d.valores_tipo || []).map(([v, n]) => {
+      const marcado = jaMarcados.size ? jaMarcados.has(String(v)) : sugeridos.has(v);
+      const nota = duvidosos.has(v)
+        ? `<span class="ml-1 text-[10px] font-semibold uppercase text-amber-600">a decidir</span>` : "";
+      return `<label class="flex items-center gap-x-2 text-[13px]">
+                <input type="checkbox" data-tipo="${String(v).replace(/"/g, "&quot;")}"
+                       ${marcado ? "checked" : ""} class="rounded border-gray-300">
+                <span class="text-gray-700">${v}</span>${nota}
+                <span class="ml-auto text-[11.5px] tabular-nums text-gray-400">${n.toLocaleString("pt-BR")}</span>
+              </label>`;
+    }).join("") || "<p class='text-[12.5px] text-gray-400'>Escolha a coluna de tipo de cliente para ver os valores.</p>";
+
+    $("bases-aviso").textContent = "";
+  }
+
+  async function confirmarBase() {
+    const mapa = {};
+    document.querySelectorAll("#m-bases select[data-campo]").forEach((s) => {
+      if (s.value) mapa[s.dataset.campo] = s.value;
+    });
+    const tipos = [];
+    document.querySelectorAll("#m-bases input[data-tipo]:checked")
+      .forEach((c) => tipos.push(c.dataset.tipo));
+
+    const b = $("bases-confirmar");
+    b.disabled = true;
+    try {
+      const r = await fetch(`/api/base-cliente/${basesEstado.atual}/confirmar`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mapa_colunas: mapa, tipos_comerciais: tipos }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        // O erro do servidor DIZ o que falta. Mostrar o texto dele é melhor que
+        // um "não foi possível" que não ajuda ninguém.
+        $("bases-aviso").textContent = d.detail || "não deu para confirmar";
+        $("bases-aviso").className = "text-[12.5px] text-red-600";
+        return;
+      }
+      $("bases-aviso").textContent = "Confirmada. Extração liberada.";
+      $("bases-aviso").className = "text-[12.5px] text-emerald-600";
+      await carregarBases();
+    } finally {
+      b.disabled = false;
+    }
   }
 
   function iniciais(nome) {
@@ -1658,6 +1808,9 @@
   // ── ligações da interface ───────────────────────────────────────────────
 
   function ligar() {
+    $("btn-bases").addEventListener("click", abrirBases);
+    $("bases-confirmar").addEventListener("click", confirmarBase);
+
     $("btn-desenhar").addEventListener("click", () => {
       estado.modo = "desenho";
       estado.painel = null;

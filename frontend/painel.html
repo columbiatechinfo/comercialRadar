@@ -128,12 +128,13 @@
     <nav class="-mx-2 flex flex-1 flex-col overflow-y-auto">
       <!-- SEM ORIGEM: não há tabela de metadados de carga por base. O botão
            fica visível e desabilitado, com o motivo no `title`. -->
-      <button type="button" disabled data-sem-origem
-              title="Sem origem no banco: não há registro de quando cada base foi carregada nem de quantas linhas tem."
-              class="group flex w-full cursor-not-allowed items-center gap-x-3 rounded-md px-2.5 py-2 text-left text-sm/6 font-medium text-gray-300">
+      <!-- DEIXOU DE SER "SEM USO" em 02/09/2026: `base_api.py` responde. É por
+           aqui que se declara qual coluna da base do cliente é o quê, e essa
+           declaração é o que libera escolher área. -->
+      <button type="button" id="btn-bases" class="nav-item">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="size-5 shrink-0"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><path d="M7 10l5 5 5-5"></path><path d="M12 15V3"></path></svg>
-        <span>Importar bases</span>
-        <span class="ml-auto text-[10px] font-semibold uppercase tracking-wide">sem uso</span>
+        <span>Bases do cliente</span>
+        <span id="sel-bases-marca" class="ml-auto text-[10px] font-semibold uppercase tracking-wide text-amber-600"></span>
       </button>
 
       <div class="mt-5 mb-1 px-2.5 text-[10.5px] font-semibold uppercase tracking-[0.07em] text-gray-400">Área de interesse</div>
@@ -369,6 +370,63 @@
       </div>
     </div>
   </main>
+
+
+  <!-- ─────────────────── modal: bases do cliente ────────────────────────
+       QUASE TELA CHEIA, e em forma de planilha. A pessoa precisa ver os
+       títulos reais e linhas reais para confirmar o que a IA sugeriu — sem
+       isso, confirmar é assinar em branco. -->
+  <div id="m-bases" class="fixed inset-0 z-[900] hidden items-center justify-center bg-gray-900/30 p-6 backdrop-blur-md">
+    <div class="flex h-full w-full flex-col overflow-hidden rounded-xl bg-white shadow-xl ring-1 ring-gray-900/5">
+      <div class="flex items-start justify-between gap-x-4 border-b border-gray-100 px-8 py-5">
+        <div>
+          <h2 class="text-base font-semibold text-gray-900">Base do cliente — qual coluna é o quê</h2>
+          <p id="bases-sub" class="mt-0.5 text-[13px] text-gray-500">A extração só é liberada depois que esta declaração estiver confirmada.</p>
+        </div>
+        <button type="button" data-fechar-modal class="rounded-md p-1 text-gray-400 hover:bg-gray-50 hover:text-gray-600">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" class="size-5"><path d="M18 6L6 18M6 6l12 12"></path></svg>
+        </button>
+      </div>
+
+      <div class="flex min-h-0 flex-1">
+        <!-- esquerda: a planilha real -->
+        <div class="flex min-w-0 flex-1 flex-col border-r border-gray-100">
+          <div class="flex items-center gap-x-3 px-6 py-3 text-[11px] text-gray-500">
+            <select id="bases-lista" class="rounded-md border-gray-300 py-1 text-[13px]"></select>
+            <span id="bases-info" class="tabular-nums"></span>
+          </div>
+          <div class="min-h-0 flex-1 overflow-auto px-6 pb-6">
+            <table class="w-max min-w-full border-separate border-spacing-0 text-[12px]">
+              <thead id="bases-cabecalho" class="sticky top-0 bg-white"></thead>
+              <tbody id="bases-corpo" class="tabular-nums"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- direita: as seis perguntas -->
+        <div class="flex w-[420px] shrink-0 flex-col overflow-y-auto px-6 py-5">
+          <div class="text-[10.5px] font-semibold uppercase tracking-[0.07em] text-gray-400">Obrigatórias</div>
+          <div id="bases-obrigatorias" class="mt-2 flex flex-col gap-y-3"></div>
+
+          <div class="mt-5 text-[10.5px] font-semibold uppercase tracking-[0.07em] text-gray-400">Complementares</div>
+          <p class="mt-0.5 text-[11.5px] text-gray-400">Quando o endereço vem partido em várias colunas.</p>
+          <div id="bases-complementares" class="mt-2 flex flex-col gap-y-3"></div>
+
+          <div class="mt-5 text-[10.5px] font-semibold uppercase tracking-[0.07em] text-gray-400">Quais tipos são atividade comercial</div>
+          <p class="mt-0.5 text-[11.5px] text-gray-400">É o que o Radar vai procurar. Marque ao menos um.</p>
+          <div id="bases-tipos" class="mt-2 flex flex-col gap-y-1.5"></div>
+        </div>
+      </div>
+
+      <div class="flex items-center justify-between gap-x-3 border-t border-gray-100 px-8 py-4">
+        <p id="bases-aviso" class="text-[12.5px] text-gray-500"></p>
+        <div class="flex gap-x-3">
+          <button type="button" data-fechar-modal class="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-900 shadow-sm hover:bg-gray-50">Fechar</button>
+          <button type="button" id="bases-confirmar" class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-gray-300">Confirmar e liberar extração</button>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <!-- ───────────────────────── modal: estatísticas ─────────────────── -->
   <div id="m-stats" class="fixed inset-0 z-[900] hidden items-center justify-center bg-gray-900/30 p-8 backdrop-blur-md">
