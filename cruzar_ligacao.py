@@ -87,8 +87,20 @@ SQL_CANDIDATOS = """
                and st_dwithin(c.geom, p.pt, %s)
            ) l on true
       left join radar_comercial.logradouro_resolvido lr on lr.poi_id = p.id
-     order by l.num_ligacao, metros
 """
+    # SEM `order by` NO SQL — E DE PROPOSITO.
+    #
+    # Havia `order by l.num_ligacao, metros` aqui. Ele ordenava TODOS os pares
+    # POI x ligacao da cidade — milhoes deles — so para o Postgres, e era o que
+    # deixava o cruzamento de Canoas em CPU por mais de 14 minutos: nao era a
+    # busca espacial (essa usa o GiST dos dois lados), era a ordenacao do
+    # resultado inteiro.
+    #
+    # E o pior: o Python nao usava essa ordem. Logo abaixo, `por_ligacao`
+    # agrupa por ligacao e faz `cands.sort(reverse=True)` — reordena cada grupo
+    # por conta propria, por (criterios, -metros), e corta os 5. A ordenacao do
+    # SQL era jogada fora linha a linha. Tirar ela nao muda um resultado, e
+    # devolve o cruzamento a segundos: o trabalho pesado ja estava no Python.
 
 
 def _log(m: str) -> None:
@@ -296,21 +308,81 @@ def cruzar(base_id: int, cidade: str, aplicar: bool, raio: float,
     _log("   base «%s» · %s" % (nome, tabela))
     _log("   tipos comerciais: %s" % ", ".join(tipos))
 
-    # O LIMITE CORTA NA ENTRADA, E NAO NO FIM.
+    # O CASAMENTO ESPACIAL E EM MEMORIA, NAO NO SQL — E O MOTIVO E MEDIDO.
     #
-    # Posto depois do `order by`, ele nao economiza nada: o Postgres precisa
-    # calcular o join inteiro e ordenar tudo para saber quais sao as primeiras
-    # N linhas. O primeiro ensaio ficou mais de dez minutos preso assim. Cortando
-    # os POIs na entrada, um ensaio de 3.000 POIs faz o trabalho de 3.000 POIs.
-    sql = SQL_CANDIDATOS.format(
-        tabela=tabela, via=mapa["endereco"], numero=mapa["numero"],
-        tipo=mapa["tipo_cliente"], cidade=mapa.get("cidade", "cidade"),
-        corte=("limit %d" % int(limite)) if limite else "")
+    # Antes, um unico SELECT pedia ao Postgres TODOS os pares ligacao x POI a
+    # ate 60 m e ainda ordenava o resultado. Para Canoas inteira (104 mil POIs x
+    # 13 mil ligacoes comerciais) isso ficava mais de 14 minutos em CPU, mesmo
+    # com indice GiST dos dois lados: o custo nao e achar o vizinho, e materializar
+    # e mexer no resultado gigante. E o Python logo abaixo REORDENA cada ligacao
+    # por conta propria — a ordem do SQL era jogada fora.
+    #
+    # Entao o banco faz so o que faz barato: duas leituras filtradas e indexadas
+    # (as ligacoes comerciais da cidade, e os POIs da cidade). O casamento por
+    # distancia — que e consulta de vizinhanca, nao de tabela — roda num
+    # `cKDTree` do scipy: construir a arvore com 104 mil pontos e consultar 13
+    # mil ligacoes leva segundos, e escala para a base estadual (2,5 milhoes)
+    # sem o join explodir.
+    #
+    # A projecao e equiretangular local (metros), ancorada na latitude media da
+    # cidade. Sobre o vao de um municipio o erro fica muito abaixo de 1 m — e o
+    # limiar aqui e 60 m —, e nao depende de acertar a zona UTM, o que importa
+    # quando a base cobre um estado que cruza dois fusos.
+    import math as _math
+
+    import numpy as _np
+    from scipy.spatial import cKDTree as _cKDTree
+
+    # `_cvia`/`_cnum` e nao `_via`/`_num`: estes ultimos sao FUNCOES do modulo
+    # (normalizam via e numero do POI logo abaixo), e um local de mesmo nome as
+    # sombreava — `via_p = _via(...)` estourava com "str object is not callable".
+    _cvia, _cnum = mapa["endereco"], mapa["numero"]
+    _tip, _cid = mapa["tipo_cliente"], mapa.get("cidade", "cidade")
+    _lig = mapa.get("ligacao", "num_ligacao")
+    _corte = (" limit %d" % int(limite)) if limite else ""
 
     t0 = time.time()
-    cur.execute(sql, [cidade, cidade, tipos, raio])
-    linhas = cur.fetchall()
-    _log("   %d pares ligação×POI a até %.0f m · %.1f s"
+    # Ligacoes comerciais da cidade — sem coalesce: `upper(col)` de NULL da NULL,
+    # que nao casa, exatamente o que se quer (tipo/cidade nulo nao entra).
+    cur.execute(
+        'select "%s"::text, "%s", "%s", "%s", '
+        'st_y(geom::geometry), st_x(geom::geometry) '
+        'from %s where geom is not null '
+        'and upper("%s") = upper(%%s) and upper("%s") = any(%%s)'
+        % (_lig, _cvia, _cnum, _tip, tabela, _cid, _tip),
+        [cidade, tipos])
+    ligs = cur.fetchall()
+
+    cur.execute(
+        "select p.id, coalesce(p.fonte,''), coalesce(p.nome,''), "
+        "       coalesce(p.endereco,''), coalesce(lr.logradouro,''), "
+        "       coalesce(lr.numero,''), st_y(p.pt_geo::geometry), "
+        "       st_x(p.pt_geo::geometry) "
+        "  from radar_comercial.pois p "
+        "  left join radar_comercial.logradouro_resolvido lr on lr.poi_id = p.id "
+        " where p.fundido_em is null and p.pt_geo is not null "
+        "   and upper(p.cidade) = upper(%s)" + _corte,
+        [cidade])
+    pois = cur.fetchall()
+
+    linhas = []
+    if ligs and pois:
+        lat0 = _math.radians(sum(r[6] for r in pois) / len(pois))
+        kx = 111320.0 * _math.cos(lat0)          # metros por grau de longitude
+        ky = 110540.0                            # metros por grau de latitude
+        pxy = _np.empty((len(pois), 2))
+        pxy[:, 0] = [r[7] * kx for r in pois]    # x = lon
+        pxy[:, 1] = [r[6] * ky for r in pois]    # y = lat
+        arvore = _cKDTree(pxy)
+        for (lg, via_l, num_l, tipo_l, llat, llon) in ligs:
+            lx, ly = llon * kx, llat * ky
+            for i in arvore.query_ball_point((lx, ly), raio):
+                pid, fonte, nome_p, end_p, via_p, num_p, plat, plon = pois[i]
+                metros = _math.hypot(pxy[i, 0] - lx, pxy[i, 1] - ly)
+                linhas.append((lg, via_l, num_l, tipo_l, pid, fonte, nome_p,
+                               end_p, via_p, num_p, metros, llat, llon,
+                               plat, plon))
+    _log("   %d pares ligação×POI a até %.0f m (cKDTree em memória) · %.1f s"
          % (len(linhas), raio, time.time() - t0))
 
     telhado = Telhado()
