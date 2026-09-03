@@ -658,8 +658,15 @@ def main(argv=None) -> int:
         # `--so-carregar` NAO baixa: le o snapshot que ja esta em disco.
         # `--gerar` e o que faz a fonte virar POI — sem ele a etapa "roda" sem
         # acrescentar ponto nenhum, que e o pior tipo de sucesso.
-        _tolerante([PYTHON, "cadastur.py", "--uf", uf, "--municipio", cidade,
-                    "--so-carregar", "--gerar"], "Cadastur")
+        # `--area` SO QUANDO HA DESENHO. O Cadastur le o municipio inteiro —
+        # e a unidade em que o MTur publica — e grava so o que cai dentro do
+        # poligono. No modo municipio, sem desenho, `a.area` nao aponta para
+        # area nenhuma e ele grava tudo, que e o comportamento certo la.
+        cmd_cad = [PYTHON, "cadastur.py", "--uf", uf, "--municipio", cidade,
+                   "--so-carregar", "--gerar"]
+        if area_utils.carregar_area(a.area):
+            cmd_cad += ["--area", a.area]
+        _tolerante(cmd_cad, "Cadastur")
 
     # ── 4 · captura + OCR ─────────────────────────────────────────────────
     #

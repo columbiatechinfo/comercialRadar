@@ -534,6 +534,22 @@ def marcar_saidas(con, eventos: dict, simular: bool = False) -> int:
     if simular:
         return len(saiu)
     with con.cursor() as k:
+        # NAO LIMPA O QUE NAO ESTA SUJO.
+        #
+        # `voltou` carrega todo mundo que PERMANECEU — ou seja, o snapshot
+        # inteiro. Mandar 151 mil tuplas num `values` para zerar uma coluna que
+        # quase ninguem tem preenchida custa minutos e nao muda uma linha. Em
+        # 03/09/2026 esse `update` era a etapa 3 inteira: cinco minutos por
+        # rodada, sempre com o mesmo resultado, com o snapshot parado no disco.
+        #
+        # Uma pergunta barata resolve: se nenhuma linha tem `saiu_em`, nao ha o
+        # que limpar. Quando houver — depois de um snapshot que de fato tirou
+        # alguem —, o `update` volta a rodar normalmente.
+        k.execute("select 1 from resources_root.cadastur_prestador "
+                  "where saiu_em is not null limit 1")
+        ha_sujeira = k.fetchone() is not None
+        if not ha_sujeira:
+            voltou = []
         if saiu:
             execute_values(
                 k, """update resources_root.cadastur_prestador c
@@ -1055,12 +1071,30 @@ LOTE_VINCULO = 100
 
 def gerar(con, uf: str | None, municipio: str | None,
           simular: bool = False, usar_cnefe: bool = True,
-          buscar_endereco: bool = True, usar_maps: bool = False) -> dict:
+          buscar_endereco: bool = True, usar_maps: bool = False,
+          area: str | None = None) -> dict:
     """Transforma em POI o que não cruzou com nada. Devolve o placar.
 
     EXIGE o cruzamento rodado. Sem ele, tudo pareceria inédito e o banco
     ganharia uma cópia de cada hotel que já está lá.
     """
+    # LE POR MUNICIPIO, GRAVA POR AREA.
+    #
+    # O Cadastur e publicado por municipio, e e assim que ele entra: carregar
+    # Canoas inteira uma vez serve todas as areas que vierem depois. Mas o que
+    # o operador desenhou e o recorte do que ele quer VER — e ate 03/09/2026
+    # a etapa gravava os 185 prestadores do municipio inteiro, mesmo com uma
+    # quadra desenhada na tela.
+    #
+    # Sem `area`, nada muda: e o modo municipio, em que o desenho nao existe.
+    poligono = None
+    if area:
+        import area_utils
+        poligono = area_utils.carregar_area(area)
+        if not poligono:
+            print("  ⚠ area %r nao encontrada — gravando o municipio inteiro"
+                  % area, flush=True)
+
     with con.cursor() as k:
         k.execute(JA_CRUZADOS)
         cruzados = dict(k.fetchall())        # id do prestador (texto) → poi_id
@@ -1196,6 +1230,13 @@ def gerar(con, uf: str | None, municipio: str | None,
         if not nome:
             placar["sem_cnpj"] += 1        # sem nome não há POI que se mostre
             marcas.append(("sem_nome", cid))
+            continue
+
+        # FORA DO DESENHO NAO ENTRA — e isto vem DEPOIS da coordenada, nao
+        # antes: o prestador so tem ponto quando alguma das ancoras resolveu, e
+        # e o ponto que decide se ele esta na area.
+        if poligono is not None and not area_utils.ponto_no_poligono(la, lo, poligono):
+            placar["fora_da_area"] = placar.get("fora_da_area", 0) + 1
             continue
 
         if simular:
@@ -1342,6 +1383,9 @@ def main() -> int:
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--uf", default=None, help="sigla, ex.: RS")
     p.add_argument("--municipio", default=None, help="nome, ex.: Canoas")
+    p.add_argument("--area", default=None,
+                   help="nome da area desenhada; grava so o que cai dentro. "
+                        "Sem ela, grava o municipio inteiro (modo municipio).")
     p.add_argument("--datasets", default=None,
                    help="lista por vírgula; padrão = as 14 de pessoa jurídica")
     p.add_argument("--desde", type=int, default=None,
@@ -1456,7 +1500,7 @@ def main() -> int:
             placar = gerar(con, args.uf, args.municipio, args.simular,
                            usar_cnefe=not args.sem_cnefe,
                            buscar_endereco=not args.sem_buscar_endereco,
-                           usar_maps=args.coordenada_pelo_maps)
+                           usar_maps=args.coordenada_pelo_maps, area=args.area)
             for chave in ("pendentes", "gerados", "ja_existe",
                           "sem_cnpj", "sem_coordenada"):
                 if chave in placar:
