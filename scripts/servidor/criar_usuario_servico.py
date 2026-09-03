@@ -37,6 +37,7 @@ from __future__ import annotations
 import argparse
 import getpass
 import json
+import os
 import re
 import sys
 import urllib.error
@@ -55,6 +56,17 @@ def _pedir(url: str, corpo: dict | None = None, token: str | None = None,
            metodo: str = "GET") -> dict:
     dados = json.dumps(corpo).encode("utf-8") if corpo is not None else None
     cab = {"Content-Type": "application/json"}
+    # O `apikey` E OBRIGATORIO NO GATEWAY, INCLUSIVE NO LOGIN.
+    #
+    # Sem ele o envoy recusa antes de o GoTrue ver a senha, e a resposta e um
+    # 401 seco — indistinguivel de senha errada. Foi o que aconteceu com uma
+    # credencial que funcionava no Postman: a colecao manda `apikey` e este
+    # script nao mandava. `SUPABASE_ANON_KEY` e o nome que o projeto usa; o
+    # antigo fica como queda.
+    chave = (os.environ.get("SUPABASE_ANON_KEY")
+             or os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or "").strip()
+    if chave:
+        cab["apikey"] = chave
     if token:
         cab["Authorization"] = "Bearer " + token
     req = urllib.request.Request(url, data=dados, headers=cab, method=metodo)
@@ -85,7 +97,14 @@ def entrar(email: str) -> str:
 
 def achar_empresa(token: str, nome: str) -> dict:
     empresas = _pedir(f"{endpoints.IDENTIDADE}/empresas", token=token)
-    lista = empresas if isinstance(empresas, list) else empresas.get("dados", [])
+    # A API DE IDENTIDADE DEVOLVE `{"empresas": [...]}`, e nao `dados`.
+    #
+    # Lendo a chave errada, a lista vinha vazia e a mensagem dizia
+    # "empresa 'A2L' nao existe. Visiveis: (nenhuma)" — enquanto o mesmo token
+    # no Postman listava A2L e Corsan. `dados` fica como queda para nao quebrar
+    # se outra rota usar esse formato.
+    lista = (empresas if isinstance(empresas, list)
+             else (empresas.get("empresas") or empresas.get("dados") or []))
     alvo = [e for e in lista
             if (e.get("name") or "").strip().lower() == nome.strip().lower()]
     if not alvo:
@@ -126,7 +145,14 @@ def main(argv=None) -> int:
     empresa = achar_empresa(token, a.empresa)
     novo = criar(token, empresa)
 
-    uid = novo.get("id") or (novo.get("dados") or {}).get("id")
+    # A CRIACAO DEVOLVE `{"usuario": {...}, "senha_inicial": ...}`.
+    # A colecao do Postman confirma: ela le `d.usuario.id`. Ler `dados`
+    # deixaria o uid nulo logo depois de o usuario ter sido criado — o
+    # pior desfecho, porque a proxima tentativa esbarraria em e-mail
+    # duplicado sem nunca ter mostrado o que deu certo.
+    uid = (novo.get("id")
+           or (novo.get("usuario") or {}).get("id")
+           or (novo.get("dados") or {}).get("id"))
     print("\n✅ usuário de serviço criado.")
     print(f"\n   Ponha no .env do servidor:\n\n     RADAR_USUARIO_SERVICO={uid}\n")
     print("   É esse uuid que o pipeline declara em `request.jwt.claim.sub`, e")

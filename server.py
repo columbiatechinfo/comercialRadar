@@ -641,8 +641,17 @@ def _comando_no_minerador(cmd: list, env: dict) -> tuple:
               "PYTHONUNBUFFERED", "A2L_DB_HOST"):
         if env.get(k):
             passar += ["-e", "%s=%s" % (k, env[k])]
+    # O `node_modules` DA IMAGEM PRECISA APARECER POR CIMA DO REPO.
+    #
+    # A imagem roda `npm ci` e deixa as dependencias em `/app/node_modules`.
+    # Montar o repo do host em `/app` ESCONDE essa pasta — e o repo do host nao
+    # a tem. A captura entao morria com um erro de Node que nao fala de
+    # dependencia nenhuma: `Cannot read properties of undefined (reading
+    # 'fileExists')`. O volume anonimo devolve o conteudo da imagem naquele
+    # ponto, que e o mesmo arranjo do conteiner de trabalho.
     novo = (["docker", "run", "--rm", "--name", nome, "--network", "host",
-             "-v", "%s:/app" % _JOB_REPO, "-w", "/app", "-e", "HOME=/tmp"]
+             "-v", "%s:/app" % _JOB_REPO, "-v", "/app/node_modules",
+             "-w", "/app", "-e", "HOME=/tmp"]
             + passar + [_JOB_DOCKER, "python"] + list(cmd[1:]))
     return novo, nome
 
