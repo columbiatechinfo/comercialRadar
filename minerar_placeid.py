@@ -912,6 +912,12 @@ def gravar_um(con, poi_id, d):
                         "localizado_em": d.get("dentroDe")},
                        ensure_ascii=False)
     with con.cursor() as k:
+        # O QUE E DO ESTABELECIMENTO FICA NA `pois`.
+        #
+        # Nome, categoria, endereco, telefone e site sao verdade sobre o lugar
+        # — o Maps foi quem contou desta vez, mas o iFood, a Receita ou o OSM
+        # contariam a mesma coisa. Sao os unicos campos gerais que este passo
+        # descobre, e por isso os unicos que ele escreve aqui.
         k.execute("""
             update radar_comercial.pois set
                    nome = coalesce(%s, nome),
@@ -930,6 +936,58 @@ def gravar_um(con, poi_id, d):
              d.get("url"), d.get("nota"), d.get("totalAval"),
              d.get("resumoIA"), d.get("statusHorario"), extra, poi_id))
 
+        # O QUE E SO DO MAPS VAI PARA `maps_data` (migracao 0048).
+        #
+        # Plus Code, URL da ficha, nota, quantidade de avaliacoes, resumo da IA
+        # do Google e status de horario nao existem fora do Maps. Enquanto
+        # moravam na `pois`, cada fonte nova pedia mais uma coluna que nascia
+        # nula para os outros 300 mil POIs.
+        #
+        # A NOTA VIRA NUMERO AQUI. Ela chegava como texto com virgula ('4,5') e
+        # ficava assim no banco — sem ordenar e sem somar, porque '10,0' vem
+        # antes de '2,0' na ordem alfabetica. `maps_data.avaliacao` e `numeric`,
+        # e a conversao acontece neste ponto, uma vez, em vez de em cada
+        # consulta que quiser usar o valor.
+        #
+        # ESCRITA DUPLA, E E TEMPORARIA. As mesmas colunas continuam sendo
+        # gravadas na `pois` acima porque o painel e o `server.py` ainda leem de
+        # la. A remocao delas e a fase seguinte da refatoracao: primeiro os
+        # leitores passam para `maps_data`, so entao as colunas caem. Apagar
+        # agora deixaria a ficha do POI sem nota e sem horario.
+        _nota = d.get("nota")
+        if isinstance(_nota, str):
+            _nota = _nota.replace(",", ".").strip() or None
+        k.execute("""
+            insert into radar_comercial.maps_data
+                   (poi_id, id_empresa, place_id, maps_url, plus_code,
+                    avaliacao, total_avaliacoes, resumo_avaliacoes,
+                    status_horario, detalhado_em, detalhado_por)
+            select %s, p.id_empresa,
+                   -- SO O PLACE_ID DO GOOGLE ENTRA AQUI. A coluna `pois.place_id`
+                   -- carrega duas coisas incompativeis: o id do Google e o
+                   -- `estadual:<cluster_id>` da fonte estadual. Copiar sem olhar
+                   -- poria id de Overture dentro da tabela do Maps — a mesma
+                   -- mentira que `maps_lat` conta hoje. A fila desta etapa filtra
+                   -- `fonte='maps'` e por isso nao chega aqui um estadual; a
+                   -- guarda existe para quem chamar esta gravacao de outro lugar.
+                   case when p.place_id like 'estadual:%%' then null
+                        else p.place_id end,
+                   %s, %s,
+                   nullif(%s::text,'')::numeric, %s, %s, %s, now(), %s
+              from radar_comercial.pois p where p.id = %s
+            on conflict (poi_id) do update set
+                   maps_url          = coalesce(excluded.maps_url, maps_data.maps_url),
+                   plus_code         = coalesce(excluded.plus_code, maps_data.plus_code),
+                   avaliacao         = excluded.avaliacao,
+                   total_avaliacoes  = excluded.total_avaliacoes,
+                   resumo_avaliacoes = excluded.resumo_avaliacoes,
+                   status_horario    = excluded.status_horario,
+                   detalhado_em      = excluded.detalhado_em,
+                   detalhado_por     = excluded.detalhado_por""",
+            (poi_id, d.get("url"), d.get("plusCode"), _nota,
+             d.get("totalAval"), d.get("resumoIA"), d.get("statusHorario"),
+             MAQUINA, poi_id))
+
         k.execute("delete from radar_comercial.comentarios where poi_id=%s",
                   (poi_id,))
         n_com = 0
@@ -940,9 +998,12 @@ def gravar_um(con, poi_id, d):
                          + a["resposta"]).strip()
             if not texto and a.get("nota") is None:
                 continue
+            # `fonte` E OBRIGATORIA DESDE A MIGRACAO 0048. A tabela guarda
+            # avaliacao de qualquer fonte — Maps hoje, iFood e Airbnb depois —
+            # e sem a coluna nao havia como saber de quem era cada linha.
             k.execute("""insert into radar_comercial.comentarios
-                           (poi_id, autor, data, nota, texto)
-                         values (%s,%s,%s,%s,%s)""",
+                           (poi_id, fonte, autor, data, nota, texto)
+                         values (%s,'maps',%s,%s,%s,%s)""",
                       (poi_id, a.get("autor"), a.get("quando"),
                        a.get("nota"), texto or None))
             n_com += 1
@@ -958,7 +1019,8 @@ def gravar_um(con, poi_id, d):
                   (poi_id,))
         for i, u in enumerate(d.get("fotos") or []):
             k.execute("""insert into radar_comercial.images_urls
-                           (poi_id, url, ordem) values (%s,%s,%s)""",
+                           (poi_id, fonte, url, ordem)
+                         values (%s,'maps',%s,%s)""",
                       (poi_id, u, i))
     con.commit()
     return n_com
