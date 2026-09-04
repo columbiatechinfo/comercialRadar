@@ -1671,6 +1671,7 @@
       latitude: "Latitude", longitude: "Longitude",
       ligacao: "Instalação / número da ligação",
       endereco: "Endereço (logradouro)", tipo_cliente: "Tipo de cliente",
+      situacao: "Situação da ligação (ativa, cortada, inativa…)",
       numero: "Número", bairro: "Bairro", cep: "CEP", cidade: "Cidade",
     };
     $("bases-obrigatorias").innerHTML =

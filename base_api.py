@@ -37,7 +37,19 @@ import base_comum as bc
 
 rotas = APIRouter(prefix="/api/base-cliente", tags=["base do cliente"])
 
-OBRIGATORIAS = ("latitude", "longitude", "ligacao", "endereco", "tipo_cliente")
+# A SITUACAO ENTROU EM 03/09/2026, e nao e mais uma coluna: e o que separa
+# "esta instalacao existe" de "esta instalacao esta LIGADA".
+#
+# Sem ela o radar trata igual uma ligacao ativa e uma cortada ha dois anos, e
+# as duas coisas levam a acoes opostas — uma e cliente a conferir, a outra e
+# endereco onde provavelmente ha consumo sem medidor. Na base da Corsan sao
+# 2.147.435 ativas contra 369.274 que nao estao (Inativa, Cortada, Corte
+# Pedido, Provisoria, Desativada): quase 15% do cadastro.
+#
+# Ela e obrigatoria e nao complementar porque a ausencia dela nao degrada o
+# resultado — ela o inverte.
+OBRIGATORIAS = ("latitude", "longitude", "ligacao", "endereco",
+                "tipo_cliente", "situacao")
 COMPLEMENTARES = ("numero", "bairro", "cep", "cidade")
 
 

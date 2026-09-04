@@ -139,94 +139,58 @@ def _num(s) -> str:
 
 
 class Telhado:
-    """Os dois critérios que dependem de imagem — e o que fazer sem ela.
+    """Os dois criterios que dependem de imagem. Casca fina sobre `telhados.py`.
 
-    Um tile é uma foto de satélite com a coordenada no nome do arquivo:
-    `tile_r000_c000_-29.91955_-51.18093.png`. Para dizer se dois pontos caem no
-    mesmo telhado, é preciso ter o tile que cobre os dois.
+    A IMPLEMENTACAO ANTIGA MORAVA AQUI E ESTAVA ERRADA DE DUAS FORMAS.
 
-    Quando não há tile, os dois critérios ficam FALSOS e a contagem de "sem
-    cobertura" sobe. Não é o mesmo que dizer que os telhados são diferentes, e a
-    diferença aparece no relatório: um número de vínculos sem imagem é um pedido
-    de captura, não um defeito do cruzamento.
+    Primeira: `LADO_GRAUS = 0.0009` supunha um tile de ~200 m de lado. O tile que
+    a captura produz e 3840x2160 a zoom 19, que a 0,2588 m/px da 994 x 559 m —
+    cinco vezes maior, e retangular, nao quadrado. Procurar "o tile que cobre
+    este ponto" com essa constante erra o alvo quase sempre.
+
+    Segunda: ela decidia "mesmo telhado" comparando a COR MEDIA num quadradinho
+    ao redor de cada ponto. Duas casas geminadas com a mesma telha davam "mesmo
+    telhado"; um telhado com claraboia dava "telhados diferentes". Cor nao e
+    geometria.
+
+    `telhados.py` faz as duas coisas direito: a caixa do tile sai do zoom e da
+    latitude (ou da caixa MEDIDA que o proprio mapa reportou), e a pertinencia
+    sai de uma extracao de construcao de verdade. A classe fica com o nome e a
+    interface para nao reescrever a chamada, e delega.
     """
 
-    # O tile cobre ~um quarteirão. Sem metadado de zoom no nome, mede-se pelo
-    # que a captura produz hoje: z20, 640 px, ~0,11 m/px no equador.
-    LADO_GRAUS = 0.0009
-
     def __init__(self, pasta: str = "capturas"):
-        self.tiles = []
-        for raiz, _, arquivos in os.walk(pasta):
-            for a in arquivos:
-                m = re.match(r"tile_r\d+_c\d+_(-?\d+\.\d+)_(-?\d+\.\d+)\.png$", a)
-                if m:
-                    self.tiles.append((float(m.group(1)), float(m.group(2)),
-                                       os.path.join(raiz, a)))
+        import telhados as _t
+        self._t = _t
+        self.tiles = _t.achar_tiles_no_disco(pasta)
+        # O menor primeiro: varios tiles cobrem o mesmo ponto, e o de 166 m a
+        # zoom 20 distingue construcoes vizinhas que o de 994 m mistura.
+        self.tiles.sort(key=lambda t: t.meia_lat * t.meia_lng)
         self.sem_cobertura = 0
-        self._cache = {}
 
-    def _tile_de(self, lat, lon):
-        for tlat, tlon, caminho in self.tiles:
-            if (abs(lat - tlat) <= self.LADO_GRAUS
-                    and abs(lon - tlon) <= self.LADO_GRAUS):
-                return (tlat, tlon, caminho)
-        return None
-
-    def _cor(self, tile, lat, lon):
-        """A cor média num quadradinho ao redor do ponto."""
-        chave = (tile[2], round(lat, 6), round(lon, 6))
-        if chave in self._cache:
-            return self._cache[chave]
-        try:
-            from PIL import Image
-        except Exception:                                  # noqa: BLE001
-            return None
-        try:
-            img = Image.open(tile[2]).convert("RGB")
-            larg, alt = img.size
-            # do canto superior esquerdo do tile para o pixel
-            fx = (lon - (tile[1] - self.LADO_GRAUS)) / (2 * self.LADO_GRAUS)
-            fy = ((tile[0] + self.LADO_GRAUS) - lat) / (2 * self.LADO_GRAUS)
-            x, y = int(fx * larg), int(fy * alt)
-            if not (0 <= x < larg and 0 <= y < alt):
-                return None
-            j = 6
-            caixa = img.crop((max(0, x - j), max(0, y - j),
-                              min(larg, x + j), min(alt, y + j)))
-            px = list(caixa.getdata())
-            if not px:
-                return None
-            cor = tuple(sum(c[i] for c in px) // len(px) for i in range(3))
-        except Exception:                                  # noqa: BLE001
-            cor = None
-        self._cache[chave] = cor
-        return cor
+    def _onde(self, lat, lon):
+        for t in self.tiles:
+            if t.cobre(lat, lon):
+                s, p = self._t.segmento_de(t, lat, lon)
+                if s is not None and p and p["telhado"]:
+                    return t, s, p
+        return None, None, None
 
     def julgar(self, lat1, lon1, lat2, lon2):
-        """Devolve (mesmo_telhado, telhado_comercial)."""
+        """(mesmo_telhado, telhado_comercial)."""
         if not self.tiles or lat1 is None or lat2 is None:
             self.sem_cobertura += 1
             return False, False
-        t = self._tile_de(lat1, lon1)
-        if not t or t != self._tile_de(lat2, lon2):
+        t, s1, p1 = self._onde(lat1, lon1)
+        if t is None:
             self.sem_cobertura += 1
             return False, False
-        c1, c2 = self._cor(t, lat1, lon1), self._cor(t, lat2, lon2)
-        if not c1 or not c2:
+        s2, _ = self._t.segmento_de(t, lat2, lon2)
+        if s2 is None:
             self.sem_cobertura += 1
             return False, False
-        # MESMO TELHADO: as duas amostras têm a mesma cor, dentro de uma folga.
-        # Telhado é superfície contínua; asfalto ao lado de telha muda muito.
-        mesmo = all(abs(a - b) <= 28 for a, b in zip(c1, c2))
-        # COMERCIAL: cobertura clara e sem cor — fibrocimento e metálica, que é
-        # o que cobre galpão e loja de rua. Telha cerâmica é vermelha e puxa
-        # residencial. Este limiar ainda NÃO foi calibrado contra fachada
-        # conferida; é hipótese explícita, não medição.
-        r, g, b = c1
-        claro = (r + g + b) / 3 >= 120
-        pouca_cor = max(r, g, b) - min(r, g, b) <= 26
-        return mesmo, bool(mesmo and claro and pouca_cor)
+        mesmo = (s1 == s2)
+        return mesmo, bool(mesmo and p1["comercial"])
 
 
 def cruzar(base_id: int, cidade: str, aplicar: bool, raio: float,
@@ -368,9 +332,21 @@ def cruzar(base_id: int, cidade: str, aplicar: bool, raio: float,
     t0 = time.time()
     # Ligacoes comerciais da cidade. Sem coalesce no tipo: lower(NULL) da NULL,
     # que nao casa — tipo/cidade nulo nao entra, que e o certo.
-    # `sit_ligacao` e coluna direta da corsan (nao vem do mapa): so entra quando
-    # `--situacao` e passado, e so faz sentido em base que a tenha.
-    _sit = " and upper(coalesce(sit_ligacao, '')) = upper(%s)" if situacao else ""
+    # A COLUNA DE SITUACAO VEM DO MAPA DA BASE, e ate 03/09/2026 vinha chumbada
+    # como `sit_ligacao` — o nome que a Corsan usa. O proximo cliente chama de
+    # `status`, `sit_lig` ou `situacao_hidrometro`, e a consulta morreria com
+    # "column does not exist" no meio do cruzamento, longe da causa.
+    #
+    # `mapa_colunas` existe exatamente para isso: e a declaracao de qual coluna
+    # e o que, feita uma vez por base. Chumbar um nome ali dentro desmonta a
+    # unica coisa que torna o sistema multi-cliente.
+    _csit = mapa.get("situacao") or ""
+    if situacao and not _csit:
+        _log("   ⚠️  --situacao pedido, mas a base nao declarou a coluna de")
+        _log("      situacao no mapa. O filtro fica de fora desta passada.")
+    _sit = ""
+    if situacao and _csit:
+        _sit = ' and upper(coalesce("' + _csit + '", \'\')) = upper(%s)'
     _sql_lig = (
         'select "' + _lig + '"::text, "' + _cvia + '", "' + _cnum + '", "' + _tip + '", '
         'st_y(geom::geometry), st_x(geom::geometry) '
@@ -378,7 +354,7 @@ def cruzar(base_id: int, cidade: str, aplicar: bool, raio: float,
         'and ' + _sa('"' + _cid + '"') + ' = ' + _sa('%s') + ' '
         'and upper("' + _tip + '") = any(%s)' + _sit
     )
-    _par_lig = [cidade, tipos] + ([situacao] if situacao else [])
+    _par_lig = [cidade, tipos] + ([situacao] if _sit else [])
     cur.execute(_sql_lig, _par_lig)
     ligs = cur.fetchall()
 
@@ -428,7 +404,7 @@ def cruzar(base_id: int, cidade: str, aplicar: bool, raio: float,
          % (len(linhas), raio, time.time() - t0))
 
     telhado = Telhado()
-    _log("   %d tile(s) de satélite no disco" % len(telhado.tiles))
+    _log("   %d tile(s) georreferenciado(s) no disco" % len(telhado.tiles))
 
     # AS FONTES QUE EXISTEM AGORA — o denominador da adesão. Ele vai gravado
     # junto para o número não mentir quando uma fonte nova entrar depois.
