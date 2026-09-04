@@ -108,8 +108,29 @@ COPY . .
 #
 # `crops` e `capturas` são volume no compose: precisam sobreviver ao restart, e
 # é o watcher da API que os lê para desenhar o mapa ao vivo.
-RUN mkdir -p /app/crops /app/capturas /app/logs \
- && chown -R pwuser:pwuser /app/crops /app/capturas /app/logs
+#
+# O QUE O PIPELINE ESCREVE TEM DE SER DELE, e essa lista custou uma rodada
+# inteira para ficar completa. Ate 31/08 quem disparava a mineracao era a API,
+# com `docker run --user 0` — ROOT —, e por isso nada disto aparecia. O worker
+# da fila roda como `pwuser`, e a etapa 4 morria em
+#
+#     PermissionError: /app/estado/cookie_maps.json.novo
+#
+# depois de ja ter colhido os placeIds — trabalho feito e jogado fora.
+#
+# TRES ALVOS ALEM DOS TRES DE CIMA:
+#   · `/app/estado` — o cookie quente do Maps, reescrito a cada rodada;
+#   · `/app` em si, NAO recursivo — `.proxy_cache.json` mora na raiz, e trocar
+#     um arquivo exige escrita no DIRETORIO, e nao no arquivo;
+#   · o proprio `.proxy_cache.json`, que ja veio da copia como root: sem dono
+#     novo, `open(..., "w")` sobre ele e negado mesmo com a pasta liberada.
+#
+# O CODIGO SEGUE SENDO DE ROOT, e isso e de proposito: `/app` nao e recursivo
+# aqui. O processo escreve estado, e nao pode reescrever o proprio programa.
+RUN mkdir -p /app/crops /app/capturas /app/logs /app/estado \
+ && chown -R pwuser:pwuser /app/crops /app/capturas /app/logs /app/estado \
+ && touch /app/.proxy_cache.json \
+ && chown pwuser:pwuser /app /app/.proxy_cache.json
 USER pwuser
 
 # NENHUM `EXPOSE`. Este contêiner não serve ninguém: ele consome a fila de jobs
