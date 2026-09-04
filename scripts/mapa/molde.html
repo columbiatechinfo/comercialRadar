@@ -1,0 +1,385 @@
+<title>Mapa do Banco do Radar</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<style>
+:root{
+  --tinta:#16202b; --tinta-2:#3d4c5a; --tinta-3:#6b7a88;
+  --papel:#e9eef2; --carta:#ffffff; --carta-2:#f4f7f9;
+  --traco:#ccd8e0; --traco-forte:#a8b8c4;
+  --agua:#0d6e8c; --agua-clara:#e0f0f5;
+  --alerta:#b4531f; --ok:#3f7a4f;
+  --f-eixo:#0d6e8c; --f-ponto:#b4531f; --f-fonte:#42619b;
+  --f-transversal:#4f7a46; --f-endereco:#8a6a2f; --f-operacao:#5d6871;
+  --f-dormente:#9aa6b0;
+  --sombra:0 1px 2px rgba(22,32,43,.06), 0 4px 14px rgba(22,32,43,.05);
+  --raio:3px;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --tinta:#dfe7ed; --tinta-2:#a4b4c1; --tinta-3:#7d8d9a;
+    --papel:#0e161d; --carta:#161f28; --carta-2:#1b2630;
+    --traco:#2b3945; --traco-forte:#3d4f5d;
+    --agua:#4bb3d4; --agua-clara:#12303b;
+    --alerta:#e08a5c; --ok:#6fae7f;
+    --f-eixo:#4bb3d4; --f-ponto:#e08a5c; --f-fonte:#7f9ed6;
+    --f-transversal:#84b578; --f-endereco:#c7a463; --f-operacao:#93a1ab;
+    --f-dormente:#5d6b76;
+    --sombra:0 1px 2px rgba(0,0,0,.4), 0 4px 14px rgba(0,0,0,.3);
+  }
+}
+:root[data-theme="dark"]{
+  --tinta:#dfe7ed; --tinta-2:#a4b4c1; --tinta-3:#7d8d9a;
+  --papel:#0e161d; --carta:#161f28; --carta-2:#1b2630;
+  --traco:#2b3945; --traco-forte:#3d4f5d;
+  --agua:#4bb3d4; --agua-clara:#12303b;
+  --alerta:#e08a5c; --ok:#6fae7f;
+  --f-eixo:#4bb3d4; --f-ponto:#e08a5c; --f-fonte:#7f9ed6;
+  --f-transversal:#84b578; --f-endereco:#c7a463; --f-operacao:#93a1ab;
+  --f-dormente:#5d6b76;
+  --sombra:0 1px 2px rgba(0,0,0,.4), 0 4px 14px rgba(0,0,0,.3);
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--papel); color:var(--tinta);
+  font:400 15px/1.55 "IBM Plex Sans",system-ui,-apple-system,sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+.env{max-width:1180px; margin:0 auto; padding:0 22px}
+
+/* ── cabecalho ─────────────────────────────────────────────────────────── */
+.topo{
+  border-bottom:1px solid var(--traco); background:var(--carta);
+  padding:38px 0 0;
+}
+.selo{
+  font:500 11px/1 "IBM Plex Mono",ui-monospace,monospace;
+  letter-spacing:.14em; text-transform:uppercase; color:var(--agua);
+  display:flex; align-items:center; gap:9px; margin-bottom:14px;
+}
+.selo::after{content:""; flex:1; height:1px; background:var(--traco)}
+h1{
+  font:700 clamp(30px,4.6vw,46px)/1.06 Archivo,system-ui,sans-serif;
+  letter-spacing:-.022em; margin:0 0 12px; text-wrap:balance;
+}
+.sub{
+  margin:0 0 26px; max-width:60ch; color:var(--tinta-2); font-size:16px;
+}
+.placar{
+  display:flex; flex-wrap:wrap; gap:0; border-top:1px solid var(--traco);
+  margin-top:4px;
+}
+.placar div{
+  padding:16px 26px 18px 0; margin-right:26px;
+  border-right:1px solid var(--traco);
+}
+.placar div:last-child{border-right:0}
+.placar b{
+  display:block; font:600 25px/1 Archivo,sans-serif;
+  font-variant-numeric:tabular-nums; letter-spacing:-.02em;
+}
+.placar span{
+  font:400 11px/1.3 "IBM Plex Mono",monospace; letter-spacing:.07em;
+  text-transform:uppercase; color:var(--tinta-3);
+}
+
+/* ── o desenho ─────────────────────────────────────────────────────────── */
+.desenho{padding:44px 0 8px}
+.desenho__cx{
+  background:var(--carta); border:1px solid var(--traco);
+  border-radius:var(--raio); padding:26px 20px 20px; overflow-x:auto;
+}
+.desenho svg{display:block; min-width:660px; width:100%; height:auto}
+.legenda{
+  display:flex; flex-wrap:wrap; gap:6px 20px; margin:18px 0 0;
+  padding-top:16px; border-top:1px solid var(--traco);
+  font-size:12.5px; color:var(--tinta-2);
+}
+.legenda i{
+  display:inline-block; width:9px; height:9px; border-radius:2px;
+  margin-right:7px; vertical-align:baseline;
+}
+
+/* ── familias ──────────────────────────────────────────────────────────── */
+.familia{padding:44px 0 0}
+.familia__cab{
+  border-left:3px solid var(--cor); padding-left:15px; margin-bottom:22px;
+  max-width:70ch;
+}
+.familia h2{
+  font:600 21px/1.2 Archivo,sans-serif; margin:0 0 6px;
+  letter-spacing:-.015em;
+}
+.familia__cab p{margin:0; color:var(--tinta-2); font-size:14.5px}
+.familia[data-fam="eixo"]{--cor:var(--f-eixo)}
+.familia[data-fam="ponto"]{--cor:var(--f-ponto)}
+.familia[data-fam="fonte"]{--cor:var(--f-fonte)}
+.familia[data-fam="transversal"]{--cor:var(--f-transversal)}
+.familia[data-fam="endereco"]{--cor:var(--f-endereco)}
+.familia[data-fam="operacao"]{--cor:var(--f-operacao)}
+.familia[data-fam="dormente"]{--cor:var(--f-dormente)}
+
+.grade{
+  display:grid; gap:14px;
+  grid-template-columns:repeat(auto-fill,minmax(288px,1fr));
+}
+.tabela{
+  background:var(--carta); border:1px solid var(--traco);
+  border-top:2px solid var(--cor); border-radius:var(--raio);
+  padding:15px 16px 0; box-shadow:var(--sombra);
+  display:flex; flex-direction:column;
+}
+.tabela[data-fam="eixo"]{--cor:var(--f-eixo)}
+.tabela[data-fam="ponto"]{--cor:var(--f-ponto)}
+.tabela[data-fam="fonte"]{--cor:var(--f-fonte)}
+.tabela[data-fam="transversal"]{--cor:var(--f-transversal)}
+.tabela[data-fam="endereco"]{--cor:var(--f-endereco)}
+.tabela[data-fam="operacao"]{--cor:var(--f-operacao)}
+.tabela[data-fam="dormente"]{--cor:var(--f-dormente)}
+.tabela--vazia{opacity:.72}
+.tabela header{
+  display:flex; align-items:baseline; justify-content:space-between;
+  gap:10px; margin-bottom:8px;
+}
+.tabela h3{
+  font:500 15px/1.2 "IBM Plex Mono",monospace; margin:0;
+  letter-spacing:-.01em; word-break:break-all;
+}
+.qtd{
+  font:500 11px/1 "IBM Plex Mono",monospace; white-space:nowrap;
+  color:var(--tinta); background:var(--agua-clara);
+  padding:4px 7px; border-radius:2px; font-variant-numeric:tabular-nums;
+}
+.qtd--zero{background:transparent; color:var(--tinta-3);
+  border:1px dashed var(--traco-forte)}
+.oq{margin:0 0 12px; font-size:13.5px; color:var(--tinta-2); line-height:1.5}
+.oq code{
+  font:400 12.5px "IBM Plex Mono",monospace; background:var(--carta-2);
+  padding:1px 4px; border-radius:2px;
+}
+.liga{
+  margin:0 0 11px; font-size:12px; color:var(--tinta-3);
+  padding:6px 8px; background:var(--carta-2); border-radius:2px;
+}
+.liga b{color:var(--cor); font-weight:500;
+  font-family:"IBM Plex Mono",monospace; font-size:11.5px}
+.cols{list-style:none; margin:0 0 8px; padding:0; border-top:1px solid var(--traco)}
+.col{
+  display:flex; align-items:baseline; gap:8px; padding:4px 0;
+  border-bottom:1px solid var(--carta-2); font-size:12.5px;
+}
+.col code{
+  font:400 12px "IBM Plex Mono",monospace; color:var(--tinta);
+  flex:0 1 auto; word-break:break-all;
+}
+.tipo{
+  margin-left:auto; font:400 10.5px "IBM Plex Mono",monospace;
+  color:var(--tinta-3); white-space:nowrap;
+}
+.col--mudou code{color:var(--alerta)}
+.nota{
+  font:500 10px "IBM Plex Mono",monospace; color:var(--alerta);
+  white-space:nowrap; order:9; width:100%;
+}
+.resto{margin:0 0 10px; font-size:12px; color:var(--tinta-3); font-style:italic}
+.tabela footer{
+  margin-top:auto; display:flex; justify-content:space-between;
+  border-top:1px solid var(--traco); padding:8px 0 10px;
+  font:400 10.5px "IBM Plex Mono",monospace; color:var(--tinta-3);
+  letter-spacing:.04em;
+}
+
+/* ── nota de rodape ────────────────────────────────────────────────────── */
+.rodape{
+  margin:56px 0 0; border-top:1px solid var(--traco);
+  background:var(--carta); padding:30px 0 44px;
+}
+.rodape h2{font:600 18px/1.2 Archivo,sans-serif; margin:0 0 12px}
+.rodape p{margin:0 0 10px; color:var(--tinta-2); font-size:14px; max-width:74ch}
+.rodape code{font:400 12.5px "IBM Plex Mono",monospace; color:var(--alerta)}
+.aviso{
+  border-left:3px solid var(--alerta); padding:2px 0 2px 14px;
+  margin:20px 0 0;
+}
+</style>
+
+<header class="topo">
+  <div class="env">
+    <div class="selo">Radar Comercial · schema radar_comercial · 03/09/2026</div>
+    <h1>O mapa do banco</h1>
+    <p class="sub">
+      Todas as tabelas que o sistema usa hoje, o que cada uma guarda e como se
+      ligam. Desenhado depois da refatoração que separou o que é do
+      estabelecimento do que é de cada fonte.
+    </p>
+    <div class="placar">
+      <div><b>{{n_tabelas}}</b><span>tabelas</span></div>
+      <div><b>{{n_colunas}}</b><span>colunas</span></div>
+      <div><b>{{n_fks}}</b><span>chaves estrangeiras</span></div>
+      <div><b>{{ligacoes}}</b><span>ligações da Corsan</span></div>
+      <div><b>{{pois}}</b><span>POIs</span></div>
+      <div><b>{{vinculos}}</b><span>vínculos</span></div>
+    </div>
+  </div>
+</header>
+
+<main class="env">
+
+<section class="desenho">
+  <div class="desenho__cx">
+  <svg viewBox="0 0 980 470" role="img"
+       aria-label="Diagrama: a ligação da Corsan é o eixo; os POIs se penduram nela; cada fonte tem a sua tabela.">
+    <defs>
+      <marker id="seta" viewBox="0 0 10 10" refX="9" refY="5"
+              markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+      </marker>
+      <style>
+        .cx{fill:var(--carta); stroke:var(--traco-forte); stroke-width:1}
+        .cx-eixo{stroke:var(--f-eixo); stroke-width:1.5}
+        .cx-ponto{stroke:var(--f-ponto); stroke-width:1.5}
+        .cx-fonte{stroke:var(--f-fonte)}
+        .cx-tv{stroke:var(--f-transversal)}
+        .rot{font:500 12.5px "IBM Plex Mono",monospace; fill:var(--tinta)}
+        .rot-p{font:600 15px "IBM Plex Mono",monospace; fill:var(--tinta)}
+        .num{font:400 10.5px "IBM Plex Mono",monospace; fill:var(--tinta-3)}
+        .ln{stroke:var(--traco-forte); stroke-width:1.2; fill:none;
+            color:var(--traco-forte)}
+        .ln-forte{stroke:var(--f-eixo); stroke-width:2; fill:none;
+            color:var(--f-eixo)}
+        .cap{font:500 10px "IBM Plex Mono",monospace; fill:var(--tinta-3);
+             letter-spacing:.08em}
+      </style>
+    </defs>
+
+    <!-- coluna 1: as fontes -->
+    <text x="18" y="26" class="cap">FONTES DE DESCOBERTA</text>
+    <g>
+      <rect class="cx cx-fonte" x="18" y="40"  width="164" height="34" rx="2"/>
+      <text x="30" y="56" class="rot">maps_data</text><text x="30" y="68" class="num">377</text>
+      <rect class="cx cx-fonte" x="18" y="82"  width="164" height="34" rx="2"/>
+      <text x="30" y="98" class="rot">overture_data</text><text x="30" y="110" class="num">14.596</text>
+      <rect class="cx cx-fonte" x="18" y="124" width="164" height="34" rx="2"/>
+      <text x="30" y="140" class="rot">foursquare_data</text><text x="30" y="152" class="num">11.735</text>
+      <rect class="cx cx-fonte" x="18" y="166" width="164" height="34" rx="2"/>
+      <text x="30" y="182" class="rot">osm_data</text><text x="30" y="194" class="num">1.196</text>
+      <rect class="cx cx-fonte" x="18" y="208" width="164" height="34" rx="2"/>
+      <text x="30" y="224" class="rot">ifood_merchant</text><text x="30" y="236" class="num">1.960</text>
+      <rect class="cx cx-fonte" x="18" y="250" width="164" height="34" rx="2"/>
+      <text x="30" y="266" class="rot">cadastur_data</text><text x="30" y="278" class="num">178</text>
+      <rect class="cx cx-fonte" x="18" y="292" width="164" height="34" rx="2"/>
+      <text x="30" y="308" class="rot">airbnb_anuncio</text><text x="30" y="320" class="num">39</text>
+      <rect class="cx cx-fonte" x="18" y="334" width="164" height="34" rx="2"/>
+      <text x="30" y="350" class="rot">receita_data</text><text x="30" y="362" class="num">vazia</text>
+    </g>
+
+    <!-- ligacoes fonte -> pois -->
+    <g class="ln">
+      <path d="M182,57 C240,57 250,180 300,196" marker-end="url(#seta)"/>
+      <path d="M182,99 C240,99 252,182 300,198" marker-end="url(#seta)"/>
+      <path d="M182,141 C240,141 254,186 300,200" marker-end="url(#seta)"/>
+      <path d="M182,183 C240,183 258,192 300,202" marker-end="url(#seta)"/>
+      <path d="M182,225 C240,225 258,214 300,206" marker-end="url(#seta)"/>
+      <path d="M182,267 C240,267 254,222 300,208" marker-end="url(#seta)"/>
+      <path d="M182,309 C240,309 252,228 300,210" marker-end="url(#seta)"/>
+      <path d="M182,351 C240,351 250,232 300,212" marker-end="url(#seta)"/>
+    </g>
+    <text x="196" y="392" class="cap">poi_id  →</text>
+
+    <!-- coluna 2: o POI -->
+    <rect class="cx cx-ponto" x="300" y="150" width="188" height="110" rx="3"/>
+    <text x="316" y="176" class="rot-p">pois</text>
+    <text x="316" y="196" class="num">301.297 linhas · 640 MB</text>
+    <text x="316" y="216" class="num">nome · endereço · coordenada</text>
+    <text x="316" y="232" class="num">telefone · e-mail · CNPJ</text>
+    <text x="316" y="248" class="num">o que é verdade sobre o LUGAR</text>
+
+    <!-- transversais abaixo -->
+    <text x="300" y="300" class="cap">O QUE SE PENDURA NO POI</text>
+    <g>
+      <rect class="cx cx-tv" x="300" y="312" width="90" height="30" rx="2"/>
+      <text x="309" y="331" class="rot" font-size="10.5">comentarios</text>
+      <rect class="cx cx-tv" x="398" y="312" width="90" height="30" rx="2"/>
+      <text x="407" y="331" class="rot" font-size="10.5">images_urls</text>
+      <rect class="cx cx-tv" x="300" y="350" width="90" height="30" rx="2"/>
+      <text x="309" y="369" class="rot" font-size="10.5">horarios</text>
+      <rect class="cx cx-tv" x="398" y="350" width="90" height="30" rx="2"/>
+      <text x="407" y="369" class="rot" font-size="10.5">streetview</text>
+      <rect class="cx cx-tv" x="300" y="388" width="188" height="30" rx="2"/>
+      <text x="309" y="407" class="rot" font-size="10.5">analise_ia — o veredito da IA de visão</text>
+    </g>
+    <g class="ln"><path d="M394,260 L394,312" marker-end="url(#seta)"/></g>
+    <text x="300" y="440" class="cap">CADA UMA COM A COLUNA `fonte`</text>
+
+    <!-- coluna 3: o vinculo e o eixo -->
+    <rect class="cx cx-eixo" x="592" y="150" width="180" height="110" rx="3"/>
+    <text x="608" y="176" class="rot-p">ligacao_poi</text>
+    <text x="608" y="196" class="num">63.404 vínculos</text>
+    <text x="608" y="216" class="num">5 critérios, cada um visível</text>
+    <text x="608" y="232" class="num">confiança = ok / 5</text>
+    <text x="608" y="248" class="num">origem: critério | telhado</text>
+
+    <g class="ln-forte">
+      <path d="M488,205 L592,205" marker-end="url(#seta)"/>
+    </g>
+    <text x="500" y="196" class="cap">poi_id</text>
+
+    <rect class="cx cx-eixo" x="810" y="150" width="152" height="110" rx="3"/>
+    <text x="826" y="176" class="rot-p">cadastro</text>
+    <text x="826" y="192" class="rot-p">_corsan</text>
+    <text x="826" y="214" class="num">2.516.709</text>
+    <text x="826" y="230" class="num">as ligações do</text>
+    <text x="826" y="244" class="num">cliente — o EIXO</text>
+    <g class="ln-forte"><path d="M772,205 L810,205" marker-end="url(#seta)"/></g>
+
+    <!-- tile -->
+    <rect class="cx" x="592" y="312" width="180" height="52" rx="2"/>
+    <text x="608" y="332" class="rot" font-size="11.5">tile_captura</text>
+    <text x="608" y="350" class="num">o telhado, último critério</text>
+    <g class="ln"><path d="M682,312 L682,260" marker-end="url(#seta)"/></g>
+
+    <text x="592" y="400" class="cap">O EIXO É A LIGAÇÃO, NÃO O POI.</text>
+    <text x="592" y="418" class="num">O POI é uma hipótese; a ligação o cliente já cobra.</text>
+    <text x="592" y="434" class="num">Por isso o vínculo se lê "esta instalação tem</text>
+    <text x="592" y="448" class="num">estes candidatos, com esta confiança".</text>
+  </svg>
+  </div>
+  <div class="legenda">
+    <span><i style="background:var(--f-eixo)"></i>eixo — a base do cliente</span>
+    <span><i style="background:var(--f-ponto)"></i>o POI</span>
+    <span><i style="background:var(--f-fonte)"></i>as fontes</span>
+    <span><i style="background:var(--f-transversal)"></i>o que se pendura</span>
+    <span><i style="background:var(--f-endereco)"></i>endereço trabalhado</span>
+    <span><i style="background:var(--f-operacao)"></i>operação</span>
+    <span><i style="background:var(--f-dormente)"></i>dormentes</span>
+  </div>
+</section>
+
+{{secoes}}
+</main>
+
+<footer class="rodape">
+  <div class="env">
+    <h2>Duas coisas que este mapa não esconde</h2>
+    <div class="aviso">
+      <p><b>A <code>pois</code> ainda tem colunas que já mudaram de casa.</b>
+      As marcadas com <code>→ maps_data</code> e <code>→ cadastur_data</code>
+      são gravadas nos dois lugares hoje. A escrita dupla é de propósito e é
+      temporária: o painel e a API ainda leem da <code>pois</code>, e apagar
+      antes de migrar os leitores deixaria a ficha do POI sem nota e sem
+      horário. Elas caem na fase seguinte.</p>
+    </div>
+    <div class="aviso">
+      <p><b>195.983 POIs não sabem de qual fonte vieram.</b>
+      Entraram como <code>fonte='estadual'</code>, que é a soma de Overture,
+      Foursquare e OSM. O <code>origem_estadual.py</code> é quem responde isso
+      lendo o parquet — rodou em Canoas e parou. Enquanto não rodar no estado
+      inteiro, eles ficam fora das três tabelas de fonte.</p>
+    </div>
+    <p style="margin-top:26px">
+      Gerado a partir do catálogo do próprio Postgres em 03/09/2026 —
+      nenhuma coluna foi transcrita à mão.
+    </p>
+  </div>
+</footer>

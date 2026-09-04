@@ -1,0 +1,907 @@
+<title>Mapa do Banco do Radar</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<style>
+:root{
+  --tinta:#16202b; --tinta-2:#3d4c5a; --tinta-3:#6b7a88;
+  --papel:#e9eef2; --carta:#ffffff; --carta-2:#f4f7f9;
+  --traco:#ccd8e0; --traco-forte:#a8b8c4;
+  --agua:#0d6e8c; --agua-clara:#e0f0f5;
+  --alerta:#b4531f; --ok:#3f7a4f;
+  --f-eixo:#0d6e8c; --f-ponto:#b4531f; --f-fonte:#42619b;
+  --f-transversal:#4f7a46; --f-endereco:#8a6a2f; --f-operacao:#5d6871;
+  --f-dormente:#9aa6b0;
+  --sombra:0 1px 2px rgba(22,32,43,.06), 0 4px 14px rgba(22,32,43,.05);
+  --raio:3px;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --tinta:#dfe7ed; --tinta-2:#a4b4c1; --tinta-3:#7d8d9a;
+    --papel:#0e161d; --carta:#161f28; --carta-2:#1b2630;
+    --traco:#2b3945; --traco-forte:#3d4f5d;
+    --agua:#4bb3d4; --agua-clara:#12303b;
+    --alerta:#e08a5c; --ok:#6fae7f;
+    --f-eixo:#4bb3d4; --f-ponto:#e08a5c; --f-fonte:#7f9ed6;
+    --f-transversal:#84b578; --f-endereco:#c7a463; --f-operacao:#93a1ab;
+    --f-dormente:#5d6b76;
+    --sombra:0 1px 2px rgba(0,0,0,.4), 0 4px 14px rgba(0,0,0,.3);
+  }
+}
+:root[data-theme="dark"]{
+  --tinta:#dfe7ed; --tinta-2:#a4b4c1; --tinta-3:#7d8d9a;
+  --papel:#0e161d; --carta:#161f28; --carta-2:#1b2630;
+  --traco:#2b3945; --traco-forte:#3d4f5d;
+  --agua:#4bb3d4; --agua-clara:#12303b;
+  --alerta:#e08a5c; --ok:#6fae7f;
+  --f-eixo:#4bb3d4; --f-ponto:#e08a5c; --f-fonte:#7f9ed6;
+  --f-transversal:#84b578; --f-endereco:#c7a463; --f-operacao:#93a1ab;
+  --f-dormente:#5d6b76;
+  --sombra:0 1px 2px rgba(0,0,0,.4), 0 4px 14px rgba(0,0,0,.3);
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--papel); color:var(--tinta);
+  font:400 15px/1.55 "IBM Plex Sans",system-ui,-apple-system,sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+.env{max-width:1180px; margin:0 auto; padding:0 22px}
+
+/* ── cabecalho ─────────────────────────────────────────────────────────── */
+.topo{
+  border-bottom:1px solid var(--traco); background:var(--carta);
+  padding:38px 0 0;
+}
+.selo{
+  font:500 11px/1 "IBM Plex Mono",ui-monospace,monospace;
+  letter-spacing:.14em; text-transform:uppercase; color:var(--agua);
+  display:flex; align-items:center; gap:9px; margin-bottom:14px;
+}
+.selo::after{content:""; flex:1; height:1px; background:var(--traco)}
+h1{
+  font:700 clamp(30px,4.6vw,46px)/1.06 Archivo,system-ui,sans-serif;
+  letter-spacing:-.022em; margin:0 0 12px; text-wrap:balance;
+}
+.sub{
+  margin:0 0 26px; max-width:60ch; color:var(--tinta-2); font-size:16px;
+}
+.placar{
+  display:flex; flex-wrap:wrap; gap:0; border-top:1px solid var(--traco);
+  margin-top:4px;
+}
+.placar div{
+  padding:16px 26px 18px 0; margin-right:26px;
+  border-right:1px solid var(--traco);
+}
+.placar div:last-child{border-right:0}
+.placar b{
+  display:block; font:600 25px/1 Archivo,sans-serif;
+  font-variant-numeric:tabular-nums; letter-spacing:-.02em;
+}
+.placar span{
+  font:400 11px/1.3 "IBM Plex Mono",monospace; letter-spacing:.07em;
+  text-transform:uppercase; color:var(--tinta-3);
+}
+
+/* ── o desenho ─────────────────────────────────────────────────────────── */
+.desenho{padding:44px 0 8px}
+.desenho__cx{
+  background:var(--carta); border:1px solid var(--traco);
+  border-radius:var(--raio); padding:26px 20px 20px; overflow-x:auto;
+}
+.desenho svg{display:block; min-width:660px; width:100%; height:auto}
+.legenda{
+  display:flex; flex-wrap:wrap; gap:6px 20px; margin:18px 0 0;
+  padding-top:16px; border-top:1px solid var(--traco);
+  font-size:12.5px; color:var(--tinta-2);
+}
+.legenda i{
+  display:inline-block; width:9px; height:9px; border-radius:2px;
+  margin-right:7px; vertical-align:baseline;
+}
+
+/* ── familias ──────────────────────────────────────────────────────────── */
+.familia{padding:44px 0 0}
+.familia__cab{
+  border-left:3px solid var(--cor); padding-left:15px; margin-bottom:22px;
+  max-width:70ch;
+}
+.familia h2{
+  font:600 21px/1.2 Archivo,sans-serif; margin:0 0 6px;
+  letter-spacing:-.015em;
+}
+.familia__cab p{margin:0; color:var(--tinta-2); font-size:14.5px}
+.familia[data-fam="eixo"]{--cor:var(--f-eixo)}
+.familia[data-fam="ponto"]{--cor:var(--f-ponto)}
+.familia[data-fam="fonte"]{--cor:var(--f-fonte)}
+.familia[data-fam="transversal"]{--cor:var(--f-transversal)}
+.familia[data-fam="endereco"]{--cor:var(--f-endereco)}
+.familia[data-fam="operacao"]{--cor:var(--f-operacao)}
+.familia[data-fam="dormente"]{--cor:var(--f-dormente)}
+
+.grade{
+  display:grid; gap:14px;
+  grid-template-columns:repeat(auto-fill,minmax(288px,1fr));
+}
+.tabela{
+  background:var(--carta); border:1px solid var(--traco);
+  border-top:2px solid var(--cor); border-radius:var(--raio);
+  padding:15px 16px 0; box-shadow:var(--sombra);
+  display:flex; flex-direction:column;
+}
+.tabela[data-fam="eixo"]{--cor:var(--f-eixo)}
+.tabela[data-fam="ponto"]{--cor:var(--f-ponto)}
+.tabela[data-fam="fonte"]{--cor:var(--f-fonte)}
+.tabela[data-fam="transversal"]{--cor:var(--f-transversal)}
+.tabela[data-fam="endereco"]{--cor:var(--f-endereco)}
+.tabela[data-fam="operacao"]{--cor:var(--f-operacao)}
+.tabela[data-fam="dormente"]{--cor:var(--f-dormente)}
+.tabela--vazia{opacity:.72}
+.tabela header{
+  display:flex; align-items:baseline; justify-content:space-between;
+  gap:10px; margin-bottom:8px;
+}
+.tabela h3{
+  font:500 15px/1.2 "IBM Plex Mono",monospace; margin:0;
+  letter-spacing:-.01em; word-break:break-all;
+}
+.qtd{
+  font:500 11px/1 "IBM Plex Mono",monospace; white-space:nowrap;
+  color:var(--tinta); background:var(--agua-clara);
+  padding:4px 7px; border-radius:2px; font-variant-numeric:tabular-nums;
+}
+.qtd--zero{background:transparent; color:var(--tinta-3);
+  border:1px dashed var(--traco-forte)}
+.oq{margin:0 0 12px; font-size:13.5px; color:var(--tinta-2); line-height:1.5}
+.oq code{
+  font:400 12.5px "IBM Plex Mono",monospace; background:var(--carta-2);
+  padding:1px 4px; border-radius:2px;
+}
+.liga{
+  margin:0 0 11px; font-size:12px; color:var(--tinta-3);
+  padding:6px 8px; background:var(--carta-2); border-radius:2px;
+}
+.liga b{color:var(--cor); font-weight:500;
+  font-family:"IBM Plex Mono",monospace; font-size:11.5px}
+.cols{list-style:none; margin:0 0 8px; padding:0; border-top:1px solid var(--traco)}
+.col{
+  display:flex; align-items:baseline; gap:8px; padding:4px 0;
+  border-bottom:1px solid var(--carta-2); font-size:12.5px;
+}
+.col code{
+  font:400 12px "IBM Plex Mono",monospace; color:var(--tinta);
+  flex:0 1 auto; word-break:break-all;
+}
+.tipo{
+  margin-left:auto; font:400 10.5px "IBM Plex Mono",monospace;
+  color:var(--tinta-3); white-space:nowrap;
+}
+.col--mudou code{color:var(--alerta)}
+.nota{
+  font:500 10px "IBM Plex Mono",monospace; color:var(--alerta);
+  white-space:nowrap; order:9; width:100%;
+}
+.resto{margin:0 0 10px; font-size:12px; color:var(--tinta-3); font-style:italic}
+.tabela footer{
+  margin-top:auto; display:flex; justify-content:space-between;
+  border-top:1px solid var(--traco); padding:8px 0 10px;
+  font:400 10.5px "IBM Plex Mono",monospace; color:var(--tinta-3);
+  letter-spacing:.04em;
+}
+
+/* ── nota de rodape ────────────────────────────────────────────────────── */
+.rodape{
+  margin:56px 0 0; border-top:1px solid var(--traco);
+  background:var(--carta); padding:30px 0 44px;
+}
+.rodape h2{font:600 18px/1.2 Archivo,sans-serif; margin:0 0 12px}
+.rodape p{margin:0 0 10px; color:var(--tinta-2); font-size:14px; max-width:74ch}
+.rodape code{font:400 12.5px "IBM Plex Mono",monospace; color:var(--alerta)}
+.aviso{
+  border-left:3px solid var(--alerta); padding:2px 0 2px 14px;
+  margin:20px 0 0;
+}
+</style>
+
+<header class="topo">
+  <div class="env">
+    <div class="selo">Radar Comercial · schema radar_comercial · 03/09/2026</div>
+    <h1>O mapa do banco</h1>
+    <p class="sub">
+      Todas as tabelas que o sistema usa hoje, o que cada uma guarda e como se
+      ligam. Desenhado depois da refatoração que separou o que é do
+      estabelecimento do que é de cada fonte.
+    </p>
+    <div class="placar">
+      <div><b>43</b><span>tabelas</span></div>
+      <div><b>737</b><span>colunas</span></div>
+      <div><b>39</b><span>chaves estrangeiras</span></div>
+      <div><b>2.516.709</b><span>ligações da Corsan</span></div>
+      <div><b>301.297</b><span>POIs</span></div>
+      <div><b>63.404</b><span>vínculos</span></div>
+    </div>
+  </div>
+</header>
+
+<main class="env">
+
+<section class="desenho">
+  <div class="desenho__cx">
+  <svg viewBox="0 0 980 470" role="img"
+       aria-label="Diagrama: a ligação da Corsan é o eixo; os POIs se penduram nela; cada fonte tem a sua tabela.">
+    <defs>
+      <marker id="seta" viewBox="0 0 10 10" refX="9" refY="5"
+              markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+      </marker>
+      <style>
+        .cx{fill:var(--carta); stroke:var(--traco-forte); stroke-width:1}
+        .cx-eixo{stroke:var(--f-eixo); stroke-width:1.5}
+        .cx-ponto{stroke:var(--f-ponto); stroke-width:1.5}
+        .cx-fonte{stroke:var(--f-fonte)}
+        .cx-tv{stroke:var(--f-transversal)}
+        .rot{font:500 12.5px "IBM Plex Mono",monospace; fill:var(--tinta)}
+        .rot-p{font:600 15px "IBM Plex Mono",monospace; fill:var(--tinta)}
+        .num{font:400 10.5px "IBM Plex Mono",monospace; fill:var(--tinta-3)}
+        .ln{stroke:var(--traco-forte); stroke-width:1.2; fill:none;
+            color:var(--traco-forte)}
+        .ln-forte{stroke:var(--f-eixo); stroke-width:2; fill:none;
+            color:var(--f-eixo)}
+        .cap{font:500 10px "IBM Plex Mono",monospace; fill:var(--tinta-3);
+             letter-spacing:.08em}
+      </style>
+    </defs>
+
+    <!-- coluna 1: as fontes -->
+    <text x="18" y="26" class="cap">FONTES DE DESCOBERTA</text>
+    <g>
+      <rect class="cx cx-fonte" x="18" y="40"  width="164" height="34" rx="2"/>
+      <text x="30" y="56" class="rot">maps_data</text><text x="30" y="68" class="num">377</text>
+      <rect class="cx cx-fonte" x="18" y="82"  width="164" height="34" rx="2"/>
+      <text x="30" y="98" class="rot">overture_data</text><text x="30" y="110" class="num">14.596</text>
+      <rect class="cx cx-fonte" x="18" y="124" width="164" height="34" rx="2"/>
+      <text x="30" y="140" class="rot">foursquare_data</text><text x="30" y="152" class="num">11.735</text>
+      <rect class="cx cx-fonte" x="18" y="166" width="164" height="34" rx="2"/>
+      <text x="30" y="182" class="rot">osm_data</text><text x="30" y="194" class="num">1.196</text>
+      <rect class="cx cx-fonte" x="18" y="208" width="164" height="34" rx="2"/>
+      <text x="30" y="224" class="rot">ifood_merchant</text><text x="30" y="236" class="num">1.960</text>
+      <rect class="cx cx-fonte" x="18" y="250" width="164" height="34" rx="2"/>
+      <text x="30" y="266" class="rot">cadastur_data</text><text x="30" y="278" class="num">178</text>
+      <rect class="cx cx-fonte" x="18" y="292" width="164" height="34" rx="2"/>
+      <text x="30" y="308" class="rot">airbnb_anuncio</text><text x="30" y="320" class="num">39</text>
+      <rect class="cx cx-fonte" x="18" y="334" width="164" height="34" rx="2"/>
+      <text x="30" y="350" class="rot">receita_data</text><text x="30" y="362" class="num">vazia</text>
+    </g>
+
+    <!-- ligacoes fonte -> pois -->
+    <g class="ln">
+      <path d="M182,57 C240,57 250,180 300,196" marker-end="url(#seta)"/>
+      <path d="M182,99 C240,99 252,182 300,198" marker-end="url(#seta)"/>
+      <path d="M182,141 C240,141 254,186 300,200" marker-end="url(#seta)"/>
+      <path d="M182,183 C240,183 258,192 300,202" marker-end="url(#seta)"/>
+      <path d="M182,225 C240,225 258,214 300,206" marker-end="url(#seta)"/>
+      <path d="M182,267 C240,267 254,222 300,208" marker-end="url(#seta)"/>
+      <path d="M182,309 C240,309 252,228 300,210" marker-end="url(#seta)"/>
+      <path d="M182,351 C240,351 250,232 300,212" marker-end="url(#seta)"/>
+    </g>
+    <text x="196" y="392" class="cap">poi_id  →</text>
+
+    <!-- coluna 2: o POI -->
+    <rect class="cx cx-ponto" x="300" y="150" width="188" height="110" rx="3"/>
+    <text x="316" y="176" class="rot-p">pois</text>
+    <text x="316" y="196" class="num">301.297 linhas · 640 MB</text>
+    <text x="316" y="216" class="num">nome · endereço · coordenada</text>
+    <text x="316" y="232" class="num">telefone · e-mail · CNPJ</text>
+    <text x="316" y="248" class="num">o que é verdade sobre o LUGAR</text>
+
+    <!-- transversais abaixo -->
+    <text x="300" y="300" class="cap">O QUE SE PENDURA NO POI</text>
+    <g>
+      <rect class="cx cx-tv" x="300" y="312" width="90" height="30" rx="2"/>
+      <text x="309" y="331" class="rot" font-size="10.5">comentarios</text>
+      <rect class="cx cx-tv" x="398" y="312" width="90" height="30" rx="2"/>
+      <text x="407" y="331" class="rot" font-size="10.5">images_urls</text>
+      <rect class="cx cx-tv" x="300" y="350" width="90" height="30" rx="2"/>
+      <text x="309" y="369" class="rot" font-size="10.5">horarios</text>
+      <rect class="cx cx-tv" x="398" y="350" width="90" height="30" rx="2"/>
+      <text x="407" y="369" class="rot" font-size="10.5">streetview</text>
+      <rect class="cx cx-tv" x="300" y="388" width="188" height="30" rx="2"/>
+      <text x="309" y="407" class="rot" font-size="10.5">analise_ia — o veredito da IA de visão</text>
+    </g>
+    <g class="ln"><path d="M394,260 L394,312" marker-end="url(#seta)"/></g>
+    <text x="300" y="440" class="cap">CADA UMA COM A COLUNA `fonte`</text>
+
+    <!-- coluna 3: o vinculo e o eixo -->
+    <rect class="cx cx-eixo" x="592" y="150" width="180" height="110" rx="3"/>
+    <text x="608" y="176" class="rot-p">ligacao_poi</text>
+    <text x="608" y="196" class="num">63.404 vínculos</text>
+    <text x="608" y="216" class="num">5 critérios, cada um visível</text>
+    <text x="608" y="232" class="num">confiança = ok / 5</text>
+    <text x="608" y="248" class="num">origem: critério | telhado</text>
+
+    <g class="ln-forte">
+      <path d="M488,205 L592,205" marker-end="url(#seta)"/>
+    </g>
+    <text x="500" y="196" class="cap">poi_id</text>
+
+    <rect class="cx cx-eixo" x="810" y="150" width="152" height="110" rx="3"/>
+    <text x="826" y="176" class="rot-p">cadastro</text>
+    <text x="826" y="192" class="rot-p">_corsan</text>
+    <text x="826" y="214" class="num">2.516.709</text>
+    <text x="826" y="230" class="num">as ligações do</text>
+    <text x="826" y="244" class="num">cliente — o EIXO</text>
+    <g class="ln-forte"><path d="M772,205 L810,205" marker-end="url(#seta)"/></g>
+
+    <!-- tile -->
+    <rect class="cx" x="592" y="312" width="180" height="52" rx="2"/>
+    <text x="608" y="332" class="rot" font-size="11.5">tile_captura</text>
+    <text x="608" y="350" class="num">o telhado, último critério</text>
+    <g class="ln"><path d="M682,312 L682,260" marker-end="url(#seta)"/></g>
+
+    <text x="592" y="400" class="cap">O EIXO É A LIGAÇÃO, NÃO O POI.</text>
+    <text x="592" y="418" class="num">O POI é uma hipótese; a ligação o cliente já cobra.</text>
+    <text x="592" y="434" class="num">Por isso o vínculo se lê "esta instalação tem</text>
+    <text x="592" y="448" class="num">estes candidatos, com esta confiança".</text>
+  </svg>
+  </div>
+  <div class="legenda">
+    <span><i style="background:var(--f-eixo)"></i>eixo — a base do cliente</span>
+    <span><i style="background:var(--f-ponto)"></i>o POI</span>
+    <span><i style="background:var(--f-fonte)"></i>as fontes</span>
+    <span><i style="background:var(--f-transversal)"></i>o que se pendura</span>
+    <span><i style="background:var(--f-endereco)"></i>endereço trabalhado</span>
+    <span><i style="background:var(--f-operacao)"></i>operação</span>
+    <span><i style="background:var(--f-dormente)"></i>dormentes</span>
+  </div>
+</section>
+
+
+  <section class="familia" data-fam="eixo">
+    <div class="familia__cab">
+      <h2>O eixo — a base do cliente</h2>
+      <p>Cada linha e uma instalacao que a Corsan ja cobra todo mes. Ela existe com ou sem radar, e e nela que tudo se pendura.</p>
+    </div>
+    <div class="grade">
+    <article class="tabela" data-fam="eixo" id="t-cadastro_corsan">
+      <header>
+        <h3>cadastro_corsan</h3>
+        <span class="qtd">2.516.709 linhas</span>
+      </header>
+      <p class="oq">As 2,5 milhoes de ligacoes da Corsan. Mora em `resources_root`, e o unico dado que o cliente entregou pronto.</p>
+      
+      <ul class="cols"></ul>
+      
+      <footer><span>0 colunas</span><span>no resources_root</span></footer>
+    </article>
+    <article class="tabela tabela--vazia" data-fam="eixo" id="t-base_cliente">
+      <header>
+        <h3>base_cliente</h3>
+        <span class="qtd qtd--zero">vazia</span>
+      </header>
+      <p class="oq">Como LER a base do cliente: de-para de colunas e quais valores de tipo significam atividade comercial. Sem isso o sistema adivinha, e adivinhar errado classifica comercio como residencia.</p>
+      
+      <ul class="cols"><li class="col"><code>id</code><span class="tipo">bigint</span></li><li class="col"><code>id_empresa</code><span class="tipo">uuid</span></li><li class="col"><code>nome</code><span class="tipo">text</span></li><li class="col"><code>cliente</code><span class="tipo">text</span></li><li class="col"><code>arquivo</code><span class="tipo">text</span></li><li class="col"><code>tabela_dados</code><span class="tipo">text</span></li><li class="col"><code>linhas</code><span class="tipo">bigint</span></li><li class="col"><code>colunas_brutas</code><span class="tipo">jsonb</span></li><li class="col"><code>mapa_colunas</code><span class="tipo">jsonb</span></li><li class="col"><code>tipos_comerciais</code><span class="tipo">jsonb</span></li><li class="col"><code>estado</code><span class="tipo">text</span></li><li class="col"><code>sugerido_por_ia</code><span class="tipo">jsonb</span></li><li class="col"><code>confirmado_por</code><span class="tipo">text</span></li><li class="col"><code>confirmado_em</code><span class="tipo">timestamptz</span></li><li class="col"><code>criado_em</code><span class="tipo">timestamptz</span></li></ul>
+      
+      <footer><span>15 colunas</span><span>80 kB</span></footer>
+    </article>
+    <article class="tabela" data-fam="eixo" id="t-ligacao_poi">
+      <header>
+        <h3>ligacao_poi</h3>
+        <span class="qtd">63.404 linhas</span>
+      </header>
+      <p class="oq">O vinculo. Cada par ligacao-POI com os cinco criterios separados, para quem le ver O QUE bateu em vez de so um numero.</p>
+      <p class="liga">aponta para <b>tile_captura</b></p>
+      <ul class="cols"><li class="col"><code>id</code><span class="tipo">bigint</span></li><li class="col"><code>ligacao</code><span class="tipo">text</span></li><li class="col"><code>poi_id</code><span class="tipo">bigint</span></li><li class="col"><code>mesmo_endereco</code><span class="tipo">boolean</span></li><li class="col"><code>mesmo_numero</code><span class="tipo">boolean</span></li><li class="col"><code>ate_20m</code><span class="tipo">boolean</span></li><li class="col"><code>mesmo_telhado</code><span class="tipo">boolean</span></li><li class="col"><code>telhado_comercial</code><span class="tipo">boolean</span></li><li class="col"><code>metros</code><span class="tipo">float8</span></li><li class="col"><code>criterios_ok</code><span class="tipo">smallint</span></li><li class="col"><code>confianca</code><span class="tipo">real</span></li><li class="col"><code>fonte_poi</code><span class="tipo">text</span></li><li class="col"><code>origem</code><span class="tipo">text</span></li><li class="col"><code>tile_id</code><span class="tipo">bigint</span></li><li class="col"><code>suspeita_motivo</code><span class="tipo">text</span></li></ul>
+      <p class="resto">+ 5 colunas</p>
+      <footer><span>20 colunas</span><span>48 MB</span></footer>
+    </article></div>
+  </section>
+  <section class="familia" data-fam="ponto">
+    <div class="familia__cab">
+      <h2>O ponto — o POI</h2>
+      <p>O estabelecimento. Guarda so o que e verdade sobre o LUGAR, venha de onde vier: nome, endereco, coordenada, contato.</p>
+    </div>
+    <div class="grade">
+    <article class="tabela" data-fam="ponto" id="t-pois">
+      <header>
+        <h3>pois</h3>
+        <span class="qtd">301.297 linhas</span>
+      </header>
+      <p class="oq">O estabelecimento. Tinha 70 colunas guardando tres coisas diferentes; 22 delas nunca guardaram nada.</p>
+      
+      <ul class="cols"><li class="col"><code>id</code><span class="tipo">bigint</span></li><li class="col"><code>id_empresa</code><span class="tipo">uuid</span></li><li class="col"><code>categoria</code><span class="tipo">text</span></li><li class="col"><code>cidade</code><span class="tipo">text</span></li><li class="col"><code>cnpj</code><span class="tipo">varchar</span></li><li class="col"><code>email</code><span class="tipo">text</span></li><li class="col"><code>endereco</code><span class="tipo">text</span></li><li class="col"><code>fonte</code><span class="tipo">text</span></li><li class="col"><code>fonte_dado</code><span class="tipo">text</span></li><li class="col"><code>instagram</code><span class="tipo">text</span></li><li class="col"><code>nome</code><span class="tipo">text</span></li><li class="col col--mudou"><code>place_id</code><span class="tipo">text</span><span class="nota">→ maps_data</span></li><li class="col"><code>sessao</code><span class="tipo">text</span></li><li class="col"><code>status</code><span class="tipo">text</span></li><li class="col"><code>telefone</code><span class="tipo">text</span></li><li class="col"><code>uf</code><span class="tipo">text</span></li><li class="col"><code>website</code><span class="tipo">text</span></li><li class="col"><code>id_base</code><span class="tipo">bigint</span></li><li class="col"><code>id_ligacao_base</code><span class="tipo">text</span></li><li class="col"><code>pt_geo</code><span class="tipo">USER-DEFINED</span></li></ul>
+      <p class="resto">+ 50 colunas</p>
+      <footer><span>70 colunas</span><span>640 MB</span></footer>
+    </article></div>
+  </section>
+  <section class="familia" data-fam="fonte">
+    <div class="familia__cab">
+      <h2>As fontes — uma tabela cada</h2>
+      <p>O que SO aquela fonte sabe, ligado ao POI por chave estrangeira. Base publica tambem e fonte de descoberta: tudo que fornece POI e uma.</p>
+    </div>
+    <div class="grade">
+    <article class="tabela" data-fam="fonte" id="t-maps_data">
+      <header>
+        <h3>maps_data</h3>
+        <span class="qtd">377 linhas</span>
+      </header>
+      <p class="oq">Place ID do Google, URL da ficha, Plus Code, nota, quantidade de avaliacoes, resumo da IA e status de horario.</p>
+      <p class="liga">aponta para <b>pois</b></p>
+      <ul class="cols"><li class="col"><code>poi_id</code><span class="tipo">bigint</span></li><li class="col"><code>id_empresa</code><span class="tipo">uuid</span></li><li class="col"><code>place_id</code><span class="tipo">text</span></li><li class="col"><code>maps_url</code><span class="tipo">text</span></li><li class="col"><code>plus_code</code><span class="tipo">text</span></li><li class="col"><code>maps_lat</code><span class="tipo">float8</span></li><li class="col"><code>maps_lng</code><span class="tipo">float8</span></li><li class="col"><code>avaliacao</code><span class="tipo">numeric</span></li><li class="col"><code>total_avaliacoes</code><span class="tipo">integer</span></li><li class="col"><code>resumo_avaliacoes</code><span class="tipo">text</span></li><li class="col"><code>status_horario</code><span class="tipo">text</span></li><li class="col"><code>preco_medio</code><span class="tipo">text</span></li><li class="col"><code>ocr_texto</code><span class="tipo">text</span></li><li class="col"><code>detalhado_em</code><span class="tipo">timestamptz</span></li><li class="col"><code>detalhado_por</code><span class="tipo">text</span></li><li class="col"><code>bruto</code><span class="tipo">jsonb</span></li></ul>
+      
+      <footer><span>16 colunas</span><span>456 kB</span></footer>
+    </article>
+    <article class="tabela" data-fam="fonte" id="t-osm_data">
+      <header>
+        <h3>osm_data</h3>
+        <span class="qtd">1.196 linhas</span>
+      </header>
+      <p class="oq">Id do objeto no OpenStreetMap e as tags — que nao tem esquema fixo, por isso `jsonb`.</p>
+      <p class="liga">aponta para <b>pois</b></p>
+      <ul class="cols"><li class="col"><code>poi_id</code><span class="tipo">bigint</span></li><li class="col"><code>id_empresa</code><span class="tipo">uuid</span></li><li class="col"><code>osm_id</code><span class="tipo">text</span></li><li class="col"><code>osm_tipo</code><span class="tipo">text</span></li><li class="col"><code>cluster_id</code><span class="tipo">text</span></li><li class="col"><code>amenity</code><span class="tipo">text</span></li><li class="col"><code>shop</code><span class="tipo">text</span></li><li class="col"><code>marca</code><span class="tipo">text</span></li><li class="col"><code>tags</code><span class="tipo">jsonb</span></li><li class="col"><code>visto_em</code><span class="tipo">timestamptz</span></li></ul>
+      
+      <footer><span>10 colunas</span><span>424 kB</span></footer>
+    </article>
+    <article class="tabela" data-fam="fonte" id="t-overture_data">
+      <header>
+        <h3>overture_data</h3>
+        <span class="qtd">14.596 linhas</span>
+      </header>
+      <p class="oq">Id do Overture, categoria hierarquica, confianca propria e quais bases contribuiram para o ponto.</p>
+      <p class="liga">aponta para <b>pois</b></p>
+      <ul class="cols"><li class="col"><code>poi_id</code><span class="tipo">bigint</span></li><li class="col"><code>id_empresa</code><span class="tipo">uuid</span></li><li class="col"><code>overture_id</code><span class="tipo">text</span></li><li class="col"><code>cluster_id</code><span class="tipo">text</span></li><li class="col"><code>categoria_principal</code><span class="tipo">text</span></li><li class="col"><code>categorias</code><span class="tipo">jsonb</span></li><li class="col"><code>confianca</code><span class="tipo">real</span></li><li class="col"><code>fontes</code><span class="tipo">jsonb</span></li><li class="col"><code>visto_em</code><span class="tipo">timestamptz</span></li></ul>
+      
+      <footer><span>9 colunas</span><span>4552 kB</span></footer>
+    </article>
+    <article class="tabela" data-fam="fonte" id="t-foursquare_data">
+      <header>
+        <h3>foursquare_data</h3>
+        <span class="qtd">11.735 linhas</span>
+      </header>
+      <p class="oq">Id do Foursquare, categorias e popularidade. Forte em varejo e restauracao.</p>
+      <p class="liga">aponta para <b>pois</b></p>
+      <ul class="cols"><li class="col"><code>poi_id</code><span class="tipo">bigint</span></li><li class="col"><code>id_empresa</code><span class="tipo">uuid</span></li><li class="col"><code>fsq_id</code><span class="tipo">text</span></li><li class="col"><code>cluster_id</code><span class="tipo">text</span></li><li class="col"><code>categoria_principal</code><span class="tipo">text</span></li><li class="col"><code>categorias</code><span class="tipo">jsonb</span></li><li class="col"><code>popularidade</code><span class="tipo">real</span></li><li class="col"><code>tags</code><span class="tipo">jsonb</span></li><li class="col"><code>visto_em</code><span class="tipo">timestamptz</span></li></ul>
+      
+      <footer><span>9 colunas</span><span>3416 kB</span></footer>
+    </article>
+    <article class="tabela tabela--vazia" data-fam="fonte" id="t-receita_data">
+      <header>
+        <h3>receita_data</h3>
+        <span class="qtd qtd--zero">vazia</span>
+      </header>
+      <p class="oq">Razao social, CNAE, natureza juridica, situacao cadastral e socios. Vazia: os 58.834 POIs da Receita so tem CNPJ.</p>
+      <p class="liga">aponta para <b>pois</b></p>
+      <ul class="cols"><li class="col"><code>poi_id</code><span class="tipo">bigint</span></li><li class="col"><code>id_empresa</code><span class="tipo">uuid</span></li><li class="col"><code>cnpj</code><span class="tipo">text</span></li><li class="col"><code>cnpj_conf</code><span class="tipo">text</span></li><li class="col"><code>razao_social</code><span class="tipo">text</span></li><li class="col"><code>nome_fantasia</code><span class="tipo">text</span></li><li class="col"><code>cnae</code><span class="tipo">text</span></li><li class="col"><code>natureza_juridica</code><span class="tipo">text</span></li><li class="col"><code>situacao_cadastral</code><span class="tipo">text</span></li><li class="col"><code>socios</code><span class="tipo">jsonb</span></li><li class="col"><code>bruto</code><span class="tipo">jsonb</span></li></ul>
+      
+      <footer><span>11 colunas</span><span>24 kB</span></footer>
+    </article>
+    <article class="tabela" data-fam="fonte" id="t-cadastur_data">
+      <header>
+        <h3>cadastur_data</h3>
+        <span class="qtd">178 linhas</span>
+      </header>
+      <p class="oq">O que o Cadastur (MTur) diz do POI. Base publica, com a mesma funcao de CNEFE e Receita.</p>
+      <p class="liga">aponta para <b>pois</b></p>
+      <ul class="cols"><li class="col"><code>poi_id</code><span class="tipo">bigint</span></li><li class="col"><code>id_empresa</code><span class="tipo">uuid</span></li><li class="col"><code>cadastur_id</code><span class="tipo">text</span></li><li class="col"><code>cnpj</code><span class="tipo">text</span></li><li class="col"><code>razao_social</code><span class="tipo">text</span></li><li class="col"><code>nome_fantasia</code><span class="tipo">text</span></li><li class="col"><code>cnae</code><span class="tipo">text</span></li><li class="col"><code>atividade</code><span class="tipo">text</span></li><li class="col"><code>situacao</code><span class="tipo">text</span></li><li class="col"><code>incerteza_m</code><span class="tipo">float8</span></li><li class="col"><code>bruto</code><span class="tipo">jsonb</span></li></ul>
+      
+      <footer><span>11 colunas</span><span>128 kB</span></footer>
+    </article>
+    <article class="tabela" data-fam="fonte" id="t-cadastur_vinculo">
+      <header>
+        <h3>cadastur_vinculo</h3>
+        <span class="qtd">1.008 linhas</span>
+      </header>
+      <p class="oq">Qual registro do Cadastur casou com qual POI, e o motivo quando nao casou nenhum.</p>
+      <p class="liga">aponta para <b>pois</b></p>
+      <ul class="cols"><li class="col"><code>id</code><span class="tipo">bigint</span></li><li class="col"><code>id_empresa</code><span class="tipo">uuid</span></li><li class="col"><code>cadastur_id</code><span class="tipo">bigint</span></li><li class="col"><code>poi_id</code><span class="tipo">bigint</span></li><li class="col"><code>sem_poi_motivo</code><span class="tipo">text</span></li><li class="col"><code>cruzado_em</code><span class="tipo">timestamptz</span></li></ul>
+      
+      <footer><span>6 colunas</span><span>840 kB</span></footer>
+    </article>
+    <article class="tabela" data-fam="fonte" id="t-ifood_merchant">
+      <header>
+        <h3>ifood_merchant</h3>
+        <span class="qtd">1.960 linhas</span>
+      </header>
+      <p class="oq">A loja no iFood: identificador, categoria, nota, faixa de preco e o que a ficha mostrou.</p>
+      
+      <ul class="cols"><li class="col"><code>id</code><span class="tipo">bigint</span></li><li class="col"><code>id_empresa</code><span class="tipo">uuid</span></li><li class="col"><code>avaliacoes</code><span class="tipo">integer</span></li><li class="col"><code>bairro</code><span class="tipo">text</span></li><li class="col"><code>bruto</code><span class="tipo">jsonb</span></li><li class="col"><code>categoria</code><span class="tipo">text</span></li><li class="col"><code>cep</code><span class="tipo">text</span></li><li class="col"><code>cidade</code><span class="tipo">text</span></li><li class="col"><code>cnpj</code><span class="tipo">text</span></li><li class="col"><code>estado_detalhe</code><span class="tipo">text</span></li><li class="col"><code>lat</code><span class="tipo">float8</span></li><li class="col"><code>lng</code><span class="tipo">float8</span></li><li class="col"><code>merchant_id</code><span class="tipo">text</span></li><li class="col"><code>nome</code><span class="tipo">text</span></li><li class="col"><code>nota</code><span class="tipo">numeric</span></li><li class="col"><code>numero</code><span class="tipo">text</span></li><li class="col"><code>poi_id</code><span class="tipo">bigint</span></li><li class="col"><code>rua</code><span class="tipo">text</span></li><li class="col"><code>slug</code><span class="tipo">text</span></li><li class="col"><code>telefone</code><span class="tipo">text</span></li><li class="col"><code>uf</code><span class="tipo">text</span></li><li class="col"><code>visto_em</code><span class="tipo">timestamptz</span></li></ul>
+      
+      <footer><span>22 colunas</span><span>2872 kB</span></footer>
+    </article>
+    <article class="tabela" data-fam="fonte" id="t-airbnb_anuncio">
+      <header>
+        <h3>airbnb_anuncio</h3>
+        <span class="qtd">39 linhas</span>
+      </header>
+      <p class="oq">O anuncio: hospedes, quartos, camas, banheiros, anfitriao, comodidades, regras e o print da ficha.</p>
+      <p class="liga">aponta para <b>pois</b></p>
+      <ul class="cols"><li class="col"><code>id</code><span class="tipo">bigint</span></li><li class="col"><code>id_empresa</code><span class="tipo">uuid</span></li><li class="col"><code>anuncio_id</code><span class="tipo">text</span></li><li class="col"><code>nome</code><span class="tipo">text</span></li><li class="col"><code>titulo</code><span class="tipo">text</span></li><li class="col"><code>tipo_resumo</code><span class="tipo">text</span></li><li class="col"><code>lat</code><span class="tipo">float8</span></li><li class="col"><code>lng</code><span class="tipo">float8</span></li><li class="col"><code>coord_exata</code><span class="tipo">boolean</span></li><li class="col"><code>bairro</code><span class="tipo">text</span></li><li class="col"><code>cidade</code><span class="tipo">text</span></li><li class="col"><code>uf</code><span class="tipo">text</span></li><li class="col"><code>cep</code><span class="tipo">text</span></li><li class="col"><code>endereco</code><span class="tipo">text</span></li><li class="col"><code>numero</code><span class="tipo">text</span></li><li class="col"><code>endereco_origem</code><span class="tipo">text</span></li><li class="col"><code>predio</code><span class="tipo">text</span></li><li class="col"><code>na_area</code><span class="tipo">boolean</span></li><li class="col"><code>area_ref</code><span class="tipo">text</span></li><li class="col"><code>hospedes</code><span class="tipo">integer</span></li><li class="col"><code>quartos</code><span class="tipo">integer</span></li><li class="col"><code>camas</code><span class="tipo">integer</span></li><li class="col"><code>banheiros</code><span class="tipo">integer</span></li><li class="col"><code>nota</code><span class="tipo">numeric</span></li></ul>
+      
+      <footer><span>40 colunas</span><span>296 kB</span></footer>
+    </article>
+    <article class="tabela tabela--vazia" data-fam="fonte" id="t-cnpj_tratado">
+      <header>
+        <h3>cnpj_tratado</h3>
+        <span class="qtd qtd--zero">vazia</span>
+      </header>
+      <p class="oq">O CNPJ depois do tratamento — aptidao geografica, perfil comercial e a evidencia que sustentou a decisao.</p>
+      
+      <ul class="cols"><li class="col"><code>id</code><span class="tipo">bigint</span></li><li class="col"><code>id_empresa</code><span class="tipo">uuid</span></li><li class="col"><code>aptidao_geo</code><span class="tipo">text</span></li><li class="col"><code>cnae</code><span class="tipo">text</span></li><li class="col"><code>cnpj</code><span class="tipo">text</span></li><li class="col"><code>cod_municipio</code><span class="tipo">text</span></li><li class="col"><code>criado_em</code><span class="tipo">timestamptz</span></li><li class="col"><code>evidencia</code><span class="tipo">text</span></li><li class="col"><code>incerteza_m</code><span class="tipo">integer</span></li><li class="col"><code>lat</code><span class="tipo">float8</span></li><li class="col"><code>lng</code><span class="tipo">float8</span></li><li class="col"><code>nome_fantasia</code><span class="tipo">text</span></li><li class="col"><code>perfil_comercial</code><span class="tipo">text</span></li><li class="col"><code>poi_id</code><span class="tipo">bigint</span></li><li class="col"><code>potencial</code><span class="tipo">text</span></li><li class="col"><code>razao_social</code><span class="tipo">text</span></li><li class="col"><code>rota</code><span class="tipo">text</span></li><li class="col"><code>situacao</code><span class="tipo">text</span></li></ul>
+      
+      <footer><span>18 colunas</span><span>48 kB</span></footer>
+    </article></div>
+  </section>
+  <section class="familia" data-fam="transversal">
+    <div class="familia__cab">
+      <h2>O que se pendura no POI</h2>
+      <p>Vale para QUALQUER fonte. Uma tabela por tipo de coisa, com a coluna `fonte` dizendo quem trouxe cada linha.</p>
+    </div>
+    <div class="grade">
+    <article class="tabela" data-fam="transversal" id="t-comentarios">
+      <header>
+        <h3>comentarios</h3>
+        <span class="qtd">2.161 linhas</span>
+      </header>
+      <p class="oq">As avaliacoes de todas as fontes. Ganhou `fonte` em 03/09/2026; antes nao havia como saber de quem era a linha.</p>
+      
+      <ul class="cols"><li class="col"><code>id</code><span class="tipo">bigint</span></li><li class="col"><code>id_empresa</code><span class="tipo">uuid</span></li><li class="col"><code>autor</code><span class="tipo">text</span></li><li class="col"><code>data</code><span class="tipo">text</span></li><li class="col"><code>nota</code><span class="tipo">float8</span></li><li class="col"><code>poi_id</code><span class="tipo">bigint</span></li><li class="col"><code>texto</code><span class="tipo">text</span></li><li class="col"><code>fonte</code><span class="tipo">text</span></li></ul>
+      
+      <footer><span>8 colunas</span><span>1504 kB</span></footer>
+    </article>
+    <article class="tabela" data-fam="transversal" id="t-images_urls">
+      <header>
+        <h3>images_urls</h3>
+        <span class="qtd">2.595 linhas</span>
+      </header>
+      <p class="oq">As fotos do estabelecimento, de qualquer fonte. Guarda URL, caminho no Storage e os bytes.</p>
+      
+      <ul class="cols"><li class="col"><code>id</code><span class="tipo">bigint</span></li><li class="col"><code>id_empresa</code><span class="tipo">uuid</span></li><li class="col"><code>bytes_tam</code><span class="tipo">integer</span></li><li class="col"><code>content_type</code><span class="tipo">varchar</span></li><li class="col"><code>dados</code><span class="tipo">bytea</span></li><li class="col"><code>data_imagem</code><span class="tipo">varchar</span></li><li class="col"><code>ordem</code><span class="tipo">integer</span></li><li class="col"><code>poi_id</code><span class="tipo">bigint</span></li><li class="col"><code>storage_path</code><span class="tipo">text</span></li><li class="col"><code>url</code><span class="tipo">text</span></li><li class="col"><code>fonte</code><span class="tipo">text</span></li></ul>
+      
+      <footer><span>11 colunas</span><span>1952 kB</span></footer>
+    </article>
+    <article class="tabela tabela--vazia" data-fam="transversal" id="t-streetview_imgs">
+      <header>
+        <h3>streetview_imgs</h3>
+        <span class="qtd qtd--zero">vazia</span>
+      </header>
+      <p class="oq">As capturas do Street View, com angulo, heading e a posicao da camera.</p>
+      
+      <ul class="cols"><li class="col"><code>id</code><span class="tipo">bigint</span></li><li class="col"><code>id_empresa</code><span class="tipo">uuid</span></li><li class="col"><code>angulo</code><span class="tipo">float8</span></li><li class="col"><code>bytes_tam</code><span class="tipo">integer</span></li><li class="col"><code>cam_lat</code><span class="tipo">float8</span></li><li class="col"><code>cam_lng</code><span class="tipo">float8</span></li><li class="col"><code>criado_em</code><span class="tipo">timestamptz</span></li><li class="col"><code>dados</code><span class="tipo">bytea</span></li><li class="col"><code>data_captura</code><span class="tipo">varchar</span></li><li class="col"><code>fov</code><span class="tipo">integer</span></li><li class="col"><code>heading</code><span class="tipo">float8</span></li><li class="col"><code>lat</code><span class="tipo">float8</span></li><li class="col"><code>lng</code><span class="tipo">float8</span></li><li class="col"><code>pano_id</code><span class="tipo">varchar</span></li><li class="col"><code>poi_id</code><span class="tipo">bigint</span></li><li class="col"><code>storage_path</code><span class="tipo">text</span></li></ul>
+      
+      <footer><span>16 colunas</span><span>40 kB</span></footer>
+    </article>
+    <article class="tabela" data-fam="transversal" id="t-horario_funcionamento">
+      <header>
+        <h3>horario_funcionamento</h3>
+        <span class="qtd">1.925 linhas</span>
+      </header>
+      <p class="oq">Um registro por dia da semana.</p>
+      
+      <ul class="cols"><li class="col"><code>id</code><span class="tipo">bigint</span></li><li class="col"><code>id_empresa</code><span class="tipo">uuid</span></li><li class="col"><code>dia</code><span class="tipo">text</span></li><li class="col"><code>horario</code><span class="tipo">text</span></li><li class="col"><code>poi_id</code><span class="tipo">bigint</span></li></ul>
+      
+      <footer><span>5 colunas</span><span>712 kB</span></footer>
+    </article>
+    <article class="tabela tabela--vazia" data-fam="transversal" id="t-analise_ia">
+      <header>
+        <h3>analise_ia</h3>
+        <span class="qtd qtd--zero">vazia</span>
+      </header>
+      <p class="oq">O veredito da IA de visao sobre a fachada: atividade real, porte, tipo de construcao e o motivo de cada um.</p>
+      
+      <ul class="cols"><li class="col"><code>poi_id</code><span class="tipo">bigint</span></li><li class="col"><code>id_empresa</code><span class="tipo">uuid</span></li><li class="col"><code>atividade_real</code><span class="tipo">text</span></li><li class="col"><code>confere</code><span class="tipo">boolean</span></li><li class="col"><code>criado_em</code><span class="tipo">timestamptz</span></li><li class="col"><code>equivalencia</code><span class="tipo">text</span></li><li class="col"><code>imagem_fonte</code><span class="tipo">text</span></li><li class="col"><code>modelo</code><span class="tipo">text</span></li><li class="col"><code>motivo</code><span class="tipo">text</span></li><li class="col"><code>n_imagens</code><span class="tipo">integer</span></li><li class="col"><code>outro_estabelecimento</code><span class="tipo">text</span></li><li class="col"><code>pessoas_estimadas</code><span class="tipo">text</span></li><li class="col"><code>porte</code><span class="tipo">text</span></li><li class="col"><code>recomendacao_motivo</code><span class="tipo">text</span></li><li class="col"><code>recomendar_visita</code><span class="tipo">boolean</span></li><li class="col"><code>resposta_json</code><span class="tipo">jsonb</span></li><li class="col"><code>tipo_construcao</code><span class="tipo">text</span></li><li class="col"><code>veredito</code><span class="tipo">text</span></li><li class="col"><code>veredito_motivo</code><span class="tipo">text</span></li></ul>
+      
+      <footer><span>19 colunas</span><span>24 kB</span></footer>
+    </article>
+    <article class="tabela tabela--vazia" data-fam="transversal" id="t-tile_captura">
+      <header>
+        <h3>tile_captura</h3>
+        <span class="qtd qtd--zero">vazia</span>
+      </header>
+      <p class="oq">Os tiles de satelite, presos a RUN e a caixa geografica — nao a um POI, porque um tile serve a dezenas. E o que o passo dos telhados vai ler. Guarda caminho, nao bytes.</p>
+      
+      <ul class="cols"><li class="col"><code>id</code><span class="tipo">bigint</span></li><li class="col"><code>id_empresa</code><span class="tipo">uuid</span></li><li class="col"><code>sessao</code><span class="tipo">text</span></li><li class="col"><code>tipo</code><span class="tipo">text</span></li><li class="col"><code>lat</code><span class="tipo">float8</span></li><li class="col"><code>lng</code><span class="tipo">float8</span></li><li class="col"><code>zoom</code><span class="tipo">integer</span></li><li class="col"><code>largura_px</code><span class="tipo">integer</span></li><li class="col"><code>altura_px</code><span class="tipo">integer</span></li><li class="col"><code>lat_min</code><span class="tipo">float8</span></li><li class="col"><code>lat_max</code><span class="tipo">float8</span></li><li class="col"><code>lng_min</code><span class="tipo">float8</span></li><li class="col"><code>lng_max</code><span class="tipo">float8</span></li><li class="col"><code>storage_path</code><span class="tipo">text</span></li><li class="col"><code>url</code><span class="tipo">text</span></li><li class="col"><code>bytes_tam</code><span class="tipo">bigint</span></li><li class="col"><code>capturado_em</code><span class="tipo">timestamptz</span></li></ul>
+      
+      <footer><span>17 colunas</span><span>32 kB</span></footer>
+    </article></div>
+  </section>
+  <section class="familia" data-fam="endereco">
+    <div class="familia__cab">
+      <h2>O endereco trabalhado</h2>
+      <p>O endereco cru nao casa com nada. Estas guardam o resultado de segmentar, corrigir e resolver — caro de refazer, entao se guarda.</p>
+    </div>
+    <div class="grade">
+    <article class="tabela" data-fam="endereco" id="t-endereco_segmentado">
+      <header>
+        <h3>endereco_segmentado</h3>
+        <span class="qtd">21.613 linhas</span>
+      </header>
+      <p class="oq">O endereco quebrado em logradouro, numero, bairro, CEP — com o metodo e o modelo que fizeram a quebra.</p>
+      
+      <ul class="cols"><li class="col"><code>bairro</code><span class="tipo">text</span></li><li class="col"><code>cep</code><span class="tipo">text</span></li><li class="col"><code>cidade</code><span class="tipo">text</span></li><li class="col"><code>complemento</code><span class="tipo">text</span></li><li class="col"><code>endereco</code><span class="tipo">text</span></li><li class="col"><code>logradouro</code><span class="tipo">text</span></li><li class="col"><code>metodo</code><span class="tipo">text</span></li><li class="col"><code>modelo</code><span class="tipo">text</span></li><li class="col"><code>motivo</code><span class="tipo">text</span></li><li class="col"><code>numero</code><span class="tipo">text</span></li><li class="col"><code>segmentado_em</code><span class="tipo">timestamptz</span></li><li class="col"><code>uf</code><span class="tipo">text</span></li><li class="col"><code>id_empresa</code><span class="tipo">uuid</span></li></ul>
+      
+      <footer><span>13 colunas</span><span>18 MB</span></footer>
+    </article>
+    <article class="tabela" data-fam="endereco" id="t-logradouro_ajustado">
+      <header>
+        <h3>logradouro_ajustado</h3>
+        <span class="qtd">332.616 linhas</span>
+      </header>
+      <p class="oq">A correcao do nome da via, com o risco e o status de revisao humana.</p>
+      
+      <ul class="cols"><li class="col"><code>ajustado_em</code><span class="tipo">timestamptz</span></li><li class="col"><code>complemento_organizado</code><span class="tipo">text</span></li><li class="col"><code>fonte</code><span class="tipo">text</span></li><li class="col"><code>logradouro_corrigido</code><span class="tipo">text</span></li><li class="col"><code>logradouro_marcado</code><span class="tipo">text</span></li><li class="col"><code>logradouro_original</code><span class="tipo">text</span></li><li class="col"><code>numero_canonico</code><span class="tipo">text</span></li><li class="col"><code>origem</code><span class="tipo">text</span></li><li class="col"><code>record_id</code><span class="tipo">text</span></li><li class="col"><code>revisado_em</code><span class="tipo">timestamptz</span></li><li class="col"><code>revisado_por</code><span class="tipo">text</span></li><li class="col"><code>revisao_nota</code><span class="tipo">text</span></li><li class="col"><code>revisao_status</code><span class="tipo">text</span></li><li class="col"><code>risco</code><span class="tipo">text</span></li><li class="col"><code>run_id</code><span class="tipo">text</span></li><li class="col"><code>scope_id</code><span class="tipo">text</span></li><li class="col"><code>tier</code><span class="tipo">text</span></li><li class="col"><code>id_empresa</code><span class="tipo">uuid</span></li></ul>
+      
+      <footer><span>18 colunas</span><span>192 MB</span></footer>
+    </article>
+    <article class="tabela" data-fam="endereco" id="t-logradouro_resolvido">
+      <header>
+        <h3>logradouro_resolvido</h3>
+        <span class="qtd">126.474 linhas</span>
+      </header>
+      <p class="oq">O endereco resolvido ate a quadra e a face, com a forca da decisao e a distancia em metros.</p>
+      
+      <ul class="cols"><li class="col"><code>id</code><span class="tipo">bigint</span></li><li class="col"><code>id_empresa</code><span class="tipo">uuid</span></li><li class="col"><code>poi_id</code><span class="tipo">bigint</span></li><li class="col"><code>cod_municipio</code><span class="tipo">text</span></li><li class="col"><code>logradouro</code><span class="tipo">text</span></li><li class="col"><code>numero</code><span class="tipo">text</span></li><li class="col"><code>cep</code><span class="tipo">text</span></li><li class="col"><code>bairro</code><span class="tipo">text</span></li><li class="col"><code>num_quadra</code><span class="tipo">text</span></li><li class="col"><code>num_face</code><span class="tipo">text</span></li><li class="col"><code>peneira</code><span class="tipo">text</span></li><li class="col"><code>forca</code><span class="tipo">text</span></li><li class="col"><code>metros</code><span class="tipo">float8</span></li><li class="col"><code>logradouro_original</code><span class="tipo">text</span></li><li class="col"><code>cep_original</code><span class="tipo">text</span></li><li class="col"><code>revisao_humana</code><span class="tipo">boolean</span></li><li class="col"><code>motivo</code><span class="tipo">text</span></li><li class="col"><code>resolvido_em</code><span class="tipo">timestamptz</span></li></ul>
+      
+      <footer><span>18 colunas</span><span>85 MB</span></footer>
+    </article></div>
+  </section>
+  <section class="familia" data-fam="operacao">
+    <div class="familia__cab">
+      <h2>A operacao</h2>
+      <p>As runs, as areas desenhadas, os arquivos carregados, os proxies e o chat. Nao e dado do cliente: e o trabalho sobre ele.</p>
+    </div>
+    <div class="grade">
+    <article class="tabela tabela--vazia" data-fam="operacao" id="t-job">
+      <header>
+        <h3>job</h3>
+        <span class="qtd qtd--zero">vazia</span>
+      </header>
+      <p class="oq">Uma run. Tipo, estado e quando comecou.</p>
+      
+      <ul class="cols"><li class="col"><code>id</code><span class="tipo">bigint</span></li><li class="col"><code>id_empresa</code><span class="tipo">uuid</span></li><li class="col"><code>pedido_por</code><span class="tipo">uuid</span></li><li class="col"><code>tipo</code><span class="tipo">text</span></li><li class="col"><code>argumentos</code><span class="tipo">jsonb</span></li><li class="col"><code>estado</code><span class="tipo">text</span></li><li class="col"><code>cancelar_pedido</code><span class="tipo">boolean</span></li><li class="col"><code>worker</code><span class="tipo">text</span></li><li class="col"><code>visto_em</code><span class="tipo">timestamptz</span></li><li class="col"><code>progresso</code><span class="tipo">jsonb</span></li><li class="col"><code>codigo_saida</code><span class="tipo">integer</span></li><li class="col"><code>erro</code><span class="tipo">text</span></li><li class="col"><code>criado_em</code><span class="tipo">timestamptz</span></li><li class="col"><code>iniciado_em</code><span class="tipo">timestamptz</span></li><li class="col"><code>terminado_em</code><span class="tipo">timestamptz</span></li></ul>
+      
+      <footer><span>15 colunas</span><span>32 kB</span></footer>
+    </article>
+    <article class="tabela tabela--vazia" data-fam="operacao" id="t-job_log">
+      <header>
+        <h3>job_log</h3>
+        <span class="qtd qtd--zero">vazia</span>
+      </header>
+      <p class="oq">As linhas de log daquela run.</p>
+      <p class="liga">aponta para <b>job</b></p>
+      <ul class="cols"><li class="col"><code>id</code><span class="tipo">bigint</span></li><li class="col"><code>id_job</code><span class="tipo">bigint</span></li><li class="col"><code>em</code><span class="tipo">timestamptz</span></li><li class="col"><code>linha</code><span class="tipo">text</span></li></ul>
+      
+      <footer><span>4 colunas</span><span>24 kB</span></footer>
+    </article>
+    <article class="tabela tabela--vazia" data-fam="operacao" id="t-area_trabalho">
+      <header>
+        <h3>area_trabalho</h3>
+        <span class="qtd qtd--zero">vazia</span>
+      </header>
+      <p class="oq">Os poligonos desenhados no painel, ou o municipio inteiro carregado da malha do IBGE.</p>
+      
+      <ul class="cols"><li class="col"><code>id</code><span class="tipo">bigint</span></li><li class="col"><code>id_empresa</code><span class="tipo">uuid</span></li><li class="col"><code>nome</code><span class="tipo">text</span></li><li class="col"><code>polygon</code><span class="tipo">jsonb</span></li><li class="col"><code>salvo_em</code><span class="tipo">timestamptz</span></li></ul>
+      
+      <footer><span>5 colunas</span><span>112 kB</span></footer>
+    </article>
+    <article class="tabela tabela--vazia" data-fam="operacao" id="t-fonte_arquivos">
+      <header>
+        <h3>fonte_arquivos</h3>
+        <span class="qtd qtd--zero">vazia</span>
+      </header>
+      <p class="oq">Que arquivo foi carregado, quantas linhas, para que tabela e se deu certo.</p>
+      
+      <ul class="cols"><li class="col"><code>id_empresa</code><span class="tipo">uuid</span></li><li class="col"><code>bytes</code><span class="tipo">bigint</span></li><li class="col"><code>carregado_em</code><span class="tipo">timestamptz</span></li><li class="col"><code>fonte</code><span class="tipo">text</span></li><li class="col"><code>linhas</code><span class="tipo">bigint</span></li><li class="col"><code>referencia</code><span class="tipo">text</span></li><li class="col"><code>status</code><span class="tipo">text</span></li><li class="col"><code>tabela</code><span class="tipo">text</span></li></ul>
+      
+      <footer><span>8 colunas</span><span>80 kB</span></footer>
+    </article>
+    <article class="tabela" data-fam="operacao" id="t-proxy_ip">
+      <header>
+        <h3>proxy_ip</h3>
+        <span class="qtd">500 linhas</span>
+      </header>
+      <p class="oq">Os IPs do plano de proxy.</p>
+      
+      <ul class="cols"><li class="col"><code>id</code><span class="tipo">text</span></li><li class="col"><code>ativo</code><span class="tipo">boolean</span></li><li class="col"><code>cidade</code><span class="tipo">text</span></li><li class="col"><code>endereco</code><span class="tipo">text</span></li><li class="col"><code>pais</code><span class="tipo">text</span></li><li class="col"><code>porta</code><span class="tipo">integer</span></li><li class="col"><code>visto_em</code><span class="tipo">timestamptz</span></li></ul>
+      
+      <footer><span>7 colunas</span><span>464 kB</span></footer>
+    </article>
+    <article class="tabela" data-fam="operacao" id="t-proxy_evento">
+      <header>
+        <h3>proxy_evento</h3>
+        <span class="qtd">550 linhas</span>
+      </header>
+      <p class="oq">O consumo de banda medido, e nao estimado.</p>
+      
+      <ul class="cols"><li class="col"><code>id</code><span class="tipo">bigint</span></li><li class="col"><code>id_empresa</code><span class="tipo">uuid</span></li><li class="col"><code>bytes</code><span class="tipo">bigint</span></li><li class="col"><code>em</code><span class="tipo">timestamptz</span></li><li class="col"><code>etapa</code><span class="tipo">text</span></li><li class="col"><code>motivo</code><span class="tipo">text</span></li><li class="col"><code>proxy_id</code><span class="tipo">text</span></li><li class="col"><code>segundos</code><span class="tipo">integer</span></li><li class="col"><code>tipo</code><span class="tipo">text</span></li></ul>
+      
+      <footer><span>9 colunas</span><span>192 kB</span></footer>
+    </article>
+    <article class="tabela tabela--vazia" data-fam="operacao" id="t-chat_conversa">
+      <header>
+        <h3>chat_conversa</h3>
+        <span class="qtd qtd--zero">vazia</span>
+      </header>
+      <p class="oq">As conversas do painel.</p>
+      
+      <ul class="cols"><li class="col"><code>id</code><span class="tipo">uuid</span></li><li class="col"><code>id_empresa</code><span class="tipo">uuid</span></li><li class="col"><code>arquivada</code><span class="tipo">boolean</span></li><li class="col"><code>criada_em</code><span class="tipo">timestamptz</span></li><li class="col"><code>mexida_em</code><span class="tipo">timestamptz</span></li><li class="col"><code>titulo</code><span class="tipo">text</span></li><li class="col"><code>usuario_id</code><span class="tipo">uuid</span></li></ul>
+      
+      <footer><span>7 colunas</span><span>48 kB</span></footer>
+    </article>
+    <article class="tabela tabela--vazia" data-fam="operacao" id="t-chat_mensagem">
+      <header>
+        <h3>chat_mensagem</h3>
+        <span class="qtd qtd--zero">vazia</span>
+      </header>
+      <p class="oq">As mensagens.</p>
+      
+      <ul class="cols"><li class="col"><code>id</code><span class="tipo">bigint</span></li><li class="col"><code>id_empresa</code><span class="tipo">uuid</span></li><li class="col"><code>conteudo</code><span class="tipo">text</span></li><li class="col"><code>conversa_id</code><span class="tipo">uuid</span></li><li class="col"><code>criada_em</code><span class="tipo">timestamptz</span></li><li class="col"><code>dados</code><span class="tipo">jsonb</span></li><li class="col"><code>ferramenta</code><span class="tipo">text</span></li><li class="col"><code>papel</code><span class="tipo">text</span></li></ul>
+      
+      <footer><span>8 colunas</span><span>24 kB</span></footer>
+    </article>
+    <article class="tabela tabela--vazia" data-fam="operacao" id="t-chat_anexo">
+      <header>
+        <h3>chat_anexo</h3>
+        <span class="qtd qtd--zero">vazia</span>
+      </header>
+      <p class="oq">Os anexos.</p>
+      
+      <ul class="cols"><li class="col"><code>id</code><span class="tipo">bigint</span></li><li class="col"><code>id_empresa</code><span class="tipo">uuid</span></li><li class="col"><code>bytes</code><span class="tipo">integer</span></li><li class="col"><code>caminho</code><span class="tipo">text</span></li><li class="col"><code>conversa_id</code><span class="tipo">uuid</span></li><li class="col"><code>criado_em</code><span class="tipo">timestamptz</span></li><li class="col"><code>extraido</code><span class="tipo">text</span></li><li class="col"><code>mensagem_id</code><span class="tipo">bigint</span></li><li class="col"><code>meta</code><span class="tipo">jsonb</span></li><li class="col"><code>nome</code><span class="tipo">text</span></li><li class="col"><code>tipo</code><span class="tipo">text</span></li></ul>
+      
+      <footer><span>11 colunas</span><span>24 kB</span></footer>
+    </article>
+    <article class="tabela tabela--vazia" data-fam="operacao" id="t-memoria">
+      <header>
+        <h3>memoria</h3>
+        <span class="qtd qtd--zero">vazia</span>
+      </header>
+      <p class="oq">O que o assistente do painel deve lembrar entre sessoes.</p>
+      
+      <ul class="cols"><li class="col"><code>id</code><span class="tipo">bigint</span></li><li class="col"><code>id_empresa</code><span class="tipo">uuid</span></li><li class="col"><code>chaves</code><span class="tipo">ARRAY</span></li><li class="col"><code>conversa_id</code><span class="tipo">uuid</span></li><li class="col"><code>criado_em</code><span class="tipo">timestamptz</span></li><li class="col"><code>detalhe</code><span class="tipo">text</span></li><li class="col"><code>resumo</code><span class="tipo">text</span></li><li class="col"><code>tipo</code><span class="tipo">text</span></li><li class="col"><code>usado_em</code><span class="tipo">timestamptz</span></li><li class="col"><code>vezes_usada</code><span class="tipo">integer</span></li></ul>
+      
+      <footer><span>10 colunas</span><span>24 kB</span></footer>
+    </article></div>
+  </section>
+  <section class="familia" data-fam="dormente">
+    <div class="familia__cab">
+      <h2>Dormentes — existem, e ninguem escreve</h2>
+      <p>Sobraram de desenhos anteriores. Estao aqui porque apagar tabela sem conferir quem a le e como se perde dado; mas nenhuma recebe linha nova.</p>
+    </div>
+    <div class="grade">
+    <article class="tabela tabela--vazia" data-fam="dormente" id="t-cadastro_cliente">
+      <header>
+        <h3>cadastro_cliente</h3>
+        <span class="qtd qtd--zero">vazia</span>
+      </header>
+      <p class="oq">84 colunas, vazia. Era o desenho antigo, em que o cadastro do cliente virava POI em vez de ser o eixo.</p>
+      
+      <ul class="cols"><li class="col"><code>id</code><span class="tipo">bigint</span></li><li class="col"><code>id_empresa</code><span class="tipo">uuid</span></li><li class="col"><code>bacia</code><span class="tipo">text</span></li><li class="col"><code>bairro</code><span class="tipo">text</span></li><li class="col"><code>categoria</code><span class="tipo">text</span></li><li class="col"><code>cep</code><span class="tipo">text</span></li><li class="col"><code>cidade</code><span class="tipo">text</span></li><li class="col"><code>classe_agua</code><span class="tipo">text</span></li><li class="col"><code>classe_esgoto</code><span class="tipo">text</span></li><li class="col"><code>classificacao</code><span class="tipo">text</span></li><li class="col"><code>cliente</code><span class="tipo">text</span></li><li class="col"><code>cod_categoria</code><span class="tipo">text</span></li><li class="col"><code>cod_classe_agua</code><span class="tipo">integer</span></li><li class="col"><code>cod_classe_esgoto</code><span class="tipo">integer</span></li><li class="col"><code>cod_comunidade</code><span class="tipo">text</span></li><li class="col"><code>cod_distrito</code><span class="tipo">text</span></li><li class="col"><code>cod_faturamento</code><span class="tipo">integer</span></li><li class="col"><code>cod_grupo</code><span class="tipo">integer</span></li><li class="col"><code>cod_rota_leitura</code><span class="tipo">integer</span></li><li class="col"><code>cod_setor_comercial</code><span class="tipo">integer</span></li><li class="col"><code>cod_tipo_consumidor</code><span class="tipo">integer</span></li><li class="col"><code>cod_tipo_medicao</code><span class="tipo">integer</span></li><li class="col"><code>complemento</code><span class="tipo">text</span></li><li class="col"><code>comunidade</code><span class="tipo">text</span></li></ul>
+      
+      <footer><span>84 colunas</span><span>40 kB</span></footer>
+    </article>
+    <article class="tabela tabela--vazia" data-fam="dormente" id="t-fachada_anotacao">
+      <header>
+        <h3>fachada_anotacao</h3>
+        <span class="qtd qtd--zero">vazia</span>
+      </header>
+      <p class="oq">67 colunas, vazia. A anotacao manual de fachada, de antes da IA de visao.</p>
+      
+      <ul class="cols"><li class="col"><code>id</code><span class="tipo">bigint</span></li><li class="col"><code>id_empresa</code><span class="tipo">uuid</span></li><li class="col"><code>acao_recomendada</code><span class="tipo">text</span></li><li class="col"><code>alvo_encontrado</code><span class="tipo">text</span></li><li class="col"><code>anotacao</code><span class="tipo">jsonb</span></li><li class="col"><code>apta</code><span class="tipo">boolean</span></li><li class="col"><code>atividade_economica_aparente</code><span class="tipo">text</span></li><li class="col"><code>atividade_no_alvo</code><span class="tipo">text</span></li><li class="col"><code>comercio_divergente</code><span class="tipo">text</span></li><li class="col"><code>comercios_encontrados</code><span class="tipo">jsonb</span></li><li class="col"><code>confianca</code><span class="tipo">real</span></li><li class="col"><code>criado_em</code><span class="tipo">timestamptz</span></li><li class="col"><code>custo_usd</code><span class="tipo">numeric</span></li><li class="col"><code>descricao</code><span class="tipo">text</span></li><li class="col"><code>deteccoes</code><span class="tipo">jsonb</span></li><li class="col"><code>deteccoes_em</code><span class="tipo">timestamptz</span></li><li class="col"><code>e_imovel</code><span class="tipo">boolean</span></li><li class="col"><code>economias_base</code><span class="tipo">integer</span></li><li class="col"><code>elementos</code><span class="tipo">jsonb</span></li><li class="col"><code>energia_entrada</code><span class="tipo">text</span></li><li class="col"><code>estado_conservacao</code><span class="tipo">text</span></li><li class="col"><code>gap_uc_economias</code><span class="tipo">integer</span></li><li class="col"><code>habitacoes_distintas</code><span class="tipo">integer</span></li><li class="col"><code>hidrometros</code><span class="tipo">integer</span></li></ul>
+      
+      <footer><span>67 colunas</span><span>80 kB</span></footer>
+    </article>
+    <article class="tabela tabela--vazia" data-fam="dormente" id="t-fachada_triagem">
+      <header>
+        <h3>fachada_triagem</h3>
+        <span class="qtd qtd--zero">vazia</span>
+      </header>
+      <p class="oq">A triagem que decidia que fachada valia olhar.</p>
+      
+      <ul class="cols"><li class="col"><code>id</code><span class="tipo">bigint</span></li><li class="col"><code>id_empresa</code><span class="tipo">uuid</span></li><li class="col"><code>angulo</code><span class="tipo">text</span></li><li class="col"><code>criado_em</code><span class="tipo">timestamptz</span></li><li class="col"><code>modelo</code><span class="tipo">text</span></li><li class="col"><code>motivo</code><span class="tipo">text</span></li><li class="col"><code>nota_total</code><span class="tipo">smallint</span></li><li class="col"><code>notas</code><span class="tipo">jsonb</span></li><li class="col"><code>poi_id</code><span class="tipo">bigint</span></li><li class="col"><code>schema_versao</code><span class="tipo">text</span></li><li class="col"><code>sv_id</code><span class="tipo">integer</span></li><li class="col"><code>tipo_de_foto</code><span class="tipo">text</span></li><li class="col"><code>veredito</code><span class="tipo">text</span></li></ul>
+      
+      <footer><span>13 colunas</span><span>40 kB</span></footer>
+    </article>
+    <article class="tabela tabela--vazia" data-fam="dormente" id="t-foto_maps_triagem">
+      <header>
+        <h3>foto_maps_triagem</h3>
+        <span class="qtd qtd--zero">vazia</span>
+      </header>
+      <p class="oq">O mesmo, para as fotos do Maps.</p>
+      
+      <ul class="cols"><li class="col"><code>id</code><span class="tipo">bigint</span></li><li class="col"><code>id_empresa</code><span class="tipo">uuid</span></li><li class="col"><code>criado_em</code><span class="tipo">timestamptz</span></li><li class="col"><code>data_imagem</code><span class="tipo">text</span></li><li class="col"><code>imagem_id</code><span class="tipo">integer</span></li><li class="col"><code>modelo</code><span class="tipo">text</span></li><li class="col"><code>motivo</code><span class="tipo">text</span></li><li class="col"><code>poi_id</code><span class="tipo">bigint</span></li><li class="col"><code>schema_versao</code><span class="tipo">text</span></li><li class="col"><code>texto_legivel</code><span class="tipo">text</span></li><li class="col"><code>veredito</code><span class="tipo">text</span></li></ul>
+      
+      <footer><span>11 colunas</span><span>40 kB</span></footer>
+    </article>
+    <article class="tabela tabela--vazia" data-fam="dormente" id="t-atribuicao">
+      <header>
+        <h3>atribuicao</h3>
+        <span class="qtd qtd--zero">vazia</span>
+      </header>
+      <p class="oq">De qual fonte veio cada campo do POI.</p>
+      
+      <ul class="cols"><li class="col"><code>id</code><span class="tipo">bigint</span></li><li class="col"><code>id_empresa</code><span class="tipo">uuid</span></li><li class="col"><code>atribuido_em</code><span class="tipo">timestamptz</span></li><li class="col"><code>atribuido_por</code><span class="tipo">uuid</span></li><li class="col"><code>decidido_em</code><span class="tipo">timestamptz</span></li><li class="col"><code>motivo_escrito</code><span class="tipo">text</span></li><li class="col"><code>motivo_generico</code><span class="tipo">USER-DEFINED</span></li><li class="col"><code>observacao</code><span class="tipo">text</span></li><li class="col"><code>pauta</code><span class="tipo">ARRAY</span></li><li class="col"><code>pauta_porque</code><span class="tipo">jsonb</span></li><li class="col"><code>poi_id</code><span class="tipo">bigint</span></li><li class="col"><code>prioridade</code><span class="tipo">USER-DEFINED</span></li><li class="col"><code>revisao</code><span class="tipo">jsonb</span></li><li class="col"><code>status</code><span class="tipo">USER-DEFINED</span></li><li class="col"><code>supervisor_id</code><span class="tipo">uuid</span></li></ul>
+      
+      <footer><span>15 colunas</span><span>48 kB</span></footer>
+    </article>
+    <article class="tabela tabela--vazia" data-fam="dormente" id="t-atribuicao_divergente">
+      <header>
+        <h3>atribuicao_divergente</h3>
+        <span class="qtd qtd--zero">vazia</span>
+      </header>
+      <p class="oq">Onde duas fontes discordaram.</p>
+      
+      <ul class="cols"><li class="col"><code>id</code><span class="tipo">bigint</span></li><li class="col"><code>id_empresa</code><span class="tipo">uuid</span></li><li class="col"><code>anotacao_id</code><span class="tipo">integer</span></li><li class="col"><code>atividade</code><span class="tipo">text</span></li><li class="col"><code>atribuido_em</code><span class="tipo">timestamptz</span></li><li class="col"><code>decidido_em</code><span class="tipo">timestamptz</span></li><li class="col"><code>motivo_escrito</code><span class="tipo">text</span></li><li class="col"><code>motivo_generico</code><span class="tipo">text</span></li><li class="col"><code>nome_lido</code><span class="tipo">text</span></li><li class="col"><code>observacao</code><span class="tipo">text</span></li><li class="col"><code>poi_id</code><span class="tipo">bigint</span></li><li class="col"><code>status</code><span class="tipo">text</span></li><li class="col"><code>supervisor_id</code><span class="tipo">uuid</span></li></ul>
+      
+      <footer><span>13 colunas</span><span>48 kB</span></footer>
+    </article>
+    <article class="tabela tabela--vazia" data-fam="dormente" id="t-vinculo_poi">
+      <header>
+        <h3>vinculo_poi</h3>
+        <span class="qtd qtd--zero">vazia</span>
+      </header>
+      <p class="oq">O cruzamento POI-com-POI, substituido pelo vinculo ancorado na ligacao.</p>
+      
+      <ul class="cols"><li class="col"><code>id</code><span class="tipo">bigint</span></li><li class="col"><code>id_empresa</code><span class="tipo">uuid</span></li><li class="col"><code>confianca</code><span class="tipo">smallint</span></li><li class="col"><code>confianca_origem</code><span class="tipo">text</span></li><li class="col"><code>criado_em</code><span class="tipo">timestamptz</span></li><li class="col"><code>dados</code><span class="tipo">jsonb</span></li><li class="col"><code>desvinculado_em</code><span class="tipo">timestamptz</span></li><li class="col"><code>desvinculado_para</code><span class="tipo">integer</span></li><li class="col"><code>desvinculado_por</code><span class="tipo">text</span></li><li class="col"><code>estado</code><span class="tipo">text</span></li><li class="col"><code>fonte</code><span class="tipo">text</span></li><li class="col"><code>id_fonte</code><span class="tipo">text</span></li><li class="col"><code>lat</code><span class="tipo">float8</span></li><li class="col"><code>lng</code><span class="tipo">float8</span></li><li class="col"><code>modelo</code><span class="tipo">text</span></li><li class="col"><code>motivo</code><span class="tipo">text</span></li><li class="col"><code>nome</code><span class="tipo">text</span></li><li class="col"><code>poi_id</code><span class="tipo">bigint</span></li></ul>
+      
+      <footer><span>18 colunas</span><span>48 kB</span></footer>
+    </article>
+    <article class="tabela" data-fam="dormente" id="t-cruzamento">
+      <header>
+        <h3>cruzamento</h3>
+        <span class="qtd">43 linhas</span>
+      </header>
+      <p class="oq">O pareamento entre duas bases, com score e evidencia.</p>
+      
+      <ul class="cols"><li class="col"><code>id</code><span class="tipo">bigint</span></li><li class="col"><code>id_empresa</code><span class="tipo">uuid</span></li><li class="col"><code>ambiguo</code><span class="tipo">boolean</span></li><li class="col"><code>base_a</code><span class="tipo">text</span></li><li class="col"><code>base_b</code><span class="tipo">text</span></li><li class="col"><code>chave</code><span class="tipo">text</span></li><li class="col"><code>concorrentes</code><span class="tipo">integer</span></li><li class="col"><code>criado_em</code><span class="tipo">timestamptz</span></li><li class="col"><code>distancia_m</code><span class="tipo">numeric</span></li><li class="col"><code>evidencia</code><span class="tipo">jsonb</span></li><li class="col"><code>id_a</code><span class="tipo">text</span></li><li class="col"><code>id_b</code><span class="tipo">text</span></li><li class="col"><code>score</code><span class="tipo">numeric</span></li></ul>
+      
+      <footer><span>13 colunas</span><span>144 kB</span></footer>
+    </article>
+    <article class="tabela tabela--vazia" data-fam="dormente" id="t-campo_catalogo">
+      <header>
+        <h3>campo_catalogo</h3>
+        <span class="qtd qtd--zero">vazia</span>
+      </header>
+      <p class="oq">O catalogo de campos que o painel sabe exibir.</p>
+      
+      <ul class="cols"><li class="col"><code>id</code><span class="tipo">bigint</span></li><li class="col"><code>id_empresa</code><span class="tipo">uuid</span></li><li class="col"><code>ajuda</code><span class="tipo">text</span></li><li class="col"><code>ativo</code><span class="tipo">boolean</span></li><li class="col"><code>chave</code><span class="tipo">text</span></li><li class="col"><code>criado_em</code><span class="tipo">timestamptz</span></li><li class="col"><code>fonte</code><span class="tipo">USER-DEFINED</span></li><li class="col"><code>formato</code><span class="tipo">text</span></li><li class="col"><code>grupo</code><span class="tipo">text</span></li><li class="col"><code>ordem</code><span class="tipo">integer</span></li><li class="col"><code>peso</code><span class="tipo">USER-DEFINED</span></li><li class="col"><code>procedencia</code><span class="tipo">text</span></li><li class="col"><code>rotulo</code><span class="tipo">text</span></li></ul>
+      
+      <footer><span>13 colunas</span><span>32 kB</span></footer>
+    </article>
+    <article class="tabela tabela--vazia" data-fam="dormente" id="t-cnefe_coletiva">
+      <header>
+        <h3>cnefe_coletiva</h3>
+        <span class="qtd qtd--zero">vazia</span>
+      </header>
+      <p class="oq">As coletivas identificadas no CNEFE.</p>
+      
+      <ul class="cols"><li class="col"><code>id</code><span class="tipo">bigint</span></li><li class="col"><code>id_empresa</code><span class="tipo">uuid</span></li><li class="col"><code>acuracia_m</code><span class="tipo">real</span></li><li class="col"><code>atividades</code><span class="tipo">text</span></li><li class="col"><code>cod_municipio</code><span class="tipo">text</span></li><li class="col"><code>coletiva_id</code><span class="tipo">text</span></li><li class="col"><code>com_atividade</code><span class="tipo">integer</span></li><li class="col"><code>economias_cnefe</code><span class="tipo">integer</span></li><li class="col"><code>forma</code><span class="tipo">text</span></li><li class="col"><code>importado_em</code><span class="tipo">timestamptz</span></li><li class="col"><code>lat</code><span class="tipo">float8</span></li><li class="col"><code>lng</code><span class="tipo">float8</span></li><li class="col"><code>localidade</code><span class="tipo">text</span></li><li class="col"><code>logradouro</code><span class="tipo">text</span></li><li class="col"><code>numero</code><span class="tipo">integer</span></li><li class="col"><code>poi_dist_m</code><span class="tipo">real</span></li><li class="col"><code>poi_id</code><span class="tipo">bigint</span></li><li class="col"><code>qtd_blocos</code><span class="tipo">integer</span></li><li class="col"><code>qtd_inferida</code><span class="tipo">integer</span></li><li class="col"><code>qtd_observada</code><span class="tipo">integer</span></li><li class="col"><code>recomendacao</code><span class="tipo">text</span></li><li class="col"><code>unidades</code><span class="tipo">integer</span></li><li class="col"><code>uso</code><span class="tipo">text</span></li><li class="col"><code>veredito</code><span class="tipo">text</span></li></ul>
+      
+      <footer><span>24 colunas</span><span>24 kB</span></footer>
+    </article></div>
+  </section>
+</main>
+
+<footer class="rodape">
+  <div class="env">
+    <h2>Duas coisas que este mapa não esconde</h2>
+    <div class="aviso">
+      <p><b>A <code>pois</code> ainda tem colunas que já mudaram de casa.</b>
+      As marcadas com <code>→ maps_data</code> e <code>→ cadastur_data</code>
+      são gravadas nos dois lugares hoje. A escrita dupla é de propósito e é
+      temporária: o painel e a API ainda leem da <code>pois</code>, e apagar
+      antes de migrar os leitores deixaria a ficha do POI sem nota e sem
+      horário. Elas caem na fase seguinte.</p>
+    </div>
+    <div class="aviso">
+      <p><b>195.983 POIs não sabem de qual fonte vieram.</b>
+      Entraram como <code>fonte='estadual'</code>, que é a soma de Overture,
+      Foursquare e OSM. O <code>origem_estadual.py</code> é quem responde isso
+      lendo o parquet — rodou em Canoas e parou. Enquanto não rodar no estado
+      inteiro, eles ficam fora das três tabelas de fonte.</p>
+    </div>
+    <p style="margin-top:26px">
+      Gerado a partir do catálogo do próprio Postgres em 03/09/2026 —
+      nenhuma coluna foi transcrita à mão.
+    </p>
+  </div>
+</footer>
