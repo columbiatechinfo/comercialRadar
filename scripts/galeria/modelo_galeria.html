@@ -1,0 +1,307 @@
+<title>Auditoria da Quadra</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root{
+    --tinta:#12222b; --tinta-fraca:#4b6674; --tinta-tenue:#7d95a1;
+    --fundo:#f4f7f8; --papel:#ffffff; --linha:#dbe5e9; --campo:#eef4f5;
+    --agua:#0f6e7a; --agua-clara:#e2f1f2;
+    --bom:#1a7f4b; --bom-fundo:#e6f4ec;
+    --meio:#9a5d0c; --meio-fundo:#fbf0dd;
+    --ruim:#a33a33; --ruim-fundo:#fbeae8;
+    --sombra:0 1px 2px rgba(18,34,43,.05), 0 8px 24px -12px rgba(18,34,43,.16);
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --tinta:#e6eef1; --tinta-fraca:#a3b8c1; --tinta-tenue:#78929c;
+      --fundo:#0c1519; --papel:#122127; --linha:#1f333b; --campo:#0e1b20;
+      --agua:#4fc3cd; --agua-clara:#10333a;
+      --bom:#5fcf90; --bom-fundo:#11291d;
+      --meio:#e0ab5a; --meio-fundo:#2c2313;
+      --ruim:#e8837a; --ruim-fundo:#2e1917;
+      --sombra:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.7);
+    }
+  }
+  :root[data-theme="dark"]{
+    --tinta:#e6eef1; --tinta-fraca:#a3b8c1; --tinta-tenue:#78929c;
+    --fundo:#0c1519; --papel:#122127; --linha:#1f333b; --campo:#0e1b20;
+    --agua:#4fc3cd; --agua-clara:#10333a;
+    --bom:#5fcf90; --bom-fundo:#11291d;
+    --meio:#e0ab5a; --meio-fundo:#2c2313;
+    --ruim:#e8837a; --ruim-fundo:#2e1917;
+    --sombra:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.7);
+  }
+
+  body{background:var(--fundo); color:var(--tinta);
+       font-family:"Source Serif 4",Georgia,serif; font-size:16px; line-height:1.6;
+       -webkit-font-smoothing:antialiased;}
+  .env{max-width:1180px; margin:0 auto; padding:44px 20px 90px;}
+  h1,h2,h3,.grot,button,summary{font-family:Archivo,"Helvetica Neue",Arial,sans-serif;}
+  h1{font-size:clamp(1.9rem,4.6vw,2.75rem); line-height:1.06; margin:0 0 .5rem;
+     font-weight:700; letter-spacing:-.022em;}
+  h2{font-size:1.24rem; font-weight:600; margin:0 0 .5rem; letter-spacing:-.012em;}
+  p{margin:0 0 .9rem; max-width:70ch;}
+  .olho{font-family:Archivo,sans-serif; font-size:.71rem; font-weight:600;
+        letter-spacing:.14em; text-transform:uppercase; color:var(--agua);
+        margin:0 0 .85rem;}
+  .sub{font-size:1.08rem; color:var(--tinta-fraca); max-width:62ch;
+       margin-bottom:1.8rem;}
+
+  .placar{display:grid; grid-template-columns:repeat(auto-fit,minmax(128px,1fr));
+          gap:1px; background:var(--linha); border:1px solid var(--linha);
+          border-radius:11px; overflow:hidden; margin:0 0 1.8rem;}
+  .placar div{background:var(--papel); padding:13px 16px;}
+  .placar b{display:block; font-family:"IBM Plex Mono",monospace; font-size:1.45rem;
+            font-weight:500; letter-spacing:-.03em; font-variant-numeric:tabular-nums;
+            line-height:1.15;}
+  .placar span{display:block; font-family:Archivo,sans-serif; font-size:.68rem;
+               letter-spacing:.07em; text-transform:uppercase;
+               color:var(--tinta-tenue); margin-top:5px;}
+  .placar .k1 b,.placar .k2 b{color:var(--bom);}
+  .placar .k3 b{color:var(--meio);}
+  .placar .k4 b{color:var(--ruim);}
+  .placar .k0 b{color:var(--agua);}
+
+  /* ── barra de filtro ─────────────────────────────────── */
+  .barra{position:sticky; top:0; z-index:30; background:var(--fundo);
+         padding:12px 0 14px; margin:0 0 1.6rem;
+         border-bottom:1px solid var(--linha);
+         display:flex; flex-wrap:wrap; gap:8px; align-items:center;}
+  .fchip{font-family:Archivo,sans-serif; font-size:.79rem; font-weight:600;
+         border:1px solid var(--linha); background:var(--papel); color:var(--tinta-fraca);
+         border-radius:999px; padding:6px 13px; cursor:pointer; line-height:1.2;}
+  .fchip[aria-pressed="true"]{background:var(--agua); border-color:var(--agua);
+                              color:#fff;}
+  :root[data-theme="dark"] .fchip[aria-pressed="true"],
+  :root:not([data-theme="light"]) .fchip[aria-pressed="true"]{color:#08171b;}
+  @media (prefers-color-scheme: light){
+    :root:not([data-theme="dark"]) .fchip[aria-pressed="true"]{color:#fff;}
+  }
+  .fchip:focus-visible{outline:2px solid var(--agua); outline-offset:2px;}
+  input[type=search]{font-family:inherit; font-size:.92rem; padding:7px 13px;
+                     border:1px solid var(--linha); border-radius:999px;
+                     background:var(--papel); color:var(--tinta); min-width:210px;
+                     flex:1 1 210px; max-width:340px;}
+  input[type=search]:focus-visible{outline:2px solid var(--agua); outline-offset:1px;}
+  .conta{font-family:"IBM Plex Mono",monospace; font-size:.82rem;
+         color:var(--tinta-tenue); margin-left:auto; white-space:nowrap;
+         font-variant-numeric:tabular-nums;}
+
+  /* ── cartão do POI ───────────────────────────────────── */
+  .poi{background:var(--papel); border:1px solid var(--linha); border-radius:14px;
+       padding:18px 20px 15px; margin-bottom:16px; box-shadow:var(--sombra);}
+  .poi header{display:flex; flex-wrap:wrap; gap:10px 14px; align-items:flex-start;
+              justify-content:space-between; margin-bottom:2px;}
+  .tit{display:flex; flex-wrap:wrap; gap:6px 10px; align-items:baseline; min-width:0;}
+  .poi h3{font-size:1.06rem; font-weight:600; margin:0; letter-spacing:-.008em;}
+  .id{font-family:"IBM Plex Mono",monospace; font-size:.8rem; color:var(--tinta-tenue);}
+  .fonte{font-family:Archivo,sans-serif; font-size:.68rem; font-weight:600;
+         letter-spacing:.07em; text-transform:uppercase; color:var(--agua);
+         background:var(--agua-clara); border-radius:5px; padding:2px 7px;}
+  .pill{font-family:Archivo,sans-serif; font-size:.74rem; font-weight:700;
+        border-radius:999px; padding:5px 13px; white-space:nowrap;
+        border:1px solid transparent;}
+  .pill.aprovado_exato,.pill.aprovado_comercial{background:var(--bom-fundo);
+    color:var(--bom); border-color:color-mix(in srgb,var(--bom) 26%,transparent);}
+  .pill.revisao_humana{background:var(--meio-fundo); color:var(--meio);
+    border-color:color-mix(in srgb,var(--meio) 30%,transparent);}
+  .pill.reprovado{background:var(--ruim-fundo); color:var(--ruim);
+    border-color:color-mix(in srgb,var(--ruim) 26%,transparent);}
+  .end{font-size:.9rem; color:var(--tinta-fraca); margin:0 0 12px;}
+
+  .tira{display:flex; gap:10px; overflow-x:auto; padding-bottom:4px;
+        margin:0 0 13px;}
+  .im{margin:0; flex:0 0 auto; max-width:100%;}
+  /* ALTURA IGUAL, LARGURA LIVRE. O satélite é quadrado (720×720) e as duas
+     visadas de rua são 3:2 — com altura automática as legendas ficavam em
+     alturas diferentes e a tira parecia quebrada. `contain` porque nenhuma das
+     três pode ser cortada: é justamente a borda da foto que às vezes carrega o
+     letreiro do vizinho. */
+  .im img{display:block; height:250px; width:auto; max-width:100%;
+          object-fit:contain; border-radius:9px; border:1px solid var(--linha);
+          cursor:zoom-in; background:var(--campo);}
+  .im.vazia .semfoto{width:230px; height:150px; border-radius:9px;
+        border:1px dashed var(--linha); display:flex; align-items:center;
+        justify-content:center; color:var(--tinta-tenue); font-size:.85rem;
+        background:var(--campo);}
+  .im figcaption{font-family:Archivo,sans-serif; font-size:.71rem;
+        color:var(--tinta-tenue); margin-top:5px; letter-spacing:.02em;}
+  .im figcaption b{color:var(--tinta-fraca); font-weight:600;}
+  /* A PÁGINA DO ANÚNCIO É OUTRA COISA: 300 px de largura por ~3.600 de altura.
+     Na tira ela entra como um recorte do TOPO — que é onde estão título, nota
+     e avaliações; a página inteira continua a um clique, na lupa. */
+  .im.pag img{height:340px; width:230px; object-fit:cover; object-position:top;}
+
+  .just{font-size:.97rem; margin:0 0 11px; max-width:78ch;}
+  .chips{display:flex; flex-wrap:wrap; gap:6px; margin:0 0 11px;}
+  .chip{font-family:Archivo,sans-serif; font-size:.72rem; font-weight:600;
+        border:1px solid var(--linha); border-radius:6px; padding:3px 9px;
+        color:var(--tinta-fraca);}
+  .chip.forte{background:var(--meio-fundo); color:var(--meio);
+              border-color:color-mix(in srgb,var(--meio) 30%,transparent);}
+  .chip.fraco{opacity:.6;}
+  .links,.ligs{display:flex; flex-wrap:wrap; gap:6px; margin:0 0 11px;}
+  .lk{font-family:Archivo,sans-serif; font-size:.75rem; font-weight:600;
+      color:var(--agua); background:var(--agua-clara); border-radius:6px;
+      padding:4px 10px; text-decoration:none; overflow-wrap:anywhere;}
+  .lk:hover{text-decoration:underline;}
+  .lig{font-family:"IBM Plex Mono",monospace; font-size:.73rem;
+       color:var(--tinta-tenue); border:1px solid var(--linha);
+       border-radius:6px; padding:3px 9px;}
+  .lig b{color:var(--tinta-fraca);}
+
+  details{margin:0 0 7px;}
+  summary{font-size:.79rem; font-weight:600; color:var(--agua); cursor:pointer;
+          list-style:none; padding:3px 0;}
+  summary::-webkit-details-marker{display:none;}
+  summary::before{content:"▸ "; display:inline-block; transition:transform .15s;}
+  details[open] > summary::before{content:"▾ ";}
+  summary:focus-visible{outline:2px solid var(--agua); outline-offset:2px;}
+  pre{font-family:"IBM Plex Mono",monospace; font-size:.76rem; line-height:1.55;
+      background:var(--campo); border:1px solid var(--linha); border-radius:9px;
+      padding:13px 15px; overflow-x:auto; white-space:pre-wrap;
+      overflow-wrap:anywhere; margin:6px 0 0; color:var(--tinta-fraca);}
+  .rod{font-family:"IBM Plex Mono",monospace; font-size:.72rem;
+       color:var(--tinta-tenue); margin:9px 0 0; border-top:1px solid var(--linha);
+       padding-top:8px;}
+
+  .pr summary span{font-family:"IBM Plex Mono",monospace; font-weight:400;
+                   color:var(--tinta-tenue); font-size:.73rem;}
+  .caixa{background:var(--papel); border:1px solid var(--linha);
+         border-radius:14px; padding:18px 20px; margin:0 0 1.6rem;
+         box-shadow:var(--sombra);}
+
+  /* ── lupa ────────────────────────────────────────────── */
+  #lupa{position:fixed; inset:0; background:rgba(6,14,17,.93); z-index:100;
+        display:flex; align-items:center; justify-content:center; padding:24px;
+        flex-direction:column; gap:12px;}
+  /* O `display:flex` acima VENCE o atributo `hidden`, e sem esta linha a lupa
+     nasce aberta por cima da página inteira. Alguns invólucros trazem um
+     `[hidden]{display:none!important}` que esconde o defeito — a página não
+     pode depender disso para funcionar quando aberta como arquivo solto. */
+  #lupa[hidden]{display:none;}
+  #lupa img{max-width:100%; max-height:84vh; border-radius:10px;
+            box-shadow:0 20px 60px rgba(0,0,0,.6); cursor:zoom-out;}
+  #lupa p{color:#dfeaee; font-family:"IBM Plex Mono",monospace; font-size:.82rem;
+          margin:0; max-width:none;}
+  #lupa small{color:#8fa6ae; font-size:.75rem;}
+  .vazio{text-align:center; color:var(--tinta-tenue); padding:48px 0;
+         font-size:.95rem;}
+  @media (max-width:640px){
+    .env{padding:30px 14px 70px;}
+    .im img{max-width:250px;}
+    .conta{margin-left:0; width:100%;}
+  }
+</style>
+
+<div class="env">
+
+<p class="olho">Radar Comercial · Corsan / A2L · quadra de Canoas · 4 de setembro de 2026</p>
+<h1>Auditoria da quadra</h1>
+<p class="sub">Os {{TOTAL}} POIs julgados, um por cartão: as imagens exatas que a
+IA recebeu, o que ela descreveu antes de ver o cadastro, o prompt como foi
+enviado, os links do anúncio, a ligação de água vinculada e o veredito.</p>
+
+<div class="placar" id="placar"></div>
+
+<div class="caixa">
+  <h2>Os prompts, como foram enviados</h2>
+  <p style="font-size:.94rem;margin-bottom:.9rem">Seis prompts, e cada um recebe
+  <b>uma</b> imagem — ou nenhuma. A percepção nunca vê o cadastro, e o
+  julgamento nunca vê a foto: é a separação que impede o modelo de confirmar a
+  si mesmo. O prompt de julgamento aparece <b>preenchido</b> dentro de cada
+  cartão, com a percepção e o cadastro daquele POI.</p>
+  {{PROMPTS}}
+</div>
+
+<div class="barra" role="group" aria-label="Filtros">
+  <button class="fchip" data-v="todos" aria-pressed="true">Todos</button>
+  <button class="fchip" data-v="aprovado_exato" aria-pressed="false">Exato</button>
+  <button class="fchip" data-v="aprovado_comercial" aria-pressed="false">Comercial</button>
+  <button class="fchip" data-v="revisao_humana" aria-pressed="false">Revisão</button>
+  <button class="fchip" data-v="reprovado" aria-pressed="false">Reprovado</button>
+  <input type="search" id="busca" placeholder="buscar por nome, categoria ou rua…"
+         aria-label="Buscar">
+  <span class="conta" id="conta"></span>
+</div>
+
+<div id="lista">
+{{CARTOES}}
+</div>
+<p class="vazio" id="vazio" hidden>Nenhum POI com esses filtros.</p>
+
+<p class="rod" style="border-top:1px solid var(--linha);padding-top:1.2rem;
+   margin-top:2rem">Imagens embutidas nesta página em {{ESCALA}} — as originais
+   ficam em <code>poi_evidencia</code>, em tamanho cheio. Clique em qualquer
+   foto para ampliar.</p>
+
+</div>
+
+<div id="lupa" hidden>
+  <img id="lupa-img" alt="">
+  <p id="lupa-cap"></p>
+  <small>clique ou Esc para fechar</small>
+</div>
+
+<script>
+(function(){
+  const PLACAR = {{PLACAR}};
+  const ROT = {aprovado_exato:["Exato","k1"], aprovado_comercial:["Comercial","k2"],
+               revisao_humana:["Revisão humana","k3"], reprovado:["Reprovado","k4"]};
+  const total = Object.values(PLACAR).reduce((a,b)=>a+b,0);
+  const pl = document.getElementById("placar");
+  const cel = (v,r,k)=>{const d=document.createElement("div");
+    d.className=k; d.innerHTML="<b>"+v+"</b><span>"+r+"</span>"; pl.appendChild(d);};
+  cel(total,"POIs julgados","k0");
+  Object.keys(ROT).forEach(k=>{ if(PLACAR[k]) cel(PLACAR[k],ROT[k][0],ROT[k][1]); });
+
+  const lista = document.getElementById("lista");
+  const cartoes = Array.from(lista.querySelectorAll(".poi"));
+  const conta = document.getElementById("conta");
+  const vazio = document.getElementById("vazio");
+  const busca = document.getElementById("busca");
+  let filtro = "todos";
+
+  function aplicar(){
+    const q = busca.value.trim().toLowerCase();
+    let n = 0;
+    cartoes.forEach(c=>{
+      const okV = filtro === "todos" || c.dataset.v === filtro;
+      const okQ = !q || c.dataset.busca.includes(q);
+      const most = okV && okQ;
+      c.hidden = !most;
+      if (most) n++;
+    });
+    conta.textContent = n + " de " + cartoes.length;
+    vazio.hidden = n > 0;
+  }
+
+  document.querySelectorAll(".fchip").forEach(b=>{
+    b.addEventListener("click", ()=>{
+      filtro = b.dataset.v;
+      document.querySelectorAll(".fchip").forEach(o=>
+        o.setAttribute("aria-pressed", String(o === b)));
+      aplicar();
+    });
+  });
+  busca.addEventListener("input", aplicar);
+  aplicar();
+
+  const lupa = document.getElementById("lupa");
+  const lupaImg = document.getElementById("lupa-img");
+  const lupaCap = document.getElementById("lupa-cap");
+  lista.addEventListener("click", ev=>{
+    const im = ev.target.closest(".im img");
+    if(!im) return;
+    lupaImg.src = im.src;
+    lupaImg.alt = im.alt;
+    lupaCap.textContent = im.dataset.cap || "";
+    lupa.hidden = false;
+  });
+  lupa.addEventListener("click", ()=>{ lupa.hidden = true; lupaImg.src = ""; });
+  document.addEventListener("keydown", ev=>{
+    if(ev.key === "Escape" && !lupa.hidden){ lupa.hidden = true; lupaImg.src=""; }
+  });
+})();
+</script>
