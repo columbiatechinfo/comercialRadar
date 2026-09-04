@@ -297,21 +297,38 @@ sustenta o veredito — data da avaliação, mês do calendário, nota.>"}"""
 
 
 # ── quem entra ─────────────────────────────────────────────────────────────
+# A FILA E ESCRITA EM `exists`, E NAO EM `join`. A primeira versao juntava
+# `pois` com `ligacao_poi`, `cadastro_corsan`, `categoria_catalogo` e
+# `poi_evidencia` e colapsava tudo com `distinct`. Funcionava enquanto havia o
+# `not exists (poi_veredito)` no fim — sem perceber, era ELE que podava a
+# consulta cedo.
+#
+# Com `--refazer` esse filtro sai, e a mesma consulta ficou 4 MINUTOS parada em
+# 04/09/2026, sem devolver linha nenhuma: o produto do join sobre 301 mil POIs
+# e 65 mil vinculos e grande, e o `distinct` so limpa DEPOIS de montar tudo.
+#
+# Em `exists` o resultado e identico — a chave continua sendo `p.id` —, mas o
+# planejador pode partir das 431 linhas de `poi_evidencia`, que e o lado
+# pequeno, e cada condicao vira um teste de existencia que para no primeiro
+# acerto. Nenhuma linha e duplicada para ser removida depois.
 SQL_ALVO = """
-    select distinct p.id, coalesce(p.nome,''), coalesce(p.fonte,''),
+    select p.id, coalesce(p.nome,''), coalesce(p.fonte,''),
            coalesce(p.categoria,''), coalesce(p.endereco,''),
            coalesce(p.cidade,''), coalesce(p.uf,''),
            st_y(p.pt_geo::geometry), st_x(p.pt_geo::geometry)
       from radar_comercial.pois p
-      join radar_comercial.ligacao_poi lp on lp.poi_id = p.id
-      join resources_root.cadastro_corsan l on l.num_ligacao::text = lp.ligacao
-      join radar_comercial.categoria_catalogo cc
-            on cc.fonte = p.fonte and cc.valor = btrim(p.categoria)
-      join radar_comercial.poi_evidencia e
-            on e.poi_id = p.id and e.dados is not null
-     where cc.avaliar
-       and upper(l.categoria) = 'RESIDENCIAL'
-       and upper(coalesce(l.sit_ligacao,'')) = 'ATIVA'
+     where exists (select 1 from radar_comercial.poi_evidencia e
+                    where e.poi_id = p.id and e.dados is not null)
+       and exists (select 1 from radar_comercial.categoria_catalogo cc
+                    where cc.fonte = p.fonte
+                      and cc.valor = btrim(p.categoria) and cc.avaliar)
+       and exists (select 1
+                     from radar_comercial.ligacao_poi lp
+                     join resources_root.cadastro_corsan l
+                          on l.num_ligacao::text = lp.ligacao
+                    where lp.poi_id = p.id
+                      and upper(l.categoria) = 'RESIDENCIAL'
+                      and upper(coalesce(l.sit_ligacao,'')) = 'ATIVA')
        %(filtro)s
      order by p.id
 """
@@ -319,33 +336,6 @@ SQL_ALVO = """
 SEM_VEREDITO = """
        and not exists (select 1 from radar_comercial.poi_veredito v
                         where v.poi_id = p.id)
-"""
-
-
-# O POI NOMEADO NÃO PASSA PELA FILA, e isso é correção de duas coisas ao mesmo
-# tempo.
-#
-# A primeira é de sentido: quem digitou `--poi 99207` já disse qual ponto quer.
-# Cruzá-lo com "categoria marcada" e "ligação residencial ativa" só produziria
-# "não achei" para um id que existe — e sem dizer qual dos dois critérios
-# barrou.
-#
-# A segunda é de custo, e foi medida em 04/09/2026: com `p.id = any(...)`
-# grudado no fim da consulta da fila, o planejador trocou o plano e a mesma
-# consulta que responde em segundos para a área inteira ficou 494 s ATIVA para
-# dezessete ids. O culpado é o `l.num_ligacao::text = lp.ligacao` — o cast
-# impede o índice, e num laço aninhado isso vira varredura de
-# `cadastro_corsan` por linha.
-SQL_POR_ID = """
-    select distinct p.id, coalesce(p.nome,''), coalesce(p.fonte,''),
-           coalesce(p.categoria,''), coalesce(p.endereco,''),
-           coalesce(p.cidade,''), coalesce(p.uf,''),
-           st_y(p.pt_geo::geometry), st_x(p.pt_geo::geometry)
-      from radar_comercial.pois p
-      join radar_comercial.poi_evidencia e
-            on e.poi_id = p.id and e.dados is not null
-     where p.id = any(%s)
-     order by p.id
 """
 
 
