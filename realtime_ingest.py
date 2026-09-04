@@ -276,6 +276,110 @@ def _endereco_pela_coordenada(r: dict):
                            cidade=cidade, usar_maps=False)
 
 
+# ── cada fonte tem a sua tabela (migracao 0048) ────────────────────────────
+#
+# ATE 03/09/2026 TUDO CAIA NA `pois`. Ela tinha 70 colunas guardando tres coisas
+# diferentes: o que e do estabelecimento (nome, endereco, telefone), o que e de
+# UMA fonte (`place_id` do Maps, `razao_social` da Receita) e o que e de
+# processo. Vinte e duas dessas colunas nunca guardaram nada — nasceram para uma
+# fonte e ficaram nulas para os outros 300 mil POIs.
+#
+# O mapa abaixo e o conserto, e a forma dele importa: acrescentar uma fonte e
+# acrescentar uma ENTRADA, nao escrever codigo. A chave e o valor de `fonte`; o
+# valor e a tabela e o de-para {coluna da tabela: chave do registro}.
+#
+# QUEM NAO ESTA AQUI TEM MOTIVO. `ifood` e `airbnb` ja tem escritor proprio
+# (`ifood_merchant`, `airbnb_anuncio`), com muito mais campo do que passa por
+# este ingestor. `estadual` depende do Parquet da extracao para saber se o ponto
+# e do OSM, do Overture ou do Foursquare — quem resolve isso e o
+# `origem_estadual.py`, que roda logo depois da importacao.
+TABELA_POR_FONTE = {
+    "maps": ("maps_data", {
+        "place_id": "place_id", "maps_url": "maps_url",
+        "plus_code": "plus_code", "maps_lat": "maps_lat",
+        "maps_lng": "maps_lng", "avaliacao": "avaliacao",
+        "total_avaliacoes": "total_avaliacoes",
+        "resumo_avaliacoes": "resumo_avaliacoes",
+        "status_horario": "status_horario", "preco_medio": "preco_medio",
+        "ocr_texto": "ocr_texto",
+    }),
+    "cadastur": ("cadastur_data", {
+        "cnpj": "cnpj", "razao_social": "razao_social",
+        "nome_fantasia": "nome_fantasia", "cnae": "cnae",
+        "incerteza_m": "coord_incerteza_m",
+    }),
+    "receita": ("receita_data", {
+        "cnpj": "cnpj", "cnpj_conf": "cnpj_conf",
+        "razao_social": "razao_social", "nome_fantasia": "nome_fantasia",
+        "cnae": "cnae", "natureza_juridica": "natureza_juridica",
+        "situacao_cadastral": "situacao_cadastral",
+    }),
+}
+
+# As colunas que sao NUMERICAS na tabela da fonte e chegam como texto do
+# pipeline. `avaliacao` e o caso classico: vinha '4,5', formato brasileiro, e
+# ficava assim no banco — sem ordenar e sem somar, porque '10,0' vem antes de
+# '2,0' na ordem alfabetica.
+_NUMERICAS = {"avaliacao", "incerteza_m"}
+
+
+def _numero(v):
+    """Texto com virgula decimal vira numero; lixo vira None, sem estourar."""
+    if v is None or isinstance(v, (int, float)):
+        return v
+    t = str(v).replace(",", ".").strip()
+    if not t:
+        return None
+    try:
+        return float(t)
+    except ValueError:
+        return None
+
+
+def _gravar_na_tabela_da_fonte(cur, poi_id, r) -> str:
+    """Poe o dado especifico da fonte na tabela dela. Devolve o nome da tabela.
+
+    `id_empresa` vem da propria `pois` por subconsulta, e nao do registro: e a
+    linha do POI que manda, e assim a filha nunca acaba numa empresa diferente
+    da mae — que e o modo de falhar mais caro aqui, porque a RLS esconderia a
+    filha de quem enxerga a mae, sem erro nenhum.
+
+    `on conflict do update` com `coalesce` do lado novo: uma etapa que reabre o
+    POI so para pegar o telefone nao pode zerar a nota que outra ja tinha
+    colhido. E o mesmo merge nao-destrutivo que a `pois` faz acima.
+    """
+    fonte = (r.get("fonte") or "").strip().lower()
+    alvo = TABELA_POR_FONTE.get(fonte)
+    if not alvo:
+        return ""
+    tabela, de_para = alvo
+
+    cols, vals = [], []
+    for col, chave in de_para.items():
+        v = r.get(chave)
+        if col in _NUMERICAS:
+            v = _numero(v)
+        elif v is not None:
+            v = _s(v)
+        if v is not None and v != "":
+            cols.append(col)
+            vals.append(v)
+    if not cols:
+        return ""
+
+    marcas = ", ".join(["%s"] * len(cols))
+    sets = ", ".join("{0} = coalesce(excluded.{0}, {1}.{0})".format(c, tabela)
+                     for c in cols)
+    cur.execute(
+        "insert into radar_comercial.{t} (poi_id, id_empresa, {cs}) "
+        "select %s, p.id_empresa, {ms} from radar_comercial.pois p "
+        " where p.id = %s "
+        "on conflict (poi_id) do update set {sets}".format(
+            t=tabela, cs=", ".join(cols), ms=marcas, sets=sets),
+        (poi_id, *vals, poi_id))
+    return tabela
+
+
 def ingerir_registro(r: dict, poligono=None, conn=None) -> tuple:
     """
     Grava UM registro do pipeline no banco. Retorna (resultado, poi_id):
@@ -504,17 +608,29 @@ def ingerir_registro(r: dict, poligono=None, conn=None) -> tuple:
                     _VALORES)
             poi_id = cur.fetchone()[0]
 
-            fotos = [(poi_id, str(u), k) for k, u in enumerate(r.get("fotos") or []) if u]
+            # O DADO DA FONTE VAI PARA A TABELA DA FONTE. As mesmas colunas
+            # continuam na `pois` acima porque o painel e a API ainda leem de
+            # la; a escrita dupla e temporaria e sai quando os leitores mudarem.
+            _gravar_na_tabela_da_fonte(cur, poi_id, r)
+            _fonte_da_linha = (r.get("fonte") or "desconhecido").strip().lower()
+
+            fotos = [(poi_id, _fonte_da_linha, str(u), k)
+                     for k, u in enumerate(r.get("fotos") or []) if u]
             if fotos:
                 # Só a url que ainda NÃO está lá. A linha existente carrega
                 # `storage_path`, `bytes_tam` e `content_type`: reinseri-la pela
                 # url perderia o byte já baixado e mandaria a próxima etapa
                 # baixar de novo o que já estava pago.
+                # `fonte` E OBRIGATORIA DESDE A MIGRACAO 0048: a tabela guarda
+                # imagem de qualquer fonte, e sem a coluna nao havia como saber
+                # de quem era cada linha. Ela viaja como VALOR na tupla, e nao
+                # interpolada no texto do SQL — o nome da fonte vem do registro,
+                # e registro e dado de fora.
                 psycopg2.extras.execute_values(
                     cur,
-                    """INSERT INTO images_urls (poi_id, url, ordem)
-                       SELECT v.poi_id, v.url, v.ordem
-                         FROM (VALUES %s) AS v(poi_id, url, ordem)
+                    """INSERT INTO images_urls (poi_id, fonte, url, ordem)
+                       SELECT v.poi_id, v.fonte, v.url, v.ordem
+                         FROM (VALUES %s) AS v(poi_id, fonte, url, ordem)
                         WHERE NOT EXISTS (SELECT 1 FROM images_urls z
                                            WHERE z.poi_id = v.poi_id AND z.url = v.url)""",
                     fotos)
@@ -523,7 +639,10 @@ def ingerir_registro(r: dict, poligono=None, conn=None) -> tuple:
                        for c in (r.get("comentarios") or []) if isinstance(c, dict)]
             if coments:
                 psycopg2.extras.execute_values(
-                    cur, "INSERT INTO comentarios (poi_id, autor, nota, texto, data) VALUES %s", coments)
+                    cur, "INSERT INTO comentarios "
+                         "(poi_id, fonte, autor, nota, texto, data) VALUES %s",
+                    [(p, _fonte_da_linha, a, n, t, d)
+                     for (p, a, n, t, d) in coments])
 
             hors = [(poi_id, dia, hor) for dia, hor in _horarios(r.get("horarios"))]
             if hors:

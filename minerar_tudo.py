@@ -332,11 +332,32 @@ def _importar_municipio(uf: str, cod: str, empresa: str,
         _log(str(aviso))
         return 2
 
-    return _rodar([PYTHON, "extracao_estadual.py",
-                   "--saida", str(destino / "saida"),
-                   "--municipio", str(cod),
-                   "--empresa", empresa or "",
-                   "--aplicar"])
+    rc = _rodar([PYTHON, "extracao_estadual.py",
+                 "--saida", str(destino / "saida"),
+                 "--municipio", str(cod),
+                 "--empresa", empresa or "",
+                 "--aplicar"])
+    if rc != 0:
+        return rc
+
+    # A PROCEDENCIA VEM JUNTO, E NAO DEPOIS.
+    #
+    # `extracao_estadual` grava os POIs com `fonte='estadual'` — que e a soma de
+    # tres fontes que nao valem o mesmo: Overture (agregado, endereco
+    # estruturado), OSM (colaborativo, nome melhor, cobertura irregular) e
+    # Foursquare (comercial, forte em varejo). Quem separa as tres e o
+    # `origem_estadual`, casando pelo `cluster_id` que ja esta no banco.
+    #
+    # ATE 03/09/2026 ELE NAO ERA ETAPA. Rodava a mao, e o resultado foi
+    # previsivel: rodou uma vez em Canoas e parou, deixando 195.983 POIs sem
+    # saber de qual fonte vieram — e sem linha nenhuma em `osm_data`,
+    # `overture_data` ou `foursquare_data`. Um passo que precisa ser lembrado e
+    # um passo que vai ser esquecido.
+    #
+    # NAO DERRUBA A RODADA: ele so acrescenta procedencia ao que ja foi gravado,
+    # e e reentrante — a proxima importacao completa o que faltou.
+    return _tolerante([PYTHON, "origem_estadual.py", "--uf", uf, "--aplicar"],
+                      "procedencia do dataset estadual")
 
 
 # A FUNCAO `_importar_no_i9` SAIU DAQUI.
