@@ -467,7 +467,10 @@ async def um_poi(page, poco, alvo, placar) -> None:
 
 
 async def rodar(area, limite, aplicar, trabalhadores, pois=None):
-    poligono = None if pois else (area_utils.carregar_area(area) if area else None)
+    # ÁREA PEDIDA E INEXISTENTE É ERRO, e não 'sem filtro'. Com
+    # `--poi` não há área a exigir: o id já é o recorte.
+    poligono = None if pois else (area_utils.exigir_area(area)
+                                  if area else None)
     con = bc.conectar()
     lista, fora = alvos(con, poligono, limite, pois)
     _log("   %d POI(s) na fila da evidência" % len(lista))

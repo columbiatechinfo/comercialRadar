@@ -722,7 +722,10 @@ def gravar(con, poi_id, v, veredito, percepcao, modelo, n_imgs, dt):
 
 
 def rodar(area, limite, aplicar, trabalhadores, modelo, pois, refazer):
-    poligono = None if pois else (area_utils.carregar_area(area) if area else None)
+    # ÁREA PEDIDA E INEXISTENTE É ERRO, e não 'sem filtro'. Com
+    # `--poi` não há área a exigir: o id já é o recorte.
+    poligono = None if pois else (area_utils.exigir_area(area)
+                                  if area else None)
     con = bc.conectar()
     lista, fora = alvos(con, poligono, limite, pois, refazer)
     _log("   %d POI(s) com evidência na fila" % len(lista))

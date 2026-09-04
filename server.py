@@ -2811,12 +2811,19 @@ def _empresa_do_pedido() -> str:
 
 @app.post("/api/jobs")
 def iniciar_job(body: dict):
+    modo = body.get("modo")
     with _JOB_LOCK:
-        if JOB.get("status") == "rodando" and JOB.get("proc") and JOB["proc"].poll() is None:
+        # O 409 SÓ VALE PARA O CAMINHO ANTIGO. Ele existia porque `JOB` é um
+        # dicionário só: dois `Popen` disputariam a mesma caixa e o painel
+        # mostraria o estado de um com o log do outro. Quem vai para a fila não
+        # tem esse problema — cada rodada é uma linha, e enfileirar várias é o
+        # ponto. Manter a recusa aqui seria carregar para o desenho novo um
+        # limite que era do desenho velho.
+        if (modo not in MODOS_NA_FILA and JOB.get("status") == "rodando"
+                and JOB.get("proc") and JOB["proc"].poll() is None):
             return JSONResponse({"erro": "Já existe um job rodando. Pare-o antes de iniciar outro."},
                                 status_code=409)
 
-        modo = body.get("modo")
         op = body.get("opcoes") or {}
 
         # O polígono é obrigatório para quem trabalha SOBRE o mapa — planilha,
@@ -2873,6 +2880,39 @@ def iniciar_job(body: dict):
         elif modo == "mineracao":
             sessao = re.sub(r"[^\w-]", "_", str(op.get("sessao") or "mineracao"))
             sessao = f"{sessao}_{datetime.now().strftime('%Y%m%d_%H%M')}"
+
+            # ── A MINERAÇÃO VAI PARA A FILA, e sai daqui ──────────────────
+            #
+            # O que segue abaixo (montar `cmd`, `_iniciar_subprocess`) é o
+            # caminho antigo, que continua servindo os outros modos. Esta
+            # rodada não passa por ele: vira uma linha em `radar_comercial.job`
+            # e quem a executa é o `minerador_worker`, noutro contêiner e
+            # possivelmente noutra máquina.
+            #
+            # OS ARGUMENTOS SÃO UM DICIONÁRIO, E NÃO UMA LINHA DE COMANDO. O
+            # worker os traduz para `--chave valor`. Guardar o dicionário e não
+            # a string é o que permite reler depois o que a rodada pediu — e
+            # `argumentos->>'sessao'` é o que liga o job aos POIs que ele criou.
+            argumentos = {
+                "area": area_utils.AREA_PADRAO,
+                "sessao": sessao,
+                "zoom": int(op.get("zoom", 19)),
+                "workers": int(op.get("workers", 10)),
+                "capture_workers": int(op.get("capture_workers", 10)),
+                "empresa": _empresa_do_pedido(),
+            }
+            for chave in ("no_proxy", "pular_bases", "reusar"):
+                if op.get(chave):
+                    argumentos[chave] = True
+            if op.get("cidade"):
+                argumentos["cidade"] = str(op["cidade"])
+            if op.get("uf"):
+                argumentos["uf"] = str(op["uf"])
+
+            fila = _enfileirar("mineracao", argumentos)
+            manager.broadcast({"tipo": "job", "dados": _job_da_fila(fila["id"])})
+            return {**fila, "na_fila": True,
+                    "mensagem": "rodada %d na fila" % fila["id"]}
             # A PLACES API SAIU DA FERRAMENTA (24/08/2026, decisão do dono do
             # produto). Ela cobrava por chamada e produzia o mesmo tipo de dado
             # que a captura + OCR produz de graça. `minerar_area.py` continua no
@@ -3221,9 +3261,218 @@ def iniciar_job(body: dict):
         return job_status()
 
 
+# ══════════════════════════════════════════════════ a fila de trabalho ═════
+#
+# POR QUE A FILA EXISTE, e por que ela substitui o `Popen`.
+#
+# Até aqui a API dava `subprocess.Popen` e guardava o estado num dicionário na
+# MEMÓRIA do processo. Isso impunha três limites que não eram desenho, eram
+# consequência: uma rodada por vez (a segunda levava 409); nada sobrevivia ao
+# restart da API (o processo virava órfão e o painel voltava a "ocioso"); e não
+# havia lista de rodadas — quem fechasse o navegador não reencontrava a sua.
+#
+# A tabela `radar_comercial.job` e o `minerador_worker.py` já existiam desde
+# 01/09/2026, prontos e desligados: o comentário da tabela diz "a API enfileira,
+# o minerador consome". Faltava esta metade.
+#
+# O QUE MUDA PARA QUEM OPERA: a rodada vira uma linha no banco. Quem clica
+# recebe um id, pode fechar o navegador, pode derrubar a API, e a rodada segue
+# porque quem a executa é outro contêiner. Várias rodadas entram em fila e os
+# workers as consomem em paralelo — quantos workers, quantas ao mesmo tempo.
+#
+# O QUE **NÃO** MUDA: os outros modos (Cadastur, base estadual, enriquecimento)
+# continuam no caminho antigo. Migrar treze modos de uma vez trocaria de lugar
+# E de comportamento no mesmo commit, e um defeito novo não teria de onde ser
+# distinguido. O painel novo só dispara `mineracao`.
+
+#: Os modos que já vivem na fila. Os demais seguem no `Popen` da memória.
+MODOS_NA_FILA = {"mineracao"}
+
+_ESTADO_PARA_STATUS = {
+    "fila": "na_fila", "rodando": "rodando", "ok": "finalizado",
+    "erro": "erro", "cancelado": "parado",
+}
+
+
+def _usuario_de_servico() -> str:
+    """Quem a rodada diz ser ao gravar. É o usuário de serviço DA EMPRESA.
+
+    Não é o operador que clicou: o job pode rodar horas depois, o operador pode
+    ter saído, e o dado gravado precisa de um dono estável. `RADAR_USUARIO_
+    SERVICO` é o que o `minerar_tudo` lê para carimbar a empresa.
+    """
+    u = _auth.USUARIO_DA_REQUISICAO.get()
+    if u is None or not u.id_empresa:
+        raise HTTPException(status_code=401, detail="sem empresa no token")
+    con = base_comum.conectar()
+    try:
+        with con.cursor() as cur:
+            cur.execute("""select id from core.tb_users
+                            where id_empresa = %s::uuid
+                              and email like 'pipeline@%%'
+                            order by created_at limit 1""", (u.id_empresa,))
+            r = cur.fetchone()
+            if r:
+                return str(r[0])
+        # Sem usuário de serviço, quem responde é o próprio operador. Não é o
+        # ideal — some quando ele for desativado —, mas é melhor que recusar a
+        # rodada de um cliente recém-criado.
+        return str(u.id)
+    finally:
+        con.close()
+
+
+def _enfileirar(tipo: str, argumentos: dict) -> dict:
+    """Põe a rodada na fila e devolve a linha criada."""
+    u = _auth.USUARIO_DA_REQUISICAO.get()
+    con = base_comum.conectar()
+    try:
+        with con.cursor() as cur:
+            cur.execute("""
+                insert into radar_comercial.job
+                       (id_empresa, pedido_por, tipo, argumentos, estado)
+                values (%s::uuid, %s::uuid, %s, %s::jsonb, 'fila')
+                returning id, estado, criado_em
+            """, (u.id_empresa, _usuario_de_servico(), tipo,
+                  json.dumps(argumentos)))
+            id_job, estado, criado = cur.fetchone()
+        con.commit()
+    finally:
+        con.close()
+    return {"id": id_job, "estado": estado,
+            "criado_em": criado.isoformat(timespec="seconds"),
+            "tipo": tipo, "argumentos": argumentos}
+
+
+def _job_da_fila(id_job=None) -> dict | None:
+    """A rodada da fila que o painel deve mostrar.
+
+    Sem `id_job`, é a mais recente que ainda importa: a que está rodando, ou a
+    primeira da fila, ou — se não houver nenhuma viva — a última que terminou.
+    Mostrar a última terminada é de propósito: quem volta à tela depois do fim
+    quer ver o placar, e não um painel vazio que parece que nada aconteceu.
+    """
+    con = base_comum.conectar()
+    try:
+        with con.cursor() as cur:
+            if id_job:
+                cur.execute("""select id, tipo, estado, argumentos, progresso,
+                                      criado_em, iniciado_em, terminado_em,
+                                      worker, codigo_saida, erro, visto_em
+                                 from radar_comercial.job where id = %s""",
+                            (int(id_job),))
+            else:
+                cur.execute("""select id, tipo, estado, argumentos, progresso,
+                                      criado_em, iniciado_em, terminado_em,
+                                      worker, codigo_saida, erro, visto_em
+                                 from radar_comercial.job
+                                order by (estado = 'rodando') desc,
+                                         (estado = 'fila') desc, id desc
+                                limit 1""")
+            r = cur.fetchone()
+    finally:
+        con.close()
+    if not r:
+        return None
+    (jid, tipo, estado, args, prog, criado, inic, term, worker,
+     cod, erro, visto) = r
+    prog = prog or {}
+    return {
+        "id_job": jid, "modo": tipo,
+        "status": _ESTADO_PARA_STATUS.get(estado, estado),
+        "estado_fila": estado, "worker": worker,
+        "sessao": (args or {}).get("sessao"),
+        "inicio": (inic or criado).isoformat(timespec="seconds"),
+        "criado_em": criado.isoformat(timespec="seconds"),
+        "fim": term.isoformat(timespec="seconds") if term else None,
+        "visto_em": visto.isoformat(timespec="seconds") if visto else None,
+        "codigo_saida": cod, "erro": erro,
+        # A BARRA TEM DUAS ESCALAS, e as duas vão para a tela. A etapa responde
+        # "quanto falta"; o contador de dentro responde "isto travou?".
+        "etapa": prog.get("etapa", 0), "etapas": prog.get("etapas", 0),
+        "etapa_titulo": prog.get("titulo", ""),
+        "feitos": prog.get("feitos", 0), "total": prog.get("total", 0),
+        "ultima_linha": prog.get("linha", ""),
+        "na_fila": True,
+    }
+
+
 @app.get("/api/jobs/atual")
-def job_atual():
+def job_atual(id_job: int | None = None):
+    """O estado da rodada — da fila quando houver, da memória para o resto.
+
+    A ORDEM IMPORTA: a fila vem primeiro. Enquanto os modos antigos não
+    migrarem, os dois convivem, e o que o painel novo dispara é sempre o da
+    fila.
+    """
+    da_fila = _job_da_fila(id_job)
+    if da_fila:
+        return da_fila
     return job_status()
+
+
+@app.get("/api/runs")
+def listar_runs(limite: int = 30):
+    """As rodadas da empresa, para reencontrar a sua depois de fechar a aba.
+
+    Vem com a contagem de POIs que cada uma produziu — que é o que responde
+    "esta rodada valeu a pena" sem abrir o mapa. A contagem sai de
+    `pois.sessao`, o mesmo carimbo que a rodada usa.
+    """
+    con = base_comum.conectar()
+    try:
+        with con.cursor() as cur:
+            cur.execute("""
+                select j.id, j.tipo, j.estado, j.argumentos, j.progresso,
+                       j.criado_em, j.iniciado_em, j.terminado_em, j.worker,
+                       j.codigo_saida,
+                       (select count(*) from radar_comercial.pois p
+                         where p.sessao = j.argumentos->>'sessao') as pois
+                  from radar_comercial.job j
+                 order by j.id desc limit %s
+            """, (max(1, min(int(limite), 200)),))
+            linhas = cur.fetchall()
+    finally:
+        con.close()
+    saida = []
+    for (jid, tipo, estado, args, prog, criado, inic, term, worker,
+         cod, n_pois) in linhas:
+        prog = prog or {}
+        saida.append({
+            "id": jid, "modo": tipo, "estado": estado,
+            "status": _ESTADO_PARA_STATUS.get(estado, estado),
+            "sessao": (args or {}).get("sessao"),
+            "criado_em": criado.isoformat(timespec="seconds"),
+            "inicio": inic.isoformat(timespec="seconds") if inic else None,
+            "fim": term.isoformat(timespec="seconds") if term else None,
+            "worker": worker, "codigo_saida": cod, "pois": n_pois,
+            "etapa": prog.get("etapa", 0), "etapas": prog.get("etapas", 0),
+            "etapa_titulo": prog.get("titulo", ""),
+        })
+    return {"runs": saida}
+
+
+@app.get("/api/runs/{id_job}/log")
+def log_da_run(id_job: int, ultimas: int = 400):
+    """As últimas linhas do log daquela rodada, do banco.
+
+    Do BANCO e não do arquivo: o arquivo vive no contêiner que rodou, e com
+    workers em duas máquinas ele pode não estar nesta. `job_log` é o único
+    lugar que as duas escrevem.
+    """
+    con = base_comum.conectar()
+    try:
+        with con.cursor() as cur:
+            cur.execute("""select em, linha from (
+                             select em, linha, id from radar_comercial.job_log
+                              where id_job = %s order by id desc limit %s
+                           ) x order by id""",
+                        (id_job, max(1, min(int(ultimas), 5000))))
+            linhas = [{"em": e.isoformat(timespec="seconds"), "linha": l}
+                      for e, l in cur.fetchall()]
+    finally:
+        con.close()
+    return {"id_job": id_job, "linhas": linhas}
 
 
 def _limpar_sessao(sessao: str) -> dict:
@@ -3298,6 +3547,43 @@ def _limpar_sessao(sessao: str) -> dict:
 @app.post("/api/jobs/parar")
 def parar_job(body: dict = Body(default=None)):
     limpar = bool((body or {}).get("limpar"))
+
+    # PARAR UMA RODADA DA FILA É UM PEDIDO, E NÃO UM SINAL.
+    #
+    # Quem a executa é outro contêiner, possivelmente noutra máquina: a API não
+    # tem o processo para matar. Ela marca `cancelar_pedido`, e o worker — que
+    # bate ponto de trinta em trinta segundos — encerra o subprocesso na
+    # próxima batida. Trinta segundos de atraso é o preço de a rodada não
+    # depender de a API estar viva.
+    #
+    # Rodada que ainda está em `fila` sai na hora: ninguém a pegou.
+    id_job = (body or {}).get("id_job")
+    alvo = _job_da_fila(id_job)
+    if alvo and alvo.get("estado_fila") in ("fila", "rodando"):
+        con = base_comum.conectar()
+        try:
+            with con.cursor() as cur:
+                cur.execute("""
+                    update radar_comercial.job
+                       set cancelar_pedido = true,
+                           estado = case when estado = 'fila' then 'cancelado'
+                                         else estado end,
+                           terminado_em = case when estado = 'fila' then now()
+                                               else terminado_em end
+                     where id = %s returning estado""", (alvo["id_job"],))
+                novo = (cur.fetchone() or [None])[0]
+            con.commit()
+        finally:
+            con.close()
+        apagados = _limpar_sessao(alvo["sessao"]) if (limpar and alvo["sessao"]) else {}
+        d = _job_da_fila(alvo["id_job"])
+        manager.broadcast({"tipo": "job", "dados": d})
+        return {"ok": True, "id_job": alvo["id_job"], "estado": novo,
+                "apagados": apagados,
+                "mensagem": ("cancelada" if novo == "cancelado"
+                             else "cancelamento pedido — o worker encerra na "
+                                  "próxima batida de ponto")}
+
     sessao = (body or {}).get("sessao") or JOB.get("sessao")
     proc = JOB.get("proc")
     if proc and proc.poll() is None:

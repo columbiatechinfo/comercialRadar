@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -178,6 +179,68 @@ def _comando(job: dict) -> list:
     raise ValueError("tipo de job desconhecido: %r" % job["tipo"])
 
 
+# ── ler o progresso das linhas que a mineração já imprime ──────────────────
+#
+# NADA MUDA NO `minerar_tudo.py`, e isso é regra desta casa: quem minera não
+# aprende a falar com a fila. Ele já imprime tudo o que a barra precisa —
+#
+#     ▶ 4/10 Maps pelo placeId — abre cada ponto pelo id, sem OCR
+#     ... célula 12/340 | ...
+#
+# — e o que faltava era alguém escutar. Antes disso a coluna `progresso` existia
+# e ficava nula: o painel sabia que o job estava vivo e não sabia onde ele
+# estava, o que na prática é uma barra que anda sozinha e não informa nada.
+#
+# DUAS ESCALAS, e as duas importam. A ETAPA (4 de 10) é o que responde "quanto
+# falta para acabar"; o contador de dentro (célula 12 de 340) é o que responde
+# "isto travou?". Uma barra só, com a etapa, fica parada dez minutos e parece
+# pendurada; só com o contador, volta ao começo a cada etapa e parece regredir.
+_RE_ETAPA = re.compile(r"^▶\s*(\d+)/(\d+)\s+(.+?)\s*$")
+_RE_DENTRO = (
+    re.compile(r"c[eé]lula\s+(\d+)/(\d+)"),
+    re.compile(r"POIs\s+(\d+)/(\d+)"),
+    re.compile(r"(\d+)/(\d+)\s*·\s*[\d.,]+\s*s/POI"),
+    re.compile(r"[✅❌]\s+(\d+)/(\d+)"),
+    re.compile(r"fotos\s+(\d+)/(\d+)"),
+)
+
+
+class Progresso:
+    """O estado da barra, escrito pelo leitor de log e lido pela batida de ponto.
+
+    As duas coisas rodam em threads diferentes de propósito — a captura passa
+    minutos sem imprimir linha, e o ponto não pode depender disso. O dicionário
+    é pequeno e as escritas são atômicas o bastante em CPython; um lock aqui
+    custaria mais atenção do que compra.
+    """
+
+    def __init__(self):
+        self.d = {"etapa": 0, "etapas": 0, "titulo": "", "feitos": 0,
+                  "total": 0, "linha": ""}
+
+    def ler(self, linha: str) -> None:
+        m = _RE_ETAPA.match(linha)
+        if m:
+            self.d.update(etapa=int(m.group(1)), etapas=int(m.group(2)),
+                          titulo=m.group(3)[:120], feitos=0, total=0)
+            return
+        for r in _RE_DENTRO:
+            m = r.search(linha)
+            if m:
+                a, b = int(m.group(1)), int(m.group(2))
+                # O CONTADOR NÃO ANDA PARA TRÁS dentro da mesma etapa. Várias
+                # linhas diferentes casam, e uma que reporte um lote menor faria
+                # a barra recuar — que é o único jeito de uma barra mentir de
+                # um jeito que o usuário percebe na hora.
+                if b == self.d.get("total"):
+                    self.d["feitos"] = max(self.d.get("feitos", 0), a)
+                else:
+                    self.d["feitos"], self.d["total"] = a, b
+                break
+        if linha.strip():
+            self.d["linha"] = linha.strip()[:200]
+
+
 def rodar(con, job: dict) -> None:
     id_job = job["id"]
     cmd = _comando(job)
@@ -202,12 +265,13 @@ def rodar(con, job: dict) -> None:
     # linha, um job perfeitamente vivo seria dado como morto e voltaria para a
     # fila — e aí rodaria duas vezes, que é pior que demorar.
     parar = threading.Event()
+    prog = Progresso()
 
     def _ponto():
         c2 = _conectar()
         try:
             while not parar.wait(30):
-                if not bater_ponto(c2, id_job):
+                if not bater_ponto(c2, id_job, dict(prog.d)):
                     registrar(c2, id_job, "⏹ cancelamento pedido — encerrando")
                     proc.terminate()
                     return
@@ -220,12 +284,19 @@ def rodar(con, job: dict) -> None:
         for linha in proc.stdout:
             linha = linha.rstrip()
             if linha:
+                prog.ler(linha)
                 registrar(con, id_job, linha)
                 print(linha, flush=True)
         codigo = proc.wait()
     finally:
         parar.set()
 
+    # O ÚLTIMO PONTO ANTES DE ENCERRAR. Sem ele a barra congela no penúltimo
+    # tique de 30 s, e uma rodada que terminou aparece como "9 de 10".
+    try:
+        bater_ponto(con, id_job, dict(prog.d))
+    except Exception:                                          # noqa: BLE001
+        pass
     encerrar(con, id_job, codigo)
     registrar(con, id_job, "■ terminou com código %d" % codigo)
 

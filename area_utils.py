@@ -164,6 +164,18 @@ def carregar_area(ref=AREA_PADRAO) -> list | None:
             cur.execute("SELECT polygon FROM area_trabalho WHERE nome=%s", (str(ref),))
             r = cur.fetchone()
         if not r or not r[0] or len(r[0]) < 3:
+            # FALAR TAMBÉM QUANDO A ÁREA SIMPLESMENTE NÃO EXISTE.
+            #
+            # Este `return None` era mudo, e o silêncio custou o dia 04/09/2026
+            # inteiro: `AREA_PADRAO` é "area_atual", não havia linha com esse
+            # nome, e todo `--area area_atual` devolveu None. Quem filtra faz
+            # `if poligono and not ponto_no_poligono(...)` — com None o filtro
+            # NÃO ROda, e a rodada processa a base inteira dizendo "0 fora do
+            # desenho". Foi assim que 143 POIs a 5 km da quadra desenhada
+            # entraram numa lista chamada "a quadra de Canoas".
+            print("  [area] a área '%s' não existe no banco (ou tem menos de 3 "
+                  "vértices) — quem filtrar por ela não vai filtrar nada"
+                  % ref, flush=True)
             return None
         return [[float(a), float(b)] for a, b in r[0]]
     except Exception as e:
@@ -175,6 +187,24 @@ def carregar_area(ref=AREA_PADRAO) -> list | None:
         return None
     finally:
         con.close()
+
+
+def exigir_area(ref=AREA_PADRAO) -> list:
+    """A área, ou uma recusa explícita. Para quem NÃO PODE rodar sem filtro.
+
+    A diferença para `carregar_area` é o que acontece no vazio: ela devolve
+    None e deixa quem chamou decidir; esta levanta. Existe porque "sem área"
+    e "área que cobre tudo" são resultados opostos que o código tratava como
+    iguais — e o segundo é o que sai quando ninguém verifica.
+    """
+    poly = carregar_area(ref)
+    if not poly:
+        raise SystemExit(
+            "A área '%s' não existe no banco. Desenhe a área no painel antes "
+            "de rodar, ou passe --area com o nome de uma que exista.\n"
+            "Rodar sem área não é rodar 'na área toda': é rodar na BASE toda."
+            % ref)
+    return poly
 
 
 def ponto_no_poligono(lat, lng, poligono) -> bool:
