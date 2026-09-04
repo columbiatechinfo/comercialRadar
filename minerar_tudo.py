@@ -639,9 +639,25 @@ def _tolerante(cmd: list, nome: str) -> int:
     """
     rc = _rodar(cmd)
     if rc != 0:
+        _ETAPAS_COM_FALHA.append("%s (código %d)" % (nome, rc))
         _log(f"⚠️  {nome} falhou (código {rc}). As demais etapas continuam;")
         _log(f"   esta pode ser repetida sozinha depois.")
     return rc
+
+
+#: As etapas que falharam sem derrubar a rodada.
+#:
+#: EXISTE PORQUE O CÓDIGO DE SAÍDA MENTIA. `main` devolvia `rc_captura` — o
+#: código da ETAPA 4 — como se fosse o resultado da rodada inteira. A rodada #1
+#: de 04/09/2026 percorreu as dez etapas, imprimiu "✅ Mineração completa" e
+#: saiu com 1, porque uma etapa opcional falhara e foi tolerada. A fila leu o 1
+#: e gravou `estado = 'erro'`: o painel dizia que a extração falhou, e ela tinha
+#: terminado.
+#:
+#: Agora "erro" quer dizer NÃO TERMINOU, que é o que a palavra promete. Etapa
+#: que falha e é tolerada aparece aqui, por nome, no fecho e no log — visível
+#: sem deixar de ser o que é: um pedaço, e não a rodada.
+_ETAPAS_COM_FALHA: list = []
 
 
 def _tolerante_i9(argumentos: list, nome: str) -> int:
@@ -906,6 +922,7 @@ def main(argv=None) -> int:
         _dispensar_predator(ajudante)
 
     if rc_captura != 0:
+        _ETAPAS_COM_FALHA.append("4 · captura do Maps (código %d)" % rc_captura)
         _log(f"⚠️  A etapa 4 terminou com código {rc_captura}. As etapas de")
         _log("   endereço e cruzamento seguem sobre o que já entrou.")
 
@@ -1338,9 +1355,19 @@ def main(argv=None) -> int:
              % (type(_e).__name__, str(_e)[:70]))
 
     _log("─" * 62)
-    _log("✅ Mineração completa. Filtre por 🔗 Multiorigem no mapa para revisar")
-    _log("   os pontos que passaram a ser sustentados por mais de uma base.")
-    return rc_captura
+    if _ETAPAS_COM_FALHA:
+        _log("✅ Mineração completa, com %d etapa(s) que falharam e foram"
+             % len(_ETAPAS_COM_FALHA))
+        _log("   toleradas — cada uma pode ser repetida sozinha depois:")
+        for e in _ETAPAS_COM_FALHA:
+            _log("     · " + e)
+    else:
+        _log("✅ Mineração completa. Filtre por 🔗 Multiorigem no mapa para revisar")
+        _log("   os pontos que passaram a ser sustentados por mais de uma base.")
+    # ZERO PORQUE TERMINOU. Ver a nota em `_ETAPAS_COM_FALHA`: o código de saída
+    # responde "a rodada chegou ao fim?", e não "todas as etapas deram certo?".
+    # Quem quer a segunda resposta lê o fecho acima, que a dá por nome.
+    return 0
 
 
 def _cod_municipio(cidade: str, uf: str) -> str:

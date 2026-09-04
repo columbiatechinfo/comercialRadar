@@ -1441,7 +1441,14 @@ def malha(uf: str = "", lat: float | None = None, lng: float | None = None):
 
 
 @app.get("/api/pois")
-def listar_pois():
+def listar_pois(sessao: str | None = None):
+    """Os POIs do mapa. Com `sessao`, só os que AQUELA rodada produziu.
+
+    É o que faz a lista de rodadas ser clicável: quem volta amanhã escolhe uma
+    rodada e vê no mapa o que ela trouxe, em vez de tudo misturado. O carimbo é
+    o mesmo `pois.sessao` que a rodada grava, e que `job.argumentos->>'sessao'`
+    guarda do outro lado.
+    """
     conn = realtime_ingest.conectar()
     try:
         with conn.cursor() as cur:
@@ -1495,6 +1502,7 @@ def listar_pois():
                 LEFT JOIN analise_ia a ON a.poi_id = p.id
                 LEFT JOIN cadastro_cliente c ON c.poi_id = p.id
                 WHERE p.match_valido IS NOT FALSE
+                  AND (%(sessao)s::text IS NULL OR p.sessao = %(sessao)s)
                   AND COALESCE(p.maps_lat, p.lat_origem) IS NOT NULL
                   -- O PONTO FUNDIDO NAO EXISTE MAIS COMO PONTO.
                   --
@@ -1513,7 +1521,7 @@ def listar_pois():
                   -- fontes que o sustentavam foram desvinculadas. Ele fica no
                   -- banco, auditavel, e some do mapa.
                   AND EXISTS (SELECT 1 FROM vinculo_poi v
-                               WHERE v.poi_id = p.id AND v.estado = 'vinculado')""")
+                               WHERE v.poi_id = p.id AND v.estado = 'vinculado')""", {"sessao": sessao})
             cols = ["id", "nome", "categoria", "endereco", "telefone", "avaliacao",
                     "total_avaliacoes", "fonte", "fonte_dado", "status", "lat", "lng",
                     "tem_cnpj", "situacao_cadastral", "endereco_fonte", "tem_tel", "tem_sv", "tem_foto",
@@ -3344,6 +3352,17 @@ def _enfileirar(tipo: str, argumentos: dict) -> dict:
             "tipo": tipo, "argumentos": argumentos}
 
 
+def _pct(prog: dict) -> int:
+    """Quanto da rodada já passou, de 0 a 100."""
+    etapas = int(prog.get("etapas") or 0)
+    if not etapas:
+        return 0
+    etapa = max(0, int(prog.get("etapa") or 0) - 1)
+    total = int(prog.get("total") or 0)
+    dentro = (int(prog.get("feitos") or 0) / total) if total else 0.0
+    return max(0, min(100, round(100 * (etapa + min(dentro, 1.0)) / etapas)))
+
+
 def _job_da_fila(id_job=None) -> dict | None:
     """A rodada da fila que o painel deve mostrar.
 
@@ -3393,6 +3412,12 @@ def _job_da_fila(id_job=None) -> dict | None:
         "etapa_titulo": prog.get("titulo", ""),
         "feitos": prog.get("feitos", 0), "total": prog.get("total", 0),
         "ultima_linha": prog.get("linha", ""),
+        # O PERCENTUAL SAI DAS DUAS ESCALAS, e é o que a barra já existente lê.
+        #
+        # Etapas concluídas mais a fração da atual. Sem o contador de dentro a
+        # barra pularia de dez em dez e ficaria parada entre os saltos; sem as
+        # etapas ela voltaria ao começo a cada uma. Juntas, ela anda.
+        "pct": _pct(prog),
         "na_fila": True,
     }
 

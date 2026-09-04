@@ -127,6 +127,8 @@
   const NAV_BASE = "nav-item";
   const estado = {
     modo: null, painel: null, cidade: null, cod: null,
+    // Qual rodada o mapa e a barra estao seguindo. Nulo = a base inteira.
+    runSeguida: null,
     desenhando: false, pts: [], temArea: false, anel: null,
     basemap: 0, pois: [], stats: null, cadastro: null, eu: null, empresa: null,
     filtros: { origem: [], atributos: [], ia: [], construcao: [] },
@@ -1283,15 +1285,26 @@
 
   function pintarJob(j) {
     if (!j) return;
-    const rodando = j.status === "rodando";
+    const rodando = j.status === "rodando" || j.status === "na_fila";
     $("job-titulo").textContent = rodando
       ? (j.fase_rotulo || "Extraindo dados…")
       : ({ ocioso: "Nenhum processo em andamento", finalizado: "Última extração concluída",
            parado: "Extração interrompida", erro: "A extração terminou com erro" }[j.status] || j.status);
+    if (j.status === "na_fila") $("job-titulo").textContent = "Na fila — esperando um trabalhador";
     const pct = Number(j.pct || 0);
     $("job-pct").textContent = rodando && pct ? pct + "%" : "";
     $("job-bar").style.width = (rodando ? pct : 0) + "%";
-    if (j.mensagem) $("job-cap").textContent = j.mensagem;
+    // A LEGENDA DIZ EM QUE SUBETAPA ESTA, e nao so que algo acontece. "Etapa 6
+    // de 10 · Airbnb" responde "quanto falta"; a ultima linha do log responde
+    // "isto travou?". Uma barra sozinha nao responde nem uma nem outra.
+    if (j.etapas) {
+      $("job-cap").textContent =
+        "Etapa " + j.etapa + " de " + j.etapas +
+        (j.etapa_titulo ? (" · " + j.etapa_titulo) : "") +
+        (j.total ? ("  (" + j.feitos + "/" + j.total + ")") : "");
+    } else if (j.mensagem) {
+      $("job-cap").textContent = j.mensagem;
+    }
     // OS BOTOES DE PARAR SO APARECEM COM RUN VIVA. Sem run, nao ha o que parar.
     const acoes = $("job-acoes");
     if (acoes) acoes.classList.toggle("hidden", !rodando);
@@ -1503,7 +1516,11 @@
   // ── carga ───────────────────────────────────────────────────────────────
 
   async function carregarPois() {
-    const d = await pegar("/api/pois");
+    // A RODADA SEGUIDA FILTRA O MAPA. Sem ela, o mapa e o de sempre — a base
+    // inteira da empresa. Com ela, so os pontos daquela sessao: e o que faz
+    // "ver no mapa" na lista de rodadas significar alguma coisa.
+    const s = estado.runSeguida && estado.runSeguida.sessao;
+    const d = await pegar("/api/pois" + (s ? ("?sessao=" + encodeURIComponent(s)) : ""));
     estado.pois = (d && d.pois) || [];
     desenharPois();
     montarFiltros();
@@ -1975,6 +1992,150 @@
       await carregarTudo();
     });
 
+    // ── RODADAS ───────────────────────────────────────────────────────
+    //
+    // A EXTRACAO NAO E DESTA ABA, e essa e a mudanca que esta tela torna
+    // visivel. Ate 04/09/2026 a run era um subprocesso da API com o estado num
+    // dicionario em memoria: fechar o navegador nao a matava, mas reabrir nao a
+    // reencontrava, e reiniciar a API a tornava invisivel para sempre. Agora
+    // ela e uma linha em `radar_comercial.job`, executada por outro conteiner —
+    // possivelmente noutra maquina.
+    //
+    // O QUE ISSO PERMITE, e e o motivo desta lista existir: disparar varias
+    // seguidas. Elas entram em fila, os workers as consomem em paralelo, e esta
+    // tela e onde se ve qual esta rodando, qual espera, e o que cada uma trouxe.
+    const ROT_ESTADO = {
+      fila: ["Na fila", "bg-gray-100 text-gray-600"],
+      rodando: ["Rodando", "bg-indigo-50 text-indigo-700"],
+      ok: ["Concluída", "bg-emerald-50 text-emerald-700"],
+      erro: ["Erro", "bg-red-50 text-red-700"],
+      cancelado: ["Cancelada", "bg-amber-50 text-amber-700"],
+    };
+
+    function horaCurta(iso) {
+      if (!iso) return "—";
+      const d = new Date(iso);
+      const hoje = new Date();
+      const mesmoDia = d.toDateString() === hoje.toDateString();
+      const hm = String(d.getHours()).padStart(2, "0") + ":" +
+                 String(d.getMinutes()).padStart(2, "0");
+      return mesmoDia ? hm : (String(d.getDate()).padStart(2, "0") + "/" +
+                              String(d.getMonth() + 1).padStart(2, "0") + " " + hm);
+    }
+
+    function duracao(a, b) {
+      if (!a) return "";
+      const ini = new Date(a).getTime();
+      const fim = b ? new Date(b).getTime() : Date.now();
+      const m = Math.max(0, Math.round((fim - ini) / 60000));
+      return m < 60 ? m + " min" : (Math.floor(m / 60) + " h " + (m % 60) + " min");
+    }
+
+    function pintarRuns(runs) {
+      const alvo = $("runs-lista");
+      if (!alvo) return;
+      alvo.innerHTML = "";
+      if (!runs.length) {
+        alvo.innerHTML = '<p class="py-8 text-center text-[13px] text-gray-400">' +
+          "Nenhuma rodada ainda. Desenhe a área e clique em “Realizar extração”." +
+          "</p>";
+        return;
+      }
+      runs.forEach((r) => {
+        const [rot, cor] = ROT_ESTADO[r.estado] || [r.estado, "bg-gray-100 text-gray-600"];
+        const viva = r.estado === "rodando" || r.estado === "fila";
+        const pct = r.etapas ? Math.round(100 * Math.max(0, r.etapa - 1) / r.etapas) : 0;
+        const el = document.createElement("div");
+        el.className = "mb-2 rounded-lg border border-gray-200 p-3.5 hover:border-indigo-300 hover:bg-indigo-50/30";
+        el.innerHTML =
+          '<div class="flex items-start justify-between gap-x-3">' +
+            '<div class="min-w-0">' +
+              '<div class="flex items-center gap-x-2">' +
+                '<span class="rounded-full px-2 py-0.5 text-[11px] font-semibold ' + cor + '">' + rot + "</span>" +
+                '<span class="truncate text-[13px] font-semibold text-gray-900">' + (r.sessao || "(sem sessão)") + "</span>" +
+                '<span class="text-[11px] text-gray-400">#' + r.id + "</span>" +
+              "</div>" +
+              '<p class="mt-1 text-[12px] text-gray-500">' +
+                (r.etapas ? ("etapa " + r.etapa + " de " + r.etapas + " · " + (r.etapa_titulo || "")) : "aguardando um trabalhador") +
+              "</p>" +
+              '<p class="mt-0.5 text-[11px] text-gray-400">' +
+                horaCurta(r.inicio || r.criado_em) +
+                (r.inicio ? (" · " + duracao(r.inicio, r.fim)) : "") +
+                (r.worker ? (" · " + r.worker) : "") +
+              "</p>" +
+            "</div>" +
+            '<div class="shrink-0 text-right">' +
+              '<div class="text-[15px] font-semibold tabular-nums text-gray-900">' + (r.pois || 0) + "</div>" +
+              '<div class="text-[10.5px] text-gray-400">POIs</div>' +
+            "</div>" +
+          "</div>" +
+          (r.etapas ? ('<div class="mt-2.5 h-1 w-full overflow-hidden rounded-full bg-gray-100">' +
+            '<div class="h-1 rounded-full bg-indigo-600" style="width:' + pct + '%"></div></div>') : "") +
+          '<div class="mt-2.5 flex gap-x-2">' +
+            '<button type="button" data-ver="' + (r.sessao || "") + '" data-id="' + r.id + '" ' +
+              'class="rounded-md bg-white px-2.5 py-1 text-[12px] font-semibold text-indigo-600 ring-1 ring-inset ring-indigo-200 hover:bg-indigo-50">' +
+              "Ver no mapa</button>" +
+            (viva ? ('<button type="button" data-parar="' + r.id + '" ' +
+              'class="rounded-md bg-white px-2.5 py-1 text-[12px] font-semibold text-red-600 ring-1 ring-inset ring-red-200 hover:bg-red-50">' +
+              "Parar</button>") : "") +
+          "</div>";
+        alvo.appendChild(el);
+      });
+    }
+
+    async function carregarRuns() {
+      const d = await pegar("/api/runs?limite=30");
+      const runs = (d && d.runs) || [];
+      const vivas = runs.filter((r) => r.estado === "rodando" || r.estado === "fila").length;
+      const n = $("runs-n");
+      if (n) n.textContent = String(vivas);
+      pintarRuns(runs);
+      return runs;
+    }
+
+    $("btn-runs").addEventListener("click", async () => {
+      abrirModal("m-runs");
+      await carregarRuns();
+    });
+
+    // A LISTA E VIVA ENQUANTO ESTA ABERTA. Fora dela, so o contador do menu se
+    // atualiza — recarregar trinta linhas a cada dez segundos com o modal
+    // fechado seria gastar banda para ninguem ver.
+    setInterval(() => {
+      const m = $("m-runs");
+      if (m && !m.classList.contains("hidden")) carregarRuns();
+    }, 10000);
+
+    $("runs-lista").addEventListener("click", async (ev) => {
+      const ver = ev.target.closest("[data-ver]");
+      if (ver) {
+        const sessao = ver.dataset.ver;
+        const id = ver.dataset.id;
+        // SEGUIR A RODADA: o mapa passa a mostrar so o que ela trouxe, e a
+        // barra volta a acompanha-la de onde ela estiver.
+        estado.runSeguida = { id: Number(id), sessao: sessao || null };
+        $("m-runs").classList.add("hidden");
+        $("log-wrap").classList.remove("hidden");
+        linhaLog("seguindo a rodada #" + id + (sessao ? (" · " + sessao) : ""),
+                 "text-indigo-400");
+        await carregarPois();
+        pintarJob(await pegar("/api/jobs/atual?id_job=" + id));
+        return;
+      }
+      const parar = ev.target.closest("[data-parar]");
+      if (parar) {
+        if (!confirm("Parar a rodada #" + parar.dataset.parar + "?")) return;
+        const r = await fetch("/api/jobs/parar", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id_job: Number(parar.dataset.parar) }),
+        }).catch(() => null);
+        const d = r ? await r.json().catch(() => ({})) : {};
+        linhaLog(d.mensagem || "não consegui parar", "text-amber-400");
+        await carregarRuns();
+      }
+    });
+
     // ── AVALIAR COM IA ────────────────────────────────────────────────
     //
     // O NUMERO VEM ANTES DO BOTAO FUNCIONAR. `/api/avaliacao/fila` conta pela
@@ -2032,6 +2193,8 @@
     // tela que por fora parece inteira.
     fila_ia();
     setInterval(fila_ia, 30000);
+    carregarRuns();
+    setInterval(() => { if ($("m-runs").classList.contains("hidden")) carregarRuns(); }, 30000);
 
     $("btn-limpar-filtros").addEventListener("click", () => {
       estado.filtros = { origem: [], atributos: [], ia: [], construcao: [] };
@@ -2363,7 +2526,8 @@
     }
 
     await carregarTudo();
-    pintarJob(await pegar("/api/jobs/atual"));
+    pintarJob(await pegar("/api/jobs/atual" +
+      (estado.runSeguida ? ("?id_job=" + estado.runSeguida.id) : "")));
     ligarWebsocket();
   }
 
