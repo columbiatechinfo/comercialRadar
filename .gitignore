@@ -52,6 +52,12 @@ mapa_pois.html
 # A licao nao e "acrescentar a pasta": e que uma excecao por NOME de pasta
 # quebra na proxima pasta. A excecao passa a ser por PADRAO.
 !migrations*/*.sql
+
+# E A CONSULTA QUE DESENHA O BANCO TAMBEM E CODIGO. `scripts/mapa/schema.sql`
+# le o catalogo do Postgres para gerar o mapa das tabelas; sem ela o gerador
+# nao roda. Caiu no `*.sql` acima na primeira tentativa e o commit passou
+# dizendo que estava versionada — exatamente a armadilha descrita acima.
+!scripts/**/*.sql
 # Backups do banco (bem pesados — DB tem os bytes das imagens)
 backups_bd/
 
