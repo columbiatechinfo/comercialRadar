@@ -235,6 +235,21 @@ estiver ali, o imóvel continua sem letreiro.
 - Ausência de letreiro não reprova por si só: muitos negócios de bairro operam \
 sem fachada. O que reprova é a ausência de QUALQUER sinal.
 
+OS TRÊS ENDEREÇOS TÊM DE SER O MESMO LUGAR, e conferir isso é parte do seu
+trabalho. Você recebe (a) o endereço do estabelecimento, (b) a coordenada de \
+onde as fotos foram tiradas e (c) o endereço e a coordenada de cada ligação de \
+água. Se a rua do estabelecimento não for a rua da ligação, ou se a ligação \
+estiver a centenas de metros do ponto fotografado, então as fotos podem ser de \
+OUTRO IMÓVEL — e nesse caso nada do que se vê nelas serve para aprovar nem para \
+reprovar este cadastro.
+
+Quando perceber essa divergência: escolha "revisao_humana" e DIGA na \
+justificativa qual é a discordância, com os números. Não aprove por uma foto \
+que pode ser de outro lugar, e não reprove um comércio por não aparecer numa \
+foto que talvez nem seja dele. Distância de algumas dezenas de metros é normal \
+— a ligação fica na calçada e o ponto no meio do lote; o que acusa é centena \
+de metros, ou rua com nome diferente.
+
 PROVA DE PLATAFORMA VENCE FACHADA MUDA. Se o cadastro disser que a loja \
 estava ATIVA numa plataforma (iFood disponível, anúncio de hospedagem com \
 avaliação recente), isso é prova de atividade econômica FUNCIONANDO, com data. \
@@ -381,7 +396,12 @@ def alvos(con, poligono, limite, pois, refazer):
             fora += 1
             continue
         saida.append({"id": pid, "nome": nome, "fonte": fonte, "categoria": cat,
-                      "endereco": endereco, "cidade": cidade, "uf": uf})
+                      "endereco": endereco, "cidade": cidade, "uf": uf,
+                      # A COORDENADA VIAJA COM O ALVO. Ela já vinha do SQL e
+                      # era descartada aqui; sem ela não há como medir a
+                      # distância até a ligação, que é o número que denuncia a
+                      # foto tirada no lugar errado.
+                      "lat": la, "lng": lo})
         if limite and len(saida) >= limite:
             break
     return saida, fora
@@ -440,6 +460,65 @@ def nome_procuravel(nome: str):
     return n
 
 
+import math as _math
+
+
+def _metros(a, b, c, d):
+    r = 6371000.0
+    p1, p2 = _math.radians(a), _math.radians(c)
+    dp, dl = _math.radians(c - a), _math.radians(d - b)
+    h = (_math.sin(dp / 2) ** 2
+         + _math.cos(p1) * _math.cos(p2) * _math.sin(dl / 2) ** 2)
+    return 2 * r * _math.asin(min(1.0, _math.sqrt(h)))
+
+
+def ligacoes_texto(con, alvo) -> str:
+    """As ligações de água do ponto: endereço, coordenada e distância ao POI.
+
+    POR QUE ISTO VAI À IA — pedido do dono do produto em 04/09/2026, e a razão
+    é um defeito medido: o geocodificador casa endereço só pelo CEP, e num CEP
+    de bairro inteiro o "número 43" vira o 43 de qualquer rua. O POI 91794 diz
+    "AVENIDA RIO GRANDE DO SUL, 43" e recebeu a coordenada do "BECO DEODORO DA
+    FONSECA, 43". A foto sai do lugar errado, e a IA julgava a casa de um
+    terceiro sem ter como desconfiar.
+    """
+    cur = con.cursor()
+    cur.execute("""
+        select lp.ligacao, coalesce(l.categoria,''), coalesce(l.sit_ligacao,''),
+               coalesce(l.nom_logradouro,''), coalesce(l.nro,''),
+               coalesce(l.nom_bairro,''),
+               l.cod_latitude::float8, l.cod_longitude::float8,
+               coalesce(l.qtd_eco_res,0), coalesce(l.qtd_eco_com,0),
+               coalesce(l.qtd_eco_ind,0)
+          from radar_comercial.ligacao_poi lp
+          left join resources_root.cadastro_corsan l
+                 on l.num_ligacao::text = lp.ligacao
+         where lp.poi_id = %s
+         order by (upper(coalesce(l.categoria,'')) = 'RESIDENCIAL') desc,
+                  lp.ligacao
+         limit 6
+    """, (alvo["id"],))
+    linhas = []
+    for (lig, cat, sit, logr, nro, bairro, la, lo,
+         eres, ecom, eind) in cur.fetchall():
+        onde = ", ".join(x for x in (("%s %s" % (logr, nro)).strip(), bairro) if x)
+        dist = ""
+        if la is not None and lo is not None and alvo.get("lat") is not None:
+            dist = " · a %.0f m do ponto fotografado" % _metros(
+                alvo["lat"], alvo["lng"], la, lo)
+        eco = []
+        if eres:
+            eco.append("%d residencial" % eres)
+        if ecom:
+            eco.append("%d comercial" % ecom)
+        if eind:
+            eco.append("%d industrial" % eind)
+        linhas.append("  - ligação %s (%s, %s) em %s%s%s"
+                      % (lig, cat or "?", sit or "?", onde or "endereço vazio",
+                         dist, (" · economias: " + ", ".join(eco)) if eco else ""))
+    return "\n".join(linhas)
+
+
 def _cadastro_texto(con, alvo) -> str:
     """O que o cadastro afirma, em texto — inclusive o que o iFood já sabe.
 
@@ -492,6 +571,16 @@ def _cadastro_texto(con, alvo) -> str:
                 (alvo["id"],))
     for (u,) in cur.fetchall():
         linhas.append("- link: %s" % u)
+
+    # A COORDENADA FOTOGRAFADA, DITA EM NÚMERO. Sem ela a IA não tem como
+    # comparar o que a foto mostra com o que o cadastro afirma.
+    if alvo.get("lat") is not None:
+        linhas.append("- coordenada de onde as fotos foram tiradas: %.6f, %.6f"
+                      % (alvo["lat"], alvo["lng"]))
+    ligs = ligacoes_texto(con, alvo)
+    if ligs:
+        linhas.append("- ligações de água vinculadas a este ponto:")
+        linhas.append(ligs)
     return "\n".join(linhas)
 
 

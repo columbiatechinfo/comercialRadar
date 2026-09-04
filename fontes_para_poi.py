@@ -107,49 +107,125 @@ def metros(a, b, c, d):
     return 2 * r * math.asin(min(1.0, math.sqrt(h)))
 
 
+# ── o nome da via, normalizado ─────────────────────────────────────────────
+_ACENTO_VIA = str.maketrans("ÁÀÂÃÄÉÈÊËÍÌÎÏÓÒÔÕÖÚÙÛÜÇ",
+                            "AAAAAEEEEIIIIOOOOOUUUUC")
+_TIPOS_VIA = {"AV", "AVE", "AVENIDA", "R", "RU", "RUA", "TV", "TRAV",
+              "TRAVESSA", "EST", "ESTR", "ESTRADA", "ROD", "RODOVIA", "PC",
+              "PCA", "PRACA", "BC", "BECO", "AL", "ALAMEDA", "LG", "LARGO",
+              "VL", "VILA", "PQ", "PARQUE", "JD", "JARDIM"}
+
+
+def via_normal(txt: str) -> str:
+    """O nome da via sem acento, sem tipo e sem pontuação — para comparar.
+
+    O tipo sai porque a mesma via chega como "AV.", "AVENIDA" e às vezes "RUA"
+    conforme a fonte, e exigir que o tipo case reprovaria casamentos bons.
+    """
+    s = (txt or "").upper().translate(_ACENTO_VIA)
+    s = s.split(",")[0].split(" - ")[0]
+    p = re.sub(r"[^A-Z0-9 ]", " ", s).split()
+    if p and p[0] in _TIPOS_VIA:
+        p = p[1:]
+    return " ".join(p)
+
+
 class Cnefe:
     """O cadastro do IBGE, para dar coordenada a quem não tem.
 
-    Indexado por CEP: dentro de um CEP procura-se o número mais próximo. Quando
-    o número não existe, vale o primeiro endereço daquele CEP — é o começo da
-    rua, não o ponto exato, e por isso quem recebe assim fica marcado.
+    A RUA É PARTE DA CHAVE, e essa é a correção de 04/09/2026.
+
+    Este índice era SÓ POR CEP: dentro de um CEP procurava-se o número mais
+    próximo, e a rua nunca entrava na conta. Parece razoável até se lembrar do
+    CEP genérico — `92330-000` cobre o bairro Mathias Velho inteiro, com
+    centenas de ruas. Ali "o número 43" é o 43 de QUALQUER uma delas, e o
+    resultado ainda saía carimbado `cnefe_numero_exato`, que se lê como "casei
+    o número exato".
+
+    Medido sobre os 143 POIs da quadra de Canoas: 24 coordenadas caíram em rua
+    diferente da que o endereço diz. O POI 91794 — "AVENIDA RIO GRANDE DO SUL,
+    43" — recebeu a coordenada do "BECO DEODORO DA FONSECA, 43". Outros três
+    endereços da mesma avenida foram parar na "AYRTON SENNA", a 5,1 km. O
+    estabelecimento nem estava dentro da área desenhada; entrou nela por um
+    casamento que nunca houve.
+
+    A ORDEM DE PREFERÊNCIA agora é:
+
+        1. via + número        `cnefe_via_numero`      exato, e conferido
+        2. via + número perto  `cnefe_via_proximo`     mesma rua, outro número
+        3. CEP específico      `cnefe_cep_especifico`  só se o CEP não for de
+                                                       bairro (não termina em
+                                                       000)
+        4. nada                `sem_casamento_de_via`
+
+    O passo 3 sobrevive porque CEP de rua identifica a rua sozinho. O que
+    sumiu é o passo que usava CEP de bairro como se fosse endereço.
     """
 
     def __init__(self, cod: str):
         self.cod = cod
         self.por_cep = defaultdict(list)
+        self.por_via_num = defaultdict(list)
+        self.por_via = defaultdict(list)
         self.n = 0
 
     def carregar(self, cur) -> float:
         t0 = time.time()
         cur.execute("""
-            select replace(coalesce(cep,''),'-','') as cep, num_endereco,
+            select replace(coalesce(cep,''),'-','') as cep,
+                   coalesce(nom_seglogr,'') as via, num_endereco,
                    latitude::float8, longitude::float8
               from resources_root.ibge_cnefe
-             where cod_municipio = %s and coalesce(cep,'') <> ''
+             where cod_municipio = %s
                and latitude is not null and longitude is not null
         """, (self.cod,))
-        for cep, num, lat, lon in cur:
+        for cep, via, num, lat, lon in cur:
             self.n += 1
             d = re.sub(r"\D", "", str(num or ""))
-            self.por_cep[cep].append((int(d) if d else None, lat, lon))
+            n = int(d) if d else None
+            v = via_normal(via)
+            if cep:
+                self.por_cep[cep].append((n, lat, lon))
+            if v:
+                self.por_via[v].append((n, lat, lon))
+                if n is not None:
+                    self.por_via_num[(v, n)].append((lat, lon))
         return time.time() - t0
 
-    def coordenada(self, cep, numero):
-        d = re.sub(r"\D", "", str(cep or ""))
-        pontos = self.por_cep.get(d)
-        if not pontos:
-            return None, None, "sem_cep_no_cnefe"
+    def coordenada(self, cep, numero, logradouro=None):
+        """A coordenada do endereço. `logradouro` é o que faz o casamento valer."""
         alvo = re.sub(r"\D", "", str(numero or ""))
-        if alvo:
-            n = int(alvo)
-            comnum = [p for p in pontos if p[0] is not None]
-            if comnum:
-                melhor = min(comnum, key=lambda p: abs(p[0] - n))
-                exato = melhor[0] == n
-                return melhor[1], melhor[2], ("cnefe_numero_exato" if exato
-                                              else "cnefe_numero_proximo")
-        return pontos[0][1], pontos[0][2], "cnefe_cep"
+        n = int(alvo) if alvo else None
+        via = via_normal(logradouro or "")
+
+        if via and n is not None:
+            pts = self.por_via_num.get((via, n))
+            if pts:
+                return pts[0][0], pts[0][1], "cnefe_via_numero"
+            # Mesma rua, número que o IBGE não tem. O ponto mais próximo DAQUELA
+            # rua é uma aproximação honesta — e continua sendo a rua certa.
+            na_via = [p for p in self.por_via.get(via, ()) if p[0] is not None]
+            if na_via:
+                m = min(na_via, key=lambda p: abs(p[0] - n))
+                return m[1], m[2], "cnefe_via_proximo"
+        if via and n is None:
+            pts = self.por_via.get(via)
+            if pts:
+                return pts[0][1], pts[0][2], "cnefe_via_sem_numero"
+
+        # CEP DE RUA AINDA SERVE; CEP DE BAIRRO, NÃO. O sufixo 000 marca o CEP
+        # geral da localidade — usá-lo como endereço é o defeito que esta
+        # classe acabou de perder.
+        d = re.sub(r"\D", "", str(cep or ""))
+        if len(d) == 8 and not d.endswith("000"):
+            pontos = self.por_cep.get(d)
+            if pontos:
+                comnum = [p for p in pontos if p[0] is not None]
+                if n is not None and comnum:
+                    m = min(comnum, key=lambda p: abs(p[0] - n))
+                    return m[1], m[2], "cnefe_cep_especifico"
+                return pontos[0][1], pontos[0][2], "cnefe_cep_especifico"
+        return None, None, "sem_casamento_de_via"
 
 
 # ══════════════════════════════════════════════ as quatro fontes ════════════
@@ -423,7 +499,9 @@ def do_municipio(qual: str, cidade: str, cod: str, uf: str = "RS",
     for i in itens:
         lat, lng, origem = i["lat"], i["lng"], "fonte"
         if lat is None and cnefe:
-            lat, lng, origem = cnefe.coordenada(i.get("cep"), i.get("numero"))
+            lat, lng, origem = cnefe.coordenada(
+                i.get("cep"), i.get("numero"),
+                i.get("logradouro") or i.get("endereco"))
         placar[origem if lat is not None else "sem_coordenada"] += 1
         if not i["nome"] and not i["endereco"]:
             # O gatilho `exigir_comparavel` recusa isto, e com razão: sem nome e
