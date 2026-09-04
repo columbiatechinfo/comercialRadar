@@ -161,6 +161,18 @@
         <span id="cat-n" class="ml-auto inline-flex min-w-5 items-center justify-center rounded-full bg-indigo-50 px-2 text-[11px] font-semibold text-indigo-600">0</span>
       </button>
 
+      <!-- DEPOIS DE EXTRAIR, MANDAR JULGAR.
+           Captura tres imagens por POI — satelite, fachada com a mira, lado
+           oposto —, tira o print dos anuncios de hospedagem e manda a Spark em
+           duas chamadas: percepcao cega e, so entao, julgamento. O contador
+           mostra quantos entram HOJE, e nao o total de POIs: so entra quem tem
+           categoria marcada acima E ligacao residencial ativa. -->
+      <button type="button" id="btn-avaliar-ia" class="nav-item mt-1">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="size-5 shrink-0"><path d="M12 3a4 4 0 0 1 4 4v1a4 4 0 0 1-1 2.6V13a3 3 0 0 1-6 0v-2.4A4 4 0 0 1 8 8V7a4 4 0 0 1 4-4z"></path><path d="M9 20h6"></path><path d="M12 16v4"></path></svg>
+        <span>Avaliar com IA</span>
+        <span id="ia-n" class="ml-auto inline-flex min-w-5 items-center justify-center rounded-full bg-indigo-50 px-2 text-[11px] font-semibold text-indigo-600">0</span>
+      </button>
+
       <button type="button" id="btn-extrair" disabled class="nav-item mt-1">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="size-5 shrink-0"><path d="M12 3v12"></path><path d="M7 10l5 5 5-5"></path><path d="M5 21h14"></path></svg>
         <span>Realizar extração</span>

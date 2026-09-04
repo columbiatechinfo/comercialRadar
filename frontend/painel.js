@@ -1975,6 +1975,64 @@
       await carregarTudo();
     });
 
+    // ── AVALIAR COM IA ────────────────────────────────────────────────
+    //
+    // O NUMERO VEM ANTES DO BOTAO FUNCIONAR. `/api/avaliacao/fila` conta pela
+    // MESMA regra que a corrida usa — categoria marcada, ligacao residencial
+    // ativa, ponto dentro do desenho. Se a tela contasse por um criterio e a
+    // corrida rodasse por outro, o contador mentiria por construcao.
+    async function fila_ia() {
+      const d = await fetch("/api/avaliacao/fila")
+        .then((x) => (x.ok ? x.json() : null)).catch(() => null);
+      if (!d) return null;
+      const n = $("ia-n");
+      if (n) n.textContent = d.alvos > 999 ? "999+" : String(d.alvos);
+      return d;
+    }
+
+    $("btn-avaliar-ia").addEventListener("click", async () => {
+      const d = await fila_ia();
+      $("log-wrap").classList.remove("hidden");
+      if (!d) {
+        linhaLog("nao consegui consultar a fila da avaliacao", "text-amber-400");
+        return;
+      }
+      if (!d.alvos) {
+        // O CAMINHO DE SAIDA E DITO, e nao so a recusa: fila vazia aqui tem
+        // duas causas possiveis e o operador nao tem como adivinhar qual.
+        linhaLog("nenhum POI na fila — marque categorias em 'Categorias para "
+                 + "a IA' e confira que a area tem vinculo com ligacao "
+                 + "residencial ativa", "text-amber-400");
+        return;
+      }
+      const falta = d.alvos - d.julgados;
+      if (!falta) {
+        linhaLog("os " + d.alvos + " POIs da area ja foram julgados",
+                 "text-lime-400");
+        return;
+      }
+      const r = await fetch("/api/jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ modo: "avaliar_ia", opcoes: { workers: 4 } }),
+      }).catch(() => null);
+      const j = r ? await r.json().catch(() => ({})) : {};
+      if (!r || !r.ok) {
+        linhaLog(j.erro || "nao foi possivel iniciar a avaliacao",
+                 "text-amber-400");
+        return;
+      }
+      linhaLog("avaliacao iniciada — " + falta + " POI(s) a julgar de "
+               + d.alvos + " na area", "text-lime-400");
+    });
+
+    // O CONTADOR ENCHE NA ABERTURA E A CADA MEIO MINUTO. A chamada fica AQUI,
+    // no mesmo escopo em que `fila_ia` foi declarada — pendura-la no laco de
+    // atualizacao geral, que vive noutra funcao, daria `ReferenceError` numa
+    // tela que por fora parece inteira.
+    fila_ia();
+    setInterval(fila_ia, 30000);
+
     $("btn-limpar-filtros").addEventListener("click", () => {
       estado.filtros = { origem: [], atributos: [], ia: [], construcao: [] };
       aposFiltro();

@@ -1117,6 +1117,71 @@ def categorias_classes(divisao: int = 0):
         conn.close()
 
 
+@app.get("/api/avaliacao/fila")
+def avaliacao_fila():
+    """Quantos POIs a avaliação alcança, e em que pé ela está.
+
+    O NÚMERO PRECISA APARECER ANTES DE GASTAR. A avaliação custa captura de
+    navegador e tempo de GPU POR POI; sem o número na tela, "avaliar com IA"
+    é um botão que o operador aperta sem saber se vai rodar por dez minutos ou
+    por dez horas. As três contagens respondem isso: quantos entram, quantos já
+    têm imagem, quantos já foram julgados.
+
+    A FILA É A MESMA DO `avaliar_tudo.py`, e tem de ser: categoria marcada na
+    tela de categorias, vínculo com ligação RESIDENCIAL ATIVA, ponto dentro da
+    área desenhada. Se a tela contasse por um critério e a corrida rodasse por
+    outro, a barra de progresso mentiria por construção.
+    """
+    conn = realtime_ingest.conectar()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                with fila as (
+                    select distinct p.id, st_y(p.pt_geo::geometry) as la,
+                           st_x(p.pt_geo::geometry) as lo
+                      from radar_comercial.pois p
+                      join radar_comercial.ligacao_poi lp on lp.poi_id = p.id
+                      join resources_root.cadastro_corsan l
+                            on l.num_ligacao::text = lp.ligacao
+                      join radar_comercial.categoria_catalogo cc
+                            on cc.fonte = p.fonte and cc.valor = btrim(p.categoria)
+                     where p.pt_geo is not null and cc.avaliar
+                       and upper(l.categoria) = 'RESIDENCIAL'
+                       and upper(coalesce(l.sit_ligacao,'')) = 'ATIVA'
+                )
+                select f.id, f.la, f.lo,
+                       exists (select 1 from radar_comercial.poi_evidencia e
+                                where e.poi_id = f.id and e.dados is not null),
+                       (select v.veredito from radar_comercial.poi_veredito v
+                         where v.poi_id = f.id)
+                  from fila f
+            """)
+            linhas = cur.fetchall()
+            cur.execute("""select veredito, count(*)
+                             from radar_comercial.poi_veredito group by 1""")
+            todos_vereditos = dict(cur.fetchall())
+    finally:
+        conn.close()
+
+    # O RECORTE PELA ÁREA É EM PYTHON, pelo mesmo motivo do resto do módulo: a
+    # área desenhada vive em `area_trabalho` e o teste de ponto-em-polígono já
+    # tem uma implementação só, em `area_utils`. Duas seriam duas para manter.
+    poly = area_utils.carregar_area()
+    alvos = com_img = julgados = 0
+    por_veredito = {}
+    for (_id, la, lo, tem_img, ver) in linhas:
+        if poly and not area_utils.ponto_no_poligono(la, lo, poly):
+            continue
+        alvos += 1
+        if tem_img:
+            com_img += 1
+        if ver:
+            julgados += 1
+            por_veredito[ver] = por_veredito.get(ver, 0) + 1
+    return {"alvos": alvos, "com_evidencia": com_img, "julgados": julgados,
+            "por_veredito": por_veredito, "vereditos_no_banco": todos_vereditos}
+
+
 @app.post("/api/categorias/marcar")
 def categorias_marcar(body: dict = Body(...)):
     """Marca ou desmarca. Aceita seção inteira, divisão inteira, fonte ou ids.
@@ -2894,6 +2959,35 @@ def iniciar_job(body: dict):
             if op.get("incluir_ja_comerciais"):
                 cmd.append("--incluir-ja-comerciais")
             _novo_job("avaliar", out_json, {})
+
+        elif modo == "avaliar_ia":
+            # A AVALIAÇÃO POR IA DO QUE ESTÁ FATURADO COMO RESIDENCIAL.
+            #
+            # É a corrida que fecha o ciclo: captura três imagens por POI
+            # (satélite, fachada com a mira, lado oposto), tira o print dos
+            # anúncios de hospedagem, e manda tudo à Spark em duas chamadas
+            # separadas — percepção cega, depois julgamento isolado.
+            #
+            # A FILA NÃO É "TODOS OS POIs", e essa é a economia inteira: só
+            # entra POI cuja CATEGORIA o operador marcou na tela de categorias
+            # E que tenha vínculo com ligação RESIDENCIAL ATIVA. Sem esse
+            # filtro seriam 42 mil pontos; com ele, na quadra de Canoas, 143.
+            #
+            # O watcher fica ocioso de propósito: nada aqui cria POI. A saída é
+            # `poi_evidencia` e `poi_veredito`, e o mapa lê as duas direto.
+            out_json = MINERACAO / "_avaliar_ia_noop.json"
+            cmd = [PYTHON, "avaliar_tudo.py", "--area", area_utils.AREA_PADRAO,
+                   "--trabalhadores", str(int(op.get("workers", 4))),
+                   "--aplicar"]
+            if op.get("limit"):
+                cmd += ["--limite", str(int(op["limit"]))]
+            # A CAIXA EXISTE PORQUE O PASSO DO AIRBNB DEPENDE DE PROXY, e proxy
+            # é a peça que mais falha. Numa área sem hospedagem anunciada ele
+            # também não tem o que fazer, e são dois minutos de sessão furtiva
+            # subindo para nada.
+            if op.get("sem_pagina"):
+                cmd.append("--sem-pagina")
+            _novo_job("avaliar_ia", out_json, {})
 
         elif modo == "enriquecer_tudo":
             # CASCATA: cada POI pobre passa por Maps → Web → Street View até completar.
