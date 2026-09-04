@@ -32,7 +32,9 @@ services:
       - ..:/app:ro
     ports:
       - "127.0.0.1:7250:7250"
-      - "192.168.3.10:7250:7250"
+      # O IP DA LAN VEM DO `.env` DA MAQUINA. Fixo em 192.168.3.10, este
+      # compose so subia no i9 — no notebook (192.168.3.30) o bind falhava.
+      - "${LIBPOSTAL_LAN_IP:-192.168.3.10}:7250:7250"
     healthcheck:
       # O modelo leva alguns segundos para carregar; `start_period` cobre isso
       # para que o container não seja marcado doente antes de estar pronto.

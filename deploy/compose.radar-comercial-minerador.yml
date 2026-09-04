@@ -67,6 +67,16 @@ services:
       #   notebook             RADAR_MAX_TRABALHADORES=10
       RADAR_MAX_TRABALHADORES: ${MAX_TRABALHADORES:-30}
 
+      # O LIBPOSTAL FICA NO HOST, E O WORKER NUMA REDE BRIDGE. `127.0.0.1`
+      # aqui dentro e o loopback DO CONTEINER — o servico esta de pe no host e
+      # nunca era alcancado: as rodadas 24 e 25 (04/09/2026) registraram
+      # "libpostal fora do ar" e seguiram sem segmentar endereco, sem erro.
+      #
+      # O IP e o da LAN DESTA maquina, vindo do `.env` dela (i9 192.168.3.10,
+      # notebook 192.168.3.30) — o mesmo caminho pelo qual o pooler ja e
+      # alcancado.
+      LIBPOSTAL_URL: http://${LIBPOSTAL_LAN_IP:-192.168.3.10}:7250
+
     # SEM `ports`. Não é esquecimento: ele consome fila do banco e não atende
     # ninguém. Publicar porta aqui seria abrir superfície para nada.
 

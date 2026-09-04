@@ -572,21 +572,16 @@
     return dentro;
   }
 
-  function htmlFichaArea(poly) {
+  // `contagem` e a resposta de `/api/area/contar`; `null` = ainda contando.
+  function htmlFichaArea(poly, contagem) {
     const ll = (poly.getLatLngs() || [])[0] || [];
     const anel = ll.map((p) => [p.lat, p.lng]);
-    // Recontado A CADA abertura: a mineração em tempo real muda `estado.pois`,
-    // e um HTML preso no bind mostraria o número de quando o polígono foi
-    // desenhado — justamente o engano que esta ficha existe para desfazer.
-    const dentro = estado.pois.filter(
-      (p) => p.lat != null && p.lng != null && dentroDoAnel(anel, p.lat, p.lng));
-    const porFonte = new Map();
-    for (const p of dentro) {
-      const f = p.fonte || "sem fonte";
-      porFonte.set(f, (porFonte.get(f) || 0) + 1);
-    }
-    const fontes = [...porFonte.entries()].sort((a, b) => b[1] - a[1]);
-    const multi = dentro.filter((p) => Number(p.n_fontes || 1) > 1).length;
+    const total = contagem && !contagem.erro ? Number(contagem.total || 0) : null;
+    const fontes = contagem && !contagem.erro
+      ? (contagem.por_fonte || []).map((x) => [x.fonte || "sem fonte", x.n])
+      : [];
+    const multi = contagem && !contagem.erro ? Number(contagem.multiorigem || 0) : 0;
+    const dentro = { length: total == null ? 0 : total };
     const ha = areaHectares(anel);
 
     const linhas = fontes.map(([f, n]) => {
@@ -596,16 +591,20 @@
              `<td class="pct">${Math.round((n / dentro.length) * 100)}%</td></tr>`;
     }).join("");
 
-    const corpo = dentro.length
-      ? `<table class="area-pop-tab"><tbody>${linhas}</tbody></table>` +
-        (multi ? `<p class="area-pop-nota">${nf.format(multi)} são <b>multiorigem</b> —
-                  sustentados por mais de uma base. É onde a fusão pode ter errado.</p>` : "")
-      : `<p class="area-pop-nota">Nenhum POI do banco aqui dentro. Se acabou de
-         minerar, o mapa só mostra o que já foi gravado.</p>`;
+    const corpo = total == null
+      ? `<p class="area-pop-nota">${contagem && contagem.erro
+          ? "Não consegui contar — o servidor não respondeu."
+          : "Contando no banco…"}</p>`
+      : (dentro.length
+        ? `<table class="area-pop-tab"><tbody>${linhas}</tbody></table>` +
+          (multi ? `<p class="area-pop-nota">${nf.format(multi)} são <b>multiorigem</b> —
+                    sustentados por mais de uma base. É onde a fusão pode ter errado.</p>` : "")
+        : `<p class="area-pop-nota">Nenhum POI do banco aqui dentro. Se acabou de
+           minerar, o mapa só mostra o que já foi gravado.</p>`);
 
     return `<div class="area-pop">
       <div class="area-pop-topo">
-        <span class="area-pop-num">${nf.format(dentro.length)}</span>
+        <span class="area-pop-num">${total == null ? "…" : nf.format(total)}</span>
         <span class="area-pop-cap">POIs do banco<br>dentro do desenho</span>
       </div>
       <div class="area-pop-sub">${ha < 10 ? ha.toLocaleString("pt-BR", { maximumFractionDigits: 1 })
@@ -624,7 +623,7 @@
   // nada. O pior tipo de defeito, porque a tela não acusa.
   function ligarFichaDaArea(poly) {
     poly.bindPopup("", { className: "area-pop-wrap", maxWidth: 340 });
-    poly.on("click", (e) => {
+    poly.on("click", async (e) => {
       L.DomEvent.stopPropagation(e);
       // A AREA JA PRONTA NAO ROUBA O CLIQUE DE QUEM AINDA ESTA DESENHANDO.
       //
@@ -635,8 +634,19 @@
       // nenhum. Quem desenhasse a segunda area em cima da primeira ficaria
       // clicando sem nada acontecer.
       if (estado.desenhando) { cliqueNoMapa(e); return; }
-      poly.setPopupContent(htmlFichaArea(poly));
+      // O NUMERO VEM DO SERVIDOR. Contar no que a tela carregou dava "0 POIs
+      // do banco aqui dentro" toda vez que o poligono caia fora do que
+      // estava carregado — que, com o mapa cortado em 8 mil e a rodada
+      // seguida filtrando por area, e quase sempre.
+      poly.setPopupContent(htmlFichaArea(poly, null));
       poly.openPopup(e.latlng);
+      const ll = (poly.getLatLngs() || [])[0] || [];
+      const r = await fetch("/api/area/contar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ poligono: ll.map((p) => [p.lat, p.lng]) }),
+      }).then((x) => (x.ok ? x.json() : null)).catch(() => null);
+      if (poly.isPopupOpen()) poly.setPopupContent(htmlFichaArea(poly, r || { erro: true }));
     });
     return poly;
   }
@@ -1672,6 +1682,14 @@
     const d = await pegar("/api/pois" +
       (ar ? ("?area=" + encodeURIComponent(ar)) : ""));
     estado.pois = (d && d.pois) || [];
+    // O CORTE E DITO. O servidor devolve no maximo `teto` pontos quando nao
+    // ha area nem rodada seguida; sem esta linha o mapa pareceria completo.
+    if (d && d.truncado) {
+      $("log-wrap").classList.remove("hidden");
+      linhaLog("mapa mostrando os " + nf.format(d.teto) + " pontos mais recentes " +
+               "— desenhe uma área ou abra uma rodada para ver tudo que há nela",
+               "text-amber-400");
+    }
     desenharPois();
     montarFiltros();
     // O CARTÃO NÃO ESPERA O `/api/stats`. Ele conta a partir dos POIs, que já
@@ -2234,7 +2252,13 @@
               // porque os pontos ja estao la, com a sessao de quem os trouxe.
               // Cinco rodadas de teste sobre a mesma quadra marcaram 0 cada uma
               // e a coluna pareceu quebrada — estava certa, e mal rotulada.
-              '<div class="text-[10.5px] text-gray-400">novos</div>' +
+              // O NUMERO PASSOU A SER O DA AREA, e o rotulo tinha ficado
+              // para tras: dizia "novos" ao lado de 1.956. A dica traz o
+              // outro numero, para quem quiser saber o que a rodada
+              // acrescentou.
+              '<div class="text-[10.5px] text-gray-400" title="' +
+                (r.pois_novos != null ? (r.pois_novos + ' criados por esta rodada') : '') +
+              '">na área</div>' +
             "</div>" +
           "</div>" +
           (r.etapas ? ('<div class="mt-2.5 h-1 w-full overflow-hidden rounded-full bg-gray-100">' +

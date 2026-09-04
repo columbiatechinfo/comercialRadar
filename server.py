@@ -1501,8 +1501,50 @@ def _wkt_do_anel(poly: list) -> str | None:
     return "POLYGON((%s))" % ", ".join("%.10f %.10f" % (x, y) for x, y in pts)
 
 
+@app.post("/api/area/contar")
+def contar_na_area(body: dict):
+    """Quantos POIs ha dentro de um poligono, por fonte — do BANCO.
+
+    A ficha do poligono contava em `estado.pois`, o que o navegador tinha
+    carregado. Isso so era verdade quando o mapa carregava tudo; hoje a
+    primeira carga e cortada em `TETO_MAPA`, e quem segue uma rodada so tem a
+    area dela. Desenhar um poligono noutro bairro dava "0 POIs do banco aqui
+    dentro" com o banco cheio — foi a queixa de 04/09/2026, e a segunda vez
+    que essa ficha mentiu por contar a coisa errada.
+
+    Contar no servidor e a unica forma de o numero nao depender do que a tela
+    por acaso tem. Custa uma consulta espacial pequena (0,2 s numa area de 54
+    pontos) — mais barata que um numero errado.
+    """
+    wkt = _wkt_do_anel(body.get("poligono") or body.get("polygon") or [])
+    if not wkt:
+        return {"total": 0, "por_fonte": [], "multiorigem": 0}
+    conn = realtime_ingest.conectar()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT p.fonte, count(*),
+                       count(*) FILTER (WHERE (SELECT count(*) FROM vinculo_poi v
+                                                WHERE v.poi_id = p.id
+                                                  AND v.estado = 'vinculado') > 1)
+                  FROM pois_completo p
+                 WHERE p.match_valido IS NOT FALSE
+                   AND p.fundido_em IS NULL
+                   AND p.pt_geo IS NOT NULL
+                   AND p.fonte IS DISTINCT FROM 'receita'
+                   AND st_covers(st_geogfromtext(%(wkt)s), p.pt_geo)
+                 GROUP BY p.fonte ORDER BY 2 DESC""", {"wkt": wkt})
+            linhas = cur.fetchall()
+    finally:
+        conn.close()
+    return {"total": sum(n for _, n, _ in linhas),
+            "por_fonte": [{"fonte": f, "n": n} for f, n, _ in linhas],
+            "multiorigem": sum(m for _, _, m in linhas)}
+
+
 @app.get("/api/pois")
-def listar_pois(sessao: str | None = None, area: str | None = None):
+def listar_pois(sessao: str | None = None, area: str | None = None,
+                com_receita: int = 0):
     """Os POIs do mapa.
 
     DOIS RECORTES, E ELES RESPONDEM PERGUNTAS DIFERENTES. `area` devolve tudo
@@ -1722,6 +1764,17 @@ def listar_pois(sessao: str | None = None, area: str | None = None):
                   AND (%(wkt)s::text IS NULL
                        OR (p.pt_geo IS NOT NULL
                            AND st_covers(st_geogfromtext(%(wkt)s), p.pt_geo)))
+                  -- O CNPJ NAO E UM LUGAR. A base da Receita (58.834 linhas,
+                  -- importada em 02/09/2026) virou um POI por CNPJ, e um CNPJ
+                  -- tem endereco de REGISTRO, nao de porta: 89 empresas
+                  -- registradas no Condominio Villaggio Brasil, Rua Brasil
+                  -- 121, viraram 89 marcadores empilhados no mesmo ponto —
+                  -- medido na rodada 25, que "tinha" 1.956 POIs numa quadra,
+                  -- 861 deles da Receita em 175 coordenadas.
+                  --
+                  -- Ela continua no banco para o cruzamento por CNPJ, que e
+                  -- para o que foi importada. No mapa so entra a pedido.
+                  AND (%(com_receita)s::int = 1 OR p.fonte IS DISTINCT FROM 'receita')
                 -- OS MAIS RECENTES PRIMEIRO quando o teto corta. Cortar por
                 -- ordem de `id` traria os POIs mais antigos da base — os que o
                 -- operador ja viu — e esconderia justamente o que acabou de ser
@@ -1729,6 +1782,7 @@ def listar_pois(sessao: str | None = None, area: str | None = None):
                 ORDER BY p.id DESC
                 LIMIT %(limite)s""",
                         {"sessao": sessao, "wkt": wkt,
+                         "com_receita": 1 if com_receita else 0,
                          "limite": (TETO_MAPA if (wkt is None and not sessao)
                                     else 200000)})
             cols = ["id", "nome", "categoria", "endereco", "telefone", "avaliacao",
@@ -3795,6 +3849,8 @@ def listar_runs(limite: int = 30):
                          where p.fundido_em is null
                            and p.match_valido is not false
                            and p.pt_geo is not null
+                           -- a mesma regra do mapa: CNPJ nao e lugar
+                           and p.fonte is distinct from 'receita'
                            and st_covers(
                                  (select st_setsrid(st_makepolygon(
                                            st_addpoint(l, st_startpoint(l))),

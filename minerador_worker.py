@@ -263,6 +263,13 @@ def _comando(job: dict) -> list:
         if aparado:
             print("[%s] teto desta máquina aplicado — %s"
                   % (EU, "; ".join(aparado)), flush=True)
+        # O AJUDANTE POR SSH SAIU DE CENA. `_acordar_predator` existia para a
+        # etapa 4 mandar metade do trabalho para a outra maquina por SSH —
+        # antes da fila. Hoje a outra maquina e um worker igual a este, que
+        # pega o proprio job; o ajudante so produzia um aviso assustador em
+        # toda rodada ("o Predator nao entrou") e, rodando NO notebook,
+        # tentava abrir SSH para si mesmo.
+        a.setdefault("sem_predator", True)
         cmd = [PYTHON, "minerar_tudo.py"]
         for chave, valor in a.items():
             if valor is None or valor is False:
