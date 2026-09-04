@@ -379,11 +379,14 @@ h1{
       deduplicação de tudo.</p>
     </div>
     <div class="aviso">
-      <p><b>Dezessete colunas vazias continuam na tabela.</b>
-      Elas nunca guardaram nada, mas o código vivo as menciona — de
-      <code>similaridade</code> a <code>streetview_path</code>. Cair antes de
-      editar esses arquivos quebraria consulta em produção, e o ganho é
-      cosmético perto do risco.</p>
+      <p><b>Dezessete colunas vazias ficam, e isso é decisão.</b>
+      Elas nunca guardaram nada — <code>similaridade</code>,
+      <code>streetview_path</code>, <code>fundido_em</code>,
+      <code>distancia_m</code> e outras treze —, mas oito arquivos vivos as
+      mencionam. Coluna nula não custa desempenho no Postgres, e editar oito
+      arquivos de produção para ganhar arrumação não paga o risco. Decidido pelo
+      dono do produto em 03/09/2026; está aqui para não ser redescoberto como
+      defeito.</p>
     </div>
     <p style="margin-top:26px">
       Gerado a partir do catálogo do próprio Postgres —
