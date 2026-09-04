@@ -373,7 +373,8 @@ def _importar_municipio(uf: str, cod: str, empresa: str,
 # nem base64 a mandar, nem CR do Windows para o bash do outro lado engolir.
 
 
-TOTAL_ETAPAS = 9
+# Dez desde 03/09/2026: a etapa 10 (telhados) fecha a lista.
+TOTAL_ETAPAS = 10
 
 
 def _base_pronta():
@@ -1183,6 +1184,27 @@ def main(argv=None) -> int:
                       "enriquecimento pelo Maps")
     else:
         _log("  pulado — sem cidade não há o que buscar no painel")
+
+    _etapa(10, "telhados — o POI órfão que divide construção com a ligação")
+    if _idbase:
+        # É A ÚLTIMA, E A ORDEM É O DESENHO.
+        #
+        # Este passo só alcança POI que ficou COMPLETAMENTE órfão depois de
+        # endereço, número e distância. Rodá-lo antes faria telhado competir com
+        # evidência melhor; rodá-lo depois faz dele o que ele é — o último
+        # recurso, e o menor nível de confiança do sistema. Por isso o vínculo
+        # que ele cria nasce com `origem='telhado'`, para quem lê a lista saber
+        # que está olhando um palpite.
+        #
+        # O CATÁLOGO VEM ANTES porque a captura da etapa 4 acabou de produzir
+        # tiles novos, e um tile que não está catalogado não cobre ponto nenhum.
+        _tolerante_i9(["telhados.py", "--registrar", "--aplicar"],
+                      "catálogo dos tiles")
+        _tolerante_i9(["telhados.py", "--base", str(_idbase),
+                       "--area", a.area, "--aplicar"],
+                      "suspeita por telhado")
+    else:
+        _log("  pulado — sem base do cliente não há ligação a suspeitar")
 
     _log("─" * 62)
     _log("✅ Mineração completa. Filtre por 🔗 Multiorigem no mapa para revisar")

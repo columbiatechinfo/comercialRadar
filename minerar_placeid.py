@@ -95,6 +95,40 @@ def metros_por_pixel(lat, zoom):
     return 156543.03392 * math.cos(math.radians(lat)) / (2 ** zoom)
 
 
+def _indexar_tile(pasta, nome, lat, lng, caixa):
+    """Acrescenta o tile ao indice da pasta, com a caixa que o mapa reportou.
+
+    UM ARQUIVO POR PASTA, reescrito inteiro a cada tile. E barato — algumas
+    centenas de linhas — e sobrevive a interrupcao: uma varredura morta no meio
+    deixa o indice coerente com o que existe no disco, em vez de um arquivo
+    truncado pela metade. `os.replace` troca o arquivo de uma vez so, entao nem
+    a troca tem janela ruim.
+
+    SEM TRAVA, E DE PROPOSITO. As dez capturas sao TAREFAS do mesmo laco
+    asyncio, nao threads: codigo sincrono entre dois `await` roda inteiro sem
+    ser interrompido. Um `threading.Lock` aqui daria a impressao de proteger
+    algo que ja e atomico, e esconderia que a garantia real vem do laco.
+    """
+    caminho = os.path.join(pasta, "_tiles.json")
+    try:
+        dados = json.load(open(caminho, encoding="utf-8"))
+    except Exception:                                          # noqa: BLE001
+        dados = {}
+    dados[nome] = {
+        "lat": lat, "lng": lng, "zoom": ZOOM,
+        "largura_px": LARG, "altura_px": ALT,
+    }
+    if isinstance(caixa, dict) and all(k in caixa for k in "snol"):
+        dados[nome].update({
+            "lat_min": caixa["s"], "lat_max": caixa["n"],
+            "lng_min": caixa["o"], "lng_max": caixa["l"],
+        })
+    tmp = caminho + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(dados, f, ensure_ascii=False)
+    os.replace(tmp, caminho)
+
+
 async def varrer_tile(nav, lat, lng, passo_px, pasta, rotulo):
     """Uma posicao: colhe os placeId visiveis e fotografa o tile.
 
@@ -125,14 +159,41 @@ async def varrer_tile(nav, lat, lng, passo_px, pasta, rotulo):
 
         if pasta:
             bruto = await pg.screenshot()
+            # A COORDENADA VAI NO NOME, e ate 03/09/2026 nao ia.
+            #
+            # O arquivo se chamava `r_000.webp` — o rotulo diz a ORDEM da
+            # varredura e nada mais. A funcao recebe `lat` e `lng`, o mapa ainda
+            # publica a caixa exata em `window.__caixa`, e as duas informacoes
+            # eram jogadas fora na hora de gravar. O resultado: 566 imagens de
+            # Canoas no disco que ninguem consegue situar no mundo.
+            #
+            # Nao e um detalhe de arquivo: ESTE estilo de mapa desenha as
+            # construcoes como poligonos chapados, e e a melhor entrada que o
+            # sistema tem para o passo dos telhados — melhor que satelite, que
+            # vem com sombra, arvore e perspectiva. Sem a coordenada, ela nao
+            # serve para nada.
+            #
+            # O nome segue a convencao que os tiles PNG ja usavam, para o mesmo
+            # leitor achar os dois.
+            nome = "tile_%s_%.5f_%.5f" % (rotulo, lat, lng)
             try:
                 import io
                 from PIL import Image
                 Image.open(io.BytesIO(bruto)).convert("RGB").save(
-                    os.path.join(pasta, "%s.webp" % rotulo), "WEBP",
+                    os.path.join(pasta, nome + ".webp"), "WEBP",
                     quality=90, method=6)
             except Exception:
-                open(os.path.join(pasta, "%s.png" % rotulo), "wb").write(bruto)
+                open(os.path.join(pasta, nome + ".png"), "wb").write(bruto)
+            # A CAIXA MEDIDA, e nao a calculada. `window.__caixa` e o que o
+            # proprio mapa reporta ter desenhado; deduzi-la do zoom e da
+            # latitude da quase o mesmo, e o "quase" ja custou caro uma vez —
+            # `cruzar_ligacao.Telhado` supunha um tile de 200 m onde ele tem
+            # 994, e por isso nunca achava o tile de ponto nenhum.
+            try:
+                caixa = await pg.evaluate("window.__caixa")
+                _indexar_tile(pasta, nome, lat, lng, caixa)
+            except Exception:                                  # noqa: BLE001
+                pass
 
         # A GRADE, SEM ESPERA ENTRE CLIQUES.
         #
