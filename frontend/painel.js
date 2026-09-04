@@ -1657,6 +1657,11 @@
     const anel = (d && d.polygon) || [];
     if (estado.runSeguida) estado.runSeguida.area = (d && d.area) || null;
     if (anel.length < 3) return;
+    // AS DUAS CAMADAS, e nao so a das areas: a `area_atual` salva e desenhada
+    // em `camadaDesenho` na abertura da tela, e sobrava por baixo do poligono
+    // da rodada — dois contornos identicos no mesmo lugar, e a ficha abrindo
+    // ora num, ora noutro.
+    camadaDesenho.clearLayers();
     camadaAreas.clearLayers();
     const poly = ligarFichaDaArea(L.polygon(anel, {
       pane: "paneArea", className: "area-poly",
