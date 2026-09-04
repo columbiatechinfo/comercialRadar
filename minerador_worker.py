@@ -161,10 +161,45 @@ def encerrar(con, id_job: int, codigo: int, erro: str | None = None) -> None:
 # ──────────────────────────────────────────────────────────────────────────
 # Rodar o job
 # ──────────────────────────────────────────────────────────────────────────
+#: Quantos trabalhadores de navegador esta MÁQUINA aguenta, no máximo.
+#:
+#: O TETO É DA MÁQUINA, E NÃO DO PEDIDO, e essa é a distinção que faz a fila
+#: poder ser atendida por hardware diferente. Quem clica no painel pede uma
+#: rodada; ele não sabe — nem deveria saber — se ela vai cair no servidor de
+#: 123 GB ou no notebook de 45. Se o pedido carregasse o número, uma rodada
+#: pedindo 30 afogaria o notebook, e uma pedindo 10 desperdiçaria o servidor.
+#:
+#: MEDIDO em 04/09/2026: cada trabalhador custa ~430 MB e ~0,3 núcleo; trinta
+#: levaram o contêiner a 13,8 GiB e 9,4 núcleos de 32. O servidor principal
+#: (123 GB, 32 vCPU) fica em 30; o notebook (45 GB, 32 vCPU, com nominatim,
+#: photon e dois OSRM de pé) fica em 10.
+MAX_TRABALHADORES = int(os.environ.get("RADAR_MAX_TRABALHADORES") or 30)
+
+#: As chaves que contam trabalhadores de navegador e por isso obedecem ao teto.
+_CHAVES_DE_TRABALHADOR = ("workers", "capture_workers", "trabalhadores")
+
+
 def _comando(job: dict) -> list:
     """A linha de comando do job. O `minerar_tudo` não mudou para caber aqui."""
-    a = job["argumentos"]
+    a = dict(job["argumentos"])
     if job["tipo"] == "mineracao":
+        # O TETO APARADO É DITO, e não aplicado em silêncio. Uma rodada que
+        # pediu 30 e rodou com 10 demora três vezes mais; quem for ler o tempo
+        # depois precisa saber por quê, sem ter de descobrir em qual máquina
+        # ela caiu.
+        for chave in _CHAVES_DE_TRABALHADOR:
+            try:
+                pedido = int(a.get(chave))
+            except (TypeError, ValueError):
+                continue
+            if pedido > MAX_TRABALHADORES:
+                a[chave] = MAX_TRABALHADORES
+                a.setdefault("_aparado", []).append(
+                    "%s: %d → %d" % (chave, pedido, MAX_TRABALHADORES))
+        aparado = a.pop("_aparado", None)
+        if aparado:
+            print("[%s] teto desta máquina aplicado — %s"
+                  % (EU, "; ".join(aparado)), flush=True)
         cmd = [PYTHON, "minerar_tudo.py"]
         for chave, valor in a.items():
             if valor is None or valor is False:
@@ -245,6 +280,8 @@ def rodar(con, job: dict) -> None:
     id_job = job["id"]
     cmd = _comando(job)
     registrar(con, id_job, "▶ " + " ".join(cmd[1:]))
+    registrar(con, id_job, "  worker %s · teto de %d trabalhador(es) nesta máquina"
+              % (EU, MAX_TRABALHADORES))
 
     # A IDENTIDADE VAI NO AMBIENTE DO SUBPROCESSO, e é isso que faz o resultado
     # nascer na empresa certa. O `minerar_tudo` abre a própria conexão; sem a

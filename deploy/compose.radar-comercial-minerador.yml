@@ -22,12 +22,31 @@
 name: radar-comercial-minerador
 
 services:
-  radar-comercial-minerador:
+  # O SERVICO CHAMA-SE `worker`, e nao como o projeto.
+  #
+  # Com os dois iguais o Compose gera
+  # `radar-comercial-minerador-radar-comercial-minerador-1` — quarenta e nove
+  # caracteres que ninguem le num `docker ps` nem digita num `docker logs`.
+  # Assim sai `radar-comercial-minerador-worker-1`, que continua casando com a
+  # convencao `radar-*` desta maquina compartilhada.
+  worker:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.minerador
-    container_name: radar-comercial-minerador
+    # SEM `container_name`, e isso e o que permite escalar.
+    #
+    # Nome fixo e um conteiner so: `--scale` falha com "container name must be
+    # unique". Sem ele o Compose numera sozinho —
+    # `radar-comercial-minerador-1`, `-2`, `-3` —, o que continua respeitando a
+    # convencao `radar-*` desta maquina compartilhada.
+    #
+    # QUANTAS REPLICAS E QUANTAS RODADAS SIMULTANEAS SAO A MESMA COISA: cada
+    # worker pega UM job por vez do `for update skip locked`. Duas replicas,
+    # duas rodadas ao mesmo tempo.
     restart: unless-stopped
+
+    deploy:
+      replicas: ${MINERADORES:-2}
 
     env_file:
       - ../.env
@@ -38,6 +57,15 @@ services:
       # statement e lock de sessão. É divergência assumida do doc 23, registrada
       # em docs/AMBIENTE_A2L.md.
       PYTHONUNBUFFERED: "1"
+
+      # O TETO DE TRABALHADORES E DA MAQUINA, e nao do pedido — ver a nota em
+      # `minerador_worker.MAX_TRABALHADORES`. Quem clica no painel nao sabe se a
+      # rodada vai cair no servidor de 123 GB ou no notebook de 45; a maquina
+      # que a pegar apara o numero e diz no log da rodada que aparou.
+      #
+      #   servidor principal   RADAR_MAX_TRABALHADORES=30   (padrao)
+      #   notebook             RADAR_MAX_TRABALHADORES=10
+      RADAR_MAX_TRABALHADORES: ${MAX_TRABALHADORES:-30}
 
     # SEM `ports`. Não é esquecimento: ele consome fila do banco e não atende
     # ninguém. Publicar porta aqui seria abrir superfície para nada.
@@ -69,7 +97,9 @@ services:
     # 24 g deixa folga de quase o dobro do pico medido e ainda permite tres
     # workers simultaneos numa maquina de 123 GB. Dez trabalhadores, que e o
     # padrao, custam 3,3 GB — o teto so entra em jogo em rodada grande.
-    mem_limit: 24g
+    # O PADRAO E O DO SERVIDOR. No notebook, `MEM_WORKER=12g` — 45 GB de RAM
+    # com nominatim, photon e dois OSRM ja de pe nao comportam 24 por replica.
+    mem_limit: ${MEM_WORKER:-24g}
 
     read_only: false     # a exceção, explicada no cabeçalho
     cap_drop: [ALL]
