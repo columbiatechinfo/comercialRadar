@@ -77,7 +77,7 @@ TIMEOUT = 480
 # A ORDEM DAS IMAGENS É A ORDEM DA LEITURA, e ela não é arbitrária: o satélite
 # primeiro dá o enquadramento (onde fica, quantas construções), a fachada
 # depois responde a pergunta, o fundo por último dá o contexto do quarteirão.
-ORDEM_RUA = ["satelite", "sv_frente", "sv_fundo"]
+ORDEM_RUA = ["sv_frente", "sv_lado_a", "sv_fundo", "sv_lado_b"]
 ORDEM_PAGINA = ["pagina_airbnb"]
 
 VEREDITOS = ("aprovado_exato", "aprovado_comercial", "revisao_humana", "reprovado")
@@ -97,88 +97,76 @@ def _log(m):
 #
 # NENHUM DADO DO CADASTRO ENTRA AQUI. Nem o nome, nem a categoria, nem a rua.
 # O que o modelo devolve tem de poder ser conferido só olhando as imagens.
-# ── a percepção, UMA CHAMADA POR IMAGEM ────────────────────────────────────
+# ── a percepção: UMA chamada, as QUATRO visadas ────────────────────────────
 #
-# ISTO JÁ FOI UMA CHAMADA SÓ, COM AS TRÊS IMAGENS, e a razão de ter deixado de
-# ser está medida no POI 99207 em 04/09/2026. A loja "Black Style" fica na
-# calçada OPOSTA e aparece só na terceira imagem; o modelo a descreveu dentro
-# do bloco "fachada", como estabelecimento do imóvel avaliado. O julgamento tem
-# uma regra explícita contra isso — "comércio do lado oposto não aprova o
-# imóvel" —, e a regra é inútil quando a contaminação acontece ANTES dela: o
-# julgamento só vê texto, e o texto já dizia que a loja era da fachada.
+# ISTO JÁ FOI UMA CHAMADA POR IMAGEM, e voltou a ser uma só porque A PERGUNTA
+# MUDOU. Antes se pedia "descreva a fachada sob a mira", e aí a foto do outro
+# lado da rua era contaminação pura: o modelo atribuía ao alvo a loja do
+# vizinho (POI 99207, "Black Style"). Agora se pede ACHAR O ESTABELECIMENTO,
+# apareça ele em qual visada aparecer — e para isso o modelo precisa ver as
+# quatro juntas, senão não há como dizer "está na esquina à direita".
 #
-# Duas tentativas de conter por instrução falharam: separar os blocos no
-# esquema, e proibir explicitamente o atravessamento. Instrução não segura o
-# que a estrutura permite. Agora cada imagem tem a sua chamada, e o modelo que
-# descreve a fachada NUNCA VIU o outro lado da rua — não há o que atravessar.
+# O QUE SUBSTITUI A SEPARAÇÃO FÍSICA é a resposta ser POR VISADA: cada bloco
+# diz o que há NAQUELA foto, e um campo à parte diz em qual delas o alvo foi
+# encontrado. Assim o julgamento continua sabendo distinguir "na frente, sob a
+# mira" de "do outro lado da rua" — que é a distinção que decide o veredito.
 #
-# O custo são duas chamadas a mais por POI: a percepção sobe de ~4 s para ~9 s.
-# É o preço de um veredito que não aprova o vizinho no lugar do alvo.
+# DUAS CHAMADAS POR POI, e não quatro: percepção e julgamento. É o que o dono
+# do produto pediu em 04/09/2026, e o custo cai de ~16 s para ~9 s por POI.
 
-# O QUE SEMPRE SE IGNORA. As três primeiras são marca do Google; a quarta é
-# NOSSA — `capturar_evidencia` desenha a mira e escreve "FACHADA AVALIADA" na
-# imagem, e o modelo transcreveu essa legenda como letreiro de loja no POI
-# 99207. Quem desenha na foto tem de dizer ao leitor o que desenhou.
+VISTA_ROTULO = {
+    "sv_frente": "FRENTE - a câmera encara a coordenada. Uma mira verde aberta "
+                 "marca o imóvel do endereço.",
+    "sv_lado_a": "LADO DIREITO - a mesma câmera girada 90°.",
+    "sv_fundo": "ATRÁS - a mesma câmera girada 180°, o outro lado da rua.",
+    "sv_lado_b": "LADO ESQUERDO - a mesma câmera girada 270°.",
+}
+
 IGNORAR = """IGNORE, e nunca transcreva como letreiro: a marca d'água do \
-Google, placas de trânsito, nomes de rua, e a legenda "FACHADA AVALIADA" com a \
-mira verde — essa mira foi desenhada por nós sobre a foto para apontar o alvo, \
-e não é nada que exista no local."""
+Google, placas de trânsito e nomes de rua. A mira verde foi desenhada por nós \
+sobre a foto para apontar o imóvel do endereço — ela não existe no local."""
 
-PROMPT_SAT = """Você vê UMA imagem: uma vista de SATÉLITE. Um anel verde marca \
-a coordenada exata de um ponto.
+PROMPT_QUATRO = """Você recebe %(n)d fotos de rua do MESMO ponto, tiradas do \
+mesmo lugar girando a câmera. Nesta ordem:
 
-Descreva o que está sob o anel e ao redor dele. Não julgue e não adivinhe o uso \
-do imóvel. %(ignorar)s
+%(lista)s
 
-Responda SOMENTE um JSON:
-{"construcoes_no_lote": <int|null>,
- "telhado_do_ponto": "<descrição curta do telhado sob o anel>",
- "observacao": "<até 25 palavras sobre o entorno imediato>"}"""
+SUA TAREFA É ACHAR ESTABELECIMENTO — comércio, serviço, oficina, igreja, \
+escola, depósito, qualquer atividade que não seja só moradia. Ele pode estar em \
+QUALQUER uma das fotos, e não só na da mira.
 
-PROMPT_FACHADA = """Você vê UMA imagem: a foto de rua de UM imóvel. Uma mira \
-verde aberta está exatamente sobre o imóvel a descrever. É ELE o assunto, e \
-nada mais na foto.
-
-DESCREVA O QUE VÊ. Não julgue, não conclua, e não adivinhe o nome de quem \
-ocupa o imóvel se não estiver escrito.
+Descreva o que vê. Não julgue, não conclua, e não invente nome que não esteja \
+escrito. %(ignorar)s
 
 REGRAS DE LEITURA
-- Transcreva letreiro, placa, toldo, faixa e adesivo de vitrine EXATAMENTE como \
-estão escritos. Se estiver ilegível, diga ilegível — não complete.
-- %(ignorar)s
-- Um mesmo imóvel pode ter mais de um estabelecimento, inclusive em andares de \
-cima. Liste todos os que conseguir ler NO IMÓVEL DA MIRA.
-- MEDIDORES: conte as caixas de medidor de energia ou de água na fachada e no \
-muro. Se não der para contar, use null — nunca zero por desencargo.
+- Transcreva letreiro, placa, toldo, faixa e adesivo EXATAMENTE como estão \
+escritos. Ilegível é "ilegível" — não complete.
+- Diga SEMPRE em qual foto viu cada coisa. É a única forma de separar o imóvel \
+do endereço dos vizinhos.
+- Um mesmo prédio pode ter mais de um estabelecimento, inclusive nos andares \
+de cima.
+- MEDIDORES: conte as caixas de medidor de energia ou água NO IMÓVEL DA MIRA \
+(foto 1). Se não der para contar, use null — nunca zero por desencargo.
 
 Responda SOMENTE um JSON:
-{"tipo_imovel": "casa|sobrado|predio|loja_terrea|galpao|terreno_vago|em_obra|\
-indefinido", "andares": <int|null>, "letreiros": ["<texto lido>", ...],
- "vitrine": true|false, "porta_comercial": true|false, "toldo": true|false,
- "grade_ou_muro_alto": true|false, "medidores": <int|null>,
- "estabelecimentos": [{"nome": "<lido>", "ramo_aparente": "<o que parece ser>"}],
- "sinais_de_comercio": ["<mercadoria à vista>", "<cliente>", "<estacionamento>"],
- "descricao": "<até 45 palavras do que se vê na mira>"}"""
-
-PROMPT_FUNDO = """Você vê UMA imagem: a vista da MESMA câmera girada 180°, \
-mostrando o outro lado de uma rua. O imóvel que interessa NÃO está nesta foto \
-— ele fica atrás da câmera. Esta foto serve só para dizer que tipo de \
-quarteirão é este.
-
-Descreva o que há do outro lado. %(ignorar)s
-
-Responda SOMENTE um JSON:
-{"carater_do_quarteirao": "residencial|misto|comercial|industrial|indefinido",
- "letreiros_do_outro_lado": ["<texto lido na calçada oposta>", ...],
- "observacao": "<até 20 palavras>"}"""
-
-# Cada tipo de evidência tem o seu prompt, o seu bloco no resultado e a sua
-# chamada. Esta lista é a percepção de rua inteira.
-PERCEPCAO_RUA = [
-    ("satelite", "satelite", PROMPT_SAT),
-    ("sv_frente", "fachada", PROMPT_FACHADA),
-    ("sv_fundo", "lado_oposto", PROMPT_FUNDO),
-]
+{
+ "imovel_da_mira": {
+   "tipo": "casa|sobrado|predio|loja_terrea|galpao|terreno_vago|em_obra|indefinido",
+   "andares": <int|null>, "medidores": <int|null>,
+   "vitrine": true|false, "porta_comercial": true|false, "toldo": true|false,
+   "letreiros": ["<texto lido NO IMÓVEL DA MIRA>", ...],
+   "conservacao": "conservado_habitado|demolido_ou_nao_construido|\
+mal_conservado_habitado|mal_conservado_desabitado|indefinido",
+   "descricao": "<até 40 palavras>"},
+ "estabelecimentos": [
+   {"nome": "<lido, ou null>", "ramo_aparente": "<o que parece ser>",
+    "onde": "frente|lado_direito|atras|lado_esquerdo",
+    "no_imovel_da_mira": true|false,
+    "evidencia": "<o que se vê: letreiro, vitrine, mercadoria, cliente>"}],
+ "numeros_visiveis": ["<número de porta lido, e em qual foto>", ...],
+ "carater_do_quarteirao": "residencial|misto|comercial|industrial|indefinido",
+ "achou_estabelecimento": true|false
+}"""
 
 
 PROMPT_PAGINA = """Você recebe UMA imagem: a página inteira de um anúncio de \
@@ -233,6 +221,10 @@ para o que o cadastro afirma; mais de um medidor numa casa aparentemente comum.
 sinal, terreno vago, obra.
 
 REGRAS QUE NÃO SE NEGOCIAM
+- A DESCRIÇÃO VEM DAS QUATRO VISADAS, e cada estabelecimento traz "onde" foi \
+visto e se está "no_imovel_da_mira". Só aprova como "aprovado_exato" ou \
+"aprovado_comercial" o que está NO IMÓVEL DA MIRA. Estabelecimento visto na \
+lateral ou atrás informa o caráter do quarteirão e mais nada.
 - Comércio do LADO OPOSTO da rua NÃO aprova o imóvel. Ele só informa o caráter \
 do quarteirão, e caráter de quarteirão sozinho é, no máximo, revisao_humana. \
 Tudo que estiver em "lado_oposto" — inclusive "letreiros_do_outro_lado" — é da \
@@ -242,8 +234,27 @@ estiver ali, o imóvel continua sem letreiro.
 - Nome parecido não é nome igual. "Silva Alimentos" não confirma "Mercado Silva".
 - Ausência de letreiro não reprova por si só: muitos negócios de bairro operam \
 sem fachada. O que reprova é a ausência de QUALQUER sinal.
-- Na dúvida entre aprovar e reprovar, escolha revisao_humana. Reprovar apaga o \
-caso; mandar para revisão custa um olhar.
+
+PROVA DE PLATAFORMA VENCE FACHADA MUDA. Se o cadastro disser que a loja \
+estava ATIVA numa plataforma (iFood disponível, anúncio de hospedagem com \
+avaliação recente), isso é prova de atividade econômica FUNCIONANDO, com data. \
+Fachada sem vitrine não a desmente: delivery de comida, doceria, marmita e \
+salão de casa operam sem porta de loja — é o negócio mais comum do bairro. \
+Nesse caso o piso é "aprovado_comercial"; use "revisao_humana" só se a foto \
+contradisser a plataforma (terreno vago, imóvel demolido, obra). NUNCA \
+reprove um estabelecimento que a plataforma dá como ativo.
+
+QUANDO REPROVAR DIRETO, SEM PASSAR POR REVISÃO. "revisao_humana" é para dúvida \
+REAL, e não para desconforto de decidir. Se a descrição das quatro fotos diz \
+casa residencial, sem vitrine, sem porta comercial, sem toldo, sem letreiro, \
+sem mercadoria e sem movimento — não há dúvida a resolver, e mandar isso para \
+uma pessoa é gastar o olhar dela com o que a foto já respondeu. REPROVE.
+
+Só use "revisao_humana" quando houver um sinal CONCRETO E AMBÍGUO que você \
+possa nomear: porta que pode ser de loja e está fechada; toldo sem letreiro; \
+mercadoria empilhada no pátio; dois ou mais medidores numa casa aparentemente \
+comum; imagem antiga demais para o que o cadastro afirma. Se você não consegue \
+escrever qual é o sinal ambíguo, não é revisão — é reprovado.
 
 CLASSIFIQUE TAMBÉM, e são duas perguntas independentes:
 - ESPÉCIE DA EDIFICAÇÃO (código do CNEFE): %(especies)s
@@ -338,6 +349,24 @@ SEM_VEREDITO = """
                         where v.poi_id = p.id)
 """
 
+# `--poi` NÃO PASSA PELA FILA, e essa é a razão de ser dele: quem digitou o id
+# já escolheu o ponto. Exigir dele categoria marcada, vínculo residencial e
+# área desenhada devolveria "não achei" para um POI que está ali na tela — que
+# foi o defeito corrigido em 27b0e41 e que a reescrita da fila em `exists`
+# apagou por descuido. A única exigência que fica é ter imagem: sem ela não há
+# o que julgar.
+SQL_POR_ID = """
+    select p.id, coalesce(p.nome,''), coalesce(p.fonte,''),
+           coalesce(p.categoria,''), coalesce(p.endereco,''),
+           coalesce(p.cidade,''), coalesce(p.uf,''),
+           st_y(p.pt_geo::geometry), st_x(p.pt_geo::geometry)
+      from radar_comercial.pois p
+     where p.id = any(%s)
+       and exists (select 1 from radar_comercial.poi_evidencia e
+                    where e.poi_id = p.id and e.dados is not null)
+     order by p.id
+"""
+
 
 def alvos(con, poligono, limite, pois, refazer):
     cur = con.cursor()
@@ -380,6 +409,37 @@ def _b64(b: bytes) -> str:
     return base64.b64encode(b).decode()
 
 
+import re as _re
+
+# NOME DE MEI NÃO É NOME DE PORTA, e mandar procurá-lo torna o diagnóstico
+# injusto — decisão do dono do produto em 04/09/2026.
+#
+# A Receita registra o microempreendedor como "59.245.003 SABRINA DE FATIMA
+# SMOLA" ou "NATIELI DE OLIVEIRA SANTOS 01973901021": é o CNPJ colado no nome
+# da pessoa. Isso NUNCA está escrito numa fachada. Pedir à IA que confirme
+# esse nome garante que ela não confirme nada, e o ponto cai em revisão ou
+# reprovação por um motivo que não é do imóvel — é do cadastro.
+#
+# O que vai no lugar é a ATIVIDADE (a descrição do CNAE). A pergunta deixa de
+# ser "existe uma placa escrito SABRINA?" e passa a ser "há sinal de lanchonete
+# aqui?", que é a pergunta que a foto pode responder.
+_DIGITOS = _re.compile(r"\d[\d./-]{4,}\d")
+
+
+def nome_procuravel(nome: str):
+    """Devolve o nome se ele puder estar numa placa; None se for razão social.
+
+    O teste é a corrida de dígitos: CNPJ, CPF ou NIRE embutidos no nome. Um
+    nome fantasia de verdade não carrega seis dígitos seguidos.
+    """
+    n = (nome or "").strip()
+    if not n:
+        return None
+    if _DIGITOS.search(n):
+        return None
+    return n
+
+
 def _cadastro_texto(con, alvo) -> str:
     """O que o cadastro afirma, em texto — inclusive o que o iFood já sabe.
 
@@ -389,9 +449,15 @@ def _cadastro_texto(con, alvo) -> str:
     vista. É prova de atividade mais forte que um print do cardápio, porque diz
     QUANDO.
     """
+    nome = nome_procuravel(alvo["nome"])
     linhas = [
-        "- nome: %s" % (alvo["nome"] or "(sem nome)"),
-        "- categoria declarada: %s" % (alvo["categoria"] or "(sem categoria)"),
+        ("- nome fantasia: %s" % nome) if nome else
+        ("- SEM NOME FANTASIA. O cadastro traz apenas a razão social de "
+         "microempreendedor (CNPJ + nome do titular), que não aparece em "
+         "fachada. NÃO procure nome: procure a ATIVIDADE abaixo."),
+        "- atividade declarada: %s" % (alvo.get("categoria_nome")
+                                       or alvo["categoria"]
+                                       or "(sem categoria)"),
         "- fonte do dado: %s" % alvo["fonte"],
         "- endereço: %s — %s/%s" % (alvo["endereco"] or "(sem endereço)",
                                     alvo["cidade"], alvo["uf"]),
@@ -435,6 +501,24 @@ def _secoes_texto(con) -> str:
     return " · ".join("%s %s" % (l, n) for l, n in cur.fetchall())
 
 
+def _nomes_de_cnae(con, alvos_lista):
+    """A descrição do CNAE, para todos de uma vez.
+
+    O código cru ("5611201") não diz nada nem para a IA nem para quem vai à
+    porta. A tradução vem da `rf_cnaes` numa consulta só, e não uma por POI.
+    """
+    codigos = sorted({(a["categoria"] or "").strip() for a in alvos_lista
+                      if (a["categoria"] or "").strip().isdigit()})
+    if not codigos:
+        return
+    with con.cursor() as k:
+        k.execute("select codigo, descricao from resources_root.rf_cnaes "
+                  "where codigo = any(%s)", (codigos,))
+        m = dict(k.fetchall())
+    for a in alvos_lista:
+        a["categoria_nome"] = m.get((a["categoria"] or "").strip())
+
+
 def um_poi(con, alvo, modelo, secoes, placar, trava, aplicar) -> None:
     t0 = time.time()
     forma, imgs, tipos = evidencia(con, alvo["id"])
@@ -447,23 +531,21 @@ def um_poi(con, alvo, modelo, secoes, placar, trava, aplicar) -> None:
                   else PROMPT_JULGAR)
 
     # 1 · percepção cega — uma chamada POR IMAGEM (ver a nota nos prompts)
-    por_tipo = dict(zip(tipos, imgs))
     percepcao = {}
     try:
         if forma == "pagina":
             percepcao = di._chat_local(modelo, PROMPT_PAGINA, [_b64(imgs[0])],
                                        max_tokens=900, timeout=TIMEOUT)
         else:
-            for tipo, bloco, prompt in PERCEPCAO_RUA:
-                if tipo not in por_tipo:
-                    # SEM IMAGEM NÃO HÁ CHAMADA, e o bloco fica nulo. É a
-                    # diferença entre "não havia foto" e "o modelo não soube
-                    # descrever" — dois erros de natureza oposta.
-                    percepcao[bloco] = None
-                    continue
-                percepcao[bloco] = di._chat_local(
-                    modelo, prompt % {"ignorar": IGNORAR},
-                    [_b64(por_tipo[tipo])], max_tokens=520, timeout=TIMEOUT)
+            # A LISTA ANUNCIADA É A QUE FOI ENVIADA. Prometer quatro fotos a
+            # quem recebeu duas é pedir que o modelo descreva as que faltam.
+            lista = "\n".join("%d. %s" % (i + 1, VISTA_ROTULO[tp])
+                               for i, tp in enumerate(tipos))
+            percepcao = di._chat_local(
+                modelo,
+                PROMPT_QUATRO % {"n": len(tipos), "lista": lista,
+                                 "ignorar": IGNORAR},
+                [_b64(b) for b in imgs], max_tokens=1100, timeout=TIMEOUT)
     except Exception as e:                                     # noqa: BLE001
         with trava:
             placar["falha_percepcao"] += 1
@@ -569,6 +651,7 @@ def rodar(area, limite, aplicar, trabalhadores, modelo, pois, refazer):
         con.close()
         return {"alvos": len(lista), "avaliados": 0}
     secoes = _secoes_texto(con)
+    _nomes_de_cnae(con, lista)
     con.close()
 
     placar = {k: 0 for k in VEREDITOS}

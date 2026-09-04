@@ -1,16 +1,21 @@
 # -*- coding: utf-8 -*-
-"""capturar_evidencia.py — as três imagens que a IA vai julgar, por POI.
+"""capturar_evidencia.py — as quatro visadas de rua que a IA vai julgar.
 
-O CONJUNTO, E POR QUE ELE É ESTE
+O CONJUNTO, E POR QUE ELE MUDOU
 
-    sv_frente   o panorama ENCARANDO a fachada
-    sv_fundo    o mesmo panorama, 180° — mostra o outro lado da rua, que é o
-                que diz se o quarteirão tem comércio
-    satelite    vista de cima no zoom máximo, com marcador sobre a coordenada
+    sv_frente   o panorama ENCARANDO a coordenada
+    sv_lado_a   a mesma câmera, 90° à direita
+    sv_fundo    a mesma câmera, 180°
+    sv_lado_b   a mesma câmera, 270°
 
-Três, e não seis, por decisão do dono do produto em 04/09/2026: o custo é por
-imagem e por POI, e as laterais acrescentavam pouco sobre o que a frente e o
-fundo já mostram.
+QUATRO VISADAS, E NÃO UMA — decisão do dono do produto em 04/09/2026, depois de
+ver o resultado de três imagens. O objetivo deixou de ser "descreva a fachada
+sob a mira" e passou a ser ACHAR O ESTABELECIMENTO, apareça ele em qual visada
+aparecer. Um comércio de bairro fica com frequência na esquina, no fundo do
+lote ou na lateral, e a visada única fechava a pergunta antes de olhar.
+
+O SATÉLITE SAIU. Ele mostrava telhado e mais nada: nem letreiro, nem vitrine,
+nem porta. Trazia o custo de uma imagem por POI e não decidia nenhum veredito.
 
 O MARCADOR NÃO PRECISA DE PROJEÇÃO, e essa é a parte que quase virou trabalho
 inútil. O `heading` que se pede ao Maps é o ângulo CÂMERA→POI — então o alvo
@@ -58,6 +63,20 @@ CHAVE = os.environ.get("MAPS_JS_KEY", "").strip()
 
 ARGS_NAV = ["--disable-http2", "--no-sandbox", "--disable-dev-shm-usage",
             "--disable-blink-features=AutomationControlled"]
+
+# AS QUATRO VISADAS, e o giro de cada uma a partir do rumo câmera→coordenada.
+# A ordem importa: a frente vem primeiro porque é onde o alvo está por
+# construção, e as outras três dão a volta no sentido horário.
+VISADAS = (
+    ("sv_frente", 0),
+    ("sv_lado_a", 90),
+    ("sv_fundo", 180),
+    ("sv_lado_b", 270),
+)
+
+# O campo de visão das três visadas de entorno. 100° é o mais aberto que o Maps
+# entrega sem distorcer as bordas a ponto de o letreiro deixar de ser legível.
+FOV_ENTORNO = 100
 
 # A vista de satélite com o marcador. `mapTypeId:'satellite'` e não 'hybrid':
 # rótulo de rua por cima do telhado atrapalha justamente o que se quer ver.
@@ -197,9 +216,27 @@ SQL_ALVO = """
 """
 
 
-def alvos(con, poligono, limite):
+SQL_POR_ID = """
+    select distinct p.id, st_y(p.pt_geo::geometry), st_x(p.pt_geo::geometry),
+           coalesce(p.nome,''), coalesce(p.fonte,''), coalesce(p.categoria,'')
+      from radar_comercial.pois p
+     where p.pt_geo is not null and p.id = any(%s)
+     order by p.id
+"""
+
+
+def alvos(con, poligono, limite, pois=None):
+    """A fila. Com `--poi` a lista é EXATAMENTE a pedida, sem filtro nenhum.
+
+    Recapturar uma amostra escolhida a dedo é o caso de todo teste de método:
+    passar pela fila normal excluiria justamente quem já tem evidência, que é
+    quem se quer refazer.
+    """
     cur = con.cursor()
-    cur.execute(SQL_ALVO)
+    if pois:
+        cur.execute(SQL_POR_ID, (list(pois),))
+    else:
+        cur.execute(SQL_ALVO)
     fora = 0
     saida = []
     for pid, la, lo, nome, fonte, cat in cur.fetchall():
@@ -238,7 +275,7 @@ def psycopg2_bin(dados):
 
 # ── a captura ──────────────────────────────────────────────────────────────
 async def um_poi(page, con, alvo, placar) -> None:
-    """As três imagens de UM POI, numa aba que já vem aberta.
+    """As quatro visadas de UM POI, numa aba que já vem aberta.
 
     A ABA É DO TRABALHADOR, E NÃO DO POI — e essa troca é a correção de
     04/09/2026. Abrir um contexto novo por POI significava cache vazio: cada
@@ -251,7 +288,7 @@ async def um_poi(page, con, alvo, placar) -> None:
     """
     lat, lng = alvo["lat"], alvo["lng"]
     try:
-        # 1 e 2 · as duas visadas de rua, do MESMO panorama
+        # As quatro visadas saem do MESMO panorama, girando a câmera.
         m = await asyncio.to_thread(sv.metadados_pano, lat, lng)
         if m is False:
             gravar(con, alvo["id"], "sv_frente", None,
@@ -265,19 +302,27 @@ async def um_poi(page, con, alvo, placar) -> None:
             d = sv._dist_m(m["lat"], m["lng"], lat, lng)
             frente = sv._bearing(m["lat"], m["lng"], lat, lng)
             fov = sv._fov_por_distancia(d)
-            for tipo, heading, rot in (
-                    ("sv_frente", frente, "FACHADA AVALIADA"),
-                    ("sv_fundo", (frente + 180) % 360, "LADO OPOSTO")):
+            for tipo, giro in VISADAS:
+                heading = (frente + giro) % 360
+                # A FRENTE FECHA NO ALVO, AS OUTRAS TRÊS ABREM.
+                #
+                # `_fov_por_distancia` escolhe o zoom para enquadrar a
+                # coordenada — o que serve à frente e atrapalha o resto: nas
+                # laterais e no fundo não há alvo para enquadrar, há entorno
+                # para varrer. Fechar o campo ali cortaria justamente a esquina
+                # onde o comércio de bairro costuma estar, que é o que estas
+                # três visadas existem para achar.
+                fov_aqui = fov if giro == 0 else FOV_ENTORNO
                 try:
                     # DUAS TENTATIVAS, e a segunda não é teimosia: os metadados
                     # JÁ garantiram que o panorama existe e disseram o id dele.
                     # Não abrir é transitório — tile lento, aba disputando banda
                     # com os outros trabalhadores. Medido em 04/09/2026: 3 de 6
                     # POIs falharam na primeira e o panorama existia nos três.
-                    ok = await sv._abrir_por_id(page, m["pano_id"], heading, fov)
+                    ok = await sv._abrir_por_id(page, m["pano_id"], heading, fov_aqui)
                     if not ok:
                         await page.wait_for_timeout(1500)
-                        ok = await sv._abrir_por_id(page, m["pano_id"], heading, fov)
+                        ok = await sv._abrir_por_id(page, m["pano_id"], heading, fov_aqui)
                     if not ok:
                         gravar(con, alvo["id"], tipo, None,
                                motivo_falha="o Maps não entrou em modo panorama "
@@ -292,10 +337,15 @@ async def um_poi(page, con, alvo, placar) -> None:
                     # do que a IA vai ver, e não no centro do que foi jogado
                     # fora com as bordas.
                     limpo = _cortar_interface(bruto)
-                    img = _marcar_centro(limpo, rot) if tipo == "sv_frente" else limpo
+                    # SÓ A FRENTE LEVA MIRA, e ela vai SEM LEGENDA. A tarja
+                    # "FACHADA AVALIADA" tapava justamente a parte de baixo da
+                    # fachada — porta, vitrine e medidor —, que é onde está a
+                    # prova. A mira aberta já diz onde é o alvo; o texto só
+                    # cobria a imagem, e o modelo ainda o lia como letreiro.
+                    img = _marcar_centro(limpo, "") if tipo == "sv_frente" else limpo
                     gravar(con, alvo["id"], tipo, img,
                            pano_id=m["pano_id"], cam_lat=m["lat"], cam_lng=m["lng"],
-                           heading=heading, pitch=5.0, fov=float(fov),
+                           heading=heading, pitch=5.0, fov=float(fov_aqui),
                            distancia_m=d, largura_px=LARG, altura_px=ALT)
                     placar[tipo] += 1
                 except Exception as e:                         # noqa: BLE001
@@ -303,33 +353,9 @@ async def um_poi(page, con, alvo, placar) -> None:
                            motivo_falha=type(e).__name__)
                     placar["falha_pano"] += 1
 
-        # 3 · a vista de satélite com o marcador
-        if not CHAVE:
-            gravar(con, alvo["id"], "satelite", None,
-                   motivo_falha="MAPS_JS_KEY não está no .env")
-            placar["sem_chave"] += 1
-            return
-        arq = "/tmp/sat_%d.html" % alvo["id"]
-        _io.open(arq, "w", encoding="utf-8").write(
-            SAT_HTML % {"l": LARG_SAT, "a": ALT_SAT, "lat": lat, "lng": lng,
-                        "zoom": ZOOM_SAT, "chave": CHAVE})
-        try:
-            await page.set_viewport_size({"width": LARG_SAT, "height": ALT_SAT})
-            await page.goto("file://" + arq)
-            await page.wait_for_function("window.__pronto === true", timeout=30000)
-            await page.wait_for_timeout(1500)
-            gravar(con, alvo["id"], "satelite", await page.screenshot(),
-                   largura_px=LARG_SAT, altura_px=ALT_SAT)
-            placar["satelite"] += 1
-        except Exception as e:                                 # noqa: BLE001
-            gravar(con, alvo["id"], "satelite", None,
-                   motivo_falha=type(e).__name__)
-            placar["falha_sat"] += 1
-        finally:
-            try:
-                os.unlink(arq)
-            except OSError:
-                pass
+        # O SATÉLITE SAIU DAQUI em 04/09/2026 — ver o cabeçalho. O código do
+        # `SAT_HTML` continua no arquivo porque a vista de cima ainda serve à
+        # etapa de telhados; o que deixou de existir é a captura por POI.
     finally:
         # A ABA CONTINUA VIVA para o próximo POI. O que precisa voltar ao
         # estado inicial é o TAMANHO DA JANELA: o satélite a encolheu para
@@ -340,10 +366,10 @@ async def um_poi(page, con, alvo, placar) -> None:
             pass
 
 
-async def rodar(area, limite, aplicar, trabalhadores):
-    poligono = area_utils.carregar_area(area) if area else None
+async def rodar(area, limite, aplicar, trabalhadores, pois=None):
+    poligono = None if pois else (area_utils.carregar_area(area) if area else None)
     con = bc.conectar()
-    lista, fora = alvos(con, poligono, limite)
+    lista, fora = alvos(con, poligono, limite, pois)
     _log("   %d POI(s) na fila da evidência" % len(lista))
     if fora:
         _log("   %d fora do desenho" % fora)
@@ -360,9 +386,8 @@ async def rodar(area, limite, aplicar, trabalhadores):
         return {"alvos": len(lista), "capturados": 0}
 
     from playwright.async_api import async_playwright
-    placar = {k: 0 for k in ("sv_frente", "sv_fundo", "satelite", "sem_pano",
-                             "sem_metadados", "falha_pano", "falha_sat",
-                             "sem_chave")}
+    placar = {k: 0 for k in [v[0] for v in VISADAS]
+              + ["sem_pano", "sem_metadados", "falha_pano"]}
     t0 = time.time()
     async with async_playwright() as pw:
         nav = await pw.chromium.launch(headless=False, args=ARGS_NAV)
@@ -427,10 +452,13 @@ def main(argv=None) -> int:
     p.add_argument("--area", default=area_utils.AREA_PADRAO)
     p.add_argument("--limite", type=int, default=0)
     p.add_argument("--trabalhadores", type=int, default=3)
+    p.add_argument("--poi", action="append", type=int,
+                   help="repetível; recaptura estes POIs, ignorando a fila")
     p.add_argument("--aplicar", action="store_true")
     a = p.parse_args(argv)
     _log("▶ evidência para a IA — 3 imagens por POI")
-    r = asyncio.run(rodar(a.area, a.limite, a.aplicar, a.trabalhadores))
+    r = asyncio.run(rodar(a.area, a.limite, a.aplicar, a.trabalhadores,
+                            a.poi))
     return 1 if r.get("erro") else 0
 
 
