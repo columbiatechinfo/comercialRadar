@@ -322,11 +322,37 @@ SEM_VEREDITO = """
 """
 
 
+# O POI NOMEADO NÃO PASSA PELA FILA, e isso é correção de duas coisas ao mesmo
+# tempo.
+#
+# A primeira é de sentido: quem digitou `--poi 99207` já disse qual ponto quer.
+# Cruzá-lo com "categoria marcada" e "ligação residencial ativa" só produziria
+# "não achei" para um id que existe — e sem dizer qual dos dois critérios
+# barrou.
+#
+# A segunda é de custo, e foi medida em 04/09/2026: com `p.id = any(...)`
+# grudado no fim da consulta da fila, o planejador trocou o plano e a mesma
+# consulta que responde em segundos para a área inteira ficou 494 s ATIVA para
+# dezessete ids. O culpado é o `l.num_ligacao::text = lp.ligacao` — o cast
+# impede o índice, e num laço aninhado isso vira varredura de
+# `cadastro_corsan` por linha.
+SQL_POR_ID = """
+    select distinct p.id, coalesce(p.nome,''), coalesce(p.fonte,''),
+           coalesce(p.categoria,''), coalesce(p.endereco,''),
+           coalesce(p.cidade,''), coalesce(p.uf,''),
+           st_y(p.pt_geo::geometry), st_x(p.pt_geo::geometry)
+      from radar_comercial.pois p
+      join radar_comercial.poi_evidencia e
+            on e.poi_id = p.id and e.dados is not null
+     where p.id = any(%s)
+     order by p.id
+"""
+
+
 def alvos(con, poligono, limite, pois, refazer):
     cur = con.cursor()
     if pois:
-        cur.execute(
-            SQL_ALVO % {"filtro": "and p.id = any(%s)"} , (list(pois),))
+        cur.execute(SQL_POR_ID, (list(pois),))
     else:
         cur.execute(SQL_ALVO % {"filtro": "" if refazer else SEM_VEREDITO})
     saida, fora = [], 0
