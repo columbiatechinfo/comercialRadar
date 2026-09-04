@@ -149,6 +149,18 @@
       </button>
       <p id="dica-modo" class="mt-1 px-2.5 text-[11.5px]/[16px] text-gray-400">Escolha um dos dois modos</p>
 
+      <!-- ANTES DE EXTRAIR, ESCOLHER O QUE VAI A IA.
+           A avaliacao custa captura e Spark por POI, e mandar tudo gasta o
+           orcamento em quem nao tem porta de rua — dos sete CNAE mais comuns
+           em Canoas, quatro sao MEI (transporte de carga, alvenaria, promocao
+           de vendas, apoio administrativo). O contador mostra o tamanho do que
+           foi marcado sem precisar abrir. -->
+      <button type="button" id="btn-categorias" class="nav-item mt-1">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="size-5 shrink-0"><path d="M4 6h16"></path><path d="M4 12h16"></path><path d="M4 18h10"></path><path d="M18 16l2 2 3-3"></path></svg>
+        <span>Categorias para a IA</span>
+        <span id="cat-n" class="ml-auto inline-flex min-w-5 items-center justify-center rounded-full bg-indigo-50 px-2 text-[11px] font-semibold text-indigo-600">0</span>
+      </button>
+
       <button type="button" id="btn-extrair" disabled class="nav-item mt-1">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="size-5 shrink-0"><path d="M12 3v12"></path><path d="M7 10l5 5 5-5"></path><path d="M5 21h14"></path></svg>
         <span>Realizar extração</span>
@@ -439,6 +451,58 @@
        tem e coletar so o que e novo — poupa a parte cara e entrega dado da
        idade que estiver la. A data e o numero que decide, e por isso ela vem
        antes da pergunta. -->
+  <!-- CATEGORIAS PARA A AVALIACAO POR IA.
+       Dois lados que nao se misturam: a CNAE, que tem hierarquia de verdade
+       (secao -> divisao -> classe) e vem traduzida pela tabela da Receita; e os
+       rotulos de texto das outras fontes, como vieram. Mapear rotulo para CNAE
+       exigiria adivinhar 1.383 vezes, e adivinhacao errada aqui vira categoria
+       que o operador achou que marcou e nao marcou. -->
+  <div id="m-categorias" class="fixed inset-0 z-[900] hidden items-center justify-center bg-gray-900/30 p-6 backdrop-blur-md">
+    <div class="flex h-full max-h-[86vh] w-full max-w-4xl flex-col overflow-hidden rounded-xl bg-white shadow-xl ring-1 ring-gray-900/5">
+      <div class="flex items-start justify-between gap-x-4 border-b border-gray-100 px-6 py-5">
+        <div>
+          <h2 class="text-base font-semibold text-gray-900">Categorias que vão à avaliação por IA</h2>
+          <p class="mt-0.5 text-[13px] text-gray-500">
+            A avaliação custa captura e processamento por ponto. Marque só o que tem porta de rua.
+          </p>
+        </div>
+        <button type="button" data-fechar-modal class="rounded-md p-1 text-gray-400 hover:bg-gray-50 hover:text-gray-600">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" class="size-5"><path d="M18 6L6 18M6 6l12 12"></path></svg>
+        </button>
+      </div>
+
+      <div class="flex gap-x-1 border-b border-gray-100 px-6 pt-3">
+        <button type="button" data-aba-cat="cnae"
+                class="rounded-t-md border-b-2 border-gray-900 px-3 py-2 text-[13px] font-medium text-gray-900">
+          Por atividade (CNAE)
+        </button>
+        <button type="button" data-aba-cat="fonte"
+                class="rounded-t-md border-b-2 border-transparent px-3 py-2 text-[13px] font-medium text-gray-500 hover:text-gray-700">
+          Por fonte
+        </button>
+      </div>
+
+      <div id="cat-cnae" class="flex-1 overflow-y-auto px-6 py-4"></div>
+
+      <div id="cat-fonte" class="hidden flex-1 overflow-y-auto px-6 py-4">
+        <div class="flex items-center gap-x-2">
+          <select id="cat-fonte-sel" class="rounded-md border border-gray-300 px-2.5 py-1.5 text-[13px]"></select>
+          <input id="cat-busca" type="search" placeholder="filtrar rótulo…"
+                 class="flex-1 rounded-md border border-gray-300 px-2.5 py-1.5 text-[13px]">
+        </div>
+        <div id="cat-rotulos" class="mt-3 flex flex-col gap-y-1"></div>
+      </div>
+
+      <div class="flex items-center justify-between gap-x-4 border-t border-gray-100 bg-gray-50 px-6 py-4">
+        <p id="cat-resumo" class="text-[13px] text-gray-600">—</p>
+        <button type="button" data-fechar-modal
+                class="rounded-md bg-gray-900 px-3.5 py-2 text-[13px] font-medium text-white hover:bg-gray-800">
+          Pronto
+        </button>
+      </div>
+    </div>
+  </div>
+
   <div id="m-reuso" class="fixed inset-0 z-[900] hidden items-center justify-center bg-gray-900/30 p-6 backdrop-blur-md">
     <div class="w-full max-w-lg overflow-hidden rounded-xl bg-white shadow-xl ring-1 ring-gray-900/5">
       <div class="flex items-start justify-between gap-x-4 border-b border-gray-100 px-6 py-5">

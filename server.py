@@ -986,6 +986,203 @@ def municipios_da_uf(uf: str = "", q: str = "", limite: int = 60):
         conn.close()
 
 
+# ──────────────────────────────────────────────────────────────────────────
+# API — catálogo de categorias (o que vai à avaliação por IA)
+# ──────────────────────────────────────────────────────────────────────────
+@app.get("/api/categorias")
+def categorias():
+    """O catálogo, em dois lados, para o operador marcar antes de gastar IA.
+
+    POR QUE ISTO EXISTE. A avaliação custa captura e Spark POR POI, e mandar
+    tudo gasta o orçamento em quem não tem nada para ser visto: dos sete CNAE
+    mais comuns em Canoas, quatro são MEI sem porta de rua — transporte de
+    carga, obras de alvenaria, promoção de vendas, apoio administrativo.
+
+    DOIS LADOS, E ELES NÃO SE MISTURAM. O lado CNAE tem hierarquia de verdade
+    (seção → divisão → classe) e vem traduzido pela `rf_cnaes`. O lado dos
+    rótulos de texto — Overture, OSM, Foursquare, Google, iFood — fica como
+    veio, por fonte: mapeá-los para a CNAE exigiria adivinhar 1.383 vezes, e
+    adivinhação errada aqui vira categoria que o operador achou que marcou.
+
+    O RÓTULO DA DIVISÃO É DERIVADO, e não digitado. Os nomes oficiais das 87
+    divisões não estão no banco, e escrevê-los à mão arriscaria rotular um
+    grupo inteiro errado. Aqui a divisão é nomeada pela classe com mais POIs
+    dentro dela — é dado real, e não pode mentir sobre o que está ali.
+    """
+    conn = realtime_ingest.conectar()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                select s.letra, s.nome,
+                       count(c.id)                            as categorias,
+                       coalesce(sum(c.pois), 0)               as pois,
+                       count(*) filter (where c.avaliar)      as marcadas,
+                       coalesce(sum(c.pois) filter (where c.avaliar), 0) as pois_marcados
+                  from radar_comercial.cnae_secao s
+                  left join radar_comercial.categoria_catalogo c
+                         on c.cnae_secao = s.letra
+                 group by s.letra, s.nome
+                 having count(c.id) > 0
+                 order by 4 desc
+            """)
+            secoes = [{"secao": r[0], "nome": r[1], "categorias": r[2],
+                       "pois": int(r[3]), "marcadas": r[4],
+                       "pois_marcados": int(r[5])} for r in cur.fetchall()]
+
+            cur.execute("""
+                select c.cnae_secao, c.cnae_divisao,
+                       count(*)                          as categorias,
+                       sum(c.pois)                       as pois,
+                       count(*) filter (where c.avaliar) as marcadas,
+                       (array_agg(c.rotulo order by c.pois desc))[1] as maior
+                  from radar_comercial.categoria_catalogo c
+                 where c.cnae_divisao is not null
+                 group by 1, 2 order by 1, 4 desc
+            """)
+            divisoes = {}
+            for sec, div, ncat, pois, marc, maior in cur.fetchall():
+                divisoes.setdefault(sec, []).append(
+                    {"divisao": div, "categorias": ncat, "pois": int(pois),
+                     "marcadas": marc, "exemplo": maior})
+            for s in secoes:
+                s["divisoes"] = divisoes.get(s["secao"], [])
+
+            # Os rótulos vêm só CONTADOS: `estadual` tem 1.111, e mandar todos
+            # em cada abertura de tela seria um megabyte para uma lista que o
+            # operador vai filtrar. A lista em si sai em /api/categorias/rotulos.
+            cur.execute("""
+                select c.fonte, count(*) as categorias, sum(c.pois) as pois,
+                       count(*) filter (where c.avaliar) as marcadas
+                  from radar_comercial.categoria_catalogo c
+                 where c.cnae_divisao is null
+                 group by 1 order by 3 desc
+            """)
+            fontes = [{"fonte": r[0], "categorias": r[1], "pois": int(r[2]),
+                       "marcadas": r[3]} for r in cur.fetchall()]
+
+            cur.execute("""
+                select count(*), coalesce(sum(pois), 0)
+                  from radar_comercial.categoria_catalogo where avaliar
+            """)
+            n_marc, pois_marc = cur.fetchone()
+    finally:
+        conn.close()
+    return {"secoes": secoes, "fontes": fontes,
+            "marcadas": n_marc, "pois_marcados": int(pois_marc)}
+
+
+@app.get("/api/categorias/rotulos")
+def categorias_rotulos(fonte: str = "", q: str = "", limite: int = 200):
+    """Os rótulos de texto de uma fonte, filtráveis. Sai à parte de propósito.
+
+    `estadual` tem 1.111 rótulos. Mandá-los junto do resumo faria a tela
+    carregar um megabyte para uma lista que o operador vai filtrar em dois
+    caracteres.
+    """
+    conn = realtime_ingest.conectar()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                select id, fonte, rotulo, pois, avaliar
+                  from radar_comercial.categoria_catalogo
+                 where cnae_divisao is null
+                   and (%s = '' or fonte = %s)
+                   and (%s = '' or rotulo ilike '%%' || %s || '%%')
+                 order by pois desc, rotulo
+                 limit %s
+            """, (fonte, fonte, q, q, max(1, min(int(limite or 200), 1000))))
+            return {"rotulos": [
+                {"id": r[0], "fonte": r[1], "rotulo": r[2],
+                 "pois": int(r[3]), "avaliar": r[4]} for r in cur.fetchall()]}
+    finally:
+        conn.close()
+
+
+@app.get("/api/categorias/classes")
+def categorias_classes(divisao: int = 0):
+    """As classes CNAE de uma divisão, para quem quer o corte fino."""
+    conn = realtime_ingest.conectar()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                select id, cnae_classe, rotulo, pois, avaliar
+                  from radar_comercial.categoria_catalogo
+                 where cnae_divisao = %s
+                 order by pois desc
+            """, (int(divisao),))
+            return {"classes": [
+                {"id": r[0], "codigo": r[1], "rotulo": r[2],
+                 "pois": int(r[3]), "avaliar": r[4]} for r in cur.fetchall()]}
+    finally:
+        conn.close()
+
+
+@app.post("/api/categorias/marcar")
+def categorias_marcar(body: dict = Body(...)):
+    """Marca ou desmarca. Aceita seção inteira, divisão inteira, fonte ou ids.
+
+    UM SÓ LUGAR PARA MARCAR, e não um por nível: a tela precisa de "marca a
+    seção G inteira" e de "desmarca só esta classe", e ter duas rotas para isso
+    faria as duas discordarem no dia em que uma mudasse.
+
+    Devolve o que MUDOU, e não "ok": marcar uma seção que já estava marcada e
+    marcar uma que não estava dão respostas diferentes, e quem opera precisa
+    ver o número para saber que o clique fez algo.
+    """
+    avaliar = bool(body.get("avaliar"))
+    secao = (body.get("secao") or "").strip().upper()[:1]
+    divisao = body.get("divisao")
+    fonte = (body.get("fonte") or "").strip()
+    ids = body.get("ids") or []
+
+    if not (secao or divisao is not None or fonte or ids):
+        return JSONResponse(
+            {"erro": "diga o que marcar: secao, divisao, fonte ou ids"},
+            status_code=400)
+
+    conn = realtime_ingest.conectar()
+    try:
+        with conn.cursor() as cur:
+            onde, par = [], []
+            if secao:
+                onde.append("cnae_secao = %s"); par.append(secao)
+            if divisao is not None:
+                onde.append("cnae_divisao = %s"); par.append(int(divisao))
+            if fonte:
+                onde.append("fonte = %s and cnae_divisao is null"); par.append(fonte)
+            if ids:
+                onde.append("id = any(%s)"); par.append([int(i) for i in ids])
+            # CONCATENACAO, E NAO `%` DE FORMATACAO. A versao anterior fazia
+            # `"... where (%s) ..." % (..., " or ".join(onde), ...)` — e `onde`
+            # contem `%s` que sao PLACEHOLDERS do psycopg2. Funcionava por um
+            # detalhe (o `%` nao reexamina o valor inserido) e quebraria na
+            # primeira edicao de quem lesse aquilo como texto comum.
+            sql = ("update radar_comercial.categoria_catalogo set avaliar = %s"
+                   " where (" + " or ".join(onde) + ")"
+                   "   and avaliar is distinct from %s")
+            cur.execute(sql, [avaliar] + par + [avaliar])
+            mudadas = cur.rowcount
+            # A CONTAGEM VEM ANTES DO COMMIT, e isso nao e estilo.
+            #
+            # `auth.conectar_como` declara `request.jwt.claim.sub` LOCAL A
+            # TRANSACAO — o certo para a API, que faz uma transacao por
+            # requisicao. Commitar no meio da rota descarta a declaracao, e a
+            # consulta seguinte roda sem usuario: `core.empresa_atual()` volta
+            # nulo e a RLS esconde tudo.
+            #
+            # O sintoma foi exatamente isso: marcar a secao G respondia
+            # `{"mudadas": 208, "marcadas": 0}`. As 208 linhas estavam marcadas
+            # no banco; quem nao as via era a propria rota, meio segundo depois
+            # de escreve-las.
+            cur.execute("select count(*), coalesce(sum(pois),0) "
+                        "  from radar_comercial.categoria_catalogo where avaliar")
+            n, p = cur.fetchone()
+            conn.commit()
+    finally:
+        conn.close()
+    return {"mudadas": mudadas, "marcadas": n, "pois_marcados": int(p)}
+
+
 @app.get("/api/area/reuso")
 def area_reuso(area: str = ""):
     """O que JA foi extraido nesta area, por empresa, e de quando.

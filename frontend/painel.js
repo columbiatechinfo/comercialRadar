@@ -2055,6 +2055,158 @@
       await iniciarExtracao(false);
     });
 
+    // ── categorias que vão à avaliação por IA ────────────────────────────
+    //
+    // DOIS LADOS, E ELES NÃO SE MISTURAM. A CNAE tem hierarquia de verdade —
+    // seção abre em divisões, e a divisão abre em classes para quem quer o
+    // corte fino. Os rótulos de texto das outras fontes ficam como vieram,
+    // numa lista filtrável: `estadual` tem 1.111, e eles não conversam com a
+    // CNAE sem alguém adivinhar 1.383 vezes.
+    //
+    // O RÓTULO DA DIVISÃO VEM DO SERVIDOR e é DERIVADO da classe com mais
+    // POIs dentro dela. Os nomes oficiais das 87 divisões não estão no banco,
+    // e digitá-los arriscaria rotular um grupo inteiro errado.
+    const cat = { secoes: [], fontes: [], abertas: new Set() };
+
+    function catResumo(d) {
+      $("cat-n").textContent = d.marcadas || 0;
+      $("cat-resumo").textContent = d.marcadas
+        ? `${d.marcadas.toLocaleString("pt-BR")} categorias marcadas · ` +
+          `${(d.pois_marcados || 0).toLocaleString("pt-BR")} POIs entram na avaliação`
+        : "Nada marcado — nenhum POI vai à avaliação.";
+    }
+
+    async function catCarregar() {
+      const d = await pegar("/api/categorias");
+      if (!d) return;
+      cat.secoes = d.secoes || [];
+      cat.fontes = d.fontes || [];
+      catResumo(d);
+      catPintarCnae();
+      const sel = $("cat-fonte-sel");
+      sel.innerHTML = "";
+      cat.fontes.forEach((f) => {
+        const o = document.createElement("option");
+        o.value = f.fonte;
+        o.textContent = `${f.fonte} (${f.categorias} rótulos · ${f.pois.toLocaleString("pt-BR")} POIs)`;
+        sel.appendChild(o);
+      });
+    }
+
+    async function catMarcar(corpo) {
+      const r = await fetch("/api/categorias/marcar", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(corpo),
+      }).catch(() => null);
+      if (!r || !r.ok) return;
+      const d = await r.json().catch(() => null);
+      if (d) catResumo(d);
+      await catCarregar();
+    }
+
+    function catLinha(marcado, titulo, sub, nPois, aoClicar, recuo) {
+      const l = document.createElement("label");
+      l.className = "flex cursor-pointer items-center gap-x-3 rounded-md px-2 py-1.5 hover:bg-gray-50";
+      if (recuo) l.style.paddingLeft = recuo + "px";
+      const cx = document.createElement("input");
+      cx.type = "checkbox";
+      cx.className = "size-4 rounded border-gray-300";
+      cx.checked = marcado === true;
+      cx.indeterminate = marcado === "parcial";
+      cx.addEventListener("change", () => aoClicar(cx.checked));
+      const txt = document.createElement("div");
+      txt.className = "min-w-0 flex-1";
+      txt.innerHTML =
+        `<div class="truncate text-[13px] text-gray-800">${esc(titulo)}</div>` +
+        (sub ? `<div class="truncate text-[11.5px] text-gray-400">${esc(sub)}</div>` : "");
+      const n = document.createElement("span");
+      n.className = "shrink-0 text-[12px] tabular-nums text-gray-500";
+      n.textContent = nPois.toLocaleString("pt-BR");
+      l.append(cx, txt, n);
+      return l;
+    }
+
+    function catPintarCnae() {
+      const cx = $("cat-cnae");
+      cx.innerHTML = "";
+      cat.secoes.forEach((s) => {
+        const estado = s.marcadas === 0 ? false
+          : (s.marcadas >= s.categorias ? true : "parcial");
+        const cab = document.createElement("div");
+        cab.className = "flex items-center gap-x-1";
+        const linha = catLinha(estado, `${s.secao} · ${s.nome}`,
+          `${s.categorias} categorias`, s.pois,
+          (v) => catMarcar({ secao: s.secao, avaliar: v }));
+        linha.className += " flex-1";
+        const abrir = document.createElement("button");
+        abrir.type = "button";
+        abrir.className = "shrink-0 rounded p-1 text-gray-400 hover:bg-gray-100";
+        abrir.textContent = cat.abertas.has(s.secao) ? "−" : "+";
+        abrir.addEventListener("click", () => {
+          if (cat.abertas.has(s.secao)) cat.abertas.delete(s.secao);
+          else cat.abertas.add(s.secao);
+          catPintarCnae();
+        });
+        cab.append(linha, abrir);
+        cx.appendChild(cab);
+
+        if (!cat.abertas.has(s.secao)) return;
+        (s.divisoes || []).forEach((d) => {
+          const est = d.marcadas === 0 ? false
+            : (d.marcadas >= d.categorias ? true : "parcial");
+          cx.appendChild(catLinha(est, `${d.divisao} · ${d.exemplo || ""}`,
+            `${d.categorias} classes`, d.pois,
+            (v) => catMarcar({ divisao: d.divisao, avaliar: v }), 28));
+        });
+      });
+    }
+
+    async function catPintarRotulos() {
+      const fonte = $("cat-fonte-sel").value || "";
+      const q = $("cat-busca").value || "";
+      const d = await pegar(`/api/categorias/rotulos?fonte=${encodeURIComponent(fonte)}` +
+                            `&q=${encodeURIComponent(q)}`);
+      const cx = $("cat-rotulos");
+      cx.innerHTML = "";
+      if (!d || !(d.rotulos || []).length) {
+        cx.innerHTML = '<p class="px-2 py-3 text-[13px] text-gray-400">nenhum rótulo aqui</p>';
+        return;
+      }
+      d.rotulos.forEach((r) => {
+        cx.appendChild(catLinha(r.avaliar, r.rotulo, r.fonte, r.pois,
+          (v) => catMarcar({ ids: [r.id], avaliar: v })));
+      });
+    }
+
+    $("btn-categorias").addEventListener("click", async () => {
+      $("m-categorias").classList.remove("hidden");
+      $("m-categorias").classList.add("flex");
+      await catCarregar();
+    });
+    document.querySelectorAll("[data-aba-cat]").forEach((b) => {
+      b.addEventListener("click", () => {
+        const alvo = b.dataset.abaCat;
+        document.querySelectorAll("[data-aba-cat]").forEach((o) => {
+          const ativo = o === b;
+          o.className = "rounded-t-md border-b-2 px-3 py-2 text-[13px] font-medium " +
+            (ativo ? "border-gray-900 text-gray-900"
+                   : "border-transparent text-gray-500 hover:text-gray-700");
+        });
+        $("cat-cnae").classList.toggle("hidden", alvo !== "cnae");
+        $("cat-fonte").classList.toggle("hidden", alvo !== "fonte");
+        if (alvo === "fonte") catPintarRotulos();
+      });
+    });
+    $("cat-fonte-sel").addEventListener("change", catPintarRotulos);
+    let _catBusca;
+    $("cat-busca").addEventListener("input", () => {
+      clearTimeout(_catBusca);
+      _catBusca = setTimeout(catPintarRotulos, 250);
+    });
+
+    // o contador da barra lateral nasce preenchido, sem abrir a tela
+    pegar("/api/categorias").then((d) => { if (d) catResumo(d); });
+
     $("btn-log").addEventListener("click", () => {
       const w = $("log-wrap");
       const aberto = !w.classList.contains("hidden");
