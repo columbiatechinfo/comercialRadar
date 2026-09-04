@@ -402,22 +402,38 @@ async def rodar(args) -> int:
     todas: dict[str, dict] = {}
     secos = 0
     t0 = time.time()
+    # O PONTO QUE FALHA TENTA DE NOVO, com outro IP, antes de ser dado por
+    # perdido. As falhas de um ponto sao transitorias — "o feed nao chegou",
+    # "a coordenada nao aplicou", modal que nao abriu — e numa area pequena
+    # ha UM ponto: uma falha e a etapa inteira falhando com zero lojas. Foi a
+    # rodada 24 (04/09/2026): "posicionou em Harmonia mas o feed nao chegou",
+    # e a rodada 25, no mesmo centro, trouxe 698 lojas. O mesmo ponto, minutos
+    # depois, teria passado.
+    TENTATIVAS_POR_PONTO = 3
     for pt in pontos:
         nome = pt["rotulo"]
         antes = len(todas)
-        proxy = await pool.acquire() if pool else None
-        # A sessão é síncrona (ver `um_ponto`); o laço continua assíncrono por
-        # causa do pool, que é.
-        lojas, motivo = await asyncio.to_thread(
-            um_ponto, nome, pt["lat"], pt["lon"], args, proxy)
-        if pool and proxy:
-            # Proxy que tomou desafio vai para o DESCANSO, não para o fim da
-            # fila. Devolvê-lo à rotação queima o IP de vez: o próximo ponto
-            # o pega ainda marcado e toma o mesmo desafio.
-            if motivo and ("desafio" in motivo or "não aplicou" in motivo):
-                await pool.mark_cooldown(proxy)
-            else:
-                await pool.release(proxy)
+        lojas, motivo = [], None
+        for tentativa in range(1, TENTATIVAS_POR_PONTO + 1):
+            proxy = await pool.acquire() if pool else None
+            # A sessão é síncrona (ver `um_ponto`); o laço continua assíncrono
+            # por causa do pool, que é.
+            lojas, motivo = await asyncio.to_thread(
+                um_ponto, nome, pt["lat"], pt["lon"], args, proxy)
+            if pool and proxy:
+                # Proxy que tomou desafio vai para o DESCANSO, não para o fim
+                # da fila. Devolvê-lo à rotação queima o IP de vez: o próximo
+                # ponto o pega ainda marcado e toma o mesmo desafio.
+                if motivo and ("desafio" in motivo or "não aplicou" in motivo):
+                    await pool.mark_cooldown(proxy)
+                else:
+                    await pool.release(proxy)
+            if not motivo:
+                break
+            if tentativa < TENTATIVAS_POR_PONTO:
+                print(f"  {nome:<26}— {motivo} · tentando de novo "
+                      f"({tentativa + 1}/{TENTATIVAS_POR_PONTO})", flush=True)
+                await asyncio.sleep(random.uniform(6.0, 12.0))
         for lj in lojas:
             todas.setdefault(lj["merchant_id"], lj)
         novas = len(todas) - antes

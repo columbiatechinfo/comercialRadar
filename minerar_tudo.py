@@ -1125,6 +1125,27 @@ def main(argv=None) -> int:
         if rc == 0:
             _tolerante_i9(["detalhar_airbnb.py", "--area", a.area],
                           "Airbnb — a ficha de quem está dentro do desenho")
+            # O ANUNCIO VIRA PONTO AQUI, e nao "depois".
+            #
+            # Ate 04/09/2026 a etapa descobria e detalhava e parava: o
+            # conversor (`fontes_para_poi.py --fonte airbnb`) existia e
+            # ninguem o chamava. Os 19 POIs de Airbnb do banco vieram de uma
+            # rodada a mao em 02/09; os 6 anuncios que a rodada 25 detalhou
+            # no centro de Canoas ficaram em `airbnb_anuncio` com `poi_id`
+            # nulo — sem marcador, sem vinculo, sem contar na area. Uma etapa
+            # que produz dado que nenhuma outra le nao existe para o produto.
+            #
+            # E o mesmo passo que o iFood ja da logo acima ("as lojas viram
+            # ponto"). `--municipio` e obrigatorio no conversor: ele recorta
+            # pela malha do IBGE, e nao pelo campo `cidade` do anuncio, que a
+            # descoberta nao preenche.
+            if cod:
+                _tolerante_i9(["fontes_para_poi.py", "--fonte", "airbnb",
+                               "--cidade", cidade, "--municipio", str(cod),
+                               "--aplicar"],
+                              "Airbnb — os anúncios viram ponto")
+            else:
+                _log("   anúncios sem virar ponto: sem código IBGE do município")
         else:
             _log("   sem descoberta nesta rodada; o detalhe fica para a próxima")
 

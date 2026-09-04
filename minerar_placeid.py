@@ -153,7 +153,15 @@ async def varrer_tile(nav, lat, lng, passo_px, pasta, rotulo):
         cobradas = []
         pg.on("request", lambda r: cobradas.append(r.url)
               if "places.googleapis.com" in r.url else None)
-        await pg.goto("file://" + arq)
+        # `commit`, E NAO `load`. O padrao do goto espera o evento `load` da
+        # pagina — e essa pagina carrega a API JS do Maps mais os tiles, com
+        # dez navegadores fazendo o mesmo ao mesmo tempo. Medido na rodada 24
+        # (04/09/2026): 27 de 97 posicoes e 30 de ~70 refinos morreram em
+        # "Page.goto: Timeout 30000ms" ANTES de qualquer colheita — 28% da
+        # area nunca foi varrida, sem erro na etapa. Quem sabe se o mapa esta
+        # pronto e `window.__pronto`, logo abaixo, com o seu proprio prazo;
+        # o goto so precisa ter comecado a navegar.
+        await pg.goto("file://" + arq, wait_until="commit")
         await pg.wait_for_function("window.__pronto === true", timeout=40000)
         await pg.wait_for_timeout(1600)
 
@@ -297,28 +305,45 @@ async def colher(pw, poligono, pasta, passo_px, paralelo, refinar_acima_de):
     for _ in range(paralelo):
         vagas.put_nowait(await pw.chromium.launch(headless=False, args=ARGS))
 
+    # UMA POSICAO QUE FALHA TENTA DE NOVO, uma vez, com navegador novo.
+    #
+    # Ate 04/09/2026 a posicao que falhava era simplesmente descartada — e
+    # posicao descartada e um pedaco da area que nunca foi varrido, sem
+    # nenhum aviso na etapa. Uma segunda tentativa custa segundos; o tile
+    # perdido custa os POIs que estavam nele.
+    TENTATIVAS_POR_TILE = 2
+
     async def uma(i, lat, lng, marca):
         nonlocal cobradas_total
         nav = await vagas.get()
         try:
-            try:
-                ids, cob = await varrer_tile(nav, lat, lng, passo_px, pasta,
-                                             "%s_%03d" % (marca, i))
-            except Exception as e:
-                async with trava:
-                    print("    %s %03d FALHOU: %s" % (marca, i, str(e)[:70]))
-                # NAVEGADOR QUE FALHOU PODE ESTAR MORTO, e devolve-lo assim
-                # contaminaria a vaga para sempre: as posicoes seguintes que a
-                # pegassem falhariam todas, e o log culparia cada uma delas.
-                # Troca-se por um novo.
+            ids = cob = None
+            for tentativa in range(1, TENTATIVAS_POR_TILE + 1):
                 try:
-                    await nav.close()
-                except Exception:
-                    pass
-                try:
-                    nav = await pw.chromium.launch(headless=False, args=ARGS)
-                except Exception:
-                    nav = None
+                    ids, cob = await varrer_tile(nav, lat, lng, passo_px, pasta,
+                                                 "%s_%03d" % (marca, i))
+                    break
+                except Exception as e:
+                    async with trava:
+                        print("    %s %03d %s: %s"
+                              % (marca, i,
+                                 "FALHOU" if tentativa == TENTATIVAS_POR_TILE
+                                 else "falhou, tentando de novo",
+                                 str(e)[:70]))
+                    # NAVEGADOR QUE FALHOU PODE ESTAR MORTO, e devolve-lo
+                    # assim contaminaria a vaga para sempre: as posicoes
+                    # seguintes que a pegassem falhariam todas, e o log
+                    # culparia cada uma delas. Troca-se por um novo.
+                    try:
+                        await nav.close()
+                    except Exception:
+                        pass
+                    try:
+                        nav = await pw.chromium.launch(headless=False, args=ARGS)
+                    except Exception:
+                        nav = None
+                        break
+            if ids is None:
                 return
             async with trava:
                 cobradas_total += cob
@@ -1240,9 +1265,20 @@ async def principal(a):
             proximo POI, colhe, grava, e volta para a fila. Duas maquinas
             rodando isto atendem a mesma quadra sem combinarem nada.
             """
-            px = usaveis[(i * 7 + desloca) % len(usaveis)]
-            nav = None
-            try:
+            # TRES PROXIES ANTES DE DESISTIR, e nao um so.
+            #
+            # O navegador que tomava tres `ERR_TIMED_OUT` seguidos voltava
+            # (`return`) e a vaga dele ficava vazia ate o fim da etapa. Nas
+            # rodadas 24 e 25 (04/09/2026) tres de dez navegadores morreram
+            # assim em cada uma — e a causa era o PROXY sorteado, nao o Maps:
+            # os outros sete seguiam colhendo normalmente. Trocar de IP e o
+            # remedio obvio; matar o trabalhador era jogar 30% da vazao fora.
+            PROXIES_POR_NAVEGADOR = 3
+            for troca_de_ip in range(PROXIES_POR_NAVEGADOR):
+              px = usaveis[(i * 7 + desloca + troca_de_ip * 131) % len(usaveis)]
+              desistiu = False
+              nav = None
+              try:
                 nav = await pw.chromium.launch(headless=False, args=ARGS, proxy={
                     "server": px["server"], "username": px["username"],
                     "password": px["password"]})
@@ -1281,9 +1317,13 @@ async def principal(a):
                         # CPU e nao entregando nada.
                         if seguidas >= 3:
                             async with trava:
-                                print("    navegador %02d desiste apos %d "
-                                      "falhas seguidas" % (i, seguidas))
-                            return
+                                print("    navegador %02d: 3 falhas seguidas "
+                                      "no proxy %s — trocando de IP (%d/%d)"
+                                      % (i, px["server"][-15:],
+                                         troca_de_ip + 1,
+                                         PROXIES_POR_NAVEGADOR))
+                            desistiu = True
+                            break
                         continue
                     async with db:
                         n_com = await asyncio.to_thread(gravar_um, conexao,
@@ -1297,10 +1337,10 @@ async def principal(a):
                     # Intervalo aleatorio ENTRE POIs do mesmo navegador.
                     await asyncio.sleep(random.uniform(a.intervalo_min,
                                                        a.intervalo_max))
-            except Exception as e:
+              except Exception as e:
                 async with trava:
                     print("    navegador %02d caiu: %s" % (i, str(e)[:80]))
-            finally:
+              finally:
                 if nav:
                     # O que este navegador ganhou navegando volta para o
                     # arquivo — a sessao engorda em vez de recomecar.
@@ -1309,6 +1349,11 @@ async def principal(a):
                     except Exception:
                         pass
                     await nav.close()
+              if not desistiu:
+                  return                    # a fila secou, ou o erro nao e de IP
+            async with trava:
+                print("    navegador %02d desiste: %d proxies seguidos falharam"
+                      % (i, PROXIES_POR_NAVEGADOR))
 
         cookie = await garantir_cookie(pw, pool, a.cookie, a.renovar_cookie)
 
