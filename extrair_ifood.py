@@ -204,7 +204,13 @@ insert into radar_comercial.ifood_merchant
        (merchant_id, nome, categoria, slug, nota, bairro, estado_detalhe, bruto,
         visto_em)
 values %s
-on conflict (merchant_id) do update set
+-- POR EMPRESA, e nao so pelo id da fonte (migracao 0058).
+-- O mesmo estabelecimento existe uma vez em CADA empresa que o extraiu ou
+-- reaproveitou; um indice global impediria isso. `id_empresa` nao aparece na
+-- lista de colunas do insert porque o gatilho `preencher_empresa` a carimba
+-- antes — e o gatilho BEFORE INSERT roda antes da checagem de conflito, entao
+-- a inferencia pelo indice funciona.
+on conflict (id_empresa, merchant_id) do update set
   nome      = coalesce(excluded.nome,      ifood_merchant.nome),
   categoria = coalesce(excluded.categoria, ifood_merchant.categoria),
   slug      = coalesce(excluded.slug,      ifood_merchant.slug),

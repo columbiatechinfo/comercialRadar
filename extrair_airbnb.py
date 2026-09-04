@@ -121,7 +121,13 @@ insert into airbnb_anuncio
        (anuncio_id, nome, titulo, tipo_resumo, lat, lng, coord_exata,
         na_area, area_ref, nota, avaliacoes_qtd, preco_total, bruto, visto_em)
 values %s
-on conflict (anuncio_id) do update set
+-- POR EMPRESA, e nao so pelo id da fonte (migracao 0058).
+-- O mesmo estabelecimento existe uma vez em CADA empresa que o extraiu ou
+-- reaproveitou; um indice global impediria isso. `id_empresa` nao aparece na
+-- lista de colunas do insert porque o gatilho `preencher_empresa` a carimba
+-- antes — e o gatilho BEFORE INSERT roda antes da checagem de conflito, entao
+-- a inferencia pelo indice funciona.
+on conflict (id_empresa, anuncio_id) do update set
   nome        = coalesce(excluded.nome,        airbnb_anuncio.nome),
   titulo      = coalesce(excluded.titulo,      airbnb_anuncio.titulo),
   tipo_resumo = coalesce(excluded.tipo_resumo, airbnb_anuncio.tipo_resumo),
