@@ -29,6 +29,7 @@ import json
 import os
 import re
 import socket
+import shlex
 import subprocess
 import sys
 import threading
@@ -149,8 +150,24 @@ def bater_ponto(con, id_job: int, progresso: dict | None = None) -> bool:
     return not (r and r[0])
 
 
-def encerrar(con, id_job: int, codigo: int, erro: str | None = None) -> None:
-    estado = "ok" if codigo == 0 else ("cancelado" if codigo == -9 else "erro")
+def encerrar(con, id_job: int, codigo: int, erro: str | None = None,
+             cancelado: bool = False) -> None:
+    """Fecha o job. `cancelado` vem de quem parou, e nao do codigo de saida.
+
+    O CODIGO DE SAIDA NAO SABE POR QUE MORREU. `proc.terminate()` manda SIGTERM
+    e o processo sai com -15; a regra antiga so reconhecia -9 (SIGKILL), entao
+    toda rodada que o operador mandou parar aparecia como ERRO. Medido em
+    04/09/2026: as rodadas #3 e #4 foram canceladas por mim e o painel disse que
+    tinham falhado.
+
+    Quem sabe que foi cancelamento e quem PEDIU o cancelamento — a thread do
+    ponto, que leu `cancelar_pedido` e chamou `terminate`. E ela que informa.
+    """
+    if cancelado:
+        estado = "cancelado"
+    else:
+        estado = "ok" if codigo == 0 else ("cancelado" if codigo in (-9, -15)
+                                           else "erro")
     with con.cursor() as cur:
         cur.execute("""update job set estado = %s, codigo_saida = %s,
                               erro = %s, terminado_em = now()
@@ -177,6 +194,52 @@ MAX_TRABALHADORES = int(os.environ.get("RADAR_MAX_TRABALHADORES") or 30)
 
 #: As chaves que contam trabalhadores de navegador e por isso obedecem ao teto.
 _CHAVES_DE_TRABALHADOR = ("workers", "capture_workers", "trabalhadores")
+
+
+#: O comando que ACENDE UMA TELA onde nao ha nenhuma, e depois vira o pipeline.
+#:
+#: A ETAPA 4 ABRE NAVEGADOR COM JANELA, e nao ha janela num conteiner. O Maps
+#: recusa o modo sem cabeca, entao a captura sobe Chromium `headless=False`; sem
+#: `DISPLAY` ele morre em menos de um segundo com "Missing X server or $DISPLAY"
+#: e a rodada segue sem a etapa mais cara que tem.
+#:
+#: FOI EXATAMENTE ISSO QUE ACONTECEU. Ate 31/08 quem disparava era a API, e ela
+#: embrulhava o comando nisto (`server.TELA_VIRTUAL`). Quando a fila passou a
+#: disparar, o embrulho ficou para tras — e as rodadas 3 a 8, em 04/09/2026, nas
+#: duas maquinas, terminaram com "a etapa 4 terminou com codigo 1" e um `ok` no
+#: painel. Rodada verde sem captura nenhuma.
+#:
+#: TRES DETALHES QUE ELE RESOLVE, e cada um ja custou uma sessao:
+#:   · `xvfb-run` pendura quando o processo filho segura o terminal — daí o
+#:     Xvfb ser subido a mao, em segundo plano;
+#:   · o display `:99`, que e o padrao de todo exemplo, colide com o do host —
+#:     daí procurar um livre entre `:200` e `:260` pelo arquivo de trava;
+#:   · o `exec` do fim faz o python SUBSTITUIR o shell, e nao virar filho dele.
+#:     Sem isso, `proc.terminate()` mata o `sh` e a mineracao continua rodando
+#:     orfa — o painel diria "parada" com os navegadores ainda queimando IP.
+TELA_VIRTUAL = (
+    "mkdir -p /tmp/.X11-unix; D=0; for n in $(seq 200 260); do "
+    "if [ ! -e /tmp/.X$n-lock ]; then "
+    "Xvfb :$n -screen 0 1920x1080x24 -nolisten tcp > /tmp/xvfb.err 2>&1 & "
+    "sleep 2; if [ -e /tmp/.X$n-lock ] && ! grep -q already /tmp/xvfb.err; "
+    "then D=$n; break; fi; fi; done; export DISPLAY=:$D; exec "
+)
+
+
+def _com_tela(cmd: list) -> list:
+    """Embrulha o comando na tela virtual, quando nao ha uma herdada.
+
+    SEPARADO DE `_comando` DE PROPOSITO: o que vai para o log da rodada e a
+    linha legivel (`minerar_tudo.py --area ...`), e nao trinta caracteres de
+    shell. Quem le o log quer saber o que rodou, nao como a tela nasceu.
+
+    Se a maquina ja entregou um `DISPLAY` — desenvolvimento com X de verdade,
+    ou um conteiner com o socket montado — nao se mexe em nada.
+    """
+    if os.environ.get("DISPLAY"):
+        return cmd
+    return ["sh", "-c", TELA_VIRTUAL
+            + " ".join(shlex.quote(p) for p in cmd)]
 
 
 def _comando(job: dict) -> list:
@@ -292,7 +355,7 @@ def rodar(con, job: dict) -> None:
                PYTHONUNBUFFERED="1", PYTHONUTF8="1", PYTHONIOENCODING="utf-8",
                RADAR_USUARIO_SERVICO=str(job["pedido_por"]))
 
-    proc = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE,
+    proc = subprocess.Popen(_com_tela(cmd), env=env, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True,
                             encoding="utf-8", errors="replace", bufsize=1)
 
@@ -303,12 +366,16 @@ def rodar(con, job: dict) -> None:
     # fila — e aí rodaria duas vezes, que é pior que demorar.
     parar = threading.Event()
     prog = Progresso()
+    #: Marcado pela thread do ponto quando ELA manda encerrar. E o unico lugar
+    #: que sabe distinguir "o operador parou" de "o processo quebrou".
+    pedido_de_cancelamento = threading.Event()
 
     def _ponto():
         c2 = _conectar()
         try:
             while not parar.wait(30):
                 if not bater_ponto(c2, id_job, dict(prog.d)):
+                    pedido_de_cancelamento.set()
                     registrar(c2, id_job, "⏹ cancelamento pedido — encerrando")
                     proc.terminate()
                     return
@@ -334,8 +401,10 @@ def rodar(con, job: dict) -> None:
         bater_ponto(con, id_job, dict(prog.d))
     except Exception:                                          # noqa: BLE001
         pass
-    encerrar(con, id_job, codigo)
-    registrar(con, id_job, "■ terminou com código %d" % codigo)
+    encerrar(con, id_job, codigo, cancelado=pedido_de_cancelamento.is_set())
+    registrar(con, id_job, "■ %s (código %d)"
+              % ("cancelada a pedido" if pedido_de_cancelamento.is_set()
+                 else "terminou", codigo))
 
 
 # ──────────────────────────────────────────────────────────────────────────

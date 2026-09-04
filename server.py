@@ -1468,7 +1468,13 @@ def listar_pois(sessao: str | None = None):
                        -- MULTIORIGEM: o ponto e sustentado por MAIS DE UMA base.
                        --
                        -- E o que o operador precisa avaliar primeiro, porque e
-                       -- onde a fusao pode ter errado: medido no RS, 66,2% das
+                       -- onde a fusao pode ter errado: medido no RS, 66,2%% das
+                       -- (o `%%` E DOBRADO DE PROPOSITO: desde que esta
+                       -- consulta passou a receber parametro, o psycopg2
+                       -- le todo `%%` como marcador — inclusive dentro de
+                       -- comentario SQL. Um `%` solto aqui derruba a rota
+                       -- inteira com "dict is not a sequence", que nao
+                       -- aponta para lugar nenhum.)
                        -- fusoes suspeitas uniram estabelecimentos distintos.
                        -- Ponto de fonte unica nao tem o que revisar — o registro
                        -- E o ponto.
@@ -2917,8 +2923,31 @@ def iniciar_job(body: dict):
             if op.get("uf"):
                 argumentos["uf"] = str(op["uf"])
 
-            fila = _enfileirar("mineracao", argumentos)
-            manager.broadcast({"tipo": "job", "dados": _job_da_fila(fila["id"])})
+            # O ERRO SOBE COMO TEXTO, e nao como 500 mudo.
+            #
+            # O painel mostra `d.erro` quando ele existe e, quando nao existe,
+            # cai em "nao foi possivel iniciar a extracao" — uma frase que nao
+            # diz nada e obriga quem for investigar a abrir o log do conteiner.
+            # Foi o que aconteceu em 04/09/2026 com duas falhas triviais (uma
+            # coluna com nome errado e um `%` solto num comentario SQL): a tela
+            # nao sabia dizer nem qual das duas era.
+            try:
+                fila = _enfileirar("mineracao", argumentos)
+            except HTTPException:
+                raise
+            except Exception as e:                             # noqa: BLE001
+                return JSONResponse(
+                    {"erro": "nao consegui enfileirar a rodada — %s: %s"
+                             % (type(e).__name__, str(e).splitlines()[0][:180])},
+                    status_code=500)
+            try:
+                manager.broadcast({"tipo": "job",
+                                   "dados": _job_da_fila(fila["id"])})
+            except Exception:                                  # noqa: BLE001
+                # A RODADA JA ESTA NA FILA. Falhar em avisar a tela nao pode
+                # desfazer isso, nem virar erro para quem clicou: os workers a
+                # pegam do mesmo jeito, e o painel a encontra no proximo tique.
+                pass
             return {**fila, "na_fila": True,
                     "mensagem": "rodada %d na fila" % fila["id"]}
             # A PLACES API SAIU DA FERRAMENTA (24/08/2026, decisão do dono do
@@ -3318,7 +3347,10 @@ def _usuario_de_servico() -> str:
             cur.execute("""select id from core.tb_users
                             where id_empresa = %s::uuid
                               and email like 'pipeline@%%'
-                            order by created_at limit 1""", (u.id_empresa,))
+                            -- `criado_em`, e nao `created_at`: esta base fala
+                            -- portugues em `core.tb_users`. A coluna inglesa
+                            -- derrubava TODA extracao com 500.
+                            order by criado_em limit 1""", (u.id_empresa,))
             r = cur.fetchone()
             if r:
                 return str(r[0])
