@@ -1876,7 +1876,11 @@ def dashboard(cidade: str = ""):
                   count(*) FILTER (WHERE EXISTS (SELECT 1 FROM images_urls i
                                                   WHERE i.poi_id = p.id)),
                   count(*) FILTER (WHERE p.place_id LIKE 'planilha:%%')
-                  FROM pois p WHERE {w}""", pc)
+                  -- `pois_completo` e nao `pois`: `total_avaliacoes` mudou para
+                  -- `maps_data` na migracao 0052, e esta rota nao tinha sido
+                  -- repontada — ela nao e chamada pelo painel, entao o erro
+                  -- ficou esperando quem abrisse o dashboard.
+                  FROM pois_completo p WHERE {w}""", pc)
             r = cur.fetchone()
             campos = ["total", "telefone", "cnpj", "endereco", "email", "website",
                       "instagram", "facebook", "streetview", "sem_panorama",

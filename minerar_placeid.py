@@ -1089,97 +1089,25 @@ def gravar_um(con, poi_id, d):
     return n_com
 
 
-def gravar(con, empresa, registros, sessao, simular):
-    placar = {"novos": 0, "atualizados": 0, "comentarios": 0,
-              "horarios": 0, "fotos": 0, "sem_nome": 0}
-    with con.cursor() as k:
-        for d in registros:
-            if not d or not d.get("nome") or _e_titulo_de_erro(d.get("nome")):
-                # Titulo de pagina de erro nao e POI — nao grava, e conta como
-                # sem_nome (o POI volta para a fila numa proxima passada).
-                placar["sem_nome"] += 1
-                continue
-            hist = d.get("histograma") or {}
-            # O histograma e os horarios de pico nao tem coluna propria ainda:
-            # vao em `ia_resposta` como JSON ate a migracao existir. Fica
-            # explicito no nome da chave para nao virar dado orfao.
-            extra = json.dumps({"histograma_estrelas": hist,
-                                "horarios_de_pico": d.get("horariosDePico") or {},
-                                "assuntos": d.get("assuntos") or [],
-                                "localizado_em": d.get("dentroDe")},
-                               ensure_ascii=False)
-            k.execute("""
-                insert into radar_comercial.pois
-                  (fonte, fonte_dado, nome, categoria, endereco, telefone,
-                   website, place_id, maps_lat, maps_lng, maps_url, plus_code,
-                   avaliacao, total_avaliacoes, resumo_avaliacoes,
-                   status_horario, cidade, uf, sessao, coord_fonte,
-                   coord_precisao, ia_resposta)
-                values ('maps', 'maps:place_id', %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                        'maps', 'porta', %s)
-                on conflict (id_empresa, place_id)
-                  where place_id is not null and place_id <> ''
-                do update set
-                   nome = excluded.nome,
-                   categoria = coalesce(excluded.categoria, pois.categoria),
-                   endereco = coalesce(excluded.endereco, pois.endereco),
-                   telefone = coalesce(excluded.telefone, pois.telefone),
-                   website = coalesce(excluded.website, pois.website),
-                   avaliacao = excluded.avaliacao,
-                   total_avaliacoes = excluded.total_avaliacoes,
-                   resumo_avaliacoes = excluded.resumo_avaliacoes,
-                   status_horario = excluded.status_horario,
-                   ia_resposta = excluded.ia_resposta
-                returning id, (xmax = 0) as inserido""",
-                (d.get("nome"), d.get("categoria"), d.get("endereco"),
-                 d.get("telefone"), d.get("site"), d["placeId"],
-                 d["lat"], d["lng"], d.get("url"), d.get("plusCode"),
-                 d.get("nota"), d.get("totalAval"), d.get("resumoIA"),
-                 d.get("statusHorario"), "Canoas", "RS", sessao, extra))
-            poi_id, inserido = k.fetchone()
-            placar["novos" if inserido else "atualizados"] += 1
-
-            k.execute("delete from radar_comercial.comentarios where poi_id=%s",
-                      (poi_id,))
-            for a in (d.get("avaliacoes") or []):
-                # `comentarios` nao tem coluna para Local Guide nem para a
-                # resposta do dono. A resposta vai colada ao texto, marcada,
-                # para nao se perder ate a migracao.
-                texto = a.get("texto") or ""
-                if a.get("resposta"):
-                    texto = (texto + "\n\n[RESPOSTA DO PROPRIETARIO] "
-                             + a["resposta"]).strip()
-                if not texto and a.get("nota") is None:
-                    continue
-                k.execute("""insert into radar_comercial.comentarios
-                               (poi_id, autor, data, nota, texto)
-                             values (%s,%s,%s,%s,%s)""",
-                          (poi_id, a.get("autor"), a.get("quando"),
-                           a.get("nota"), texto or None))
-                placar["comentarios"] += 1
-
-            k.execute("delete from radar_comercial.horario_funcionamento "
-                      "where poi_id=%s", (poi_id,))
-            for dia, h in (d.get("horarioSemana") or {}).items():
-                k.execute("""insert into radar_comercial.horario_funcionamento
-                               (poi_id, dia, horario) values (%s,%s,%s)""",
-                          (poi_id, dia, h))
-                placar["horarios"] += 1
-
-            k.execute("delete from radar_comercial.images_urls where poi_id=%s",
-                      (poi_id,))
-            for i, u in enumerate(d.get("fotos") or []):
-                k.execute("""insert into radar_comercial.images_urls
-                               (poi_id, url, ordem) values (%s,%s,%s)""",
-                          (poi_id, u, i))
-                placar["fotos"] += 1
-    if simular:
-        con.rollback()
-    else:
-        con.commit()
-    return placar
-
+# A `gravar` EM LOTE FOI REMOVIDA EM 04/09/2026.
+#
+# Ela estava DEFINIDA E NUNCA CHAMADA — o caminho vivo e `gravar_um`, que grava
+# em streaming, um POI por vez, e foi para onde os consertos foram desde
+# 03/09/2026. A morta ficou para tras carregando dois defeitos:
+#
+#   · escrevia `maps_url`, `plus_code`, `avaliacao`, `total_avaliacoes`,
+#     `resumo_avaliacoes` e `status_horario` na `pois`, colunas que a migracao
+#     0052 mudou para `maps_data`. Se alguem a chamasse, morreria com
+#     "column does not exist" — que foi exatamente o que aconteceu com a etapa
+#     4 por causa de uma irma dela.
+#
+#   · gravava `"Canoas", "RS"` CHUMBADO como cidade e UF. A colheita teve esse
+#     mesmo defeito, corrigido em 03/09/2026 para `municipio_da_area`; esta
+#     copia nao foi junto.
+#
+# Codigo morto que quebra e mente sobre a cidade e pior que nenhum codigo: ele
+# passa em revisao por parecer alternativa, e so falha no dia em que alguem o
+# liga. O historico esta no git.
 
 # ---------------------------------------------------------------------- main --
 
