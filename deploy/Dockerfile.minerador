@@ -136,8 +136,24 @@ COPY --chown=pwuser:pwuser . .
 # Os pontos de montagem continuam aqui: VOLUME SOBREPOE O DONO DA IMAGEM, e
 # um volume criado antes desta linha guarda a dona antiga. `radar-capturas` e
 # `radar-crops` precisaram de `chown` a mao nas duas maquinas.
+# `COPY --chown` NAO ALCANCA O PROPRIO `/app`, e isso escapou duas vezes.
+#
+# Ele carimba o que E COPIADO; o diretorio nasceu no `WORKDIR /app`, como
+# root, e continua de root. O efeito e sutil: o processo escreve nos
+# arquivos que ja existem e falha ao CRIAR entrada nova, porque criar exige
+# escrita no DIRETORIO.
+#
+# Foi assim que a rodada 24, em 04/09/2026, perdeu o enriquecimento pelo
+# Maps com
+#
+#     PermissionError: /app/.browser_profiles
+#
+# — uma pasta que nem vem na imagem (esta no `.dockerignore`) e por isso e
+# criada na primeira execucao. As pastas que ja existiam funcionavam, e so
+# a que precisava nascer falhou.
 RUN mkdir -p /app/crops /app/capturas /app/logs /app/estado \
- && chown -R pwuser:pwuser /app/crops /app/capturas /app/logs /app/estado
+ && chown -R pwuser:pwuser /app/crops /app/capturas /app/logs /app/estado \
+ && chown pwuser:pwuser /app
 USER pwuser
 
 # NENHUM `EXPOSE`. Este contêiner não serve ninguém: ele consome a fila de jobs
