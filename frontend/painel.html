@@ -415,7 +415,7 @@
        QUASE TELA CHEIA, e em forma de planilha. A pessoa precisa ver os
        títulos reais e linhas reais para confirmar o que a IA sugeriu — sem
        isso, confirmar é assinar em branco. -->
-  <div id="m-bases" class="fixed inset-0 z-[900] hidden items-center justify-center bg-gray-900/30 p-6 backdrop-blur-md">
+  <div id="m-bases" data-modal class="fixed inset-0 z-[900] hidden items-center justify-center bg-gray-900/30 p-6 backdrop-blur-md">
     <div class="flex h-full w-full flex-col overflow-hidden rounded-xl bg-white shadow-xl ring-1 ring-gray-900/5">
       <div class="flex items-start justify-between gap-x-4 border-b border-gray-100 px-8 py-5">
         <div>
@@ -480,7 +480,7 @@
        rotulos de texto das outras fontes, como vieram. Mapear rotulo para CNAE
        exigiria adivinhar 1.383 vezes, e adivinhacao errada aqui vira categoria
        que o operador achou que marcou e nao marcou. -->
-  <div id="m-categorias" class="fixed inset-0 z-[900] hidden items-center justify-center bg-gray-900/30 p-6 backdrop-blur-md">
+  <div id="m-categorias" data-modal class="fixed inset-0 z-[900] hidden items-center justify-center bg-gray-900/30 p-6 backdrop-blur-md">
     <div class="flex h-full max-h-[86vh] w-full max-w-4xl flex-col overflow-hidden rounded-xl bg-white shadow-xl ring-1 ring-gray-900/5">
       <div class="flex items-start justify-between gap-x-4 border-b border-gray-100 px-6 py-5">
         <div>
@@ -527,7 +527,7 @@
   </div>
 
   <!-- ─────────────────────────── rodadas ──────────────────────────── -->
-  <div id="m-runs" class="fixed inset-0 z-[900] hidden items-center justify-center bg-gray-900/30 p-6 backdrop-blur-md">
+  <div id="m-runs" data-modal class="fixed inset-0 z-[900] hidden items-center justify-center bg-gray-900/30 p-6 backdrop-blur-md">
     <div class="flex max-h-[85vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl bg-white shadow-xl ring-1 ring-gray-900/5">
       <div class="flex items-start justify-between gap-x-4 border-b border-gray-100 px-6 py-5">
         <div>
@@ -543,12 +543,14 @@
       </div>
       <div id="runs-lista" class="flex-1 overflow-y-auto px-6 py-4"></div>
       <div class="border-t border-gray-100 px-6 py-3 text-[11.5px] text-gray-400">
-        Clique numa rodada para ver no mapa só os pontos que ela trouxe.
+Clique numa rodada para ver no mapa só os pontos que ela trouxe.
+        <span class="text-gray-500">“novos” é o que aquela rodada criou</span> —
+        área já minerada devolve zero, porque os pontos já estão lá.
       </div>
     </div>
   </div>
 
-  <div id="m-reuso" class="fixed inset-0 z-[900] hidden items-center justify-center bg-gray-900/30 p-6 backdrop-blur-md">
+  <div id="m-reuso" data-modal class="fixed inset-0 z-[900] hidden items-center justify-center bg-gray-900/30 p-6 backdrop-blur-md">
     <div class="w-full max-w-lg overflow-hidden rounded-xl bg-white shadow-xl ring-1 ring-gray-900/5">
       <div class="flex items-start justify-between gap-x-4 border-b border-gray-100 px-6 py-5">
         <div>
@@ -585,7 +587,7 @@
     </div>
   </div>
 
-  <div id="m-stats" class="fixed inset-0 z-[900] hidden items-center justify-center bg-gray-900/30 p-8 backdrop-blur-md">
+  <div id="m-stats" data-modal class="fixed inset-0 z-[900] hidden items-center justify-center bg-gray-900/30 p-8 backdrop-blur-md">
     <div class="flex h-full w-full flex-col overflow-hidden rounded-xl bg-white shadow-xl ring-1 ring-gray-900/5">
       <div class="flex items-start justify-between gap-x-4 border-b border-gray-100 px-8 py-5">
         <div>
@@ -633,7 +635,7 @@
     </div>
   </div>
   <!-- ───────────────────────── modal: meu perfil ───────────────────── -->
-  <div id="m-perfil" class="fixed inset-0 z-[900] hidden items-center justify-center bg-gray-900/40 p-6">
+  <div id="m-perfil" data-modal class="fixed inset-0 z-[900] hidden items-center justify-center bg-gray-900/40 p-6">
     <div class="flex max-h-full w-full max-w-3xl flex-col overflow-hidden rounded-xl bg-white shadow-xl ring-1 ring-gray-900/5">
       <div class="flex-1 overflow-y-auto px-8 py-7">
         <div class="grid grid-cols-1 gap-x-10 gap-y-6 md:grid-cols-[190px_1fr]">
@@ -714,7 +716,7 @@
     (motivo e etapa), e só então a lista IP a IP — que é para conferência, não
     para leitura.
   -->
-  <div id="m-proxies" class="fixed inset-0 z-[900] hidden items-center justify-center bg-gray-900/30 p-6 backdrop-blur-md">
+  <div id="m-proxies" data-modal class="fixed inset-0 z-[900] hidden items-center justify-center bg-gray-900/30 p-6 backdrop-blur-md">
     <div class="flex h-full w-full flex-col overflow-hidden rounded-xl bg-white shadow-xl ring-1 ring-gray-900/5">
       <div class="flex items-start justify-between gap-x-4 border-b border-gray-100 px-8 py-5">
         <div>
@@ -804,7 +806,7 @@
   </div>
 
   <!-- ───────────────────────── modal: organização ──────────────────── -->
-  <div id="m-org" class="fixed inset-0 z-[900] hidden items-center justify-center bg-gray-900/40 p-6">
+  <div id="m-org" data-modal class="fixed inset-0 z-[900] hidden items-center justify-center bg-gray-900/40 p-6">
     <div class="flex max-h-full w-full max-w-5xl flex-col overflow-hidden rounded-xl bg-white shadow-xl ring-1 ring-gray-900/5">
       <div class="flex items-start justify-between gap-x-4 border-b border-gray-100 px-8 py-5">
         <div>

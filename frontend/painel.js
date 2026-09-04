@@ -1589,9 +1589,18 @@
     m.classList.add("flex");
   }
 
+  // FECHA QUALQUER DIALOGO, E NAO UMA LISTA.
+  //
+  // Isto era `["m-stats", "m-perfil", "m-org", "m-bases"]` — uma lista escrita
+  // a mao, que precisava ser lembrada toda vez que um modal novo nascia. Nao
+  // foi: Rodadas, Categorias, Proxies e Reuso entraram depois e ficaram de
+  // fora, e o X deles nao fazia nada. O usuario ficava preso no modal.
+  //
+  // Uma lista que precisa ser atualizada a cada tela nova vai ser esquecida —
+  // a unica questao e quando. Agora quem decide e o proprio HTML: o dialogo se
+  // declara com `data-modal`, e quem nasce depois ja nasce fechavel.
   function fecharModais() {
-    ["m-stats", "m-perfil", "m-org", "m-bases"].forEach((id) => {
-      const m = $(id);
+    document.querySelectorAll("[data-modal]").forEach((m) => {
       m.classList.add("hidden");
       m.classList.remove("flex");
     });
@@ -2066,7 +2075,12 @@
             "</div>" +
             '<div class="shrink-0 text-right">' +
               '<div class="text-[15px] font-semibold tabular-nums text-gray-900">' + (r.pois || 0) + "</div>" +
-              '<div class="text-[10.5px] text-gray-400">POIs</div>' +
+              // "POIs" ENGANAVA. O numero e o que ESTA rodada CRIOU, e nao
+              // quantos existem na area: uma area ja minerada devolve zero
+              // porque os pontos ja estao la, com a sessao de quem os trouxe.
+              // Cinco rodadas de teste sobre a mesma quadra marcaram 0 cada uma
+              // e a coluna pareceu quebrada — estava certa, e mal rotulada.
+              '<div class="text-[10.5px] text-gray-400">novos</div>' +
             "</div>" +
           "</div>" +
           (r.etapas ? ('<div class="mt-2.5 h-1 w-full overflow-hidden rounded-full bg-gray-100">' +
@@ -2249,7 +2263,7 @@
         l.className = "flex items-baseline justify-between gap-x-4 text-[13px]";
         l.innerHTML =
           '<span class="text-gray-700">' + (e.e_minha ? "<b>" : "") +
-          esc(e.empresa) + (e.e_minha ? "</b> (sua empresa)" : "") + "</span>" +
+          escapar(e.empresa) + (e.e_minha ? "</b> (sua empresa)" : "") + "</span>" +
           '<span class="tabular-nums text-gray-500">' +
           e.pois.toLocaleString("pt-BR") + " pontos · coleta de " +
           (e.coleta_mais_recente || "?") + "</span>";
@@ -2338,8 +2352,8 @@
       const txt = document.createElement("div");
       txt.className = "min-w-0 flex-1";
       txt.innerHTML =
-        `<div class="truncate text-[13px] text-gray-800">${esc(titulo)}</div>` +
-        (sub ? `<div class="truncate text-[11.5px] text-gray-400">${esc(sub)}</div>` : "");
+        `<div class="truncate text-[13px] text-gray-800">${escapar(titulo)}</div>` +
+        (sub ? `<div class="truncate text-[11.5px] text-gray-400">${escapar(sub)}</div>` : "");
       const n = document.createElement("span");
       n.className = "shrink-0 text-[12px] tabular-nums text-gray-500";
       n.textContent = nPois.toLocaleString("pt-BR");
@@ -2482,6 +2496,19 @@
     $("btn-expandir").addEventListener("click", () => abrirModal("m-stats"));
     document.querySelectorAll("[data-fechar-modal]").forEach((b) =>
       b.addEventListener("click", fecharModais));
+
+    // AS DUAS SAIDAS QUE TODO MUNDO TENTA ANTES DE PROCURAR O X: a tecla Esc e
+    // o clique no fundo escurecido. Sem elas, quem nao acha o X fica preso — e
+    // o X ficou quebrado tempo suficiente para isso acontecer de verdade.
+    document.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape") fecharModais();
+    });
+    document.querySelectorAll("[data-modal]").forEach((m) =>
+      m.addEventListener("click", (ev) => {
+        // So o FUNDO fecha. Clique no conteudo do dialogo sobe ate aqui pelo
+        // borbulhamento, e fechar por causa dele tornaria o modal inutilizavel.
+        if (ev.target === m) fecharModais();
+      }));
 
     $("btn-abrir-perfil").addEventListener("click", () => {
       $("menu-perfil").classList.add("hidden");
