@@ -466,7 +466,12 @@ def ingerir_registro(r: dict, poligono=None, conn=None) -> tuple:
                           # coordenada nao pode apagar a declaracao de quem
                           # sabia. Enriquecer telefone nao rebaixa o ponto.
                           "coord_precisao", "coord_fonte", "coord_incerteza_m")
-                cur.execute(f"SELECT {', '.join(_MERGE)} FROM pois WHERE id = %s", (ids[0],))
+                # DA VIEW, e nao da tabela: metade do que o merge preserva mudou de
+                # casa na migracao 0052 (`avaliacao` e `status_horario` para
+                # `maps_data`, `razao_social` e `cnae` para `cadastur_data`).
+                # Ler da `pois` traria coluna que nao existe mais; ler da view
+                # traz o mesmo formato de sempre, das tabelas certas.
+                cur.execute(f"SELECT {', '.join(_MERGE)} FROM pois_completo WHERE id = %s", (ids[0],))
                 antigo = cur.fetchone()
                 if antigo:
                     for campo, valor in zip(_MERGE, antigo):
@@ -557,36 +562,50 @@ def ingerir_registro(r: dict, poligono=None, conn=None) -> tuple:
                     return ("pulado", None)
                 r["endereco"] = achado["endereco"]
 
-            _COLS = ("fonte", "sessao", "nome", "categoria", "endereco", "telefone", "website",
-                     "avaliacao", "total_avaliacoes", "plus_code", "status_horario",
-                     "lat_origem", "lng_origem", "maps_lat", "maps_lng", "maps_url", "place_id",
-                     "status", "distancia_m", "similaridade", "match_valido", "ocr_texto",
-                     "nome_original", "endereco_original", "preco_medio", "fonte_dado", "ia_resposta",
-                     "cnpj", "razao_social", "nome_fantasia", "natureza_juridica", "cnae",
-                     "situacao_cadastral", "socios", "instagram", "email", "resumo_avaliacoes",
-                     "streetview_path", "fontes_web", "endereco_fonte", "cidade", "uf",
-                     "cnpj_conf", "facebook",
+            # NOVE COLUNAS SAIRAM DAQUI NA MIGRACAO 0052, e elas nao
+            # sumiram: mudaram de casa. `avaliacao`, `total_avaliacoes`,
+            # `plus_code`, `status_horario`, `maps_url` e `resumo_avaliacoes`
+            # sao do Maps e vivem em `maps_data`; `razao_social`,
+            # `nome_fantasia` e `cnae` sao da empresa e vivem em
+            # `cadastur_data`/`receita_data`. Quem as grava agora e
+            # `_gravar_na_tabela_da_fonte`, logo abaixo.
+            #
+            # `place_id` FICA. Ela parece do Maps e nao e: e a chave de
+            # deduplicacao deste ingestor, para qualquer fonte — nos POIs
+            # estaduais vale `estadual:<cluster_id>`.
+            _COLS = ("fonte", "sessao", "nome", "categoria", "endereco",
+                     "telefone", "website",
+                     "lat_origem", "lng_origem", "maps_lat", "maps_lng",
+                     "place_id",
+                     "status", "distancia_m", "similaridade", "match_valido",
+                     "ocr_texto", "nome_original", "endereco_original",
+                     "preco_medio", "fonte_dado", "ia_resposta",
+                     "cnpj", "natureza_juridica",
+                     "situacao_cadastral", "socios", "instagram", "email",
+                     "streetview_path", "fontes_web", "endereco_fonte",
+                     "cidade", "uf", "cnpj_conf", "facebook",
                      # A PRECISAO DA COORDENADA, declarada por quem a produziu.
                      # Sem isto o mapa mostra um centroide de quadra e um pin de
                      # porta como pontos iguais, e quem vai a campo trata os dois
                      # com a mesma confianca. Ver a migracao 0028.
                      "coord_precisao", "coord_fonte", "coord_incerteza_m")
             _VALORES = (
-                    r.get("fonte") or "desconhecido", _s(r.get("sessao")), str(r["nome"]),
-                    _s(r.get("categoria")), _s(r.get("endereco")), _s(r.get("telefone")),
-                    _s(r.get("website")), _s(r.get("avaliacao")), _i(r.get("total_avaliacoes")),
-                    _s(r.get("plus_code")), _s(r.get("status_horario")),
+                    r.get("fonte") or "desconhecido", _s(r.get("sessao")),
+                    str(r["nome"]), _s(r.get("categoria")),
+                    _s(r.get("endereco")), _s(r.get("telefone")),
+                    _s(r.get("website")),
                     _f(r.get("lat_origem") if r.get("lat_origem") is not None else r.get("lat")),
                     _f(r.get("lng_origem") if r.get("lng_origem") is not None else r.get("lng")),
-                    _f(r.get("maps_lat")), _f(r.get("maps_lng")), _s(r.get("maps_url")),
-                    _s(r.get("place_id")), _s(r.get("status")), _f(r.get("distancia_m")),
-                    _f(r.get("similaridade")), r.get("match_valido"), _s(r.get("ocr_texto")),
-                    _s(r.get("nome_planilha")), _s(r.get("endereco_planilha")),
-                    _s(r.get("preco_medio")), _s(r.get("fonte_dado")), _s(r.get("ia_resposta")),
-                    _s(r.get("cnpj")), _s(r.get("razao_social")), _s(r.get("nome_fantasia")),
-                    _s(r.get("natureza_juridica")), _s(r.get("cnae")),
-                    _s(r.get("situacao_cadastral")), _s(r.get("socios")), _s(r.get("instagram")),
-                    _s(r.get("email")), _s(r.get("resumo_avaliacoes")),
+                    _f(r.get("maps_lat")), _f(r.get("maps_lng")),
+                    _s(r.get("place_id")),
+                    _s(r.get("status")), _f(r.get("distancia_m")),
+                    _f(r.get("similaridade")), r.get("match_valido"),
+                    _s(r.get("ocr_texto")), _s(r.get("nome_planilha")),
+                    _s(r.get("endereco_planilha")), _s(r.get("preco_medio")),
+                    _s(r.get("fonte_dado")), _s(r.get("ia_resposta")),
+                    _s(r.get("cnpj")), _s(r.get("natureza_juridica")),
+                    _s(r.get("situacao_cadastral")), _s(r.get("socios")),
+                    _s(r.get("instagram")), _s(r.get("email")),
                     _s(r.get("streetview_path")), _s(r.get("fontes_web")),
                     _s(r.get("endereco_fonte")),
                     # cidade/uf: usa o que o merge preservou ou extrai do endereço
@@ -596,6 +615,14 @@ def ingerir_registro(r: dict, poligono=None, conn=None) -> tuple:
                     _s(r.get("coord_precisao")), _s(r.get("coord_fonte")),
                     _i(r.get("coord_incerteza_m")),
             )
+            if len(_COLS) != len(_VALORES):
+                # NAO E PARANOIA: as duas tuplas sao posicionais, e um valor a
+                # mais ou a menos desloca TODAS as colunas seguintes — o
+                # telefone iria para `website`, o CNPJ para `email`, e o banco
+                # aceitaria calado enquanto os tipos batessem.
+                raise RuntimeError(
+                    "_COLS tem %d entradas e _VALORES tem %d — a gravacao "
+                    "deslocaria as colunas" % (len(_COLS), len(_VALORES)))
 
             if ids:
                 sets = ", ".join(f"{c} = %s" for c in _COLS)

@@ -1129,6 +1129,11 @@ def listar_pois():
     try:
         with conn.cursor() as cur:
             cur.execute("""
+                -- `pois_completo` E NAO `pois` (migracao 0052): `avaliacao` e
+                -- `total_avaliacoes` moraram na `pois` ate 03/09/2026 e hoje
+                -- moram em `maps_data`. A view devolve o formato chapado que
+                -- esta consulta sempre usou, vindo de onde os campos moram
+                -- agora — o painel nao precisa saber da mudanca.
                 SELECT p.id, p.nome, p.categoria, p.endereco, p.telefone, p.avaliacao,
                        p.total_avaliacoes, p.fonte, p.fonte_dado, p.status,
                        COALESCE(p.maps_lat, p.lat_origem), COALESCE(p.maps_lng, p.lng_origem),
@@ -1169,7 +1174,7 @@ def listar_pois():
                        a.veredito, a.motivo, a.recomendar_visita, a.tipo_construcao,
                        COALESCE(p.revisar_manual, false) AS revisar_manual, p.cidade,
                        p.place_id
-                FROM pois p
+                FROM pois_completo p
                 LEFT JOIN analise_ia a ON a.poi_id = p.id
                 LEFT JOIN cadastro_cliente c ON c.poi_id = p.id
                 WHERE p.match_valido IS NOT FALSE
@@ -1217,7 +1222,7 @@ def detalhe_poi(poi_id: int):
                        cnpj, razao_social, nome_fantasia, natureza_juridica, cnae,
                        situacao_cadastral, socios, instagram, email, resumo_avaliacoes,
                        streetview_path, fontes_web, endereco_fonte
-                FROM pois WHERE id = %s""", (poi_id,))
+                FROM pois_completo WHERE id = %s""", (poi_id,))
             row = cur.fetchone()
             if not row:
                 return JSONResponse({"erro": "POI não encontrado"}, status_code=404)

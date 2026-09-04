@@ -979,6 +979,12 @@ def gravar_um(con, poi_id, d):
         # — o Maps foi quem contou desta vez, mas o iFood, a Receita ou o OSM
         # contariam a mesma coisa. Sao os unicos campos gerais que este passo
         # descobre, e por isso os unicos que ele escreve aqui.
+        # A ESCRITA DUPLA ACABOU NA MIGRACAO 0052. Ate 03/09/2026 estas seis
+        # colunas — plus_code, maps_url, avaliacao, total_avaliacoes,
+        # resumo_avaliacoes e status_horario — eram gravadas aqui E em
+        # `maps_data`, porque o painel ainda lia da `pois`. O painel passou a
+        # ler da view `pois_completo`, as colunas sairam da tabela, e o unico
+        # lugar que as recebe agora e o `insert` em `maps_data`, logo abaixo.
         k.execute("""
             update radar_comercial.pois set
                    nome = coalesce(%s, nome),
@@ -986,16 +992,10 @@ def gravar_um(con, poi_id, d):
                    endereco = coalesce(%s, endereco),
                    telefone = coalesce(%s, telefone),
                    website = coalesce(%s, website),
-                   plus_code = coalesce(%s, plus_code),
-                   maps_url = coalesce(%s, maps_url),
-                   avaliacao = %s, total_avaliacoes = %s,
-                   resumo_avaliacoes = %s, status_horario = %s,
                    ia_resposta = %s
              where id = %s""",
             (d.get("nome"), d.get("categoria"), d.get("endereco"),
-             d.get("telefone"), d.get("site"), d.get("plusCode"),
-             d.get("url"), d.get("nota"), d.get("totalAval"),
-             d.get("resumoIA"), d.get("statusHorario"), extra, poi_id))
+             d.get("telefone"), d.get("site"), extra, poi_id))
 
         # O QUE E SO DO MAPS VAI PARA `maps_data` (migracao 0048).
         #
