@@ -115,6 +115,57 @@
   const SEM_LIGACAO = { cor: "#6366f1", anel: "#3730a3", destaque: false,
                         rotulo: "Sem ligação no cadastro" };
 
+  // ── O MARCADOR DIZ DUAS COISAS, E ELAS SAO INDEPENDENTES ────────────────
+  //
+  // A FORMA responde "este ponto tem ligação no cadastro do cliente?", que é
+  // uma pergunta sobre o CADASTRO. A COR responde "a IA aprovou?", que é uma
+  // pergunta sobre a EVIDÊNCIA visual. Um ponto pode ter ligação e ser
+  // reprovado; pode não ter ligação nenhuma e ser aprovado. Espremer as duas
+  // numa dimensão só — como era, com a cor vindo do `cruz_flag` — obrigava a
+  // abrir a ficha para saber qual das duas o ponto estava dizendo.
+  //
+  // O CASO QUE VALE DINHEIRO GANHA ESTRELA E PULSA: atividade econômica
+  // sentada numa ligação RESIDENCIAL. É literalmente o produto — comércio
+  // pagando tarifa de casa. Numa rua densa ele sumia entre os iguais.
+  const SINAL_VINCULO = {
+    // sem ligação encontrada no cadastro
+    sem: { icone: "⚠", rotulo: "Sem ligação no cadastro", classe: "" },
+    // ligação encontrada, e o cadastro já a trata como não-residencial
+    comercial: { icone: "✓", rotulo: "Ligação no cadastro, já comercial",
+                 classe: "v-tem" },
+    // ligação encontrada, mas RESIDENCIAL — a oportunidade
+    residencial: { icone: "★", rotulo: "Ligação RESIDENCIAL com atividade "
+                                       + "econômica no local",
+                   classe: "v-oportunidade" },
+  };
+
+  function vinculoDoPoi(p) {
+    if (p.num_ligacao == null || p.num_ligacao === "") return SINAL_VINCULO.sem;
+    // `e_comercial` é a bandeira do PRÓPRIO cliente. No vocabulário dele
+    // "comercial" é toda categoria que não seja RESIDENCIAL — não é uma
+    // dedução nossa a partir do ramo do POI.
+    return p.e_comercial === false
+      ? SINAL_VINCULO.residencial
+      : SINAL_VINCULO.comercial;
+  }
+
+  // VERDE PASSA, AMBAR PEDE OLHO HUMANO, VERMELHO BARRA — a convenção de
+  // semáforo, escolhida pelo dono do produto em 04/09/2026. Sem veredito o
+  // ponto fica ardósia: "ainda não julgado" não é o mesmo que "reprovado", e
+  // pintar de vermelho o que a IA nem viu seria mentir no mapa.
+  const COR_IA = {
+    aprovado_exato: "#15803d",
+    aprovado_comercial: "#16a34a",
+    revisao_humana: "#f59e0b",
+    reprovado: "#dc2626",
+  };
+  const COR_SEM_IA = "#64748b";
+
+  function corDoPoi(p) {
+    if (p.revisar_manual) return COR_IA.revisao_humana;
+    return COR_IA[p.veredito] || COR_SEM_IA;
+  }
+
   // OS QUATRO VEREDITOS SÃO OS DA `analise_ia`, e as cores vêm do desenho.
   // Verde e lima aprovam, âmbar manda para o humano, vermelho reprova.
   const VEREDITOS = [
@@ -596,28 +647,37 @@
     $("btn-limpar").click();          // um caminho só para limpar a área
   });
 
-  function marcadorDoPoi(p) {
+  function marcadorDoPoi(p, novo) {
     if (p.lat == null || p.lng == null) return null;
     const e = CORES[p.cruz_flag] || SEM_LIGACAO;
     const n = Number(p.n_fontes || 1);
     const k = ramoDoPoi(p);
+    const v = vinculoDoPoi(p);
+    const cor = corDoPoi(p);
+    const oportunidade = v === SINAL_VINCULO.residencial;
     const m = L.marker([p.lat, p.lng], {
       pane: "paneMarcadores",
       icon: L.divIcon({
         className: "pin-wrap",
-        html: `<div class="pin${e.destaque ? " achado" : ""}${k.ia ? " m-ia-fachada" : ""}" ` +
-              `style="--c:${e.cor}">` +
-              `<div class="pin-head"><i>${k.emo}</i></div><div class="pin-tail"></div>` +
+        html: `<div class="pin ${v.classe}${k.ia ? " m-ia-fachada" : ""}` +
+              `${novo ? " novo" : ""}" style="--c:${cor}">` +
+              `<div class="pin-head"><i>${v.icone}</i></div>` +
+              '<div class="pin-tail"></div>' +
+              // A CATEGORIA CONTINUA VISIVEL, num distintivo proprio. Ela era
+              // o conteudo do circulo; perdeu o lugar para o sinal do vinculo,
+              // mas nao a utilidade — e o que diz se aquele ponto e padaria ou
+              // oficina sem abrir a ficha.
+              `<div class="pin-ramo">${k.emo}</div>` +
               (n > 1 ? `<div class="pin-fontes">${n}</div>` : "") +
               "</div>",
         iconSize: [34, 43], iconAnchor: [17, 43],
       }),
-      // O ACHADO FICA POR CIMA. Numa rua densa o ponto que interessa some
-      // atrás dos que já estão no cadastro.
-      zIndexOffset: e.destaque ? 1000 : 0,
+      // A OPORTUNIDADE FICA POR CIMA. Numa rua densa o ponto que o produto
+      // existe para achar some atrás dos que já estão no cadastro.
+      zIndexOffset: oportunidade ? 1000 : 0,
       keyboard: false,
     });
-    m.on("click", () => m.bindPopup(fichaDoPonto(p, e, n)).openPopup());
+    m.on("click", () => m.bindPopup(fichaDoPonto(p, e, n, v)).openPopup());
     return m;
   }
 
@@ -635,13 +695,22 @@
     $("job-cap").dataset.pontos = lista.length;
   }
 
-  function fichaDoPonto(p, e, n) {
+  function fichaDoPonto(p, e, n, v) {
     return `<b>${escapar(p.nome || "(sem nome)")}</b><br>` +
       `<span style="color:#6b7280">${escapar(p.endereco || "sem endereço")}</span>` +
-      `<br><small style="color:${e.anel}">${escapar(e.rotulo)}` +
-      (p.num_ligacao ? ` · ligação ${escapar(p.num_ligacao)}` : "") + "</small>" +
-      `<br><small style="color:#6b7280">${n} ` + (n === 1 ? "fonte" : "fontes") + "</small>" +
-      (p.veredito ? `<br><small>${escapar(p.veredito)}</small>` : "");
+      // A FICHA REPETE A LEITURA DO MARCADOR EM PALAVRAS. Quem abriu o
+      // ponto acabou de ver uma forma e uma cor; a ficha existe para dizer o
+      // que elas queriam dizer, sem legenda em canto de tela.
+      `<br><small style="color:${corDoPoi(p)}">${(v || vinculoDoPoi(p)).icone} ` +
+      `${escapar((v || vinculoDoPoi(p)).rotulo)}` +
+      (p.num_ligacao ? ` · ligação ${escapar(p.num_ligacao)}` : "") +
+      (p.categoria_ligacao ? ` (${escapar(p.categoria_ligacao)})` : "") +
+      "</small>" +
+      `<br><small style="color:#6b7280">${n} ` + (n === 1 ? "fonte" : "fontes") +
+      ` · ${escapar(e.rotulo)}</small>` +
+      (p.veredito
+        ? `<br><small style="color:${corDoPoi(p)}">IA: ${escapar(p.veredito)}</small>`
+        : '<br><small style="color:#94a3b8">IA: ainda não julgado</small>');
   }
 
   function escapar(s) {
@@ -1549,7 +1618,11 @@
     // Só desenha o que o filtro atual deixaria ver — senão o ponto novo aparece
     // por cima de um recorte que o operador escolheu.
     if (poisFiltrados().some((x) => x.id === p.id)) {
-      const m = marcadorDoPoi(p);
+      // `true` = CHEGOU AGORA. O marcador cai na tela com a animacao de
+      // entrada, que e o que faz a mineracao parecer viva em vez de um numero
+      // subindo num canto. Ela dura meio segundo e acaba — o pulso permanente
+      // fica reservado para a oportunidade (ligacao residencial com comercio).
+      const m = marcadorDoPoi(p, true);
       if (m && camadaPois) { camadaPois.addLayer(m); marcadoresVivos.set(p.id, m); }
     }
     // OS CARTÕES ESPERAM MEIO SEGUNDO. Repintar a cada POI faria a tela
@@ -1560,12 +1633,44 @@
 
   // ── carga ───────────────────────────────────────────────────────────────
 
+  // LEVAR O MAPA ATE A RODADA — que era o que "Ver no mapa" NAO fazia.
+  //
+  // Ele trocava os pontos e nada mais: quem clicasse numa rodada de outro
+  // bairro continuava olhando o pedaco de mapa onde ja estava, agora vazio,
+  // com a impressao de que a rodada nao tinha trazido nada.
+  //
+  // O POLIGONO VEM DO SERVIDOR, e nao do desenho que sobrou na tela. Sao
+  // coisas diferentes desde que cada rodada congela a sua copia: entre
+  // disparar e clicar, o operador pode ter desenhado outras tres areas.
+  async function irParaAreaDaRun(id) {
+    const d = await pegar("/api/runs/" + id + "/area");
+    const anel = (d && d.polygon) || [];
+    if (estado.runSeguida) estado.runSeguida.area = (d && d.area) || null;
+    if (anel.length < 3) return;
+    camadaAreas.clearLayers();
+    const poly = ligarFichaDaArea(L.polygon(anel, {
+      pane: "paneArea", className: "area-poly",
+      color: INDIGO, weight: 2, fillColor: INDIGO, fillOpacity: 0.1,
+    })).addTo(camadaAreas);
+    estado.anel = anel;
+    estado.temArea = true;
+    mapa.fitBounds(poly.getBounds(), { padding: [60, 60] });
+    pintarEstado();
+  }
+
   async function carregarPois() {
     // A RODADA SEGUIDA FILTRA O MAPA. Sem ela, o mapa e o de sempre — a base
     // inteira da empresa. Com ela, so os pontos daquela sessao: e o que faz
     // "ver no mapa" na lista de rodadas significar alguma coisa.
-    const s = estado.runSeguida && estado.runSeguida.sessao;
-    const d = await pegar("/api/pois" + (s ? ("?sessao=" + encodeURIComponent(s)) : ""));
+    // O RECORTE E A AREA, E NAO A SESSAO.
+    //
+    // Por sessao vinham so os pontos que AQUELA rodada acrescentou — 5 numa
+    // area que tem 54. O mapa ficava quase vazio e a ficha do poligono dizia
+    // "0 POIs do banco aqui dentro" com a area cheia de pontos. Quem clica
+    // numa rodada quer ver a area dela.
+    const ar = estado.runSeguida && estado.runSeguida.area;
+    const d = await pegar("/api/pois" +
+      (ar ? ("?area=" + encodeURIComponent(ar)) : ""));
     estado.pois = (d && d.pois) || [];
     desenharPois();
     montarFiltros();
@@ -2176,11 +2281,13 @@
         const id = ver.dataset.id;
         // SEGUIR A RODADA: o mapa passa a mostrar so o que ela trouxe, e a
         // barra volta a acompanha-la de onde ela estiver.
-        estado.runSeguida = { id: Number(id), sessao: sessao || null };
-        $("m-runs").classList.add("hidden");
+        estado.runSeguida = { id: Number(id), sessao: sessao || null,
+                              area: null };
+        fecharModais();
         $("log-wrap").classList.remove("hidden");
         linhaLog("seguindo a rodada #" + id + (sessao ? (" · " + sessao) : ""),
                  "text-indigo-400");
+        await irParaAreaDaRun(Number(id));
         await carregarPois();
         pintarJob(await pegar("/api/jobs/atual?id_job=" + id));
         return;

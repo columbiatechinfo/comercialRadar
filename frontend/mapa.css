@@ -80,6 +80,76 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* ─────────────────────────────────────────────────────────────────────────
+   O MARCADOR DIZ DUAS COISAS AO MESMO TEMPO.
+
+   A COR (`--c`) vem do veredito da IA — verde passa, âmbar pede olho humano,
+   vermelho barra, ardósia é "ainda não julgado". O ÍCONE dentro do círculo vem
+   do cadastro do cliente: ✓ tem ligação e já é comercial, ⚠ não tem ligação
+   nenhuma, ★ tem ligação e ela é RESIDENCIAL.
+
+   As duas perguntas são independentes — um ponto pode ter ligação e ser
+   reprovado pela IA — e por isso ocupam canais visuais separados. Espremer as
+   duas na cor, como era antes, obrigava a abrir a ficha para saber qual delas
+   o marcador estava respondendo.
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* O ícone do vínculo é glifo de texto, e não emoji: emoji vem colorido do
+   sistema e brigaria com a cor de fundo que carrega o veredito. */
+.pin-head > i { color: #fff; font-weight: 700; }
+
+/* A CATEGORIA PERDEU O CENTRO E GANHOU UM CANTO. Ela era o conteúdo do
+   círculo; saiu para o sinal do vínculo entrar, mas continua sendo o que diz
+   se aquele ponto é padaria ou oficina sem ninguém abrir a ficha. */
+.pin-ramo {
+  position: absolute; bottom: 9px; left: -6px; z-index: 2;
+  width: 17px; height: 17px; border-radius: 50%;
+  background: #fff; border: 1.5px solid rgba(15,23,42,.18);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 9.5px; line-height: 1;
+  box-shadow: 0 1px 2px rgba(0,0,0,.18);
+}
+
+/* Ligação encontrada e já comercial: o caso em ordem. Um anel discreto basta —
+   ele é a maioria dos pontos, e destacar a maioria não destaca nada. */
+.pin.v-tem .pin-head { box-shadow: 0 0 0 2px rgba(255,255,255,.55); }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   A OPORTUNIDADE: atividade econômica sentada numa ligação RESIDENCIAL.
+
+   É literalmente o produto — comércio pagando tarifa de casa. Por isso é o
+   único marcador que cresce e pulsa: numa rua com trinta pontos ele tem de
+   ser encontrado sem varredura visual. Pulso lento e infinito, de propósito;
+   a animação de chegada (`.novo`) é rápida e acaba, esta é permanente.
+   ───────────────────────────────────────────────────────────────────────── */
+.pin.v-oportunidade { transform: scale(1.22); z-index: 3; }
+.pin.v-oportunidade:hover { transform: scale(1.34); }
+.pin.v-oportunidade .pin-head {
+  border-width: 3px;
+  box-shadow: 0 0 0 3px rgba(250,204,21,.55);
+}
+.pin.v-oportunidade::before {
+  content: ""; position: absolute; top: 4px; left: 50%;
+  width: 32px; height: 32px; margin-left: -16px; border-radius: 50%;
+  border: 2px solid var(--c, #1a73e8);
+  animation: bater 1.9s ease-out infinite;
+  pointer-events: none;
+}
+@keyframes bater {
+  0%   { transform: scale(.75); opacity: .75; }
+  100% { transform: scale(2.1); opacity: 0; }
+}
+
+/* QUEM PEDIU PARA NAO SE MEXER TEM VEZ. `prefers-reduced-motion` não é
+   preferência estética: para parte das pessoas movimento contínuo na tela
+   causa enjoo. O destaque sobrevive sem o pulso — o marcador continua maior e
+   com o anel âmbar. */
+@media (prefers-reduced-motion: reduce) {
+  .pin.v-oportunidade::before { animation: none; opacity: .5; }
+  .pin.novo { animation: none; }
+  .pin.novo::after { animation: none; }
+}
+
 /* O ACHADO fica em destaque: habitacional no cadastro, comércio no local.
    É o ponto que o produto existe para encontrar, e numa rua densa ele sumia
    atrás dos que já estão cadastrados. */

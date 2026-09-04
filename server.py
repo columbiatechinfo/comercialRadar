@@ -1461,15 +1461,81 @@ def malha(uf: str = "", lat: float | None = None, lng: float | None = None):
 
 
 
+#: Quantos POIs o mapa aceita devolver quando NAO ha recorte nenhum.
+#:
+#: SEM TETO A API MORRE, e nao e figura de linguagem: medido em 04/09/2026, com
+#: 301.450 POIs no banco, `GET /api/pois` sem area estourou o limite de 1 GiB do
+#: conteiner e o processo reiniciou no meio da resposta — o navegador recebeu
+#: "connection closed" e o painel, um mapa vazio. Cada POI custa ~700 bytes de
+#: JSON: a base inteira sao ~210 MB numa resposta so, montada em memoria antes
+#: de sair.
+#:
+#: O DEFEITO ESTAVA ESCONDIDO ATRAS DE OUTRO. Ate hoje a consulta exigia ficha
+#: em `vinculo_poi`, uma tabela que nunca recebeu linha — devolvia zero sempre,
+#: e zero cabe em qualquer lugar. Consertado um, o outro apareceu na hora.
+#:
+#: O RECORTE POR AREA NAO PASSA POR AQUI, de proposito: ele e pequeno por
+#: natureza (54 pontos na area de teste) e e o caminho que o operador usa. O
+#: teto existe para a primeira carga, antes de qualquer area ser escolhida.
+TETO_MAPA = int(os.environ.get("RADAR_TETO_MAPA") or 8000)
+
+
+def _wkt_do_anel(poly: list) -> str | None:
+    """O anel de `[lat, lng]` virando `POLYGON((lng lat, ...))`.
+
+    LAT E LNG TROCAM DE LUGAR, e essa e a fonte classica de erro mudo: o painel
+    guarda na ordem do Leaflet, `[lat, lng]`, e o WKT quer `x y` — longitude
+    primeiro. Invertido, o poligono cai no oceano ao sul da India e a consulta
+    devolve zero sem nenhum erro.
+
+    O anel guardado e ABERTO; o WKT exige o primeiro ponto repetido no fim.
+
+    So numero entra na string: cada valor passa por `float()` antes. Nao ha
+    texto de fora chegando ao SQL por aqui.
+    """
+    if not poly or len(poly) < 3:
+        return None
+    pts = [(float(p[1]), float(p[0])) for p in poly]
+    if pts[0] != pts[-1]:
+        pts.append(pts[0])
+    return "POLYGON((%s))" % ", ".join("%.10f %.10f" % (x, y) for x, y in pts)
+
+
 @app.get("/api/pois")
-def listar_pois(sessao: str | None = None):
-    """Os POIs do mapa. Com `sessao`, só os que AQUELA rodada produziu.
+def listar_pois(sessao: str | None = None, area: str | None = None):
+    """Os POIs do mapa.
+
+    DOIS RECORTES, E ELES RESPONDEM PERGUNTAS DIFERENTES. `area` devolve tudo
+    o que existe dentro de um polígono nomeado — é o que "Ver no mapa" usa,
+    porque quem clica numa rodada quer ver a área dela, e não só o punhado de
+    pontos que ela acrescentou. `sessao` devolve o delta daquela rodada, que
+    serve para auditar o que ela trouxe.
+
+    Com `sessao`, só os que AQUELA rodada produziu.
 
     É o que faz a lista de rodadas ser clicável: quem volta amanhã escolhe uma
     rodada e vê no mapa o que ela trouxe, em vez de tudo misturado. O carimbo é
     o mesmo `pois.sessao` que a rodada grava, e que `job.argumentos->>'sessao'`
     guarda do outro lado.
     """
+    # A AREA E RESOLVIDA AQUI, E NAO DENTRO DO SQL.
+    #
+    # A primeira versao buscava o poligono no proprio SELECT, por
+    # `area_trabalho.nome`. Funcionava em `/api/runs` e devolvia ZERO aqui: as
+    # duas rotas usam conexoes com identidades diferentes, e a RLS escondia a
+    # linha da area para esta. `st_covers(NULL, ...)` e NULL, nenhuma linha
+    # passa, e nao ha erro nenhum para investigar — o mapa so fica vazio.
+    #
+    # `carregar_area` le pelo caminho que ja funciona, e o que desce para o SQL
+    # e o poligono pronto. Uma dependencia a menos entre o recorte e quem
+    # pergunta.
+    anel = area_utils.carregar_area(area) if area else None
+    wkt = _wkt_do_anel(anel) if anel else None
+    if area and not wkt:
+        # AREA PEDIDA E NAO ENCONTRADA NAO PODE VIRAR "TODOS OS PONTOS". Seria o
+        # oposto do que se pediu, e em silencio.
+        return {"pois": []}
+
     conn = realtime_ingest.conectar()
     try:
         with conn.cursor() as cur:
@@ -1493,7 +1559,8 @@ def listar_pois(sessao: str | None = None):
                        -- (o `%%` E DOBRADO DE PROPOSITO: desde que esta
                        -- consulta passou a receber parametro, o psycopg2
                        -- le todo `%%` como marcador — inclusive dentro de
-                       -- comentario SQL. Um `%` solto aqui derruba a rota
+                       -- comentario SQL. Um sinal de porcento solto aqui
+                       -- derruba a rota
                        -- inteira com "dict is not a sequence", que nao
                        -- aponta para lugar nenhum.)
                        -- fusoes suspeitas uniram estabelecimentos distintos.
@@ -1507,7 +1574,7 @@ def listar_pois(sessao: str | None = None):
                        -- multiorigem não valem o mesmo se um tem duas fontes e
                        -- o outro tem cinco, e o booleano apagava essa
                        -- diferença justamente onde ela decide a confiança.
-                       (SELECT count(*) FROM vinculo_poi v
+                       (SELECT greatest(count(*), 1) FROM vinculo_poi v
                          WHERE v.poi_id = p.id AND v.estado = 'vinculado') AS n_fontes,
 
                        -- A FLAG DO CADASTRO, que é o que pinta o ponto.
@@ -1521,13 +1588,88 @@ def listar_pois(sessao: str | None = None):
                        -- Vem por LEFT JOIN porque a maioria dos pontos não tem
                        -- ligação nenhuma (17.470 em Canoas), e exigir a junção
                        -- os tiraria do mapa.
-                       c.cruz_flag, c.num_ligacao,
-                       a.veredito, a.motivo, a.recomendar_visita, a.tipo_construcao,
+                       -- ONDE O VINCULO MORA HOJE.
+                       --
+                       -- Era `cadastro_cliente`, uma tabela com ZERO linhas
+                       -- (`n_tup_ins = 0`: nunca recebeu uma). Em 03/09/2026 o
+                       -- POI e a ligacao passaram a ser da Corsan e o vinculo
+                       -- virou `ligacao_poi` — 65.772 pares. A rota continuou
+                       -- lendo a tabela antiga, e todo ponto do mapa saia sem
+                       -- ligacao, sem categoria e sem cor.
+                       lig.cruz_flag, lig.num_ligacao,
+                       -- O QUE O MARCADOR PRECISA SABER SOBRE A LIGACAO.
+                       --
+                       -- `e_comercial` e a bandeira do proprio cliente, e nao
+                       -- uma deducao nossa: no vocabulario dele "comercial" e
+                       -- toda categoria que nao seja RESIDENCIAL. O caso que
+                       -- vale dinheiro e justamente o POI com atividade
+                       -- economica sentado numa ligacao RESIDENCIAL — e por
+                       -- isso ele ganha estrela e pulsa no mapa, em vez de
+                       -- virar mais um ponto igual aos outros.
+                       lig.e_comercial, lig.categoria_ligacao,
+                       -- E O VEREDITO TAMBEM MUDOU DE CASA: `analise_ia` esta
+                       -- vazia; os julgamentos vivem em `poi_veredito` desde a
+                       -- migracao 0066 (143 linhas hoje).
+                       iv.veredito, iv.justificativa AS motivo,
+                       NULL::boolean AS recomendar_visita,
+                       NULL::text AS tipo_construcao,
                        COALESCE(p.revisar_manual, false) AS revisar_manual, p.cidade,
                        p.place_id
                 FROM pois_completo p
-                LEFT JOIN analise_ia a ON a.poi_id = p.id
-                LEFT JOIN cadastro_cliente c ON c.poi_id = p.id
+
+                -- O VEREDITO MAIS RECENTE, e um so por ponto. Um POI pode ter
+                -- sido julgado mais de uma vez (recalibracao do prompt, segunda
+                -- olhada); sem o `distinct on` o ponto se duplicaria no mapa.
+                LEFT JOIN LATERAL (
+                    SELECT pv.veredito, pv.justificativa
+                      FROM poi_veredito pv
+                     WHERE pv.poi_id = p.id
+                     ORDER BY pv.avaliado_em DESC NULLS LAST, pv.id DESC
+                     LIMIT 1) iv ON TRUE
+
+                -- A LIGACAO MAIS CONFIAVEL DO PONTO, com a categoria vinda da
+                -- base do cliente.
+                --
+                -- `lp.ligacao::bigint = cc.num_ligacao` E NAO O CONTRARIO. A
+                -- chave primaria de `cadastro_corsan` e `(id_empresa,
+                -- num_ligacao)`, e `num_ligacao` e bigint. Escrito ao contrario
+                -- — `cc.num_ligacao::text = lp.ligacao` — o cast cega o indice
+                -- e a consulta varre 2,5 milhoes de linhas: medido, 14,9 s.
+                --
+                -- E NAO SE JUNTA POR `id_base`, embora as duas tabelas tenham a
+                -- coluna: `ligacao_poi` carimba 1 (o id de `base_cliente`, que
+                -- so tem essa linha) e `cadastro_corsan` carimba 7, resto de uma
+                -- importacao anterior. Juntar pelos dois campos devolve ZERO —
+                -- e devolvia, em silencio.
+                LEFT JOIN LATERAL (
+                    -- A CATEGORIA VEM DA PROPRIA `ligacao_poi` — migracao
+                    -- 0068 —, e nao de um cruzamento com a base do cliente.
+                    --
+                    -- Cruzar aqui custava 15 s por area, e 162 s para desenhar
+                    -- um mapa de 54 pontos. O EXPLAIN disse por que: a politica
+                    -- RLS de `resources_root.cadastro_corsan` chama
+                    -- `core.empresa_atual()` SEM subselect, entao o Postgres a
+                    -- avalia por linha e nao consegue usar a chave primaria —
+                    -- 2.516.709 linhas varridas a cada requisicao.
+                    --
+                    -- Consertar aquela politica seria o certo, e ela e de outro
+                    -- sistema: `resources_root` e do servico de recursos. A
+                    -- copia resolve do nosso lado, e de quebra congela o que
+                    -- valia QUANDO o vinculo foi feito.
+                    SELECT lp.ligacao AS num_ligacao,
+                           lp.categoria_ligacao,
+                           (lp.categoria_ligacao IS DISTINCT FROM 'RESIDENCIAL')
+                             AS e_comercial,
+                           CASE
+                             WHEN lp.categoria_ligacao IS NULL THEN NULL
+                             WHEN lp.categoria_ligacao = 'RESIDENCIAL'
+                               THEN 'reclassificar_alta'
+                             ELSE 'ja_cadastrado'
+                           END AS cruz_flag
+                      FROM ligacao_poi lp
+                     WHERE lp.poi_id = p.id
+                     ORDER BY lp.confianca DESC NULLS LAST, lp.id
+                     LIMIT 1) lig ON TRUE
                 WHERE p.match_valido IS NOT FALSE
                   AND (%(sessao)s::text IS NULL OR p.sessao = %(sessao)s)
                   AND COALESCE(p.maps_lat, p.lat_origem) IS NOT NULL
@@ -1544,18 +1686,65 @@ def listar_pois(sessao: str | None = None):
                   -- 30 mil pontos" era sobre isto — o banco ja estava certo, o
                   -- mapa e que nao tinha sido avisado.
                   AND p.fundido_em IS NULL
-                  -- E o ponto sem NENHUMA ficha ativa nao tem o que mostrar: as
-                  -- fontes que o sustentavam foram desvinculadas. Ele fica no
-                  -- banco, auditavel, e some do mapa.
-                  AND EXISTS (SELECT 1 FROM vinculo_poi v
-                               WHERE v.poi_id = p.id AND v.estado = 'vinculado')""", {"sessao": sessao})
+                  -- DESVINCULADO SOME; QUEM NUNCA TEVE FICHA FICA. A diferenca
+                  -- entre as duas coisas custou o mapa inteiro.
+                  --
+                  -- A regra queria dizer: "o ponto cujas fontes foram todas
+                  -- DESVINCULADAS nao tem o que mostrar". Escrita como
+                  -- `EXISTS(estado = 'vinculado')`, ela diz outra coisa — "o
+                  -- ponto sem ficha nenhuma tambem nao" —, e as duas frases
+                  -- so sao equivalentes enquanto ALGUEM escrever as fichas.
+                  --
+                  -- Em 02/09/2026 a etapa 9 (cruzamento) saiu do pipeline por
+                  -- decisao do dono do produto: "nao esta errado, esta cedo".
+                  -- O proprio commit registrou "0 POIs fundidos, 0 vinculos —
+                  -- nunca chegou a rodar". `povoar_vinculo.py` continua no
+                  -- repositorio e ninguem mais o chama.
+                  --
+                  -- Medido em 04/09/2026: `vinculo_poi` com `n_tup_ins = 0` —
+                  -- a tabela nunca recebeu UMA linha —, 301.450 POIs no banco
+                  -- e `/api/pois` devolvendo ZERO. O mapa estava vazio, e o
+                  -- sintoma chegou como "clico no poligono e diz 0 POIs".
+                  --
+                  -- Agora o ponto so some quando TEVE ficha e ela foi desfeita.
+                  AND (NOT EXISTS (SELECT 1 FROM vinculo_poi v
+                                    WHERE v.poi_id = p.id)
+                       OR EXISTS (SELECT 1 FROM vinculo_poi v
+                                   WHERE v.poi_id = p.id
+                                     AND v.estado = 'vinculado'))
+                  -- RECORTE POR AREA, E NAO POR SESSAO.
+                  --
+                  -- "Ver no mapa" numa rodada filtrava por `pois.sessao`, o
+                  -- que mostra so o que AQUELA rodada criou — 5 pontos numa
+                  -- area que tem 54. O mapa ficava quase vazio e a ficha do
+                  -- poligono dizia "0 POIs do banco aqui dentro" com a area
+                  -- cheia. O operador quer ver a area, e nao o delta.
+                  AND (%(wkt)s::text IS NULL
+                       OR (p.pt_geo IS NOT NULL
+                           AND st_covers(st_geogfromtext(%(wkt)s), p.pt_geo)))
+                -- OS MAIS RECENTES PRIMEIRO quando o teto corta. Cortar por
+                -- ordem de `id` traria os POIs mais antigos da base — os que o
+                -- operador ja viu — e esconderia justamente o que acabou de ser
+                -- minerado.
+                ORDER BY p.id DESC
+                LIMIT %(limite)s""",
+                        {"sessao": sessao, "wkt": wkt,
+                         "limite": (TETO_MAPA if (wkt is None and not sessao)
+                                    else 200000)})
             cols = ["id", "nome", "categoria", "endereco", "telefone", "avaliacao",
                     "total_avaliacoes", "fonte", "fonte_dado", "status", "lat", "lng",
                     "tem_cnpj", "situacao_cadastral", "endereco_fonte", "tem_tel", "tem_sv", "tem_foto",
                     "multiorigem", "n_fontes", "cruz_flag", "num_ligacao",
+                    "e_comercial", "categoria_ligacao",
                     "veredito", "motivo", "recomendar_visita", "tipo_construcao", "revisar_manual",
                     "cidade", "place_id"]
-            return {"pois": [dict(zip(cols, row)) for row in cur.fetchall()]}
+            pois = [dict(zip(cols, row)) for row in cur.fetchall()]
+            # CORTE DECLARADO. Um mapa que mostra 8 mil de 301 mil sem dizer
+            # nada e pior que um mapa vazio: ele parece completo, e quem olhar
+            # vai concluir que a area nao tem o que procura.
+            cortado = (wkt is None and not sessao and len(pois) >= TETO_MAPA)
+            return {"pois": pois, "truncado": cortado,
+                    "teto": TETO_MAPA if cortado else None}
     finally:
         conn.close()
 
@@ -3541,13 +3730,37 @@ def job_atual(id_job: int | None = None):
     return job_status()
 
 
+@app.get("/api/runs/{id_job}/area")
+def area_da_run(id_job: int):
+    """O poligono que AQUELA rodada minerou, para o mapa poder ir ate ele.
+
+    A rodada congela uma copia do desenho em `rodada_<sessao>` — ver o
+    comentario em `POST /api/jobs`. E essa copia que vale, e nao o desenho que
+    sobrou na tela: entre uma coisa e outra o operador pode ter desenhado outras
+    tres areas, e "Ver no mapa" levaria para o lugar errado com toda a
+    confianca do mundo.
+    """
+    con = base_comum.conectar()
+    try:
+        with con.cursor() as cur:
+            cur.execute("select argumentos->>'area' from radar_comercial.job "
+                        "where id = %s", (id_job,))
+            r = cur.fetchone()
+    finally:
+        con.close()
+    nome = r[0] if r else None
+    poly = area_utils.carregar_area(nome) if nome else None
+    return {"id": id_job, "area": nome, "polygon": poly or []}
+
+
 @app.get("/api/runs")
 def listar_runs(limite: int = 30):
     """As rodadas da empresa, para reencontrar a sua depois de fechar a aba.
 
-    Vem com a contagem de POIs que cada uma produziu — que é o que responde
-    "esta rodada valeu a pena" sem abrir o mapa. A contagem sai de
-    `pois.sessao`, o mesmo carimbo que a rodada usa.
+    Vem com DUAS contagens, e a distincao importa: `pois` e quanto existe
+    hoje dentro da area daquela rodada, e `pois_novos` e quanto ela mesma
+    acrescentou. A primeira responde "o que tem ali"; a segunda, "esta rodada
+    trouxe alguma coisa" — e e quase sempre zero numa area ja minerada.
     """
     con = base_comum.conectar()
     try:
@@ -3556,8 +3769,48 @@ def listar_runs(limite: int = 30):
                 select j.id, j.tipo, j.estado, j.argumentos, j.progresso,
                        j.criado_em, j.iniciado_em, j.terminado_em, j.worker,
                        j.codigo_saida,
+                       -- QUANTOS PONTOS EXISTEM NA AREA DA RODADA, e nao
+                       -- quantos ela criou.
+                       --
+                       -- Contar por `pois.sessao` respondia "o que esta rodada
+                       -- acrescentou", que e quase sempre zero numa area ja
+                       -- minerada — e virava uma lista de rodadas marcando
+                       -- 0, 0, 0 ao lado de areas cheias de pontos. Medido em
+                       -- 04/09/2026 nas rodadas 21, 22 e 23: por sessao davam
+                       -- 4, 7 e 5; as areas delas tem 30, 36 e 54. Quem opera
+                       -- pergunta "quanto tem ali", nao "quanto entrou de novo
+                       -- no banco".
+                       --
+                       -- O ANEL GUARDADO E ABERTO — o ultimo vertice nao repete
+                       -- o primeiro —, e `st_makepolygon` exige fechado: daí o
+                       -- `st_addpoint(l, st_startpoint(l))`.
+                       --
+                       -- E LAT/LNG TROCAM DE LUGAR: o painel guarda `[lat,lng]`
+                       -- (ordem do Leaflet) e o PostGIS quer
+                       -- `st_makepoint(x,y)` = `(lng,lat)`. Invertido, o
+                       -- poligono cai no oceano ao sul da India e a contagem da
+                       -- zero sem erro nenhum.
+                       (select count(*)
+                          from radar_comercial.pois_completo p
+                         where p.fundido_em is null
+                           and p.match_valido is not false
+                           and p.pt_geo is not null
+                           and st_covers(
+                                 (select st_setsrid(st_makepolygon(
+                                           st_addpoint(l, st_startpoint(l))),
+                                         4326)::geography
+                                    from (select st_makeline(
+                                                   st_makepoint((e->>1)::float8,
+                                                                (e->>0)::float8)
+                                                   order by ord) as l
+                                            from radar_comercial.area_trabalho a,
+                                                 jsonb_array_elements(a.polygon)
+                                                   with ordinality t(e, ord)
+                                           where a.nome = j.argumentos->>'area'
+                                           group by a.id) z),
+                                 p.pt_geo)) as pois,
                        (select count(*) from radar_comercial.pois p
-                         where p.sessao = j.argumentos->>'sessao') as pois
+                         where p.sessao = j.argumentos->>'sessao') as pois_novos
                   from radar_comercial.job j
                  order by j.id desc limit %s
             """, (max(1, min(int(limite), 200)),))
@@ -3566,7 +3819,7 @@ def listar_runs(limite: int = 30):
         con.close()
     saida = []
     for (jid, tipo, estado, args, prog, criado, inic, term, worker,
-         cod, n_pois) in linhas:
+         cod, n_pois, n_novos) in linhas:
         prog = prog or {}
         saida.append({
             "id": jid, "modo": tipo, "estado": estado,
@@ -3576,6 +3829,10 @@ def listar_runs(limite: int = 30):
             "inicio": inic.isoformat(timespec="seconds") if inic else None,
             "fim": term.isoformat(timespec="seconds") if term else None,
             "worker": worker, "codigo_saida": cod, "pois": n_pois,
+            # OS DOIS NUMEROS VAO JUNTOS. O painel mostra o da area, que e o
+            # que o operador pergunta; o de novos continua util para saber se a
+            # rodada acrescentou algo, e aparece na dica ao passar o mouse.
+            "pois_novos": n_novos,
             "etapa": prog.get("etapa", 0), "etapas": prog.get("etapas", 0),
             "etapa_titulo": prog.get("titulo", ""),
         })

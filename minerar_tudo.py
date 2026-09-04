@@ -45,6 +45,8 @@ from __future__ import annotations
 
 import argparse
 import io
+import contextlib
+import zlib
 import os
 import subprocess
 import re
@@ -660,6 +662,56 @@ def _tolerante(cmd: list, nome: str) -> int:
 _ETAPAS_COM_FALHA: list = []
 
 
+@contextlib.contextmanager
+def _um_de_cada_vez(nome: str):
+    """So uma rodada da frota INTEIRA executa este trecho por vez.
+
+    `pg_advisory_lock` e do BANCO, e nao do processo — que e o unico lugar de
+    onde duas maquinas diferentes enxergam a mesma tranca. Um lock de arquivo
+    ou um semaforo em memoria serializaria os workers de um servidor so, e o
+    conflito que motivou isto acontece entre maquinas.
+
+    A tranca vive na CONEXAO: fechar a conexao a solta, inclusive quando o
+    processo morre. Nao ha tranca orfa para alguem ter de limpar depois.
+
+    Sem banco, segue sem tranca: o trecho protegido e tolerante por natureza, e
+    deixar de rodar a etapa por causa da tranca seria pior que o conflito que
+    ela evita.
+    """
+    import time as _t
+    try:
+        import base_comum as _bc
+        con = _bc.conectar()
+    except Exception as erro:                                  # noqa: BLE001
+        _log("  (sem tranca de fila: %s) — seguindo assim mesmo"
+             % type(erro).__name__)
+        yield
+        return
+    chave = zlib.crc32(nome.encode("utf-8")) - 2 ** 31
+    inicio = _t.time()
+    try:
+        with con.cursor() as cur:
+            # Primeiro sem esperar, so para saber se HOUVE espera — e poder
+            # dize-lo. Uma etapa que fica cinco minutos muda sem explicacao
+            # parece travada, e alguem vai matar a rodada achando que travou.
+            cur.execute("select pg_try_advisory_lock(%s)", (chave,))
+            if not cur.fetchone()[0]:
+                _log("  outra rodada esta em '%s' — esperando a vez" % nome)
+                cur.execute("select pg_advisory_lock(%s)", (chave,))
+                _log("  minha vez em '%s' (esperei %d s)"
+                     % (nome, int(_t.time() - inicio)))
+        con.commit()
+        yield
+    finally:
+        try:
+            with con.cursor() as cur:
+                cur.execute("select pg_advisory_unlock(%s)", (chave,))
+            con.commit()
+        except Exception:                                      # noqa: BLE001
+            pass
+        con.close()
+
+
 def _tolerante_i9(argumentos: list, nome: str) -> int:
     """O NOME FICOU, A VIAGEM SAIU. Roda local, como todo o resto.
 
@@ -984,8 +1036,31 @@ def main(argv=None) -> int:
         # loja — saiu do pipeline a pedido do dono do produto: ele alcança só o
         # que a base já tem, e nesta fase nenhuma etapa compara uma base com as
         # outras.
-        rc = _tolerante_i9(["extrair_ifood.py", "--area", a.area, "--oculto"],
-                           "iFood — descobrir as lojas da área")
+        # UMA SESSAO DE iFOOD POR VEZ EM TODA A FROTA, e o motivo esta medido.
+        #
+        # Em 04/09/2026 tres rodadas cairam juntas na fila. Os horarios:
+        #
+        #     #22  20:16:17  abre sessao          →  403 · 0 lojas · 3,2 min
+        #     #23  20:16:23  abre sessao (6 s)    →  403 · 0 lojas · 3,2 min
+        #     #21  20:17:06  abre sessao (49 s)   →  485 lojas · 0,5 min
+        #
+        # Quem abriu sozinha passou; as duas que abriram com seis segundos de
+        # diferenca tomaram 403 no proprio `/inicio` e ainda posicionaram a
+        # praca na cidade errada ("Proximo de Estancia Velha", a 30 km da area).
+        #
+        # Isto NAO existia antes da fila: so havia uma rodada por vez, entao
+        # nunca houve duas sessoes simultaneas para colidir. O paralelismo que
+        # a fila trouxe e desejado em tudo o mais — cada rodada tem os seus
+        # navegadores, os seus proxies e a sua area. O iFood e a excecao,
+        # porque o que colide nao e recurso local: e a sessao do outro lado.
+        #
+        # O ESPERADO E ESPERAR. A descoberta leva de meio minuto a tres; tres
+        # rodadas em fila custam menos que duas refeitas. Se o processo morrer
+        # segurando a tranca, a conexao cai com ele e o Postgres a solta — nao
+        # ha tranca orfa a limpar.
+        with _um_de_cada_vez("ifood-descoberta"):
+            rc = _tolerante_i9(["extrair_ifood.py", "--area", a.area, "--oculto"],
+                               "iFood — descobrir as lojas da área")
         if rc == 0:
             # O detalhe é HTTP puro e sai de graça: `/v1/merchants/{id}/extra`,
             # sem token e sem navegador. Só depois dele é que sobra trabalho
