@@ -361,24 +361,32 @@ h1{
 
 <footer class="rodape">
   <div class="env">
-    <h2>Duas coisas que este mapa não esconde</h2>
+    <h2>O que mudou, e o que continua aberto</h2>
     <div class="aviso">
-      <p><b>A <code>pois</code> ainda tem colunas que já mudaram de casa.</b>
-      As marcadas com <code>→ maps_data</code> e <code>→ cadastur_data</code>
-      são gravadas nos dois lugares hoje. A escrita dupla é de propósito e é
-      temporária: o painel e a API ainda leem da <code>pois</code>, e apagar
-      antes de migrar os leitores deixaria a ficha do POI sem nota e sem
-      horário. Elas caem na fase seguinte.</p>
+      <p><b>A <code>pois</code> saiu de 70 colunas para 53.</b>
+      Seis nunca guardaram nada e ninguém as lia; onze mudaram para a tabela da
+      sua fonte, e a carga foi conferida linha a linha antes da remoção — zero
+      perda em todas. Quem precisa do formato chapado de antes lê a view
+      <code>pois_completo</code>, que junta a <code>pois</code> com
+      <code>maps_data</code>, <code>cadastur_data</code> e
+      <code>receita_data</code>. É por ela que o painel desenha a ficha.</p>
     </div>
     <div class="aviso">
-      <p><b>195.983 POIs não sabem de qual fonte vieram.</b>
-      Entraram como <code>fonte='estadual'</code>, que é a soma de Overture,
-      Foursquare e OSM. O <code>origem_estadual.py</code> é quem responde isso
-      lendo o parquet — rodou em Canoas e parou. Enquanto não rodar no estado
-      inteiro, eles ficam fora das três tabelas de fonte.</p>
+      <p><b><code>place_id</code> ficou, e não é descuido.</b>
+      Ela parece campo do Maps e não é: é a chave de deduplicação do ingestor,
+      para qualquer fonte — nos POIs estaduais vale
+      <code>estadual:&lt;cluster_id&gt;</code>. Tirá-la quebraria a
+      deduplicação de tudo.</p>
+    </div>
+    <div class="aviso">
+      <p><b>Dezessete colunas vazias continuam na tabela.</b>
+      Elas nunca guardaram nada, mas o código vivo as menciona — de
+      <code>similaridade</code> a <code>streetview_path</code>. Cair antes de
+      editar esses arquivos quebraria consulta em produção, e o ganho é
+      cosmético perto do risco.</p>
     </div>
     <p style="margin-top:26px">
-      Gerado a partir do catálogo do próprio Postgres em 03/09/2026 —
+      Gerado a partir do catálogo do próprio Postgres —
       nenhuma coluna foi transcrita à mão.
     </p>
   </div>

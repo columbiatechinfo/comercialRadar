@@ -215,11 +215,11 @@ h1{
     </p>
     <div class="placar">
       <div><b>43</b><span>tabelas</span></div>
-      <div><b>737</b><span>colunas</span></div>
+      <div><b>784</b><span>colunas</span></div>
       <div><b>39</b><span>chaves estrangeiras</span></div>
       <div><b>2.516.709</b><span>ligações da Corsan</span></div>
       <div><b>301.297</b><span>POIs</span></div>
-      <div><b>63.404</b><span>vínculos</span></div>
+      <div><b>63.417</b><span>vínculos</span></div>
     </div>
   </div>
 </header>
@@ -388,7 +388,7 @@ h1{
     <article class="tabela" data-fam="eixo" id="t-ligacao_poi">
       <header>
         <h3>ligacao_poi</h3>
-        <span class="qtd">63.404 linhas</span>
+        <span class="qtd">63.417 linhas</span>
       </header>
       <p class="oq">O vinculo. Cada par ligacao-POI com os cinco criterios separados, para quem le ver O QUE bateu em vez de so um numero.</p>
       <p class="liga">aponta para <b>tile_captura</b></p>
@@ -411,8 +411,8 @@ h1{
       <p class="oq">O estabelecimento. Tinha 70 colunas guardando tres coisas diferentes; 22 delas nunca guardaram nada.</p>
       
       <ul class="cols"><li class="col"><code>id</code><span class="tipo">bigint</span></li><li class="col"><code>id_empresa</code><span class="tipo">uuid</span></li><li class="col"><code>categoria</code><span class="tipo">text</span></li><li class="col"><code>cidade</code><span class="tipo">text</span></li><li class="col"><code>cnpj</code><span class="tipo">varchar</span></li><li class="col"><code>email</code><span class="tipo">text</span></li><li class="col"><code>endereco</code><span class="tipo">text</span></li><li class="col"><code>fonte</code><span class="tipo">text</span></li><li class="col"><code>fonte_dado</code><span class="tipo">text</span></li><li class="col"><code>instagram</code><span class="tipo">text</span></li><li class="col"><code>nome</code><span class="tipo">text</span></li><li class="col col--mudou"><code>place_id</code><span class="tipo">text</span><span class="nota">→ maps_data</span></li><li class="col"><code>sessao</code><span class="tipo">text</span></li><li class="col"><code>status</code><span class="tipo">text</span></li><li class="col"><code>telefone</code><span class="tipo">text</span></li><li class="col"><code>uf</code><span class="tipo">text</span></li><li class="col"><code>website</code><span class="tipo">text</span></li><li class="col"><code>id_base</code><span class="tipo">bigint</span></li><li class="col"><code>id_ligacao_base</code><span class="tipo">text</span></li><li class="col"><code>pt_geo</code><span class="tipo">USER-DEFINED</span></li></ul>
-      <p class="resto">+ 50 colunas</p>
-      <footer><span>70 colunas</span><span>640 MB</span></footer>
+      <p class="resto">+ 33 colunas</p>
+      <footer><span>53 colunas</span><span>640 MB</span></footer>
     </article></div>
   </section>
   <section class="familia" data-fam="fonte">
@@ -435,35 +435,35 @@ h1{
     <article class="tabela" data-fam="fonte" id="t-osm_data">
       <header>
         <h3>osm_data</h3>
-        <span class="qtd">1.196 linhas</span>
+        <span class="qtd">13.204 linhas</span>
       </header>
       <p class="oq">Id do objeto no OpenStreetMap e as tags — que nao tem esquema fixo, por isso `jsonb`.</p>
       <p class="liga">aponta para <b>pois</b></p>
       <ul class="cols"><li class="col"><code>poi_id</code><span class="tipo">bigint</span></li><li class="col"><code>id_empresa</code><span class="tipo">uuid</span></li><li class="col"><code>osm_id</code><span class="tipo">text</span></li><li class="col"><code>osm_tipo</code><span class="tipo">text</span></li><li class="col"><code>cluster_id</code><span class="tipo">text</span></li><li class="col"><code>amenity</code><span class="tipo">text</span></li><li class="col"><code>shop</code><span class="tipo">text</span></li><li class="col"><code>marca</code><span class="tipo">text</span></li><li class="col"><code>tags</code><span class="tipo">jsonb</span></li><li class="col"><code>visto_em</code><span class="tipo">timestamptz</span></li></ul>
       
-      <footer><span>10 colunas</span><span>424 kB</span></footer>
+      <footer><span>10 colunas</span><span>5968 kB</span></footer>
     </article>
     <article class="tabela" data-fam="fonte" id="t-overture_data">
       <header>
         <h3>overture_data</h3>
-        <span class="qtd">14.596 linhas</span>
+        <span class="qtd">95.980 linhas</span>
       </header>
       <p class="oq">Id do Overture, categoria hierarquica, confianca propria e quais bases contribuiram para o ponto.</p>
       <p class="liga">aponta para <b>pois</b></p>
       <ul class="cols"><li class="col"><code>poi_id</code><span class="tipo">bigint</span></li><li class="col"><code>id_empresa</code><span class="tipo">uuid</span></li><li class="col"><code>overture_id</code><span class="tipo">text</span></li><li class="col"><code>cluster_id</code><span class="tipo">text</span></li><li class="col"><code>categoria_principal</code><span class="tipo">text</span></li><li class="col"><code>categorias</code><span class="tipo">jsonb</span></li><li class="col"><code>confianca</code><span class="tipo">real</span></li><li class="col"><code>fontes</code><span class="tipo">jsonb</span></li><li class="col"><code>visto_em</code><span class="tipo">timestamptz</span></li></ul>
       
-      <footer><span>9 colunas</span><span>4552 kB</span></footer>
+      <footer><span>9 colunas</span><span>41 MB</span></footer>
     </article>
     <article class="tabela" data-fam="fonte" id="t-foursquare_data">
       <header>
         <h3>foursquare_data</h3>
-        <span class="qtd">11.735 linhas</span>
+        <span class="qtd">114.326 linhas</span>
       </header>
       <p class="oq">Id do Foursquare, categorias e popularidade. Forte em varejo e restauracao.</p>
       <p class="liga">aponta para <b>pois</b></p>
       <ul class="cols"><li class="col"><code>poi_id</code><span class="tipo">bigint</span></li><li class="col"><code>id_empresa</code><span class="tipo">uuid</span></li><li class="col"><code>fsq_id</code><span class="tipo">text</span></li><li class="col"><code>cluster_id</code><span class="tipo">text</span></li><li class="col"><code>categoria_principal</code><span class="tipo">text</span></li><li class="col"><code>categorias</code><span class="tipo">jsonb</span></li><li class="col"><code>popularidade</code><span class="tipo">real</span></li><li class="col"><code>tags</code><span class="tipo">jsonb</span></li><li class="col"><code>visto_em</code><span class="tipo">timestamptz</span></li></ul>
       
-      <footer><span>9 colunas</span><span>3416 kB</span></footer>
+      <footer><span>9 colunas</span><span>42 MB</span></footer>
     </article>
     <article class="tabela tabela--vazia" data-fam="fonte" id="t-receita_data">
       <header>
@@ -474,7 +474,7 @@ h1{
       <p class="liga">aponta para <b>pois</b></p>
       <ul class="cols"><li class="col"><code>poi_id</code><span class="tipo">bigint</span></li><li class="col"><code>id_empresa</code><span class="tipo">uuid</span></li><li class="col"><code>cnpj</code><span class="tipo">text</span></li><li class="col"><code>cnpj_conf</code><span class="tipo">text</span></li><li class="col"><code>razao_social</code><span class="tipo">text</span></li><li class="col"><code>nome_fantasia</code><span class="tipo">text</span></li><li class="col"><code>cnae</code><span class="tipo">text</span></li><li class="col"><code>natureza_juridica</code><span class="tipo">text</span></li><li class="col"><code>situacao_cadastral</code><span class="tipo">text</span></li><li class="col"><code>socios</code><span class="tipo">jsonb</span></li><li class="col"><code>bruto</code><span class="tipo">jsonb</span></li></ul>
       
-      <footer><span>11 colunas</span><span>24 kB</span></footer>
+      <footer><span>11 colunas</span><span>48 kB</span></footer>
     </article>
     <article class="tabela" data-fam="fonte" id="t-cadastur_data">
       <header>
@@ -541,7 +541,7 @@ h1{
     <article class="tabela" data-fam="transversal" id="t-comentarios">
       <header>
         <h3>comentarios</h3>
-        <span class="qtd">2.161 linhas</span>
+        <span class="qtd">2.163 linhas</span>
       </header>
       <p class="oq">As avaliacoes de todas as fontes. Ganhou `fonte` em 03/09/2026; antes nao havia como saber de quem era a linha.</p>
       
@@ -552,7 +552,7 @@ h1{
     <article class="tabela" data-fam="transversal" id="t-images_urls">
       <header>
         <h3>images_urls</h3>
-        <span class="qtd">2.595 linhas</span>
+        <span class="qtd">2.599 linhas</span>
       </header>
       <p class="oq">As fotos do estabelecimento, de qualquer fonte. Guarda URL, caminho no Storage e os bytes.</p>
       
@@ -593,16 +593,16 @@ h1{
       
       <footer><span>19 colunas</span><span>24 kB</span></footer>
     </article>
-    <article class="tabela tabela--vazia" data-fam="transversal" id="t-tile_captura">
+    <article class="tabela" data-fam="transversal" id="t-tile_captura">
       <header>
         <h3>tile_captura</h3>
-        <span class="qtd qtd--zero">vazia</span>
+        <span class="qtd">5 linhas</span>
       </header>
       <p class="oq">Os tiles de satelite, presos a RUN e a caixa geografica — nao a um POI, porque um tile serve a dezenas. E o que o passo dos telhados vai ler. Guarda caminho, nao bytes.</p>
       
       <ul class="cols"><li class="col"><code>id</code><span class="tipo">bigint</span></li><li class="col"><code>id_empresa</code><span class="tipo">uuid</span></li><li class="col"><code>sessao</code><span class="tipo">text</span></li><li class="col"><code>tipo</code><span class="tipo">text</span></li><li class="col"><code>lat</code><span class="tipo">float8</span></li><li class="col"><code>lng</code><span class="tipo">float8</span></li><li class="col"><code>zoom</code><span class="tipo">integer</span></li><li class="col"><code>largura_px</code><span class="tipo">integer</span></li><li class="col"><code>altura_px</code><span class="tipo">integer</span></li><li class="col"><code>lat_min</code><span class="tipo">float8</span></li><li class="col"><code>lat_max</code><span class="tipo">float8</span></li><li class="col"><code>lng_min</code><span class="tipo">float8</span></li><li class="col"><code>lng_max</code><span class="tipo">float8</span></li><li class="col"><code>storage_path</code><span class="tipo">text</span></li><li class="col"><code>url</code><span class="tipo">text</span></li><li class="col"><code>bytes_tam</code><span class="tipo">bigint</span></li><li class="col"><code>capturado_em</code><span class="tipo">timestamptz</span></li></ul>
       
-      <footer><span>17 colunas</span><span>32 kB</span></footer>
+      <footer><span>17 colunas</span><span>64 kB</span></footer>
     </article></div>
   </section>
   <section class="familia" data-fam="endereco">
@@ -883,24 +883,32 @@ h1{
 
 <footer class="rodape">
   <div class="env">
-    <h2>Duas coisas que este mapa não esconde</h2>
+    <h2>O que mudou, e o que continua aberto</h2>
     <div class="aviso">
-      <p><b>A <code>pois</code> ainda tem colunas que já mudaram de casa.</b>
-      As marcadas com <code>→ maps_data</code> e <code>→ cadastur_data</code>
-      são gravadas nos dois lugares hoje. A escrita dupla é de propósito e é
-      temporária: o painel e a API ainda leem da <code>pois</code>, e apagar
-      antes de migrar os leitores deixaria a ficha do POI sem nota e sem
-      horário. Elas caem na fase seguinte.</p>
+      <p><b>A <code>pois</code> saiu de 70 colunas para 53.</b>
+      Seis nunca guardaram nada e ninguém as lia; onze mudaram para a tabela da
+      sua fonte, e a carga foi conferida linha a linha antes da remoção — zero
+      perda em todas. Quem precisa do formato chapado de antes lê a view
+      <code>pois_completo</code>, que junta a <code>pois</code> com
+      <code>maps_data</code>, <code>cadastur_data</code> e
+      <code>receita_data</code>. É por ela que o painel desenha a ficha.</p>
     </div>
     <div class="aviso">
-      <p><b>195.983 POIs não sabem de qual fonte vieram.</b>
-      Entraram como <code>fonte='estadual'</code>, que é a soma de Overture,
-      Foursquare e OSM. O <code>origem_estadual.py</code> é quem responde isso
-      lendo o parquet — rodou em Canoas e parou. Enquanto não rodar no estado
-      inteiro, eles ficam fora das três tabelas de fonte.</p>
+      <p><b><code>place_id</code> ficou, e não é descuido.</b>
+      Ela parece campo do Maps e não é: é a chave de deduplicação do ingestor,
+      para qualquer fonte — nos POIs estaduais vale
+      <code>estadual:&lt;cluster_id&gt;</code>. Tirá-la quebraria a
+      deduplicação de tudo.</p>
+    </div>
+    <div class="aviso">
+      <p><b>Dezessete colunas vazias continuam na tabela.</b>
+      Elas nunca guardaram nada, mas o código vivo as menciona — de
+      <code>similaridade</code> a <code>streetview_path</code>. Cair antes de
+      editar esses arquivos quebraria consulta em produção, e o ganho é
+      cosmético perto do risco.</p>
     </div>
     <p style="margin-top:26px">
-      Gerado a partir do catálogo do próprio Postgres em 03/09/2026 —
+      Gerado a partir do catálogo do próprio Postgres —
       nenhuma coluna foi transcrita à mão.
     </p>
   </div>
