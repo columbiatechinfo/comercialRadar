@@ -1306,6 +1306,37 @@ def main(argv=None) -> int:
     else:
         _log("  pulado — sem base do cliente não há ligação a suspeitar")
 
+    # ── os links do POI, refeitos ────────────────────────────────────────
+    #
+    # NÃO É ETAPA, é fecho de escrita. A derivação vive em
+    # `radar_comercial.recarregar_links()` (migração 0065) e custa um segundo:
+    # ela transforma o `maps_url`, o slug do iFood, o id do Airbnb e o
+    # `website` do estabelecimento nas URLs que a captura de página e a tela do
+    # POI consomem.
+    #
+    # AQUI E NÃO ANTES porque só agora existem todos os quatro insumos: a etapa
+    # 4 acabou de gravar `maps_data`, a 5 o `ifood_merchant`, a 6 o
+    # `airbnb_anuncio`, e a 8 fundiu duplicatas — derivar antes da fusão criaria
+    # link apontando para POI que deixou de existir.
+    #
+    # É idempotente: numa área já minerada devolve zero em tudo.
+    try:
+        import base_comum as _bc
+        _c = _bc.conectar()
+        with _c.cursor() as _k:
+            _k.execute("select fonte, novos from radar_comercial.recarregar_links()")
+            _novos = _k.fetchall()
+        _c.commit()
+        _c.close()
+        _tot = sum(n for _, n in _novos)
+        _log("  links do POI: %d novo(s) — %s"
+             % (_tot, ", ".join("%s %d" % (f, n) for f, n in _novos)))
+    except Exception as _e:                                    # noqa: BLE001
+        # NÃO DERRUBA A CORRIDA. Sem link o painel mostra o POI do mesmo jeito;
+        # o que se perde é o botão "ver o anúncio" e a captura de página.
+        _log("  ⚠️  links do POI não recarregados — %s: %s"
+             % (type(_e).__name__, str(_e)[:70]))
+
     _log("─" * 62)
     _log("✅ Mineração completa. Filtre por 🔗 Multiorigem no mapa para revisar")
     _log("   os pontos que passaram a ser sustentados por mais de uma base.")

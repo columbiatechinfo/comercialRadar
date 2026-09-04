@@ -108,7 +108,20 @@ def metadados_pano(lat, lng, raio: int = RAIO_PANO_M) -> dict | bool | None:
     (sem chave, erro de rede, cota). None é diferente de False de propósito:
     quem não sabe não carimba 'NA'.
     """
-    chave = (os.environ.get("MAPS_SERVER_KEY") or "").strip()
+    # A CHAVE DE SERVIDOR, E A DO JS COMO QUEDA.
+    #
+    # `MAPS_SERVER_KEY` nunca existiu neste `.env` — so ha `MAPS_JS_KEY` —, e
+    # por isso esta funcao devolvia None para TUDO desde sempre. O efeito era
+    # silencioso e caro: `metadados_pano` respondendo None significa "nao deu
+    # para saber", a captura desiste, e `streetview_imgs` ficou com ZERO linhas
+    # sem ninguem notar que a causa era uma variavel de ambiente.
+    #
+    # A chave do JS foi testada contra este endpoint em 04/09/2026 e e aceita:
+    # a resposta veio `ZERO_RESULTS` (nao ha panorama naquele ponto), e nao
+    # `REQUEST_DENIED`. Uma chave restrita por referenciador daria REQUEST_DENIED
+    # — e o codigo trata isso como None, que e o comportamento certo.
+    chave = ((os.environ.get("MAPS_SERVER_KEY") or "").strip()
+             or (os.environ.get("MAPS_JS_KEY") or "").strip())
     if not (chave and lat is not None and lng is not None):
         return None
     # `source=outdoor` — a correção que fez a captura parar de fotografar o
