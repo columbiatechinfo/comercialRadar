@@ -1248,6 +1248,22 @@ def categorias_marcar(body: dict = Body(...)):
     return {"mudadas": mudadas, "marcadas": n, "pois_marcados": int(p)}
 
 
+@app.post("/api/area/reuso")
+def area_reuso_poligono(body: dict):
+    """O mesmo do GET, para um poligono que ainda NAO foi salvo.
+
+    Existe por causa das varias areas por vez: o painel acumula os desenhos na
+    tela e so grava um deles como `area_atual`. Sem esta porta, a pergunta
+    "reaproveitar o que ja existe?" so saberia responder sobre o ultimo — e
+    quem desenhou tres areas decidiria pelas tres olhando o numero de uma.
+    """
+    poly = body.get("poligono") or body.get("polygon") or []
+    if len(poly) < 3:
+        return {"area": "", "existe": False, "por_empresa": [],
+                "reaproveitaveis": 0}
+    return _reuso_do_poligono(poly, "")
+
+
 @app.get("/api/area/reuso")
 def area_reuso(area: str = ""):
     """O que JA foi extraido nesta area, por empresa, e de quando.
@@ -1265,6 +1281,11 @@ def area_reuso(area: str = ""):
     if not poly:
         return {"area": area or area_utils.AREA_PADRAO, "existe": False,
                 "por_empresa": [], "reaproveitaveis": 0}
+    return _reuso_do_poligono(poly, area or area_utils.AREA_PADRAO)
+
+
+def _reuso_do_poligono(poly: list, rotulo: str) -> dict:
+    """O corpo do calculo, sem saber de onde o poligono veio."""
 
     lats = [p[0] if isinstance(p, (list, tuple)) else p["lat"] for p in poly]
     lngs = [p[1] if isinstance(p, (list, tuple)) else p["lng"] for p in poly]
@@ -1294,7 +1315,7 @@ def area_reuso(area: str = ""):
 
     minha = next((e for e in por_empresa if e["e_minha"]), None)
     return {
-        "area": area or area_utils.AREA_PADRAO,
+        "area": rotulo,
         "existe": True,
         "por_empresa": por_empresa,
         "ja_tenho": minha["pois"] if minha else 0,
@@ -2862,7 +2883,21 @@ def iniciar_job(body: dict):
                          "custa por chamada. Recarregue a página."},
                 status_code=410)
 
-        poly = area_utils.carregar_area()
+        # O POLIGONO PODE VIR NO PEDIDO, e nao so da area salva no banco.
+        #
+        # `area_atual` e UMA LINHA SO: desenhar de novo a sobrescreve. Enquanto
+        # o painel desenhava uma area por vez isso bastava. Para enfileirar tres
+        # rodadas de tres desenhos diferentes, nao basta — as tres apontariam
+        # para o mesmo nome, e as tres minerariam o ULTIMO desenho.
+        #
+        # ACONTECEU EM 04/09/2026. O operador desenhou a area A, mandou extrair,
+        # desenhou a area B e mandou extrair de novo. As duas rodadas mineraram
+        # B; a segunda achou tudo ja gravado pela primeira e marcou zero POI. A
+        # tela nao tinha como avisar: do ponto de vista dela as duas pediram
+        # "area_atual", e as duas receberam exatamente isso.
+        pedido = op.get("poligono") or op.get("polygon")
+        poly = (pedido if pedido and len(pedido) >= 3
+                else area_utils.carregar_area())
         # `base_estadual` entra na mesma exceção do Cadastur, e pelo mesmo
         # motivo: ela trabalha por UF, que é a unidade em que as bases públicas
         # são publicadas. Exigir um retângulo desenhado para produzir a base do
@@ -2893,7 +2928,22 @@ def iniciar_job(body: dict):
 
         elif modo == "mineracao":
             sessao = re.sub(r"[^\w-]", "_", str(op.get("sessao") or "mineracao"))
-            sessao = f"{sessao}_{datetime.now().strftime('%Y%m%d_%H%M')}"
+            # O MINUTO NAO BASTA, e isso quebrou na primeira vez que o
+            # painel enfileirou tres areas de uma vez (04/09/2026).
+            #
+            # A sessao nomeia DUAS coisas: os POIs que a rodada cria
+            # (`pois.sessao`) e a copia congelada do poligono
+            # (`rodada_<sessao>`). Tres rodadas disparadas no mesmo minuto
+            # ganhavam o mesmo nome — e a terceira SOBRESCREVIA a area das duas
+            # primeiras. As tres minerariam o terceiro desenho, que e
+            # exatamente o defeito que congelar a area veio consertar, so que
+            # um nivel abaixo.
+            #
+            # Segundos + quatro digitos de acaso: legivel na tela e unico mesmo
+            # com o lote inteiro caindo no mesmo segundo.
+            sessao = "%s_%s_%s" % (sessao,
+                                   datetime.now().strftime("%Y%m%d_%H%M%S"),
+                                   secrets.token_hex(2))
 
             # ── A MINERAÇÃO VAI PARA A FILA, e sai daqui ──────────────────
             #
@@ -2907,8 +2957,31 @@ def iniciar_job(body: dict):
             # worker os traduz para `--chave valor`. Guardar o dicionário e não
             # a string é o que permite reler depois o que a rodada pediu — e
             # `argumentos->>'sessao'` é o que liga o job aos POIs que ele criou.
+            # A RODADA LEVA UMA COPIA DO DESENHO, e nao um ponteiro para ele.
+            #
+            # Congelar aqui e o que torna a fila confiavel. O worker so le a
+            # area quando pega o job — minutos ou horas depois —, e cada etapa
+            # do pipeline a le OUTRA VEZ, no seu proprio subprocesso. Com o
+            # nome compartilhado, um desenho novo no meio do caminho mudava a
+            # area de uma rodada JA EM CURSO, sem nada aparecer no log.
+            #
+            # O nome carrega a sessao, entao a copia tambem serve de registro:
+            # da para abrir depois o poligono exato que aquela rodada minerou,
+            # em vez de deduzir pelo desenho que sobrou na tela.
+            nome_area = "rodada_%s" % sessao
+            tenant_area, erro_area = _tenant_para_gravar()
+            if erro_area:
+                return JSONResponse({"erro": erro_area}, status_code=409)
+            try:
+                area_utils.salvar_area(poly, nome_area, tenant=tenant_area)
+            except Exception as e:                             # noqa: BLE001
+                return JSONResponse(
+                    {"erro": "nao consegui congelar a area da rodada — %s: %s"
+                             % (type(e).__name__, str(e).splitlines()[0][:160])},
+                    status_code=500)
+
             argumentos = {
-                "area": area_utils.AREA_PADRAO,
+                "area": nome_area,
                 "sessao": sessao,
                 "zoom": int(op.get("zoom", 19)),
                 "workers": int(op.get("workers", 10)),

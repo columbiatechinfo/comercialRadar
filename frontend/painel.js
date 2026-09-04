@@ -130,11 +130,27 @@
     // Qual rodada o mapa e a barra estao seguindo. Nulo = a base inteira.
     runSeguida: null,
     desenhando: false, pts: [], temArea: false, anel: null,
+    // OS DESENHOS QUE AINDA NAO VIRARAM RODADA.
+    //
+    // Antes so existia `anel` — UM poligono, o ultimo. Quem queria minerar
+    // tres quadras tinha de desenhar, extrair, desenhar de novo, extrair de
+    // novo; e como o desenho seguinte sobrescrevia a area salva no banco, a
+    // rodada ja enfileirada passava a apontar para a area NOVA. Duas rodadas,
+    // um poligono, e a segunda gravando zero.
+    //
+    // Agora o modo desenho nao se desliga ao fechar um poligono: ele se
+    // acumula aqui, e a extracao enfileira UMA RODADA POR AREA.
+    areasPendentes: [],
     basemap: 0, pois: [], stats: null, cadastro: null, eu: null, empresa: null,
     filtros: { origem: [], atributos: [], ia: [], construcao: [] },
   };
 
-  let mapa, camadaDesenho, camadaPois, tile;
+  // DUAS CAMADAS, E NAO UMA. `camadaDesenho` e apagada a cada clique para
+  // redesenhar a linha tracejada em andamento; se os poligonos ja concluidos
+  // morassem nela, o segundo vertice do desenho seguinte apagaria o primeiro
+  // desenho da tela. `camadaAreas` guarda os concluidos e ninguem a limpa sem
+  // querer.
+  let mapa, camadaDesenho, camadaAreas, camadaPois, tile;
 
   // ── utilidades ──────────────────────────────────────────────────────────
 
@@ -201,6 +217,7 @@
     });
     mapa.addLayer(camadaPois);
     camadaDesenho = L.layerGroup().addTo(mapa);
+    camadaAreas = L.layerGroup().addTo(mapa);
     const rot = $("basemap-nome");
     if (rot) rot.textContent = BASES[estado.basemap].nome;
 
@@ -394,7 +411,7 @@
     if (!estado.desenhando) return;
     estado.pts.push([e.latlng.lat, e.latlng.lng]);
     redesenharTemporario();
-    $("n-vertices").textContent = estado.pts.length + " vértices";
+    rotuloDesenho();
     const pronto = estado.pts.length >= 3;
     const b = $("btn-concluir");
     b.disabled = !pronto;
@@ -415,6 +432,13 @@
     }).addTo(camadaDesenho));
   }
 
+  function rotuloDesenho() {
+    const n = estado.areasPendentes.length;
+    $("n-vertices").textContent =
+      (n ? n + (n === 1 ? " área pronta" : " áreas prontas") + " · " : "") +
+      estado.pts.length + " vértices";
+  }
+
   async function concluirDesenho() {
     if (estado.pts.length < 3) return;
     const pts = estado.pts.slice();
@@ -422,9 +446,13 @@
     const poly = ligarFichaDaArea(L.polygon(pts, {
       pane: "paneArea", className: "area-poly",
       color: INDIGO, weight: 2, fillColor: INDIGO, fillOpacity: 0.12,
-    })).addTo(camadaDesenho);
-    mapa.fitBounds(poly.getBounds(), { padding: [40, 40] });
-    if (mapa.doubleClickZoom) mapa.doubleClickZoom.enable();
+    })).addTo(camadaAreas);
+    // SEM ENQUADRAR ENQUANTO SE DESENHA. Enquadrar a area recem-fechada
+    // arrastava o mapa para longe de onde a mao estava — e quem ia desenhar a
+    // area vizinha tinha de se reencontrar no mapa a cada poligono.
+    if (!estado.desenhando) {
+      mapa.fitBounds(poly.getBounds(), { padding: [40, 40] });
+    }
 
     // A ÁREA VAI PARA O BANCO, e não fica só na tela. É ela que o
     // `minerar_tudo` lê — desenhar sem gravar produziria uma extração da área
@@ -435,12 +463,18 @@
       body: JSON.stringify({ polygon: pts.map(([la, ln]) => [la, ln]) }),
     }).catch(() => {});
 
-    estado.desenhando = false;
+    // O MODO CONTINUA LIGADO. Era aqui que ele se desligava, e era isso que
+    // obrigava a desmarcar e marcar "Desenhar" entre uma area e outra — e cada
+    // ida e volta sobrescrevia a area salva, que e a raiz do defeito de cima.
+    estado.areasPendentes.push(pts);
     estado.temArea = true;
     estado.anel = pts;
     estado.pts = [];
-    $("faixa-desenho").classList.add("hidden");
-    $("faixa-desenho").classList.remove("flex");
+    rotuloDesenho();
+    $("btn-concluir").disabled = true;
+    $("btn-concluir").className =
+      "cursor-not-allowed rounded-full bg-white/10 px-3 py-1 text-xs " +
+      "font-semibold text-white/40";
     pintarEstado();
     await carregarBases();
     await carregarTudo();
@@ -541,6 +575,15 @@
     poly.bindPopup("", { className: "area-pop-wrap", maxWidth: 340 });
     poly.on("click", (e) => {
       L.DomEvent.stopPropagation(e);
+      // A AREA JA PRONTA NAO ROUBA O CLIQUE DE QUEM AINDA ESTA DESENHANDO.
+      //
+      // O poligono e interativo — clicar nele abre a ficha com os numeros da
+      // area. So que agora o modo desenho continua ligado depois de concluir
+      // uma area, e a area concluida fica POR CIMA do mapa: o primeiro vertice
+      // da area seguinte caia nela, abria a ficha e nao virava vertice
+      // nenhum. Quem desenhasse a segunda area em cima da primeira ficaria
+      // clicando sem nada acontecer.
+      if (estado.desenhando) { cliqueNoMapa(e); return; }
       poly.setPopupContent(htmlFichaArea(poly));
       poly.openPopup(e.latlng);
     });
@@ -1240,7 +1283,9 @@
     $("status-dot").className = "size-2 rounded-full " + (pronto ? "bg-green-600" : "bg-gray-400");
     $("status-txt").textContent = estado.cidade
       ? "Município selecionado — " + estado.cidade
-      : (estado.temArea ? "Área desenhada no mapa" : "Nenhuma área de interesse definida");
+      : (estado.areasPendentes.length > 1
+        ? estado.areasPendentes.length + " áreas desenhadas — a extração abre uma rodada para cada"
+        : (estado.temArea ? "Área desenhada no mapa" : "Nenhuma área de interesse definida"));
 
     $("dica-modo").textContent = estado.modo === "desenho"
       ? "Modo desenho de área ativo"
@@ -1926,8 +1971,10 @@
       estado.cidade = null; estado.cod = null;
       estado.temArea = false; estado.pts = [];
       estado.anel = null;
+      estado.areasPendentes = [];
       estado.desenhando = true;
       camadaDesenho.clearLayers();
+      camadaAreas.clearLayers();
       if (mapa.doubleClickZoom) mapa.doubleClickZoom.disable();
       const f = $("faixa-desenho");
       f.classList.remove("hidden"); f.classList.add("flex");
@@ -1937,7 +1984,9 @@
 
     $("btn-cancelar-desenho").addEventListener("click", () => {
       estado.desenhando = false; estado.pts = [];
+      estado.areasPendentes = []; estado.temArea = false;
       camadaDesenho.clearLayers();
+      camadaAreas.clearLayers();
       if (mapa.doubleClickZoom) mapa.doubleClickZoom.enable();
       const f = $("faixa-desenho");
       f.classList.add("hidden"); f.classList.remove("flex");
@@ -2224,32 +2273,92 @@
     //
     // A PERGUNTA SÓ APARECE QUANDO HÁ RESPOSTA. Área virgem começa a extração
     // direto; uma caixa de diálogo que só oferece "não há nada, siga" é ruído.
+    // UMA RODADA POR AREA, e o poligono VAI JUNTO no pedido.
+    //
+    // Mandar so `sessao` fazia o servidor resolver "area_atual" na hora de
+    // rodar — um nome que o desenho seguinte sobrescreve. Com o poligono no
+    // corpo, o servidor congela uma copia por rodada e nenhum desenho posterior
+    // alcanca o que ja esta na fila.
     async function iniciarExtracao(reusar) {
-      const r = await fetch("/api/jobs", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          modo: "mineracao",
-          opcoes: { sessao: "painel", reusar: !!reusar },
-        }),
-      }).catch(() => null);
-      if (!r) return;
-      const d = await r.json().catch(() => ({}));
+      const areas = estado.areasPendentes.length
+        ? estado.areasPendentes
+        : [null];                       // sem desenho novo: usa a area salva
       $("log-wrap").classList.remove("hidden");
-      if (!r.ok) {
-        linhaLog(d.erro || "não foi possível iniciar a extração", "text-amber-400");
-        return;
+
+      let enfileiradas = 0;
+      for (let i = 0; i < areas.length; i += 1) {
+        const opcoes = { sessao: "painel", reusar: !!reusar };
+        if (areas[i]) opcoes.poligono = areas[i].map(([la, ln]) => [la, ln]);
+        const r = await fetch("/api/jobs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ modo: "mineracao", opcoes: opcoes }),
+        }).catch(() => null);
+        const d = r ? await r.json().catch(() => ({})) : {};
+        if (!r || !r.ok) {
+          // DIZER QUAL DELAS FALHOU. Com tres areas na fila, "não foi possível
+          // iniciar a extração" deixaria o operador sem saber se falhou uma ou
+          // as tres, nem qual repetir.
+          linhaLog("área " + (i + 1) + " de " + areas.length + ": " +
+                   (d.erro || "não foi possível iniciar a extração"),
+                   "text-amber-400");
+          continue;
+        }
+        enfileiradas += 1;
       }
-      linhaLog(reusar
-        ? "extração iniciada — reaproveitando o que já existe na área"
-        : "extração iniciada", "text-lime-400");
+      if (!enfileiradas) return;
+      linhaLog(
+        (enfileiradas === 1 ? "extração iniciada" :
+          enfileiradas + " rodadas na fila, uma por área") +
+        (reusar ? " — reaproveitando o que já existe" : ""),
+        "text-lime-400");
+      estado.areasPendentes = [];
+      await carregarRuns();
     }
 
     $("btn-extrair").addEventListener("click", async () => {
       if ($("btn-extrair").disabled) return;
 
-      const info = await fetch("/api/area/reuso")
-        .then((x) => (x.ok ? x.json() : null)).catch(() => null);
+      // A PERGUNTA E UMA SO, SOMANDO AS AREAS. Perguntar uma vez por area
+      // faria quem desenhou tres responder tres caixas iguais em sequencia — e
+      // a resposta e a mesma politica para todas.
+      const areas = estado.areasPendentes;
+      let info = null;
+      if (areas.length) {
+        const partes = [];
+        for (const a of areas) {
+          const x = await fetch("/api/area/reuso", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ poligono: a.map(([la, ln]) => [la, ln]) }),
+          }).then((y) => (y.ok ? y.json() : null)).catch(() => null);
+          if (x) partes.push(x);
+        }
+        if (partes.length) {
+          const porEmpresa = new Map();
+          partes.forEach((p) => (p.por_empresa || []).forEach((e) => {
+            const v = porEmpresa.get(e.empresa) ||
+              { empresa: e.empresa, pois: 0, coleta_mais_recente: null,
+                e_minha: e.e_minha };
+            v.pois += e.pois;
+            if (!v.coleta_mais_recente ||
+                (e.coleta_mais_recente || "") > v.coleta_mais_recente) {
+              v.coleta_mais_recente = e.coleta_mais_recente;
+            }
+            porEmpresa.set(e.empresa, v);
+          }));
+          info = {
+            reaproveitaveis: partes.reduce((s, p) => s + (p.reaproveitaveis || 0), 0),
+            ja_tenho: partes.reduce((s, p) => s + (p.ja_tenho || 0), 0),
+            minha_coleta_mais_recente:
+              partes.map((p) => p.minha_coleta_mais_recente).filter(Boolean).sort().pop() || null,
+            por_empresa: [...porEmpresa.values()],
+          };
+        }
+      } else {
+        info = await fetch("/api/area/reuso")
+          .then((x) => (x.ok ? x.json() : null)).catch(() => null);
+      }
 
       if (!info || !info.reaproveitaveis) {
         await iniciarExtracao(false);
