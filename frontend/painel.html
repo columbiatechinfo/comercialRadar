@@ -433,6 +433,49 @@
   </div>
 
   <!-- ───────────────────────── modal: estatísticas ─────────────────── -->
+  <!-- A ESCOLHA ANTES DE EXTRAIR.
+       O mapa e neutro e o POI tem dono: o mesmo lugar existe uma vez por
+       empresa. Quando outra ja extraiu esta area, da para copiar o que ela
+       tem e coletar so o que e novo — poupa a parte cara e entrega dado da
+       idade que estiver la. A data e o numero que decide, e por isso ela vem
+       antes da pergunta. -->
+  <div id="m-reuso" class="fixed inset-0 z-[900] hidden items-center justify-center bg-gray-900/30 p-6 backdrop-blur-md">
+    <div class="w-full max-w-lg overflow-hidden rounded-xl bg-white shadow-xl ring-1 ring-gray-900/5">
+      <div class="flex items-start justify-between gap-x-4 border-b border-gray-100 px-6 py-5">
+        <div>
+          <h2 class="text-base font-semibold text-gray-900">Esta área já foi extraída</h2>
+          <p class="mt-0.5 text-[13px] text-gray-500">
+            Reaproveitar poupa tempo de coleta. O dado vem com a idade que tiver.
+          </p>
+        </div>
+        <button type="button" data-fechar-modal class="rounded-md p-1 text-gray-400 hover:bg-gray-50 hover:text-gray-600">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" class="size-5"><path d="M18 6L6 18M6 6l12 12"></path></svg>
+        </button>
+      </div>
+      <div class="px-6 py-5">
+        <div id="reuso-quadro" class="flex flex-col gap-y-2"></div>
+        <div class="mt-5 rounded-lg border border-gray-200 p-4">
+          <div class="text-[10.5px] font-semibold uppercase tracking-[0.07em] text-gray-400">Disponível para reaproveitar</div>
+          <div class="mt-1 flex items-baseline gap-x-2">
+            <span id="reuso-qtd" class="text-3xl font-semibold tracking-tight tabular-nums text-gray-900">—</span>
+            <span class="text-[12px] text-gray-400">pontos dentro do seu desenho</span>
+          </div>
+          <p id="reuso-idade" class="mt-2 text-[12.5px] text-gray-500"></p>
+        </div>
+      </div>
+      <div class="flex items-center justify-end gap-x-3 border-t border-gray-100 bg-gray-50 px-6 py-4">
+        <button id="reuso-zero" type="button"
+                class="rounded-md px-3 py-2 text-[13px] font-medium text-gray-700 hover:bg-gray-100">
+          Coletar tudo do zero
+        </button>
+        <button id="reuso-sim" type="button"
+                class="rounded-md bg-gray-900 px-3.5 py-2 text-[13px] font-medium text-white hover:bg-gray-800">
+          Reaproveitar e coletar o novo
+        </button>
+      </div>
+    </div>
+  </div>
+
   <div id="m-stats" class="fixed inset-0 z-[900] hidden items-center justify-center bg-gray-900/30 p-8 backdrop-blur-md">
     <div class="flex h-full w-full flex-col overflow-hidden rounded-xl bg-white shadow-xl ring-1 ring-gray-900/5">
       <div class="flex items-start justify-between gap-x-4 border-b border-gray-100 px-8 py-5">

@@ -1980,22 +1980,79 @@
       aposFiltro();
     });
 
-    $("btn-extrair").addEventListener("click", async () => {
-      if ($("btn-extrair").disabled) return;
+    // COMEÇAR A EXTRAÇÃO, com uma pergunta no meio quando ela vale a pena.
+    //
+    // O mapa é neutro e o POI tem dono: o mesmo estabelecimento existe uma vez
+    // por empresa. Se outra já extraiu esta área, dá para copiar o que ela tem
+    // e coletar só o que é novo — poupa a parte cara (captura, OCR, navegador)
+    // e entrega dado com a idade que estiver lá.
+    //
+    // A PERGUNTA SÓ APARECE QUANDO HÁ RESPOSTA. Área virgem começa a extração
+    // direto; uma caixa de diálogo que só oferece "não há nada, siga" é ruído.
+    async function iniciarExtracao(reusar) {
       const r = await fetch("/api/jobs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ modo: "mineracao", opcoes: { sessao: "painel" } }),
+        body: JSON.stringify({
+          modo: "mineracao",
+          opcoes: { sessao: "painel", reusar: !!reusar },
+        }),
       }).catch(() => null);
       if (!r) return;
       const d = await r.json().catch(() => ({}));
+      $("log-wrap").classList.remove("hidden");
       if (!r.ok) {
         linhaLog(d.erro || "não foi possível iniciar a extração", "text-amber-400");
-        $("log-wrap").classList.remove("hidden");
         return;
       }
-      $("log-wrap").classList.remove("hidden");
-      linhaLog("extração iniciada", "text-lime-400");
+      linhaLog(reusar
+        ? "extração iniciada — reaproveitando o que já existe na área"
+        : "extração iniciada", "text-lime-400");
+    }
+
+    $("btn-extrair").addEventListener("click", async () => {
+      if ($("btn-extrair").disabled) return;
+
+      const info = await fetch("/api/area/reuso")
+        .then((x) => (x.ok ? x.json() : null)).catch(() => null);
+
+      if (!info || !info.reaproveitaveis) {
+        await iniciarExtracao(false);
+        return;
+      }
+
+      const q = $("reuso-quadro");
+      q.innerHTML = "";
+      (info.por_empresa || []).forEach((e) => {
+        const l = document.createElement("div");
+        l.className = "flex items-baseline justify-between gap-x-4 text-[13px]";
+        l.innerHTML =
+          '<span class="text-gray-700">' + (e.e_minha ? "<b>" : "") +
+          esc(e.empresa) + (e.e_minha ? "</b> (sua empresa)" : "") + "</span>" +
+          '<span class="tabular-nums text-gray-500">' +
+          e.pois.toLocaleString("pt-BR") + " pontos · coleta de " +
+          (e.coleta_mais_recente || "?") + "</span>";
+        q.appendChild(l);
+      });
+      $("reuso-qtd").textContent = info.reaproveitaveis.toLocaleString("pt-BR");
+      $("reuso-idade").textContent = info.ja_tenho
+        ? ("Você já tem " + info.ja_tenho.toLocaleString("pt-BR") +
+           " pontos aqui, coletados até " + (info.minha_coleta_mais_recente || "?") +
+           ". Reaproveitar não mexe neles — só acrescenta o que falta.")
+        : "Sua empresa ainda não tem nenhum ponto nesta área.";
+      $("m-reuso").classList.remove("hidden");
+      $("m-reuso").classList.add("flex");
+    });
+
+    $("reuso-sim").addEventListener("click", async () => {
+      $("m-reuso").classList.add("hidden");
+      $("m-reuso").classList.remove("flex");
+      await iniciarExtracao(true);
+    });
+    $("reuso-zero").addEventListener("click", async () => {
+      $("m-reuso").classList.add("hidden");
+      $("m-reuso").classList.remove("flex");
+      await iniciarExtracao(false);
     });
 
     $("btn-log").addEventListener("click", () => {

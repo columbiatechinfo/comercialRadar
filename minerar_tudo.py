@@ -614,6 +614,10 @@ def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--area", default=area_utils.AREA_PADRAO)
+    p.add_argument("--reusar", action="store_true",
+                   help="antes de coletar, copia para a sua empresa os POIs "
+                        "que outra ja extraiu dentro da area. Poupa "
+                        "processamento; o dado pode estar velho.")
     # `required` deixa de valer com `--so-diagnostico`: pedir o nome da sessao
     # para NAO rodar sessao nenhuma e obrigar a inventar um valor descartavel.
     p.add_argument("--sessao", default="")
@@ -679,6 +683,25 @@ def main(argv=None) -> int:
     # já ter rodado. Horas de trabalho perdidas por uma variável que já estava
     # calculada vinte linhas acima, em `cod_previa`, para o diagnóstico.
     cod = cod_previa
+
+    # ── 0 · reaproveitar o que outra empresa ja extraiu nesta area ────────
+    #
+    # ANTES DE TUDO, E ISSO E O DESENHO. O mapa e neutro e o POI tem dono: o
+    # mesmo estabelecimento existe uma vez por empresa. Quando outra ja
+    # extraiu esta area, copiar o que ela tem e deixar a coleta rodar so
+    # sobre o que e novo poupa a parte cara — captura, OCR, navegador.
+    #
+    # O preco e a IDADE DO DADO, e ele fica visivel: cada POI copiado guarda
+    # em `coletado_em` quando o dado foi colhido do mundo, que e diferente de
+    # quando a copia nasceu.
+    #
+    # NAO E O PADRAO. Sem `--reusar` a rodada coleta tudo de novo, que e o
+    # comportamento de sempre e o que da dado fresco. Reaproveitar e uma
+    # escolha de quem opera, feita na tela antes de comecar.
+    if a.reusar:
+        _etapa(0, "reaproveitar — o que outra empresa ja extraiu nesta area")
+        _tolerante_i9(["reusar_area.py", "--area", a.area, "--aplicar"],
+                      "reaproveitamento entre empresas")
 
     # ── 1 e 2 · bases públicas ────────────────────────────────────────────
     if a.pular_bases:

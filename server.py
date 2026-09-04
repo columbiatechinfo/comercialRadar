@@ -986,6 +986,61 @@ def municipios_da_uf(uf: str = "", q: str = "", limite: int = 60):
         conn.close()
 
 
+@app.get("/api/area/reuso")
+def area_reuso(area: str = ""):
+    """O que JA foi extraido nesta area, por empresa, e de quando.
+
+    E o que a tela mostra antes de perguntar "reaproveitar ou coletar do
+    zero?". O numero que decide e a DATA: reaproveitar poupa a parte cara da
+    coleta e entrega dado da idade que estiver ali.
+
+    A travessia entre empresas nao acontece aqui — acontece em
+    `radar_comercial.reuso_resumo`, que e `security definer` e devolve
+    CONTAGEM e DATA por empresa, nunca nome nem endereco de POI alheio. Esta
+    rota so pergunta e formata.
+    """
+    poly = area_utils.carregar_area(area or area_utils.AREA_PADRAO)
+    if not poly:
+        return {"area": area or area_utils.AREA_PADRAO, "existe": False,
+                "por_empresa": [], "reaproveitaveis": 0}
+
+    lats = [p[0] if isinstance(p, (list, tuple)) else p["lat"] for p in poly]
+    lngs = [p[1] if isinstance(p, (list, tuple)) else p["lng"] for p in poly]
+    caixa = (min(lats), max(lats), min(lngs), max(lngs))
+
+    conn = realtime_ingest.conectar()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("select * from radar_comercial.reuso_resumo(%s,%s,%s,%s)",
+                        caixa)
+            por_empresa = [
+                {"empresa": r[1], "pois": int(r[2]),
+                 "coleta_mais_antiga": str(r[3]) if r[3] else None,
+                 "coleta_mais_recente": str(r[4]) if r[4] else None,
+                 "e_minha": bool(r[5])}
+                for r in cur.fetchall()]
+            # O RECORTE FINO E FEITO AQUI, e nao na funcao: a caixa e maior que
+            # o desenho, e a diferenca nao e pequena — no primeiro teste, 111
+            # dos 495 pontos da caixa caiam fora do poligono. Mostrar o numero
+            # da caixa faria a tela prometer mais do que a copia entrega.
+            cur.execute("select * from radar_comercial.reuso_candidatos(%s,%s,%s,%s)",
+                        caixa)
+            cands = [r for r in cur.fetchall()
+                     if area_utils.ponto_no_poligono(r[1], r[2], poly)]
+    finally:
+        conn.close()
+
+    minha = next((e for e in por_empresa if e["e_minha"]), None)
+    return {
+        "area": area or area_utils.AREA_PADRAO,
+        "existe": True,
+        "por_empresa": por_empresa,
+        "ja_tenho": minha["pois"] if minha else 0,
+        "minha_coleta_mais_recente": minha["coleta_mais_recente"] if minha else None,
+        "reaproveitaveis": len(cands),
+    }
+
+
 @app.post("/api/area/municipio")
 def area_do_municipio(cod: str):
     """Usa o polígono do município COMO ÁREA DE TRABALHO.
@@ -2599,7 +2654,22 @@ def iniciar_job(body: dict):
             # o que se perde.
             if op.get("pular_bases"):
                 cmd.append("--pular-bases")
-            _novo_job("mineracao", out_json, {"sessao": sessao, "motor": "duas-fontes"})
+            # REAPROVEITAR E ESCOLHA, E NASCE DESLIGADA.
+            #
+            # Com ela, a rodada primeiro copia para a empresa de quem pediu os
+            # POIs que OUTRA ja extraiu dentro da area, e a coleta roda so
+            # sobre o que e novo. Poupa a parte cara — captura, OCR, navegador
+            # — e entrega dado da idade que estiver la; `coletado_em` diz
+            # quanto.
+            #
+            # Desligada por padrao porque o comportamento seguro e o de sempre:
+            # coletar tudo de novo da dado fresco. Quem aceita o dado velho tem
+            # de dizer que aceita, e a tela mostra a data antes de perguntar.
+            if op.get("reusar"):
+                cmd.append("--reusar")
+            _novo_job("mineracao", out_json,
+                      {"sessao": sessao, "motor": "duas-fontes",
+                       "reusar": bool(op.get("reusar"))})
 
         elif modo == "avaliar":
             # A leitura de fachada grava DIRETO em `fachada_anotacao` — não passa
