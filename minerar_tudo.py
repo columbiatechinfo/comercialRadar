@@ -1123,6 +1123,20 @@ def main(argv=None) -> int:
         _log("  pulado — sem código IBGE do município")
 
     # ── 9 · o cadastro do cliente ─────────────────────────────────────────
+    # A BASE E RESOLVIDA AQUI, FORA DO `if cidade:`.
+    #
+    # Ela morava dentro dele, e a etapa 10 — acrescentada depois — le `_idbase`
+    # do lado de fora. Numa rodada em que a area nao resolve o municipio, a
+    # variavel nunca era criada e a etapa 10 estourava com `NameError` DEPOIS
+    # de toda a mineracao ja ter acontecido: horas de trabalho para morrer no
+    # ultimo passo, por um nome que nao existia.
+    #
+    # `_base_pronta()` devolve None quando nao ha base confirmada, e as duas
+    # etapas ja sabem lidar com isso — pular vinculo nao e erro. A base do
+    # cliente e o EIXO do vinculo, nao um pre-requisito da mineracao: minera-se
+    # normalmente e nao se vincula a ninguem.
+    _idbase = _base_pronta()
+
     _etapa(8, "cadastro do cliente — qual ligação é cada ponto")
     if cidade:
         # DEPOIS DO 8, E ISSO É DECISÃO DO DONO DO PRODUTO, 28/08/2026.
@@ -1157,7 +1171,6 @@ def main(argv=None) -> int:
         # LIGAÇÃO, reúne até 5 POIs candidatos — os irmãos. É o que faz a etapa
         # 9 poder pular quem divide ligação com um irmão já informado, sem
         # copiar nada de um POI para o outro.
-        _idbase = _base_pronta()
         if _idbase:
             _tolerante_i9(["cruzar_ligacao.py", "--base", str(_idbase),
                            "--cidade", cidade, "--area", a.area, "--aplicar"],
