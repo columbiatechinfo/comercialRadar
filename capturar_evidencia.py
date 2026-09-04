@@ -176,8 +176,23 @@ SQL_ALVO = """
        and cc.avaliar
        and upper(l.categoria) = 'RESIDENCIAL'
        and upper(coalesce(l.sit_ligacao,'')) = 'ATIVA'
+       -- QUEM JA TEM FOTO NAO VOLTA. Quem FALHOU volta, e essa distincao
+       -- custou 17 POIs de 143 na primeira corrida do bloco de Canoas.
+       --
+       -- A condicao era `not exists (... tipo = 'sv_frente')`, sem olhar se
+       -- havia byte na linha. So que a captura grava linha TAMBEM quando
+       -- falha, para registrar o motivo — entao um tile lento carimbava o POI
+       -- como feito, e ele nunca mais era tentado. Falha transitoria virando
+       -- permanente, em silencio.
+       --
+       -- Duas falhas sao DEFINITIVAS e continuam fora: o Google confirmando
+       -- que nao ha panorama no ponto, e a chave ausente. Repetir essas duas e
+       -- gastar navegador para receber a mesma resposta.
        and not exists (select 1 from radar_comercial.poi_evidencia e
-                        where e.poi_id = p.id and e.tipo = 'sv_frente')
+                        where e.poi_id = p.id and e.tipo = 'sv_frente'
+                          and (e.dados is not null
+                               or e.motivo_falha like 'o Google confirma%'
+                               or e.motivo_falha like 'MAPS_JS_KEY%'))
      order by p.id
 """
 
