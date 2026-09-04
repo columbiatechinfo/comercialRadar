@@ -820,6 +820,19 @@ def suspeitar(base_id: int, area: str = "", aplicar: bool = False,
         con.close()
         return {"orfaos": len(orfaos), "suspeitas": len(registros), **placar}
 
+    # LISTA VAZIA NAO CHEGA AO BANCO, e por isso `rowcount` mente.
+    #
+    # `execute_values` com `registros` vazio nao executa comando nenhum, e
+    # `cur.rowcount` continua descrevendo o comando ANTERIOR — que aqui era o
+    # SELECT dos POIs orfaos. Medido em 04/09/2026: "SUSPEITAS levantadas 0"
+    # seguido de "42.423 suspeita(s) gravada(s)". O dado estava certo e o
+    # relatorio mentia, que e a combinacao que faz alguem confiar no numero
+    # errado — ninguem confere 42 mil linhas por causa de um numero grande.
+    if not registros:
+        _log("   nada a gravar: nenhum POI órfão dividiu telhado com ligação")
+        con.close()
+        return {"orfaos": len(orfaos), "suspeitas": 0, "gravadas": 0, **placar}
+
     from psycopg2.extras import execute_values
     execute_values(cur, """
         insert into radar_comercial.ligacao_poi

@@ -44,6 +44,7 @@ USO
 from __future__ import annotations
 
 import argparse
+import io
 import os
 import subprocess
 import re
@@ -76,6 +77,64 @@ MARCADOR = "_pronto.txt"
 def _log(msg: str) -> None:
     """Uma linha por vez, sem buffer: é isto que aparece no painel ao vivo."""
     print(msg, flush=True)
+
+
+class _Espelho:
+    """Escreve no terminal E num arquivo. Sem isso a rodada nao deixa rastro.
+
+    O JOB RODA COM `--rm`: quando ele termina, o conteiner some e o log vai
+    junto. O painel mostra ao vivo, mas depois nao ha como voltar — numa rodada
+    de horas que falha no fim, o unico registro do que houve desaparece com o
+    conteiner. Aconteceu em 04/09/2026: a etapa 5 falhou, o job terminou, e
+    reconstruir o motivo exigiu rodar a etapa de novo.
+
+    O ESPELHO FICA AQUI, E NAO NUM `tee` DO SHELL, por dois motivos. O comando
+    do conteiner termina em `exec`, que existe para o botao "parar" alcancar o
+    processo certo — meter um `tee` no meio poria um shell entre o sinal e o
+    alvo. E `_rodar` ja le o stdout dos sub-passos LINHA A LINHA por pipe e
+    reimprime, entao tudo passa por aqui: espelhar o `sys.stdout` do processo
+    pai captura a rodada inteira, sub-passos inclusive.
+
+    Falha de escrita nao derruba a rodada: log e registro, nao a tarefa.
+    """
+
+    def __init__(self, alvo, caminho):
+        self.alvo = alvo
+        self.arq = None
+        try:
+            caminho.parent.mkdir(parents=True, exist_ok=True)
+            self.arq = io.open(caminho, "a", encoding="utf-8", buffering=1)
+        except OSError:
+            pass
+
+    def write(self, s):
+        self.alvo.write(s)
+        if self.arq is not None:
+            try:
+                self.arq.write(s)
+            except OSError:
+                self.arq = None
+        return len(s)
+
+    def flush(self):
+        self.alvo.flush()
+        if self.arq is not None:
+            try:
+                self.arq.flush()
+            except OSError:
+                self.arq = None
+
+    def isatty(self):
+        return False
+
+
+def _espelhar_log(sessao: str) -> Path:
+    """Liga o espelho e devolve o caminho. Chamada uma vez, no comeco."""
+    import sys as _sys
+    caminho = BASE / "logs" / ("%s.log" % (sessao or "sem-sessao"))
+    _sys.stdout = _Espelho(_sys.stdout, caminho)
+    _sys.stderr = _sys.stdout
+    return caminho
 
 
 def _rodar(cmd: list, cwd: Path | None = None) -> int:
@@ -674,6 +733,11 @@ def main(argv=None) -> int:
         _log("❌ --sessao é obrigatório para rodar. Para só ver o quadro acima, "
              "use --so-diagnostico.")
         return 2
+
+    # O LOG COMECA AQUI, e nao antes: ele leva o nome da sessao. O diagnostico
+    # acima nao precisa de arquivo — ele nao muda nada e cabe na tela.
+    _caminho_log = _espelhar_log(a.sessao)
+    _log("📝 log desta rodada em %s" % _caminho_log)
 
     # O CÓDIGO DO MUNICÍPIO NÃO DEPENDE DAS BASES PÚBLICAS.
     #

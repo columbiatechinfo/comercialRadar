@@ -178,7 +178,15 @@ def uma_caixa(sessao, cx, paginas):
     achado = {}
 
     def acao(page):
-        page.wait_for_timeout(4500)
+        # Espera o cartao aparecer, mas NAO exige que ele apareca: 25 s e o
+        # bastante para a lista carregar quando existe, e area sem hospedagem
+        # segue adiante em vez de travar.
+        try:
+            page.wait_for_selector('a[href*="/rooms/"]', state="attached",
+                                   timeout=25000)
+        except Exception:                                      # noqa: BLE001
+            pass
+        page.wait_for_timeout(2500)
         ids = page.evaluate(IDS) or []
         itens = page.evaluate(COLHER) or []
         # o payload vem NA MESMA ORDEM dos cartões — é assim que o id do href
@@ -228,20 +236,40 @@ def uma_caixa(sessao, cx, paginas):
     return achado
 
 
-def varrer(proxies, caixa_inicial, paginas, log=print, profundidade=0):
+def varrer(proxies, caixa_inicial, paginas, log=print, profundidade=0,
+           estado=None):
     """Varre a caixa e SUBDIVIDE quando ela satura. Devolve o dicionário todo."""
     from scrapling.fetchers import StealthySession
 
     sw_lat, sw_lng, ne_lat, ne_lng = caixa_inicial
     lado = max(ne_lat - sw_lat, ne_lng - sw_lng)
     tudo = {}
+    # `estado["buscou"]` separa DUAS COISAS que davam o mesmo resultado vazio:
+    # a busca que rodou e nao achou hospedagem, e a busca que nem chegou a
+    # rodar. Sem essa distincao, area sem Airbnb era relatada como falha da
+    # etapa — foi o que derrubou a etapa 6 em 04/09/2026 num quarteirao
+    # residencial de Canoas.
+    if estado is None:
+        estado = {}
     try:
+        # SEM `wait_selector` NA SESSAO, e essa foi a causa da etapa 6 morrer.
+        #
+        # Ela esperava ate 120 s por `a[href*="/rooms/"]` — o cartao de anuncio.
+        # Numa area que NAO TEM HOSPEDAGEM esse seletor nunca aparece, e o
+        # timeout era relatado como falha de busca. Medido em 04/09/2026 num
+        # quarteirao residencial de Canoas: a pagina respondeu 200, o Cloudflare
+        # nao entrou, e a etapa gastou 2,5 min para dizer "falhou" sobre uma
+        # area que so nao tem Airbnb.
+        #
+        # A espera desceu para dentro de `acao`, com prazo curto e sem exigir
+        # que o cartao exista: quem decide se ha anuncio e a leitura, nao a
+        # sessao. Area vazia passa a custar segundos e a ser relatada como
+        # vazia.
         with StealthySession(headless=True, solve_cloudflare=True,
-                             wait_selector='a[href*="/rooms/"]',
-                             wait_selector_state="attached",
                              proxy=proxies(), locale="pt-BR",
                              timezone_id="America/Sao_Paulo") as s:
             tudo = uma_caixa(s, caixa_inicial, paginas)
+        estado["buscou"] = True
     except Exception as e:                                     # noqa: BLE001
         log("  %scaixa %.4f,%.4f..%.4f,%.4f — %s"
             % ("  " * profundidade, sw_lat, sw_lng, ne_lat, ne_lng,
@@ -257,7 +285,8 @@ def varrer(proxies, caixa_inicial, paginas, log=print, profundidade=0):
         log("  %s  saturou (>= %d) — dividindo em quatro"
             % ("  " * profundidade, SATURADO))
         for q in quadrantes(*caixa_inicial):
-            tudo.update(varrer(proxies, q, paginas, log, profundidade + 1))
+            tudo.update(varrer(proxies, q, paginas, log,
+                               profundidade + 1, estado))
     return tudo
 
 
@@ -336,7 +365,9 @@ def main() -> int:
 
     proxies = _rodizio(a.sem_proxy)
     t0 = time.time()
-    achado = varrer(proxies, (sw_lat, sw_lng, ne_lat, ne_lng), a.paginas)
+    _estado_busca = {}
+    achado = varrer(proxies, (sw_lat, sw_lng, ne_lat, ne_lng), a.paginas,
+                    estado=_estado_busca)
 
     dentro = sum(1 for r in achado.values()
                  if r.get("lat") is not None
@@ -345,8 +376,18 @@ def main() -> int:
     print("%s%d anúncios · %d dentro do desenho · %d com coordenada exata · %.1f min"
           % (NL, len(achado), dentro, exatas, (time.time() - t0) / 60), flush=True)
     if not achado:
-        print("! nenhum anúncio. A busca não devolveu lista — não é 'a área não "
-              "tem hospedagem'.", flush=True)
+        # VAZIO NAO E FALHA quando a busca rodou. Um quarteirao residencial nao
+        # tem Airbnb, e dizer "falhou" sobre isso faz o operador procurar
+        # defeito onde ha so ausencia — e faz a etapa aparecer como quebrada no
+        # placar da rodada.
+        if _estado_busca.get("buscou"):
+            print("! nenhum anúncio nesta área. A página respondeu e a lista "
+                  "veio vazia — o mais provável é que não haja hospedagem "
+                  "aqui. Se a área for turística, aí sim desconfie da busca.",
+                  flush=True)
+            return 0
+        print("! a busca NÃO CHEGOU A RODAR — nenhuma caixa carregou. Isso é "
+              "bloqueio ou rede, não ausência de hospedagem.", flush=True)
         return 1
 
     if a.simular:
