@@ -1018,11 +1018,15 @@ def gravar_um(con, poi_id, d):
         _nota = d.get("nota")
         if isinstance(_nota, str):
             _nota = _nota.replace(",", ".").strip() or None
+        # `detalhado_em`/`detalhado_por` NAO ESTAO AQUI, e a migracao 0060 diz
+        # por que: elas sao a TRAVA DA FILA desta etapa, marcadas la em cima
+        # quando a maquina PEGA o POI — antes de o Maps ter dito qualquer coisa.
+        # Estado de processo, e nao dado do Maps. Elas moram na `pois`.
         k.execute("""
             insert into radar_comercial.maps_data
                    (poi_id, id_empresa, place_id, maps_url, plus_code,
                     avaliacao, total_avaliacoes, resumo_avaliacoes,
-                    status_horario, detalhado_em, detalhado_por)
+                    status_horario)
             select %s, p.id_empresa,
                    -- SO O PLACE_ID DO GOOGLE ENTRA AQUI. A coluna `pois.place_id`
                    -- carrega duas coisas incompativeis: o id do Google e o
@@ -1034,7 +1038,7 @@ def gravar_um(con, poi_id, d):
                    case when p.place_id like 'estadual:%%' then null
                         else p.place_id end,
                    %s, %s,
-                   nullif(%s::text,'')::numeric, %s, %s, %s, now(), %s
+                   nullif(%s::text,'')::numeric, %s, %s, %s
               from radar_comercial.pois p where p.id = %s
             on conflict (poi_id) do update set
                    maps_url          = coalesce(excluded.maps_url, maps_data.maps_url),
@@ -1042,12 +1046,10 @@ def gravar_um(con, poi_id, d):
                    avaliacao         = excluded.avaliacao,
                    total_avaliacoes  = excluded.total_avaliacoes,
                    resumo_avaliacoes = excluded.resumo_avaliacoes,
-                   status_horario    = excluded.status_horario,
-                   detalhado_em      = excluded.detalhado_em,
-                   detalhado_por     = excluded.detalhado_por""",
+                   status_horario    = excluded.status_horario""",
             (poi_id, d.get("url"), d.get("plusCode"), _nota,
              d.get("totalAval"), d.get("resumoIA"), d.get("statusHorario"),
-             MAQUINA, poi_id))
+             poi_id))
 
         k.execute("delete from radar_comercial.comentarios where poi_id=%s",
                   (poi_id,))
