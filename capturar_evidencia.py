@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import io as _io
 import math
 import os
@@ -250,7 +251,105 @@ def alvos(con, poligono, limite, pois=None):
     return saida, fora
 
 
-def gravar(con, poi_id, tipo, dados, **extra):
+class Poco:
+    """Um punhado de conexões emprestadas por gravação, e não por trabalhador.
+
+    O DEFEITO QUE ISTO CORRIGE, medido em 04/09/2026: cada trabalhador abria a
+    SUA conexão e a segurava a rodada inteira. Com 30 trabalhadores o Supavisor
+    respondeu `(EMAXCONNSESSION) max clients reached in session mode - pool_size:
+    20` e a captura morreu antes da primeira foto. Não foi a máquina que
+    sufocou — havia 108 GB livres e 32 núcleos ociosos; foram as 20 conexões do
+    pooler, que o número de trabalhadores consumia um a um.
+
+    A conta que estava errada era a de amarrar as duas coisas. Um trabalhador
+    passa ~11 s por POI, e usa o banco por poucos milissegundos em cada uma das
+    quatro gravações. Trinta trabalhadores geram algo como onze escritas por
+    segundo — que meia dúzia de conexões atende com folga.
+
+    Por isso o empréstimo é POR GRAVAÇÃO e não por trabalhador: quem está
+    esperando o Google carregar um panorama não precisa segurar uma conexão de
+    banco enquanto isso.
+    """
+
+    def __init__(self, n: int):
+        import queue
+        self.fila = queue.Queue()
+        self.n = max(1, n)
+        for _ in range(self.n):
+            self.fila.put(bc.conectar())
+
+    @contextlib.contextmanager
+    def pegar(self):
+        con = self.fila.get()
+        try:
+            yield con
+        except Exception:
+            # CONEXÃO QUE VIU EXCEÇÃO PODE ESTAR EM TRANSAÇÃO ABORTADA, e
+            # devolvê-la assim contamina o próximo que a pegar: todo comando
+            # seguinte falha com "current transaction is aborted".
+            try:
+                con.rollback()
+            except Exception:                                  # noqa: BLE001
+                pass
+            raise
+        finally:
+            self.fila.put(con)
+
+    def fechar(self):
+        while not self.fila.empty():
+            try:
+                self.fila.get_nowait().close()
+            except Exception:                                  # noqa: BLE001
+                pass
+
+
+#: Quanto cada trabalhador espera a mais que o anterior antes de começar.
+#:
+#: Três trabalhadores abrindo o Maps no mesmo segundo disputam a mesma banda e
+#: o mesmo início de sessão. Um segundo e meio entre eles não atrasa uma rodada
+#: de centenas de POIs e tira a disputa do momento mais frágil.
+ESCALONAR_S = 1.5
+
+
+async def _aquecer(page) -> None:
+    """Abre um panorama descartável antes do primeiro POI de verdade.
+
+    O DEFEITO QUE ISTO CORRIGE, e é o mesmo de manhã visto por outro ângulo.
+    Ficou parecendo resolvido porque a medida era boa: 19 de 20 POIs com as
+    quatro visadas. Mas naquela rodada cada trabalhador fazia CINCO POIs — só o
+    primeiro pegava a aba fria, e os outros quatro escondiam a falha na média.
+
+    Com três POIs e três trabalhadores, cada um faz UM: todos os POIs são
+    primeiro-POI, e o resultado desabou para 1 de 3, igual no i9 e no notebook,
+    que têm IPs diferentes. Não era limite do Google — era a aba fria, que
+    precisa baixar o JavaScript inteiro do Maps antes de mostrar o primeiro
+    tile e estoura a espera de `_abrir`.
+
+    Isto importa mais, e não menos, com a fila: várias rodadas curtas significam
+    muitos arranques a frio, que é justamente onde o defeito mora.
+
+    O panorama usado é fixo e conhecido; o que interessa dele não é a imagem, é
+    o cache que ele deixa na aba. Falhar aqui não é motivo para desistir do
+    POI — no pior caso a aba entra fria, que é como era antes.
+    """
+    try:
+        await sv._abrir_por_id(page, PANO_AQUECIMENTO, 0, 90)
+        await page.wait_for_timeout(600)
+    except Exception:                                          # noqa: BLE001
+        pass
+
+
+#: Um panorama qualquer de Canoas, só para o Maps carregar o próprio código.
+PANO_AQUECIMENTO = "msYLglDqsAq9mfemgrpY8g"
+
+
+# QUANTAS CONEXÕES, independentemente de quantos trabalhadores. Seis atendem
+# 30 trabalhadores com folga pela conta acima, e deixam as outras 14 do pooler
+# para a API, o painel e o restante do fluxo — que rodam ao mesmo tempo.
+CONEXOES = 6
+
+
+def gravar(poco, poi_id, tipo, dados, **extra):
     campos = ["poi_id", "tipo", "dados", "bytes_tam"]
     vals = [poi_id, tipo, psycopg2_bin(dados), len(dados) if dados else None]
     for k, v in extra.items():
@@ -260,12 +359,13 @@ def gravar(con, poi_id, tipo, dados, **extra):
     marc = ", ".join(["%s"] * len(campos))
     sets = ", ".join("%s = excluded.%s" % (c, c) for c in campos
                      if c not in ("poi_id", "tipo"))
-    with con.cursor() as k:
-        k.execute(
-            "insert into radar_comercial.poi_evidencia (%s) values (%s) "
-            "on conflict (id_empresa, poi_id, tipo) do update set %s, "
-            "capturado_em = now()" % (", ".join(campos), marc, sets), vals)
-    con.commit()
+    with poco.pegar() as con:
+        with con.cursor() as k:
+            k.execute(
+                "insert into radar_comercial.poi_evidencia (%s) values (%s) "
+                "on conflict (id_empresa, poi_id, tipo) do update set %s, "
+                "capturado_em = now()" % (", ".join(campos), marc, sets), vals)
+        con.commit()
 
 
 def psycopg2_bin(dados):
@@ -274,7 +374,7 @@ def psycopg2_bin(dados):
 
 
 # ── a captura ──────────────────────────────────────────────────────────────
-async def um_poi(page, con, alvo, placar) -> None:
+async def um_poi(page, poco, alvo, placar) -> None:
     """As quatro visadas de UM POI, numa aba que já vem aberta.
 
     A ABA É DO TRABALHADOR, E NÃO DO POI — e essa troca é a correção de
@@ -291,11 +391,11 @@ async def um_poi(page, con, alvo, placar) -> None:
         # As quatro visadas saem do MESMO panorama, girando a câmera.
         m = await asyncio.to_thread(sv.metadados_pano, lat, lng)
         if m is False:
-            gravar(con, alvo["id"], "sv_frente", None,
+            gravar(poco, alvo["id"], "sv_frente", None,
                    motivo_falha="o Google confirma que não há panorama aqui")
             placar["sem_pano"] += 1
         elif m is None:
-            gravar(con, alvo["id"], "sv_frente", None,
+            gravar(poco, alvo["id"], "sv_frente", None,
                    motivo_falha="metadados não responderam")
             placar["sem_metadados"] += 1
         else:
@@ -324,7 +424,7 @@ async def um_poi(page, con, alvo, placar) -> None:
                         await page.wait_for_timeout(1500)
                         ok = await sv._abrir_por_id(page, m["pano_id"], heading, fov_aqui)
                     if not ok:
-                        gravar(con, alvo["id"], tipo, None,
+                        gravar(poco, alvo["id"], tipo, None,
                                motivo_falha="o Maps não entrou em modo panorama "
                                             "em duas tentativas")
                         placar["falha_pano"] += 1
@@ -343,13 +443,13 @@ async def um_poi(page, con, alvo, placar) -> None:
                     # prova. A mira aberta já diz onde é o alvo; o texto só
                     # cobria a imagem, e o modelo ainda o lia como letreiro.
                     img = _marcar_centro(limpo, "") if tipo == "sv_frente" else limpo
-                    gravar(con, alvo["id"], tipo, img,
+                    gravar(poco, alvo["id"], tipo, img,
                            pano_id=m["pano_id"], cam_lat=m["lat"], cam_lng=m["lng"],
                            heading=heading, pitch=5.0, fov=float(fov_aqui),
                            distancia_m=d, largura_px=LARG, altura_px=ALT)
                     placar[tipo] += 1
                 except Exception as e:                         # noqa: BLE001
-                    gravar(con, alvo["id"], tipo, None,
+                    gravar(poco, alvo["id"], tipo, None,
                            motivo_falha=type(e).__name__)
                     placar["falha_pano"] += 1
 
@@ -389,6 +489,7 @@ async def rodar(area, limite, aplicar, trabalhadores, pois=None):
     placar = {k: 0 for k in [v[0] for v in VISADAS]
               + ["sem_pano", "sem_metadados", "falha_pano"]}
     t0 = time.time()
+    poco = Poco(min(CONEXOES, max(1, trabalhadores)))
     async with async_playwright() as pw:
         nav = await pw.chromium.launch(headless=False, args=ARGS_NAV)
         try:
@@ -397,10 +498,12 @@ async def rodar(area, limite, aplicar, trabalhadores, pois=None):
                 fila.put_nowait(a)
 
             async def obreiro(n):
-                c = bc.conectar()
                 ctx = await nav.new_context(
                     viewport={"width": LARG, "height": ALT})
                 page = await ctx.new_page()
+                # PARTIDA ESCALONADA E ABA AQUECIDA — ver `_aquecer`.
+                await asyncio.sleep(ESCALONAR_S * n)
+                await _aquecer(page)
                 try:
                     while True:
                         try:
@@ -408,7 +511,7 @@ async def rodar(area, limite, aplicar, trabalhadores, pois=None):
                         except asyncio.QueueEmpty:
                             return
                         try:
-                            await um_poi(page, c, a, placar)
+                            await um_poi(page, poco, a, placar)
                         except Exception as e:                 # noqa: BLE001
                             _log("      %d FALHOU: %s" % (a["id"], str(e)[:70]))
                             # A ABA PODE TER MORRIDO JUNTO. Sem trocá-la, o
@@ -424,7 +527,6 @@ async def rodar(area, limite, aplicar, trabalhadores, pois=None):
                                  % (feitos, len(lista),
                                     (time.time() - t0) / max(feitos, 1)))
                 finally:
-                    c.close()
                     try:
                         await ctx.close()
                     except Exception:                          # noqa: BLE001
@@ -433,6 +535,7 @@ async def rodar(area, limite, aplicar, trabalhadores, pois=None):
             await asyncio.gather(*[obreiro(i) for i in range(trabalhadores)])
         finally:
             await nav.close()
+            poco.fechar()
 
     dt = time.time() - t0
     _log("")
@@ -456,7 +559,7 @@ def main(argv=None) -> int:
                    help="repetível; recaptura estes POIs, ignorando a fila")
     p.add_argument("--aplicar", action="store_true")
     a = p.parse_args(argv)
-    _log("▶ evidência para a IA — 3 imagens por POI")
+    _log("▶ evidência para a IA — 4 visadas de rua por POI")
     r = asyncio.run(rodar(a.area, a.limite, a.aplicar, a.trabalhadores,
                             a.poi))
     return 1 if r.get("erro") else 0

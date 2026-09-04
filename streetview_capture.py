@@ -324,12 +324,36 @@ def _gravar_imagem(poi_id: int, dados: bytes, lat, lng, **extra):
 ESPERA_PANO_S = 25
 
 
-async def _abrir(page, url: str, segundos: float = ESPERA_PANO_S) -> tuple | None:
-    """Abre a URL e espera a marca de panorama (`,3a,`) aparecer na URL final.
+#: A marca de que a aba ESTÁ num panorama, independentemente de coordenada.
+#:
+#: `_RE_CAM` exige `@<lat>,<lng>,3a` — coordenada decimal da câmera E o `3a`. É
+#: uma URL que o Maps produz na maioria das vezes, e não sempre: medido em
+#: 04/09/2026 no POI 84666, o panorama abriu e a URL final ficou
+#:
+#:     /@0,0,0a,80y,190h,95t/data=!3m5!1e1!3m3!1sbS_DNbKiLK7KHubelxvd1w!2e0!...
+#:
+#: Zero, zero, zero-a. O panorama estava aberto — os dados dele estão ali, o id
+#: pedido está ali —, o Maps só não resolveu a posição da câmera de volta para a
+#: URL. A captura lia isso como fracasso e gravava "o Maps não entrou em modo
+#: panorama", que é uma frase confiantemente errada: soa como "não há foto
+#: aqui", e havia.
+#:
+#: O que separa panorama de vista aérea não é a coordenada: é o trio de ângulos
+#: `<zoom>y,<rumo>h,<inclinação>t`, que só existe em panorama. Uma URL de mapa
+#: traz `,17z/` e nunca um `y,` seguido de `h,`.
+_RE_PANO_ABERTO = re.compile(r"/@[^/]*,\d+(?:\.\d+)?y,\d+(?:\.\d+)?h,")
 
-    Retorna (cam_lat, cam_lng) lidos da URL, ou None se o Maps não entrou em
-    modo panorama — o que quase sempre significa que ele caiu na vista aérea,
-    cuja URL termina em `,NNa,` (altitude) em vez de `,3a,`.
+
+async def _abrir(page, url: str, segundos: float = ESPERA_PANO_S) -> tuple | None:
+    """Abre a URL e espera a aba entrar em panorama.
+
+    Devolve `(cam_lat, cam_lng)` quando o Maps escreve a posição da câmera na
+    URL, e `(None, None)` quando ele entra em panorama sem escrevê-la — que
+    também é sucesso, e era lido como falha (ver `_RE_PANO_ABERTO`). Devolve
+    `None` só quando a aba não chegou a panorama nenhum.
+
+    Quem chama trata o retorno como verdadeiro/falso; a coordenada da câmera já
+    veio dos metadados, e não é daqui que ela é usada.
     """
     await page.goto(url, wait_until="domcontentloaded", timeout=30000)
     fim = time.time() + segundos
@@ -337,6 +361,8 @@ async def _abrir(page, url: str, segundos: float = ESPERA_PANO_S) -> tuple | Non
         m = _RE_CAM.search(page.url)
         if m:
             return float(m.group(1)), float(m.group(2))
+        if _RE_PANO_ABERTO.search(page.url):
+            return (None, None)
         await page.wait_for_timeout(400)
     return None
 
