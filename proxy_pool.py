@@ -213,6 +213,20 @@ class ProxyPool:
             return False
         return True
 
+    def em_castigo(self, proxy: Dict) -> bool:
+        """Este IP esta de castigo agora?
+
+        `_disponivel` ja sabia disso, e nao servia para quem escolhe o proxy
+        por conta propria — `minerar_placeid` percorre `_proxies` por indice,
+        porque precisa de um IP FIXO por navegador durante toda a rodada e nao
+        de um emprestimo por requisicao. Faltava so poder perguntar.
+
+        Sincrona de proposito: e leitura de um dicionario em memoria, e quem
+        pergunta esta dentro de um laco apertado escolhendo entre centenas.
+        """
+        exp = self._cooldown.get((proxy or {}).get("id"))
+        return bool(exp and exp > time.time())
+
     async def acquire(self) -> Optional[Dict]:
         """Retorna um proxy livre (o menos usado recentemente) e o marca em uso."""
         async with self._lock:

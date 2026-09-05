@@ -886,14 +886,59 @@ def _e_titulo_de_erro(nome) -> bool:
     return n in _TITULOS_DE_ERRO
 
 
+class _ProxyQueimado(Exception):
+    """O Google respondeu, e respondeu vazio. Culpa do IP, nao do ponto."""
+
+
+def _pagina_vazia(d) -> bool:
+    """A resposta veio, e nao tem POI nenhum dentro.
+
+    PROXY QUEIMADO NAO LEVANTA EXCECAO — e essa e a razao de existir desta
+    funcao. O IP punido pelo Google devolve a pagina do Maps SEM CONTEUDO:
+    status 200, DOM montado, nenhum `h1`. Para o codigo isso era sucesso, o
+    contador de falhas seguidas voltava a zero, e o navegador seguia a rodada
+    inteira no mesmo IP morto.
+
+    MEDIDO em 05/09/2026, nas faixas de Canoas: a faixa 1 detalhou com 1% de
+    "SEM NOME"; as faixas 2 e 3, com 55%. Metade do trabalho jogado fora e
+    refeito, sem nenhum sinal de erro — o `ProxyPool` tem descanso de 2 h para
+    IP punido e nunca era chamado, porque nada aqui reconhecia a punicao.
+
+    O nome vazio e o unico sinal que o Google da. Ele ja era conhecido — o
+    comentario de `usaveis` diz "devolve pagina em branco, e o sintoma vira
+    SEM NOME" — mas a conclusao tinha parado em filtrar por pais.
+    """
+    if not d:
+        return True
+    nome = (d.get("nome") or "").strip()
+    return not nome
+
+
 async def detalhar(ctx, alvo):
+    """O caminho do Chromium: abre a pagina no contexto e extrai."""
     pg = await ctx.new_page()
+    try:
+        return await _extrair_do_ponto(pg, alvo, navegar=True)
+    finally:
+        try:
+            await pg.close()
+        except Exception:                                      # noqa: BLE001
+            pass
+
+
+async def _extrair_do_ponto(pg, alvo, navegar=True):
+    """Tudo o que se tira de UM ponto, a partir de uma pagina ja aberta.
+
+    `navegar=False` para quem ja chegou na URL certa — e o caso do Camoufox,
+    que navega por conta propria antes de entregar a pagina.
+    """
     cobradas = []
     pg.on("request", lambda r: cobradas.append(r.url)
           if "places.googleapis.com" in r.url else None)
     try:
-        await pg.goto("https://www.google.com/maps/place/?q=place_id:" + alvo["placeId"],
-                      wait_until="domcontentloaded", timeout=60000)
+        if navegar:
+            await pg.goto("https://www.google.com/maps/place/?q=place_id:" + alvo["placeId"],
+                          wait_until="domcontentloaded", timeout=60000)
         # Espera o nome aparecer; so entao o intervalo aleatorio, que existe
         # para nao desenhar padrao — nao para dar tempo de carregar.
         try:
@@ -927,7 +972,13 @@ async def detalhar(ctx, alvo):
         d["cobradas"] = len(cobradas)
         return d
     finally:
-        await pg.close()
+        # QUEM ABRIU A PAGINA E QUEM A FECHA. Aqui o extrator so devolve o
+        # ouvinte de requisicao que pendurou, para nao vazar entre pontos
+        # quando a pagina for reaproveitada.
+        try:
+            pg.remove_listener("request", None)
+        except Exception:                                      # noqa: BLE001
+            pass
 
 
 # ------------------------------------------------------------------ gravacao --
@@ -1275,7 +1326,20 @@ async def principal(a):
             # remedio obvio; matar o trabalhador era jogar 30% da vazao fora.
             PROXIES_POR_NAVEGADOR = 3
             for troca_de_ip in range(PROXIES_POR_NAVEGADOR):
-              px = usaveis[(i * 7 + desloca + troca_de_ip * 131) % len(usaveis)]
+              # PULA QUEM ESTA DE CASTIGO. O indice fixo pegava o proximo da
+              # lista sem perguntar; agora anda ate achar um IP fora do
+              # descanso, dando no maximo uma volta completa.
+              base = (i * 7 + desloca + troca_de_ip * 131) % len(usaveis)
+              px = usaveis[base]
+              for salto in range(len(usaveis)):
+                  cand = usaveis[(base + salto) % len(usaveis)]
+                  try:
+                      castigado = pool.em_castigo(cand)
+                  except Exception:                            # noqa: BLE001
+                      castigado = False
+                  if not castigado:
+                      px = cand
+                      break
               desistiu = False
               nav = None
               try:
@@ -1296,6 +1360,13 @@ async def principal(a):
                         return                      # a fila secou
                     try:
                         d = await detalhar(ctx, alvo)
+                        if _pagina_vazia(d):
+                            # NAO E FALHA DO POI, E DO IP. Levantar aqui faz o
+                            # POI voltar para a fila e o contador de falhas
+                            # seguidas subir — que e o caminho que ja existe
+                            # para trocar de proxy.
+                            raise _ProxyQueimado(
+                                "pagina sem nome — IP provavelmente punido")
                         seguidas = 0
                     except Exception as e:
                         # Nao deu certo aqui: volta para a fila e outro tenta.
@@ -1316,9 +1387,19 @@ async def principal(a):
                         # novo. Aconteceu — 13.798 erros em segundos, queimando
                         # CPU e nao entregando nada.
                         if seguidas >= 3:
+                            # O IP VAI DESCANSAR, e nao so sai de cena. Sem
+                            # isto ele volta para a rotacao no proximo
+                            # trabalhador e queima de novo: o `ProxyPool` tem
+                            # castigo de 2 h justamente para isso, e ate hoje
+                            # ninguem o chamava a partir daqui.
+                            try:
+                                await pool.mark_cooldown(px)
+                            except Exception:                  # noqa: BLE001
+                                pass
                             async with trava:
                                 print("    navegador %02d: 3 falhas seguidas "
-                                      "no proxy %s — trocando de IP (%d/%d)"
+                                      "no proxy %s — 2 h de castigo, trocando "
+                                      "de IP (%d/%d)"
                                       % (i, px["server"][-15:],
                                          troca_de_ip + 1,
                                          PROXIES_POR_NAVEGADOR))

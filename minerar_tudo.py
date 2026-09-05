@@ -764,6 +764,22 @@ def main(argv=None) -> int:
                    help="pula o Cadastur/MTur desta rodada")
     p.add_argument("--pular-ifood", dest="pular_ifood", action="store_true",
                    help="pula a descoberta do iFood desta rodada")
+    # AS DUAS ETAPAS QUE SAO DO MUNICIPIO, E NAO DA AREA.
+    #
+    # A 7 normaliza o logradouro do municipio INTEIRO (188.571 marcacoes numa
+    # passada) e a 9 enriquece pelo painel do Maps a cidade toda. Rodar uma
+    # area de 10 km2 faz as duas do mesmo jeito: elas nao olham o desenho.
+    #
+    # MEDIDO em 05/09/2026, dividindo Canoas em 14 faixas: as duas somam ~60
+    # min POR FAIXA, contra ~40 min de colheita. Repeti-las 14 vezes e o que
+    # separa 13 h de 24 h. Pulando nas faixas e rodando UMA vez ao final —
+    # `--de-etapa 7` sobre o municipio — o resultado e o mesmo.
+    p.add_argument("--pular-enderecos", dest="pular_enderecos",
+                   action="store_true",
+                   help="nao roda a etapa 7 (municipal; rode uma vez ao final)")
+    p.add_argument("--pular-enriquecimento", dest="pular_enriquecimento",
+                   action="store_true",
+                   help="nao roda a etapa 9 (municipal; rode uma vez ao final)")
     p.add_argument("--pular-airbnb", dest="pular_airbnb",
                    action="store_true",
                    help="não roda a etapa 7 (Airbnb)")
@@ -1158,7 +1174,9 @@ def main(argv=None) -> int:
     # passo 7, que depende do logradouro canônico, cruzaria menos sem que
     # ninguém entendesse por quê.
     _etapa(7, "endereços — o texto vira campos, a skill prova a forma, e o IBGE diz a rua")
-    if cod:
+    if a.pular_enderecos:
+        _log("  pulado por --pular-enderecos — etapa MUNICIPAL, roda uma vez ao final")
+    elif cod:
         # ESTA ETAPA É A EXCEÇÃO: ela roda a CIDADE, não a área.
         #
         # Decisão do dono do produto, 26/08/2026, e ele foi explícito de que
@@ -1381,7 +1399,9 @@ def main(argv=None) -> int:
         _log("  pulado — sem cidade não há cadastro a cruzar")
 
     _etapa(9, "Maps — telefone e site de quem não tem nada, pelo painel")
-    if cidade:
+    if a.pular_enriquecimento:
+        _log("  pulado por --pular-enriquecimento — etapa MUNICIPAL, roda uma vez ao final")
+    elif cidade:
         # POR ÚLTIMO, E ISSO IMPORTA.
         #
         # A peneira desta etapa é "quem não tem telefone, nem CNPJ, nem rede

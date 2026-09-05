@@ -3231,9 +3231,28 @@ def iniciar_job(body: dict):
                 "capture_workers": int(op.get("capture_workers", 10)),
                 "empresa": _empresa_do_pedido(),
             }
-            for chave in ("no_proxy", "pular_bases", "reusar"):
+            # AS ETAPAS QUE SE PULA, TODAS AS CINCO.
+            #
+            # Faltavam `pular_cadastur`, `pular_ifood` e `pular_airbnb` —
+            # e sem elas nao da para dividir um municipio em varias
+            # rodadas sem repetir o que e municipal. O iFood acha as lojas
+            # da cidade inteira a partir de um ponto: rodar seis vezes e
+            # seis vezes o mesmo resultado e seis vezes o risco de
+            # bloqueio. O mesmo vale para as bases publicas e o Cadastur.
+            for chave in ("no_proxy", "pular_bases", "pular_cadastur",
+                          "pular_ifood", "pular_airbnb", "pular_enderecos",
+                          "pular_enriquecimento", "reusar"):
                 if op.get(chave):
                     argumentos[chave] = True
+            # DE QUE ETAPA COMECAR. Serve para a rodada de fechamento de um
+            # municipio dividido em faixas: `de_etapa=7` pula colheita, iFood e
+            # Airbnb e roda so o que e municipal, uma vez, sobre tudo o que as
+            # faixas ja trouxeram.
+            try:
+                if int(op.get("de_etapa") or 0) > 1:
+                    argumentos["de_etapa"] = int(op["de_etapa"])
+            except (TypeError, ValueError):
+                pass
             if op.get("cidade"):
                 argumentos["cidade"] = str(op["cidade"])
             if op.get("uf"):
