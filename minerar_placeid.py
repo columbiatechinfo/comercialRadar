@@ -1587,7 +1587,27 @@ async def principal(a):
                             colhidos_por[i].append(_e)
                     except Exception:
                         pass
-                    await nav.close()
+                    # A LIMPEZA NAO DERRUBA A RODADA.
+                    #
+                    # `nav.close()` estava nu num `finally`, fora do `except`
+                    # que protege o corpo — entao um erro AQUI escapava do
+                    # trabalhador, subia pelo `gather` e matava as dez.
+                    # Aconteceu em 06/09/2026, com 1.523 POIs ainda na fila:
+                    # "Browser.close: Connection closed while reading from the
+                    # driver". Nao foi memoria (1,75 GB de 24 GB) nem punicao
+                    # (0,6% de erro) — o driver do Playwright simplesmente
+                    # morreu, e fechar um navegador ja morto virou o fim de
+                    # tudo.
+                    #
+                    # Fechar e educacao com o sistema operacional, nao
+                    # trabalho: se falhar, o processo termina e o sistema
+                    # recolhe. Nada disso vale uma rodada.
+                    try:
+                        await nav.close()
+                    except Exception as _e_fechar:              # noqa: BLE001
+                        async with trava:
+                            print("    navegador %02d nao fechou limpo: %s"
+                                  % (i, str(_e_fechar)[:70]))
               # O IP VOLTA PARA A PRATELEIRA assim que este navegador larga
               # dele — por sair ou por trocar. Sem isto ele ficaria reservado
               # ate o prazo vencer, e uma rodada de dez navegadores tiraria de
@@ -1704,7 +1724,16 @@ async def principal(a):
         print("  proxies utilizaveis: %d de %d (pais %s) · faixa a partir de %d"
               % (len(usaveis), len(pool._proxies), pool.pais or "qualquer",
                  desloca % max(1, len(usaveis))))
-        await asyncio.gather(*(trabalhador(i) for i in range(a.workers)))
+        # UM TRABALHADOR QUE MORRE NAO LEVA OS OUTROS. Mesma razao do
+        # aquecimento dos cookies: sem `return_exceptions`, a primeira
+        # excecao cancela as nove tarefas irmas no meio do POI delas. A fila e
+        # do banco e sobrevive — o que nao sobrevive e o tempo ja gasto.
+        _res = await asyncio.gather(*(trabalhador(i) for i in range(a.workers)),
+                                    return_exceptions=True)
+        for _i, _x in enumerate(_res):
+            if isinstance(_x, BaseException):
+                print("    navegador %02d morreu: %s: %s"
+                      % (_i, type(_x).__name__, str(_x)[:90]))
         # FILA QUE SOBROU E AVISO, e nao silencio. A faixa 10 terminou com 600
         # de 712 pontos sem detalhe e nada no log dizia isso: a etapa seguiu
         # para a proxima como se tivesse acabado.
