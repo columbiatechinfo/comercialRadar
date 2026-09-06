@@ -183,6 +183,40 @@ SQL_ALVOS = """
 """
 
 
+def _perguntar_local(caminho, pergunta) -> dict | None:
+    """A ficha vai ao modelo de visao DA CASA. Devolve o JSON ou None.
+
+    POR QUE ISTO SUBSTITUI O NAVEGADOR. O caminho original abria o
+    `chatgpt.com` num Chromium, por proxy, e lia a resposta de dentro de um
+    `<code>` na pagina. Funcionou para provar que a IMAGEM tem o endereco — a
+    descoberta que abriu esta etapa —, mas nao serve como passo de producao:
+    depende de sessao logada, de um proxy vivo, do desenho da pagina de outra
+    empresa e de raspar um servico por navegador. Qualquer um dos quatro muda
+    sem aviso, e a etapa para em silencio.
+    Medido em 06/09/2026: `enderecar_airbnb` NUNCA rodou — os 55 anuncios de
+    Canoas estao com `endereco` e `endereco_origem` nulos, e por isso os 44
+    POIs de Airbnb entraram sem rua.
+
+    O modelo de visao da casa ja existe e ja e usado pelo veredito
+    (`descrever_imagens._chat_local`, `qwen3vl-moe` no vLLM). Mesma pergunta,
+    mesma imagem, sem navegador, sem proxy e sem depender de terceiro.
+    """
+    import base64
+    try:
+        import descrever_imagens as _di
+    except Exception as e:                                     # noqa: BLE001
+        _log("   modelo de visao indisponivel: %s" % str(e)[:80])
+        return None
+    try:
+        with open(caminho, "rb") as f:
+            b64 = base64.b64encode(f.read()).decode()
+        return _di._chat_local(_di.MODELO_PADRAO, pergunta, [b64],
+                               max_tokens=700) or None
+    except Exception as e:                                     # noqa: BLE001
+        _log("   %s: %s" % (os.path.basename(caminho), str(e)[:80]))
+        return None
+
+
 def caminho_do_print(guardado, anuncio_id) -> str:
     """O print pode estar gravado como caminho absoluto ou só como nome."""
     for tentativa in (guardado,
@@ -230,7 +264,8 @@ def gravar(con, cur, anuncio_id, d) -> list:
     return notas
 
 
-def rodar(area="", limite=0, aplicar=False, visivel=False) -> dict:
+def rodar(area="", limite=0, aplicar=False, visivel=False,
+          pelo_navegador=False) -> dict:
     con = bc.conectar()
     cur = con.cursor()
     filtro, args = "", []
@@ -268,6 +303,27 @@ def rodar(area="", limite=0, aplicar=False, visivel=False) -> dict:
                                            a["arquivo"]))
         con.close()
         return {"alvos": len(prontos), "gravados": 0}
+
+    # O CAMINHO DA CASA E O PADRAO. `--pelo-navegador` guarda o antigo, que
+    # foi o que provou o metodo e continua util para conferir uma ficha
+    # dificil a mao.
+    if not pelo_navegador:
+        placar = Counter()
+        t0 = time.time()
+        for a in prontos:
+            d = _perguntar_local(a["arquivo"], prompt_da_imagem(a))
+            if not d:
+                placar["sem_resposta"] += 1
+                continue
+            for k in gravar(con, cur, a["id"], d):
+                placar[k] += 1
+        con.commit()
+        _log("   %d anuncio(s) em %.1f s pelo modelo da casa"
+             % (len(prontos), time.time() - t0))
+        for k, n in placar.most_common():
+            _log("      %-28s %d" % (k, n))
+        con.close()
+        return {"alvos": len(prontos), **dict(placar)}
 
     from playwright.sync_api import sync_playwright
     from proxy_pool import ProxyPool
@@ -349,6 +405,12 @@ def main(argv=None) -> int:
         description="O print da ficha do Airbnb vira endereço com número.")
     p.add_argument("--area", default="", help="restringe a uma área desenhada")
     p.add_argument("--limite", type=int, default=0)
+    p.add_argument("--pelo-navegador", dest="pelo_navegador",
+                   action="store_true",
+                   help="usa o caminho antigo — Chromium no chatgpt.com por "
+                        "proxy. Foi o que provou o metodo; o padrao agora e o "
+                        "modelo de visao da casa, que nao depende de sessao "
+                        "logada nem do desenho da pagina de terceiro")
     p.add_argument("--visivel", action="store_true",
                    help="mostra o navegador; padrão é sem janela")
     p.add_argument("--aplicar", action="store_true")
@@ -356,7 +418,7 @@ def main(argv=None) -> int:
 
     _log("▶ endereço do Airbnb pela imagem%s"
          % ((" · área %s" % a.area) if a.area else ""))
-    rodar(a.area, a.limite, a.aplicar, a.visivel)
+    rodar(a.area, a.limite, a.aplicar, a.visivel, a.pelo_navegador)
     return 0
 
 

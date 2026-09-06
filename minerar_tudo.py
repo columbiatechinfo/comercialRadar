@@ -1141,6 +1141,27 @@ def main(argv=None) -> int:
         if rc == 0:
             _tolerante_i9(["detalhar_airbnb.py", "--area", a.area],
                           "Airbnb — a ficha de quem está dentro do desenho")
+            # O ENDEREÇO SAI DO PRINT, E ESTE PASSO EXISTIA SEM SER CHAMADO.
+            #
+            # O Airbnb não publica rua. `enderecar_airbnb.py` foi escrito
+            # justamente para isso — o print da ficha vai ao modelo de visão e
+            # volta com rua e número —, e nunca entrou no pipeline. Medido em
+            # 06/09/2026: os 55 anúncios de Canoas estão com `endereco` e
+            # `endereco_origem` nulos, e por isso os 44 POIs de Airbnb entraram
+            # sem rua nenhuma.
+            #
+            # SEM RUA, A HOSPEDAGEM SÓ CASA POR DISTÂNCIA. E como a coordenada
+            # do Airbnb é embaralhada de propósito, casar por distância é o
+            # pior dos mundos: a etapa 7 geocodifica o ponto deslocado ao
+            # contrário e devolve uma rua que ninguém publicou. É a diferença
+            # entre um endereço com fonte e um palpite com aparência de fonte.
+            #
+            # VEM ANTES DA CONVERSÃO EM POI, de propósito: o conversor lê
+            # `airbnb_anuncio.endereco`, e chamar depois deixaria o POI nascer
+            # sem rua de novo, agora com o endereço já no banco ao lado.
+            _tolerante_i9(["enderecar_airbnb.py", "--area", a.area,
+                           "--aplicar"],
+                          "Airbnb — o print da ficha vira rua e número")
             # O ANUNCIO VIRA PONTO AQUI, e nao "depois".
             #
             # Ate 04/09/2026 a etapa descobria e detalhava e parava: o
