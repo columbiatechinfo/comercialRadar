@@ -489,7 +489,27 @@ async def _capturar(page, alvo: dict) -> str | None:
 # é a mesma direção em fov 90, para a costura fechar. Fica o close para ler
 # letreiro de perto e a panorâmica para enxergar a cena — duas coisas
 # diferentes, cada uma com o enquadramento que serve.
-GIRO_GRAUS = (0, 60, 120, 180, 240, 300)
+# OS DOIS FLANCOS, E NAO A VOLTA INTEIRA.
+#
+# Era `(0, 60, 120, 180, 240, 300)`: seis giros mais a fachada, SETE imagens por
+# POI. Medido em 06/09/2026, 72 POIs: 479 imagens, 6,7 por ponto. Para os 27.756
+# POIs de Canoas isso projetava 21 GB e mais de 30 h de navegador.
+#
+# DUAS COISAS ESTAVAM ERRADAS NESSE DESENHO:
+#
+# `g0` aponta para o MESMO rumo da fachada — era duplicata pura, um sexto do
+# custo gasto em fotografar duas vezes a mesma coisa.
+#
+# E a volta completa era paga ADIANTADO para todo mundo, quando ela existe para
+# um caso especifico: a leitura ve um muro e conclui "sem comercio". Esse caso
+# ja tem tratamento proprio — `descrever_imagens` busca panoramas extras
+# ANTES DE REPROVAR, e so para quem seria reprovado. Capturar 360 graus de todo
+# POI e pagar o resgate de todos para socorrer alguns.
+#
+# Ficam a fachada e os dois flancos: cobre "do outro lado da via" e "na
+# esquina", que sao os casos comuns. "Atras da camera" continua alcancavel pelo
+# resgate, que e onde ele sempre esteve.
+GIRO_GRAUS = (90, 270)
 
 # FOV FIXO NO GIRO, e é requisito de costura, não preferência.
 #

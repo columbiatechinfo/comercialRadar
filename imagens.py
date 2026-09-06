@@ -84,6 +84,59 @@ def _buscar(con, tabela: str, onde: str, args: tuple, limite: int | None = None)
     return out
 
 
+#: Maior largura guardada. E a largura que o CONSUMIDOR pede.
+#:
+#: `descrever_imagens.IMG_LARGURA` e 1024: a IA reduz para isso antes de olhar,
+#: e o painel exibe menor ainda. Guardar 1280 era guardar 256 px que ninguem le
+#: e que atravessam disco, backup e rede toda vez.
+LARGURA_MAX = 1024
+
+#: Qualidade do WebP. Medido em fachadas reais de Canoas (06/09/2026):
+#:
+#:      1280px WebP q80    101 KB   92% do original
+#:      1024px WebP q80     70 KB   63%
+#:       896px WebP q80     56 KB   51%
+#:
+#: 1024 em WebP economiza ~40% SEM PERDA PARA QUEM USA, porque e exatamente o
+#: que a IA pede. Descer para 896 economizaria mais e ja seria abaixo do que
+#: o consumidor pede — economia que o proximo a olhar paga.
+WEBP_QUALIDADE = 80
+
+
+def padronizar(dados: bytes, largura_max: int = LARGURA_MAX) -> tuple:
+    """(bytes, tipo) prontos para o Storage: WebP, no maximo `largura_max` px.
+
+    UM SO LUGAR CONVERTE. Cada fonte entrega o que entrega — o Street View sai
+    em JPEG do navegador, o print do Airbnb em PNG, o tile em WebP — e sem um
+    ponto comum cada uma escolheria formato e tamanho por conta, que e como se
+    chega a 21 GB de imagem que ninguem abre no tamanho em que foi guardada.
+
+    NAO E CRITICA: se o Pillow faltar ou o byte nao for imagem, devolve o
+    original intacto. Guardar maior e pior que nao guardar.
+    """
+    try:
+        from PIL import Image
+    except Exception:                                          # noqa: BLE001
+        return dados, "image/jpeg"
+    try:
+        import io as _io
+        im = Image.open(_io.BytesIO(dados))
+        if im.width > largura_max:
+            alt = int(im.height * largura_max / im.width)
+            im = im.resize((largura_max, alt), Image.LANCZOS)
+        buf = _io.BytesIO()
+        im.convert("RGB").save(buf, format="WEBP", quality=WEBP_QUALIDADE,
+                               method=4)
+        novo = buf.getvalue()
+        # SO TROCA SE ENCOLHEU. Recomprimir um JPEG ja pequeno pode INCHAR —
+        # medido: JPEG q85 sobre JPEG deu 116% do original.
+        if novo and len(novo) < len(dados):
+            return novo, "image/webp"
+    except Exception:                                          # noqa: BLE001
+        pass
+    return dados, "image/jpeg"
+
+
 def enviar(caminho: str, dados: bytes, tipo: str = "image/jpeg") -> bool:
     """Sobe um objeto para o Storage. `x-upsert` para reenvio não duplicar."""
     chave = _chave()
@@ -129,8 +182,14 @@ def gravar_streetview(poi_id: int, dados: bytes, lat, lng, con,
                      extra.get("cam_lat"), extra.get("cam_lng"),
                      extra.get("heading"), extra.get("fov")))
         sv_id = cur.fetchone()[0]
-        caminho = f"fachada/{sv_id % 100:02d}/{sv_id}.jpg"
-        if not enviar(caminho, dados):
+        # PADRONIZA ANTES DE SUBIR, e o tamanho gravado e o do byte que subiu.
+        corpo, tipo = padronizar(dados)
+        ext = "webp" if tipo == "image/webp" else "jpg"
+        caminho = f"fachada/{sv_id % 100:02d}/{sv_id}.{ext}"
+        if len(corpo) != len(dados):
+            cur.execute("UPDATE streetview_imgs SET bytes_tam=%s WHERE id=%s",
+                        (len(corpo), sv_id))
+        if not enviar(caminho, corpo, tipo):
             # Sem o byte no Storage a linha seria uma promessa vazia: melhor
             # desfazer do que registrar imagem que não existe.
             cur.execute("DELETE FROM streetview_imgs WHERE id=%s", (sv_id,))
