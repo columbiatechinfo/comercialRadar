@@ -627,8 +627,22 @@ def main():
     p.add_argument("--limit", type=int, default=0)
     p.add_argument("--refazer", action="store_true", help="Recaptura mesmo quem já tem print")
     p.add_argument("--ids", default="", help="POIs específicos, ex: 1644,31861")
+    p.add_argument("--ids-arquivo", dest="ids_arquivo", default="",
+                   help="arquivo com um id de POI por linha")
     a = p.parse_args()
+    # A LISTA POR ARQUIVO, porque a consulta padrão pega o ESTADO INTEIRO e
+    # `--ids` não cabe na linha de comando.
+    #
+    # O recorte que interessa em Canoas são os 26.209 POIs que cruzaram com
+    # uma ligação da concessionária — a lista que a IA vai julgar. Capturar
+    # fachada dos 118 mil da cidade seria 25 h de navegador para imagens que
+    # ninguém abre. Qual é o recorte é decisão de quem roda, e por isso entra
+    # por fora em vez de virar mais um filtro aqui dentro.
     ids = [int(x) for x in a.ids.split(",") if x.strip()] if a.ids else []
+    if a.ids_arquivo:
+        with open(a.ids_arquivo, encoding="utf-8") as f:
+            ids += [int(l.strip()) for l in f if l.strip()]
+        print("   %d POI(s) lidos de %s" % (len(ids), a.ids_arquivo), flush=True)
     asyncio.run(run(a.workers, a.limit, a.refazer, ids))
 
 
