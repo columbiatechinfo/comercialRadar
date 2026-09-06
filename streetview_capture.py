@@ -253,7 +253,11 @@ def carregar_alvos(limit: int, refazer: bool, ids: list = None) -> list:
             alvos = [{"id": i, "nome": n, "lat": la, "lng": lo} for i, n, la, lo in cur.fetchall()]
             return alvos[:limit] if limit > 0 else alvos
     finally:
-        pass                      # a conexao e do processo, nao deste worker
+        # A conexao e do processo, nao deste worker — mas o navegador e dele.
+        try:
+            await nav.close()
+        except Exception:                                      # noqa: BLE001
+            pass
 
 
 def soltar_presos(conn=None) -> int:
@@ -616,7 +620,26 @@ async def _giro(page, alvo, m, heading, fov) -> None:
             continue
 
 
-async def worker(wid, fila: asyncio.Queue, ctx, counter, total, lock):
+async def worker(wid, fila: asyncio.Queue, pw, counter, total, lock):
+    """UM NAVEGADOR POR TRABALHADOR, e nao uma aba num navegador comum.
+
+    Era `ctx.new_page()` sobre um contexto unico: vinte abas dentro do MESMO
+    Chromium. Medido em 06/09/2026, com 20 trabalhadores: os cem primeiros POIs
+    saem normais e depois tudo vira `nao_abriu` — 151 seguidos —, com a maquina
+    OCIOSA (CPU 4%, load 0,6 em 32 nucleos) e 44 processos de Chromium vivos
+    sem fazer nada. As abas penduram; nao e falta de CPU.
+
+    E nao e bloqueio de IP, que foi minha primeira suspeita e a medicao
+    derrubou: no mesmo instante em que a rodada falhava, o panorama abria pelo
+    IP da casa num navegador novo. Pelos proxies, alias, nem abria.
+
+    `minerar_placeid` roda dez em paralelo sem isso acontecer, e a diferenca de
+    desenho e exatamente esta: la, cada trabalhador tem o seu navegador. Aqui
+    passa a ter tambem.
+    """
+    nav = await pw.chromium.launch(headless=True)
+    ctx = await nav.new_context(locale="pt-BR", user_agent=UA)
+    await ctx.add_cookies(CONSENT_COOKIES)
     page = await ctx.new_page()
     await page.set_viewport_size({"width": 1280, "height": 800})
     conn = _con()
@@ -679,12 +702,16 @@ async def run(workers: int, limit: int, refazer: bool, ids: list = None):
     ini = time.time()
 
     async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=True)
-        ctx = await browser.new_context(locale="pt-BR", user_agent=UA)
-        await ctx.add_cookies(CONSENT_COOKIES)
-        await asyncio.gather(*[worker(i, fila, ctx, counter, total, lock)
-                               for i in range(workers)])
-        await browser.close()
+        # `return_exceptions=True`: um trabalhador que morre nao pode cancelar
+        # os outros dezenove no meio do POI deles. A fila e da memoria e o
+        # progresso ja gravado sobrevive, mas o tempo nao.
+        _r = await asyncio.gather(*[worker(i, fila, pw, counter, total, lock)
+                                    for i in range(workers)],
+                                   return_exceptions=True)
+        for _i, _x in enumerate(_r):
+            if isinstance(_x, BaseException):
+                print("   trabalhador %02d morreu: %s: %s"
+                      % (_i, type(_x).__name__, str(_x)[:90]), flush=True)
 
     print(f"\n{'═'*52}")
     print(f"📸 Street View | Resumo")
