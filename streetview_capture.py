@@ -313,9 +313,32 @@ _TRAVA_BANCO = threading.Lock()
 
 
 def _con():
-    """A conexao do processo. Reabre se cair — a rodada dura horas."""
+    """A conexao do processo. Reabre se cair, e se limpa se estiver suja.
+
+    O CONSERTO PARCIAL NAO BASTOU, e o sintoma foi didatico. Pus rollback no
+    caminho de `gravar_streetview` e deixei `_gravar_path` sem — e como a
+    conexao e UMA, bastou um erro no caminho desprotegido para toda gravacao
+    seguinte falhar. Medido em 06/09/2026: 784 imagens gravadas, escrita parada
+    de uma vez, e dali em diante 100% dos POIs em falha, sem uma linha de erro
+    que apontasse a causa.
+
+    A guarda tem de morar em quem ENTREGA a conexao, e nao em cada chamador:
+    chamador se esquece, e o proximo a ser escrito tambem vai esquecer. Aqui,
+    quem pede uma conexao suja recebe uma limpa.
+    """
     global _CONEXAO_UNICA
     if _CONEXAO_UNICA is None or _CONEXAO_UNICA.closed:
+        _CONEXAO_UNICA = realtime_ingest.conectar()
+        return _CONEXAO_UNICA
+    try:
+        import psycopg2.extensions as _ext
+        if _CONEXAO_UNICA.get_transaction_status() == _ext.TRANSACTION_STATUS_INERROR:
+            _CONEXAO_UNICA.rollback()
+    except Exception:                                          # noqa: BLE001
+        try:
+            _CONEXAO_UNICA.close()
+        except Exception:                                      # noqa: BLE001
+            pass
         _CONEXAO_UNICA = realtime_ingest.conectar()
     return _CONEXAO_UNICA
 
@@ -622,8 +645,14 @@ async def worker(wid, fila: asyncio.Queue, ctx, counter, total, lock):
                     mot = alvo.get("_motivo", "desconhecido")
                     counter.setdefault("motivos", {})
                     counter["motivos"][mot] = counter["motivos"].get(mot, 0) + 1
+                # O MOTIVO NO LOG, e nao so no contador. "falhas 48" nao
+                # aponta para lugar nenhum; "falhas 48 (storage 47)" aponta.
+                _mot = counter.get("motivos") or {}
+                _res = " ".join("%s:%d" % (k, v) for k, v in
+                                sorted(_mot.items(), key=lambda x: -x[1])[:3])
                 print(f"📸 POIs {counter['n']}/{total} | capturados {counter['ok']} | "
-                      f"sem pano {counter['na']} | falhas {counter['falhou']} | "
+                      f"sem pano {counter['na']} | falhas {counter['falhou']}"
+                      + (f" ({_res})" if _res else "") + f" | "
                       f"{alvo['nome'][:34]}", flush=True)
             await page.wait_for_timeout(500)
     finally:
