@@ -438,6 +438,123 @@ def _tf(x):
     return str(x).strip().lower() in ("true", "sim", "1") if x is not None else False
 
 
+#: Ate quando um comentario de hospede conta como "esta operando".
+MESES_HOSPEDE_RECENTE = 12
+
+_MESES_PT = {"janeiro": 1, "fevereiro": 2, "março": 3, "marco": 3, "abril": 4,
+             "maio": 5, "junho": 6, "julho": 7, "agosto": 8, "setembro": 9,
+             "outubro": 10, "novembro": 11, "dezembro": 12}
+
+
+def _mes_ano(txt):
+    """'junho de 2026' -> (2026, 6). O Airbnb data o comentario assim."""
+    if not txt:
+        return None
+    ano = mes = None
+    for x in str(txt).lower().replace(" de ", " ").split():
+        if x in _MESES_PT:
+            mes = _MESES_PT[x]
+        elif x.isdigit() and len(x) == 4:
+            ano = int(x)
+    return (ano, mes) if ano and mes else None
+
+
+def _prova_da_fonte(row: dict, conn) -> dict | None:
+    """O veredito que o REGISTRO DA FONTE ja decide, sem olhar fachada.
+
+    POR QUE ISTO EXISTE. Medido em 06/09/2026, 26 POIs de Canoas julgados por
+    fachada: 11 foram reprovados como "residencia sem comercio" e, nos ONZE, o
+    modelo nao tinha visto letreiro nenhum. Nao era o codigo descartando
+    evidencia — nao havia evidencia na fachada. Uma cozinha de delivery e uma
+    hospedagem por temporada funcionam DENTRO DE CASA; fotografar a casa e
+    concluir "sem comercio" e responder a pergunta errada.
+
+    E no iFood a inversao e completa: "parece uma casa" e prova A FAVOR da
+    tese, e nao contra. O produto procura comercio pagando tarifa
+    residencial — a cozinha na casa E o achado.
+
+    Devolve o veredito quando a fonte decide, ou None para seguir pela imagem.
+    """
+    fonte = (row.get("fonte") or "").strip().lower()
+    if conn is None or fonte not in ("ifood", "airbnb"):
+        return None
+
+    if fonte == "ifood":
+        # A FICHA DO MERCHANT E MAIS FORTE QUE QUALQUER FACHADA. Em Canoas:
+        # 100% das 950 lojas com CNPJ, 100% com rua, 100% com nota, 96,7% com
+        # avaliacoes. Uma loja anunciada no iFood, com CNPJ e nota, e um
+        # estabelecimento — a foto da rua nao acrescenta nada a isso.
+        with conn.cursor() as k:
+            k.execute("""select m.cnpj, m.nota, m.avaliacoes, m.categoria
+                           from radar_comercial.ifood_merchant m
+                          where m.poi_id = %s limit 1""", (row["id"],))
+            r = k.fetchone()
+        if not r:
+            return None
+        cnpj, nota, aval, cat = r
+        if not (cnpj or nota is not None):
+            return None
+        return {
+            "confere": True, "veredito": "aprovado", "motivo": "ok",
+            "equivalencia": ("Loja anunciada no iFood com %s%s — a ficha da fonte "
+                             "prova o estabelecimento; a fachada apenas reforça."
+                             % ("CNPJ" if cnpj else "nota",
+                                " e %d avaliações" % aval if aval else "")),
+            "veredito_motivo": cat or None, "atividade_real": cat or None,
+            "porte": None, "pessoas_estimadas": None,
+            "tipo_construcao": None, "outro_estabelecimento": None,
+            "_percepcao": {"prova_da_fonte": "ifood"}, "_nome_ok": True,
+        }
+
+    # AIRBNB: A FACHADA NEM E DELE. O site desloca o pino de proposito — 34 dos
+    # 44 POIs de Canoas com `coord_exata` falso —, entao o predio fotografado
+    # pode ser outro. Julgar isso por imagem nao e conservador, e ruido.
+    #
+    # O que prova operacao comercial e o proprio anuncio: esta com preco (no ar)
+    # e recebeu hospede no ultimo ano. Decisao do dono do produto, 06/09/2026.
+    with conn.cursor() as k:
+        k.execute("""select a.preco_total is not null, a.avaliacoes, a.avaliacoes_qtd
+                       from radar_comercial.airbnb_anuncio a
+                      where a.poi_id = %s limit 1""", (row["id"],))
+        r = k.fetchone()
+    if not r:
+        return None
+    anunciado, avals, qtd = r
+    datas = sorted([d for d in (_mes_ano((x or {}).get("data"))
+                                for x in (avals or []) if isinstance(x, dict)) if d],
+                   reverse=True)
+    import datetime as _dt
+    hoje = _dt.date.today()
+    limite = (hoje.year * 12 + hoje.month) - MESES_HOSPEDE_RECENTE
+    recente = bool(datas and (datas[0][0] * 12 + datas[0][1]) >= limite)
+
+    if anunciado and recente:
+        return {
+            "confere": True, "veredito": "aprovado", "motivo": "ok",
+            "equivalencia": ("Anúncio no ar e com hóspede em %d/%02d — hospedagem "
+                             "em operação. A fachada não julga: o Airbnb desloca "
+                             "o pino de propósito." % datas[0]),
+            "veredito_motivo": "hospedagem", "atividade_real": "hospedagem",
+            "porte": None, "pessoas_estimadas": None, "tipo_construcao": None,
+            "outro_estabelecimento": None,
+            "_percepcao": {"prova_da_fonte": "airbnb"}, "_nome_ok": True,
+        }
+    return {
+        "confere": False, "veredito": "revisao_humana",
+        "motivo": "sem_sinal_de_operacao",
+        "equivalencia": ("Anúncio %s e %s — sem sinal de operação recente. Não "
+                         "reprovado pela fachada, que no Airbnb aponta para o "
+                         "prédio errado."
+                         % ("no ar" if anunciado else "fora do ar",
+                            "último hóspede em %d/%02d" % datas[0] if datas
+                            else "sem comentário colhido")),
+        "veredito_motivo": "hospedagem", "atividade_real": "hospedagem",
+        "porte": None, "pessoas_estimadas": None, "tipo_construcao": None,
+        "outro_estabelecimento": None,
+        "_percepcao": {"prova_da_fonte": "airbnb"}, "_nome_ok": False,
+    }
+
+
 def _decidir(p: dict, row: dict, modelo: str) -> dict:
     """Decide a partir da percepção; o casamento ramo↔categoria é uma 2ª chamada
     focada ao mesmo modelo (só texto), e nome↔cadastro é fuzzy em código."""
@@ -577,7 +694,24 @@ def _analisar_poi(modelo: str, imgs: list, largura: int, row: dict, conn=None) -
     Avalia cada foto ISOLADA (não concatenada): as listagens do Maps misturam fotos
     do ponto com ruído (ex.: pizza + deck de chalé trocado) e concatenar contamina a
     leitura. Cada foto é evidência independente — aprova na 1ª que casar."""
+    # A FONTE DECIDE PRIMEIRO, QUANDO ELA PODE DECIDIR.
+    #
+    # Para iFood e Airbnb a fachada nao e evidencia do estabelecimento — ver
+    # `_prova_da_fonte`. A percepcao continua rodando, porque ela REFORCA: o
+    # letreiro que confirma o ramo vira nota no veredito. O que ela nao faz
+    # mais e reprovar quem a propria fonte ja prova.
+    veredito_da_fonte = _prova_da_fonte(row, conn)
+
     percep = _observar_seguro(modelo, imgs, largura)
+    if veredito_da_fonte is not None:
+        veredito_da_fonte["_percepcao"] = dict(percep,
+                                               prova_da_fonte=row.get("fonte"))
+        ramo = (percep.get("ramo_visto") or "").strip()
+        if ramo and veredito_da_fonte["veredito"] == "aprovado":
+            veredito_da_fonte["equivalencia"] += (
+                " Fachada mostra %s, o que reforça." % ramo)
+        return veredito_da_fonte
+
     res = _decidir(percep, row, modelo)
     # dispara também em residencia/sem_estabelecimento: a fachada murada ou o terreno
     # podem esconder o negócio que as fotos do PRÓPRIO ponto revelam (ex.: creche com
@@ -604,7 +738,10 @@ def carregar_alvos(limit: int, refazer: bool, ids: list, so_reprovados: bool = F
     conn = realtime_ingest.conectar()
     try:
         with conn.cursor() as cur:
-            base_cols = ("id, nome, nome_fantasia, razao_social, categoria, cnae, "
+            # `fonte` E NECESSARIA PARA JULGAR. Ver `_prova_da_fonte`: ha
+            # fontes cujo proprio registro ja prova o estabelecimento, e nelas
+            # a fachada nao pode reprovar.
+            base_cols = ("id, fonte, nome, nome_fantasia, razao_social, categoria, cnae, "
                          "natureza_juridica, preco_medio, avaliacao, streetview_path, "
                          "COALESCE(maps_lat, lat_origem) AS lat, "
                          "COALESCE(maps_lng, lng_origem) AS lng")
