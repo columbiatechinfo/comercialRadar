@@ -253,11 +253,7 @@ def carregar_alvos(limit: int, refazer: bool, ids: list = None) -> list:
             alvos = [{"id": i, "nome": n, "lat": la, "lng": lo} for i, n, la, lo in cur.fetchall()]
             return alvos[:limit] if limit > 0 else alvos
     finally:
-        # A conexao e do processo, nao deste worker — mas o navegador e dele.
-        try:
-            await nav.close()
-        except Exception:                                      # noqa: BLE001
-            pass
+        conn.close()
 
 
 def soltar_presos(conn=None) -> int:
@@ -679,10 +675,16 @@ async def worker(wid, fila: asyncio.Queue, pw, counter, total, lock):
                       f"{alvo['nome'][:34]}", flush=True)
             await page.wait_for_timeout(500)
     finally:
-        conn.close()
+        # A CONEXAO E DO PROCESSO e nao se fecha aqui — vinte trabalhadores
+        # fechando a mesma conexao derrubariam os outros dezenove. O NAVEGADOR
+        # e deste trabalhador, e esse sim e dele para fechar.
         try:
             await page.close()
-        except Exception:
+        except Exception:                                      # noqa: BLE001
+            pass
+        try:
+            await nav.close()
+        except Exception:                                      # noqa: BLE001
             pass
 
 
