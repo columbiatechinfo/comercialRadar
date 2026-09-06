@@ -20,6 +20,7 @@ import json
 import math
 import time
 import asyncio
+import threading
 import argparse
 import urllib.parse
 import urllib.request
@@ -252,7 +253,7 @@ def carregar_alvos(limit: int, refazer: bool, ids: list = None) -> list:
             alvos = [{"id": i, "nome": n, "lat": la, "lng": lo} for i, n, la, lo in cur.fetchall()]
             return alvos[:limit] if limit > 0 else alvos
     finally:
-        conn.close()
+        pass                      # a conexao e do processo, nao deste worker
 
 
 def soltar_presos(conn=None) -> int:
@@ -292,6 +293,33 @@ def _gravar_path(poi_id: int, path: str, conn):
         cur.execute("UPDATE pois SET streetview_path = %s WHERE id = %s", (path, poi_id))
 
 
+#: UMA CONEXAO PARA A MAQUINA INTEIRA, com trava.
+#:
+#: O pooler da porta 7100 aceita 20 sessoes NO TOTAL, entre todas as maquinas.
+#: Este arquivo abria uma conexao POR NAVEGADOR e mais uma POR IMAGEM: com 20
+#: navegadores e tres imagens por POI, a primeira rodada morreu antes do
+#: primeiro ponto com
+#:
+#:     FATAL: (EMAXCONNSESSION) max clients reached in session mode
+#:
+#: E o mesmo desenho que `minerar_placeid` ja usa e anuncia no log — "1 conexao
+#: para os 10 navegadores desta maquina". O gargalo do banco nao pode limitar
+#: quantos navegadores cabem: sao coisas independentes.
+#:
+#: A trava e `threading.Lock` e nao `asyncio.Lock` porque `psycopg2` e sincrono
+#: e as gravacoes saem de `asyncio.to_thread`.
+_CONEXAO_UNICA = None
+_TRAVA_BANCO = threading.Lock()
+
+
+def _con():
+    """A conexao do processo. Reabre se cair — a rodada dura horas."""
+    global _CONEXAO_UNICA
+    if _CONEXAO_UNICA is None or _CONEXAO_UNICA.closed:
+        _CONEXAO_UNICA = realtime_ingest.conectar()
+    return _CONEXAO_UNICA
+
+
 def _gravar_imagem(poi_id: int, dados: bytes, lat, lng, **extra):
     """A fachada vai para `streetview_imgs`, não para um .jpg na pasta.
 
@@ -305,11 +333,19 @@ def _gravar_imagem(poi_id: int, dados: bytes, lat, lng, **extra):
     Substitui a linha 'facade' anterior deste POI: recapturar é justamente para
     trocar a foto, e acumular versões só incharia a tabela e o bucket."""
     import imagens
-    conn = realtime_ingest.conectar()
-    try:
-        return imagens.gravar_streetview(poi_id, dados, lat, lng, conn, **extra)
-    finally:
-        conn.close()
+    with _TRAVA_BANCO:
+        try:
+            return imagens.gravar_streetview(poi_id, dados, lat, lng, _con(),
+                                             **extra)
+        except Exception:                                      # noqa: BLE001
+            # A CONEXAO E COMPARTILHADA: um erro deixado sem rollback envenena
+            # a proxima gravacao de OUTRO navegador. Ver o mesmo conserto em
+            # `minerar_placeid.gravar_um`.
+            try:
+                _con().rollback()
+            except Exception:                                  # noqa: BLE001
+                pass
+            raise
 
 
 # Quanto esperar o Maps entrar em modo panorama.
@@ -560,7 +596,7 @@ async def _giro(page, alvo, m, heading, fov) -> None:
 async def worker(wid, fila: asyncio.Queue, ctx, counter, total, lock):
     page = await ctx.new_page()
     await page.set_viewport_size({"width": 1280, "height": 800})
-    conn = realtime_ingest.conectar()
+    conn = _con()
     try:
         while True:
             try:
