@@ -1316,16 +1316,38 @@ async def principal(a):
             proximo POI, colhe, grava, e volta para a fila. Duas maquinas
             rodando isto atendem a mesma quadra sem combinarem nada.
             """
-            # TRES PROXIES ANTES DE DESISTIR, e nao um so.
+            # QUANTOS IPs UM NAVEGADOR QUEIMA ANTES DE DESISTIR DE VEZ.
             #
-            # O navegador que tomava tres `ERR_TIMED_OUT` seguidos voltava
-            # (`return`) e a vaga dele ficava vazia ate o fim da etapa. Nas
-            # rodadas 24 e 25 (04/09/2026) tres de dez navegadores morreram
-            # assim em cada uma — e a causa era o PROXY sorteado, nao o Maps:
-            # os outros sete seguiam colhendo normalmente. Trocar de IP e o
-            # remedio obvio; matar o trabalhador era jogar 30% da vazao fora.
-            PROXIES_POR_NAVEGADOR = 3
-            for troca_de_ip in range(PROXIES_POR_NAVEGADOR):
+            # Comecou em 3, e 3 era pouco. Na faixa 10 de Canoas (06/09/2026,
+            # 00h30) o Google voltou a punir em massa: os dez navegadores
+            # gastaram os tres IPs cada um, os dez desistiram, e a etapa seguiu
+            # adiante com 600 dos 712 pontos SEM DETALHE. Trocar "insistir num
+            # IP morto para sempre" por "desistir no terceiro" foi trocar um
+            # defeito por outro — com 250 proxies na mao, parar no terceiro e
+            # jogar fora 247.
+            #
+            # O TETO CONTINUA EXISTINDO porque desistir precisa ser possivel:
+            # se o Maps estiver fora do ar, ou o cookie tiver morrido, nenhum IP
+            # vai funcionar e o laco infinito queimaria a lista inteira em
+            # castigo de 2 h — deixando as faixas seguintes sem proxy nenhum.
+            # Doze cobre uma punicao ampla e para antes de torrar a reserva.
+            PROXIES_POR_NAVEGADOR = 12
+            # O ORCAMENTO CONTA TROCAS SEGUIDAS SEM RENDER NADA, e nao trocas
+            # na vida inteira do navegador.
+            #
+            # Com `for ... in range(12)` o contador nunca voltava: um navegador
+            # que trabalhou bem por quinhentos pontos e depois trocou doze vezes
+            # morria, mesmo havendo 135 IPs saudaveis na reserva. Medido no
+            # reprocesso da faixa 2 (06/09/2026, 04h26): nove dos dez
+            # navegadores desistiram com 638 de 1.225 pontos feitos, e o decimo
+            # ficou sozinho arrastando o resto.
+            #
+            # Trocar de IP e caro, mas nao e fracasso: fracasso e trocar doze
+            # vezes SEM colher um ponto entre elas. Um ponto colhido prova que o
+            # caminho funciona, e devolve o orcamento inteiro.
+            troca_de_ip = 0
+            rendeu_algo = False
+            while troca_de_ip < PROXIES_POR_NAVEGADOR:
               # PULA QUEM ESTA DE CASTIGO. O indice fixo pegava o proximo da
               # lista sem perguntar; agora anda ate achar um IP fora do
               # descanso, dando no maximo uma volta completa.
@@ -1409,6 +1431,7 @@ async def principal(a):
                     async with db:
                         n_com = await asyncio.to_thread(gravar_um, conexao,
                                                         alvo["poi_id"], d)
+                    rendeu_algo = True
                     async with trava:
                         feitos.append(d)
                         print("    %3d %-12s %-34s %-20s %3d aval"
@@ -1432,9 +1455,17 @@ async def principal(a):
                     await nav.close()
               if not desistiu:
                   return                    # a fila secou, ou o erro nao e de IP
+              # PONTO COLHIDO DEVOLVE O ORCAMENTO. Se este navegador entregou
+              # algo desde a ultima troca, ele provou que ainda serve.
+              if rendeu_algo:
+                  troca_de_ip = 0
+                  rendeu_algo = False
+              else:
+                  troca_de_ip += 1
             async with trava:
                 print("    navegador %02d desiste: %d proxies seguidos falharam"
                       % (i, PROXIES_POR_NAVEGADOR))
+                desistencias.append(i)
 
         cookie = await garantir_cookie(pw, pool, a.cookie, a.renovar_cookie)
 
@@ -1462,7 +1493,7 @@ async def principal(a):
                       "Parando antes de gravar 90 POIs vazios.")
                 return 4
 
-        colhidos, feitos = [], []
+        colhidos, feitos, desistencias = [], [], []
         # Uma conexao para a maquina inteira, com trava: o pooler da porta
         # 7100 so aceita 20 sessoes NO TOTAL, entre todas as maquinas.
         conexao = bc.conectar()
@@ -1491,6 +1522,22 @@ async def principal(a):
               % (len(usaveis), len(pool._proxies), pool.pais or "qualquer",
                  desloca % max(1, len(usaveis))))
         await asyncio.gather(*(trabalhador(i) for i in range(a.workers)))
+        # FILA QUE SOBROU E AVISO, e nao silencio. A faixa 10 terminou com 600
+        # de 712 pontos sem detalhe e nada no log dizia isso: a etapa seguiu
+        # para a proxima como se tivesse acabado.
+        if desistencias:
+            _sobrou = 0
+            try:
+                with conexao.cursor() as _k:
+                    _k.execute("""select count(*) from radar_comercial.pois
+                                   where sessao = %s and detalhado_em is null""",
+                               (a.sessao,))
+                    _sobrou = _k.fetchone()[0]
+            except Exception:                                  # noqa: BLE001
+                pass
+            print("  ATENCAO: %d navegador(es) desistiram e %d ponto(s) ficaram "
+                  "SEM DETALHE. Rode a mesma area de novo para completar."
+                  % (len(desistencias), _sobrou))
         conexao.close()
         cresceu = engordar_cookie(a.cookie, colhidos)
         if cresceu:
