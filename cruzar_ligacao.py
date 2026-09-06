@@ -20,9 +20,11 @@ OS CINCO CRITÉRIOS, CADA UM VISÍVEL POR SI
     mesmo_telhado       os dois pontos caem no mesmo telhado
     telhado_comercial   a cor do telhado é de cobertura comercial
 
-`confianca` é `criterios_ok / 5`, sem peso escondido — está escrito na própria
-tabela. Guardar os cinco separados é o que permite rever a régua depois sem
-refazer o cruzamento.
+`confianca` sai de `confianca_de()`: rua E número juntos são a base forte
+(0,70), rua só é a quadra (0,35), e telhado, telhado comercial e distância
+entram como reforço. Era `criterios_ok / 5` até 06/09/2026 — ver a função.
+Guardar os cinco separados é o que permite rever a régua depois sem refazer
+o cruzamento.
 
 OS DOIS ÚLTIMOS AINDA NÃO TÊM DADO, e isso é dito aqui em vez de escondido: o
 telhado sai dos tiles capturados, e em 02/09/2026 existe UM tile no disco, de
@@ -51,6 +53,47 @@ import base_comum as bc
 # critérios; se a busca parasse em 20 m, um POI a 35 m que bate endereço e
 # número nunca seria visto — e ele é exatamente o caso interessante, o ponto
 # cuja coordenada está torta mas cujo endereço está certo.
+def confianca_de(mesmo_end, mesmo_num, perto, mesmo_tel, tel_com) -> float:
+    """A regua de confianca de um par ligacao x POI.
+
+    ERA `acertos / 5`, com os cinco criterios pesando igual — e isso fazia
+    "rua + numero" (a PORTA identificada) empatar em 0,40 com "rua + ate 20 m"
+    (a QUADRA identificada). Pior: "numero sem rua + 20 m" tambem dava 0,40, e
+    numero sem rua e coincidencia — o 350 existe em toda rua da cidade.
+
+    Decisao do dono do produto, 06/09/2026: rua E numero juntos valem mais que
+    a soma das partes. A regua separa BASE de REFORCO:
+
+        base     rua E numero ........ 0,70   a porta
+                 rua so .............. 0,35   a quadra
+                 nem rua ............. 0,10   so proximidade
+        reforco  mesmo telhado ....... +0,20  desempata vizinho
+                 telhado comercial ... +0,05
+                 ate 20 m ............ +0,05
+        teto 1,00
+
+    Medido sobre os 72.285 vinculos existentes antes de aplicar: os 23.469 com
+    rua+numero sobem para 0,70-0,75 e se separam dos 27.220 que so tem a
+    quadra (0,40); os 2.498 de "numero sem rua + 20 m" caem de 0,40 para 0,15.
+
+    Os cinco criterios continuam gravados separados: mudar esta regua nunca
+    exige refazer o cruzamento — basta recalcular a coluna.
+    """
+    if mesmo_end and mesmo_num:
+        v = 0.70
+    elif mesmo_end:
+        v = 0.35
+    else:
+        v = 0.10
+    if mesmo_tel:
+        v += 0.20
+    if tel_com:
+        v += 0.05
+    if perto:
+        v += 0.05
+    return min(1.0, round(v, 2))
+
+
 RAIO_BUSCA_M = 60.0
 PERTO_M = 20.0
 
@@ -159,7 +202,25 @@ class Telhado:
     interface para nao reescrever a chamada, e delega.
     """
 
+    #: Raios sondados ao redor da ligacao quando o pixel exato nao e telhado.
+    #: A coordenada da ligacao e a do hidrometro — calcada, muro, frente do
+    #: lote —, e o predio dela e o mais proximo. 12 m cobre o recuo de um lote
+    #: urbano; alem disso ja e o vizinho.
+    ANEIS_DE_SONDAGEM_M = (4.0, 8.0, 12.0)
+
+    #: Quantas segmentacoes (33 MB cada) ficam vivas ao mesmo tempo.
+    #: Ligacoes vizinhas caem no mesmo tile, entao 64 ja acerta quase sempre; o
+    #: resto vem do .npz em disco. Sem este teto, o cruzamento residencial de
+    #: Canoas estourou 24 GB (OOMKilled, 06/09/2026).
+    SEGMENTACOES_VIVAS = 64
+
+    #: Tamanho da celula do indice de tiles, em graus (~1,1 km). O maior tile
+    #: tem 994 m de lado, entao a vizinhanca 3x3 de uma celula sempre contem
+    #: todo tile que cobre um ponto dela.
+    CELULA_GRAUS = 0.01
+
     def __init__(self, pasta: str = "capturas"):
+        import collections
         import telhados as _t
         self._t = _t
         self.tiles = _t.achar_tiles_no_disco(pasta)
@@ -167,30 +228,108 @@ class Telhado:
         # zoom 20 distingue construcoes vizinhas que o de 994 m mistura.
         self.tiles.sort(key=lambda t: t.meia_lat * t.meia_lng)
         self.sem_cobertura = 0
+        self.sondados = 0                 # ligacoes achadas pelo anel, nao pelo pixel
+        # INDICE POR CELULA. Um tile entra em toda celula que a caixa dele toca.
+        self._celulas = collections.defaultdict(list)
+        g = self.CELULA_GRAUS
+        for tl in self.tiles:
+            a, b, c, d = tl.caixa
+            for i in range(int(a // g), int(b // g) + 1):
+                for j in range(int(c // g), int(d // g) + 1):
+                    self._celulas[(i, j)].append(tl)
+        # CACHE DE SEGMENTACAO, mais recente por ultimo.
+        self._vivas = collections.OrderedDict()
+
+    def _candidatos(self, lat, lon):
+        """Os tiles que podem cobrir o ponto — poucos, pelo indice."""
+        g = self.CELULA_GRAUS
+        return self._celulas.get((int(lat // g), int(lon // g)), ())
+
+    def _lembrar(self, tl):
+        """Registra o tile como recem-usado; solta o mais antigo se passou do teto."""
+        chave = id(tl)
+        if chave in self._vivas:
+            self._vivas.move_to_end(chave)
+            return
+        self._vivas[chave] = tl
+        if len(self._vivas) > self.SEGMENTACOES_VIVAS:
+            _, velho = self._vivas.popitem(last=False)
+            velho._seg = None             # a memoria volta; o .npz fica no disco
+
+    def _telhado_em(self, tl, lat, lon):
+        """(segmento, props) se o ponto cai em telhado neste tile; senao (None, None)."""
+        s, p = self._t.segmento_de(tl, lat, lon)
+        self._lembrar(tl)
+        if s is not None and p and p.get("telhado"):
+            return s, p
+        return None, None
 
     def _onde(self, lat, lon):
-        for t in self.tiles:
-            if t.cobre(lat, lon):
-                s, p = self._t.segmento_de(t, lat, lon)
-                if s is not None and p and p["telhado"]:
-                    return t, s, p
+        """O tile e o telhado da ligacao — o de baixo dela, ou o MAIS PROXIMO.
+
+        Medido em 06/09/2026, 300 pares com rua e numero batendo: 96% morriam
+        aqui porque a ligacao (o hidrometro) cai na calcada, nao no telhado.
+        O predio da ligacao e o mais proximo dela: se o pixel exato nao e
+        telhado, sondam-se aneis crescentes em oito direcoes.
+        """
+        import math as _m
+        for tl in self._candidatos(lat, lon):
+            if not tl.cobre(lat, lon):
+                continue
+            s, p = self._telhado_em(tl, lat, lon)
+            if s is not None:
+                return tl, s, p
+            # Nao esta em cima de telhado: o predio mais proximo, em aneis.
+            ky = 110540.0
+            kx = 111320.0 * _m.cos(_m.radians(lat))
+            for raio in self.ANEIS_DE_SONDAGEM_M:
+                for k in range(8):
+                    ang = k * _m.pi / 4.0
+                    la = lat + (raio * _m.sin(ang)) / ky
+                    lo = lon + (raio * _m.cos(ang)) / kx
+                    if not tl.cobre(la, lo):
+                        continue
+                    s, p = self._telhado_em(tl, la, lo)
+                    if s is not None:
+                        self.sondados += 1
+                        return tl, s, p
         return None, None, None
 
     def julgar(self, lat1, lon1, lat2, lon2):
-        """(mesmo_telhado, telhado_comercial)."""
+        """(mesmo_telhado, telhado_comercial).
+
+        Ponto 1 e a LIGACAO (achada pelo pixel ou pelo anel); ponto 2 e o POI,
+        que e um pino do Maps e quase sempre ja esta sobre o telhado — mas
+        tambem ganha o anel, porque um pino na porta e comum.
+        """
         if not self.tiles or lat1 is None or lat2 is None:
             self.sem_cobertura += 1
             return False, False
-        t, s1, p1 = self._onde(lat1, lon1)
-        if t is None:
+        tl, s1, p1 = self._onde(lat1, lon1)
+        if tl is None:
             self.sem_cobertura += 1
             return False, False
-        s2, _ = self._t.segmento_de(t, lat2, lon2)
+        s2, _ = self._telhado_em(tl, lat2, lon2)
+        if s2 is None:
+            import math as _m
+            ky = 110540.0
+            kx = 111320.0 * _m.cos(_m.radians(lat2))
+            for raio in self.ANEIS_DE_SONDAGEM_M:
+                for k in range(8):
+                    ang = k * _m.pi / 4.0
+                    la = lat2 + (raio * _m.sin(ang)) / ky
+                    lo = lon2 + (raio * _m.cos(ang)) / kx
+                    if tl.cobre(la, lo):
+                        s2, _ = self._telhado_em(tl, la, lo)
+                        if s2 is not None:
+                            break
+                if s2 is not None:
+                    break
         if s2 is None:
             self.sem_cobertura += 1
             return False, False
         mesmo = (s1 == s2)
-        return mesmo, bool(mesmo and p1["comercial"])
+        return mesmo, bool(mesmo and p1.get("comercial"))
 
 
 def cruzar(base_id: int, cidade: str, aplicar: bool, raio: float,
@@ -431,18 +570,22 @@ def cruzar(base_id: int, cidade: str, aplicar: bool, raio: float,
         if ok == 0:
             placar["descartado_sem_criterio"] += 1
             continue
+        # A ORDEM E A DA REGUA, e nao a da contagem crua: com `ok` na frente,
+        # "numero sem rua + 20 m" (2 acertos) passava na frente de "rua so"
+        # (1 acerto) na hora de escolher os 5 candidatos por ligacao.
         por_ligacao[lig].append(
-            (ok, -(metros or 9e9), poi_id, fonte, mesmo_end, mesmo_num, perto,
-             mesmo_tel, tel_com, metros))
+            (confianca_de(mesmo_end, mesmo_num, perto, mesmo_tel, tel_com),
+             -(metros or 9e9), poi_id, fonte, mesmo_end, mesmo_num, perto,
+             mesmo_tel, tel_com, metros, ok))
 
     registros = []
     for lig, cands in por_ligacao.items():
         cands.sort(reverse=True)
         aderentes = len({c[3] for c in cands[:MAX_POR_LIGACAO] if c[3]})
-        for (ok, _neg, poi_id, fonte, me, mn, pe, mt, tc, metros) in \
+        for (_conf, _neg, poi_id, fonte, me, mn, pe, mt, tc, metros, ok) in \
                 cands[:MAX_POR_LIGACAO]:
             registros.append((base_id, str(lig), poi_id, me, mn, pe, mt, tc,
-                              metros, ok, round(ok / 5.0, 4),
+                              metros, ok, confianca_de(me, mn, pe, mt, tc),
                               aderentes, fontes_no_momento, fonte or None))
             placar["criterios_%d" % ok] += 1
             for chave, valor in (("mesmo_endereco", me), ("mesmo_numero", mn),
@@ -453,6 +596,9 @@ def cruzar(base_id: int, cidade: str, aplicar: bool, raio: float,
 
     _log("   %d ligações com candidato · %d vínculos a gravar"
          % (len(por_ligacao), len(registros)))
+    if telhado.sondados:
+        _log("   %d ligações acharam o telhado pelo anel (hidrômetro na calçada)"
+             % telhado.sondados)
     if telhado.sem_cobertura:
         _log("   %d pares sem tile cobrindo os dois pontos — os dois critérios"
              % telhado.sem_cobertura)
