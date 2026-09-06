@@ -366,10 +366,30 @@ def _mascarar_ui(im: Image.Image) -> Image.Image:
     return im
 
 
-def _imgs_b64(imgs: list, largura: int) -> list:
-    """1ª imagem (street view, com máscara de UI) na largura cheia; fotos de apoio
-    menores e mais comprimidas (o link até o servidor é relay Tailscale)."""
-    return [_resize_b64(b, largura, 80, mascarar=True) if i == 0
+def _imgs_b64(imgs: list, largura: int, eh_streetview=None) -> list:
+    """Street View com máscara de UI e largura cheia; fotos de apoio, menores.
+
+    A MÁSCARA SEGUE A NATUREZA DA IMAGEM, E NÃO A POSIÇÃO DELA.
+
+    Era `if i == 0`, de quando o street view era um só e vinha na frente. Hoje
+    não é: o protocolo 360 acrescenta os giros DEPOIS das fotos do Maps
+    (`imgs = imgs + rot`), e a captura de fachada já grava três ângulos. Todas
+    são prints do Maps, todas trazem o painel de endereço no topo-esquerdo e o
+    rótulo do minimapa no rodapé — e todas menos a primeira iam CRUAS.
+
+    O modelo lê esse texto como se fosse placa. Medido em 06/09/2026, no POI
+    84240 (Chapa Quente Lanches): o giro `g90` mostrava o rótulo do minimapa
+    "Padaria Confeitaria e Cafeteria Sabor Do Trigo", e o modelo devolveu isso
+    como `nome_visto` e `ramo_visto` — um estabelecimento VIZINHO, lido da
+    interface do Google. O veredito acertou por outro motivo (a ficha do iFood),
+    mas a evidência estava inventada.
+
+    `eh_streetview` é a lista de índices que levam máscara. Sem ela, mantém o
+    comportamento antigo — a primeira — para não quebrar quem ainda não passa.
+    """
+    sv = set(range(len(imgs))) if eh_streetview is True else \
+        ({0} if eh_streetview is None else set(eh_streetview))
+    return [_resize_b64(b, largura, 80, mascarar=True) if i in sv
             else _resize_b64(b, min(largura, MAPS_FOTO_LARGURA), 70)
             for i, b in enumerate(imgs)]
 
@@ -408,13 +428,16 @@ def _observar(modelo: str, imgs_b64: list) -> dict:
                        max_tokens=480, timeout=TIMEOUT)
 
 
-def _observar_seguro(modelo: str, imgs: list, largura: int) -> dict:
+def _observar_seguro(modelo: str, imgs: list, largura: int,
+                     eh_streetview=None) -> dict:
     """Observa com degradação progressiva (contexto) e retry em timeout (fila GPU)."""
     import socket
     import urllib.error
+    _sv = set(range(len(imgs))) if eh_streetview is True else \
+        ({0} if eh_streetview is None else set(eh_streetview))
     tentativas = (
-        _imgs_b64(imgs, largura),                                   # SV cheia + fotos 768
-        [_resize_b64(b, 512, mascarar=(i == 0))                     # TODAS a 512 (mantém
+        _imgs_b64(imgs, largura, eh_streetview),                    # SV cheia + fotos 768
+        [_resize_b64(b, 512, mascarar=(i in _sv))                   # TODAS a 512 (mantém
          for i, b in enumerate(imgs)],                              # o giro 360 no jogo)
         [_resize_b64(imgs[0], largura, mascarar=True)],             # só o street view
     )
@@ -686,7 +709,8 @@ def _recomendar_visita(conn, poi_id: int, aprovado: bool) -> tuple:
 FOTOS_2LOOK = 3           # 2ª olhada: avalia até 3 fotos do próprio ponto, UMA A UMA
 
 
-def _analisar_poi(modelo: str, imgs: list, largura: int, row: dict, conn=None) -> dict:
+def _analisar_poi(modelo: str, imgs: list, largura: int, row: dict, conn=None,
+                  eh_streetview=None) -> dict:
     """Percepção + decisão; se divergente MAS há fotos do próprio POI, faz uma
     2ª olhada SÓ nas fotos (CP4/CP10): elas são do estabelecimento em si — confiança
     maior que o street view, que pode estar mostrando o letreiro do vizinho.
@@ -702,7 +726,7 @@ def _analisar_poi(modelo: str, imgs: list, largura: int, row: dict, conn=None) -
     # mais e reprovar quem a propria fonte ja prova.
     veredito_da_fonte = _prova_da_fonte(row, conn)
 
-    percep = _observar_seguro(modelo, imgs, largura)
+    percep = _observar_seguro(modelo, imgs, largura, eh_streetview)
     if veredito_da_fonte is not None:
         veredito_da_fonte["_percepcao"] = dict(percep,
                                                prova_da_fonte=row.get("fonte"))
@@ -960,7 +984,11 @@ def run(limit, workers, modelo, largura, refazer, ids, incremental, extras_n,
                         _arquivar_shot(conn, row["id"], facade, "facade",
                                        row["lat"], row["lng"], data_pano)
                     imgs = [facade] + _fotos_maps_bytes(row["id"], conn)
-                    res = _analisar_poi(modelo, imgs, largura, row, conn)
+                    # QUAIS SAO PRINTS DO MAPS. A lista cresce por tras (giros
+                    # e panoramas deslocados entram no fim), e por isso os
+                    # indices vao explicitos em vez de "o primeiro".
+                    sv = [0]
+                    res = _analisar_poi(modelo, imgs, largura, row, conn, sv)
                     escalou = False
                     # CP9: NUNCA reprovar sem antes girar o panorama 360° e olhar
                     # o entorno; se ainda reprovar, tenta panoramas deslocados.
@@ -971,8 +999,9 @@ def run(limit, workers, modelo, largura, refazer, ids, incremental, extras_n,
                                            row["lat"], row["lng"], data_pano)
                         if rot:
                             escalou = True
+                            sv += list(range(len(imgs), len(imgs) + len(rot)))
                             imgs = imgs + rot
-                            res = _analisar_poi(modelo, imgs, largura, row, conn)
+                            res = _analisar_poi(modelo, imgs, largura, row, conn, sv)
                         if res["veredito"] == "reprovado" and extras_n > 0:
                             extra_imgs = cap.extras(row["lat"], row["lng"], cam, extras_n)
                             for k, shot in enumerate(extra_imgs):
@@ -980,8 +1009,11 @@ def run(limit, workers, modelo, largura, refazer, ids, incremental, extras_n,
                                                row["lat"], row["lng"], data_pano)
                             if extra_imgs:
                                 escalou = True
+                                sv += list(range(len(imgs),
+                                                 len(imgs) + len(extra_imgs)))
                                 imgs = imgs + extra_imgs
-                                res = _analisar_poi(modelo, imgs, largura, row, conn)
+                                res = _analisar_poi(modelo, imgs, largura, row,
+                                                    conn, sv)
                         res["_360"] = True         # marca: passou pelo protocolo 360
                     _gravar(row, res, modelo, len(imgs), conn)
                     _contabiliza(row, res, len(imgs), escalou)
