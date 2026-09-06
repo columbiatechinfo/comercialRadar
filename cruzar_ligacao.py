@@ -53,7 +53,30 @@ import base_comum as bc
 # critérios; se a busca parasse em 20 m, um POI a 35 m que bate endereço e
 # número nunca seria visto — e ele é exatamente o caso interessante, o ponto
 # cuja coordenada está torta mas cujo endereço está certo.
-def confianca_de(mesmo_end, mesmo_num, perto, mesmo_tel, tel_com) -> float:
+#: Teto de confianca quando o endereco do POI e INDICIO, e nao PROVA.
+#:
+#: `logradouro_resolvido.forca` ja separava os dois e o cruzamento ignorava a
+#: distincao. `prova` e endereco que a fonte publicou ou que o CEP confirmou;
+#: `indicio` e endereco DEDUZIDO DA COORDENADA — o CNEFE mais proximo, a 6,5 m
+#: em media, ou o OSRM a 8,9 m.
+#:
+#: A diferenca importa porque, no indicio, a rua e o numero SAO A COORDENADA
+#: escrita de outro jeito. Dizer "rua e numero batem, logo 0,95" quando a rua
+#: e o numero vieram do proprio ponto e raciocinio circular: mede-se
+#: proximidade duas vezes e chama-se a segunda de porta identificada.
+#:
+#: Medido em Canoas, 06/09/2026: 3.428 vinculos de confianca >= 0,70 apoiam-se
+#: num endereco `indicio` — 5,6% de todos os de alta confianca. O caso extremo
+#: e o Airbnb, que embaralha o pino de proposito e mesmo assim produzia
+#: vinculos 0,95.
+#:
+#: 0,60 e escolha: fica ABAIXO da faixa da porta identificada (0,70) e ACIMA
+#: da quadra (0,40). O indicio continua valendo — so nao vale como prova.
+TETO_ENDERECO_INDICIO = 0.60
+
+
+def confianca_de(mesmo_end, mesmo_num, perto, mesmo_tel, tel_com,
+                 end_prova: bool = True) -> float:
     """A regua de confianca de um par ligacao x POI.
 
     ERA `acertos / 5`, com os cinco criterios pesando igual — e isso fazia
@@ -91,6 +114,11 @@ def confianca_de(mesmo_end, mesmo_num, perto, mesmo_tel, tel_com) -> float:
         v += 0.05
     if perto:
         v += 0.05
+    if not end_prova and (mesmo_end or mesmo_num):
+        # O TETO SO MORDE QUEM USOU O ENDERECO. Um par que casou por
+        # proximidade e telhado nao fica pior por o POI ter endereco fraco —
+        # ele nao usou endereco nenhum.
+        v = min(v, TETO_ENDERECO_INDICIO)
     return min(1.0, round(v, 2))
 
 
@@ -552,7 +580,11 @@ def cruzar(base_id: int, cidade: str, aplicar: bool, raio: float,
         "select p.id, coalesce(p.fonte,''), coalesce(p.nome,''), "
         "       coalesce(p.endereco,''), coalesce(lr.logradouro,''), "
         "       coalesce(lr.numero,''), st_y(p.pt_geo::geometry), "
-        "       st_x(p.pt_geo::geometry) "
+        "       st_x(p.pt_geo::geometry), "
+        # A FORCA DO ENDERECO VIAJA COM O POI. Sem ela a regua nao consegue
+        # distinguir a porta que a fonte publicou da porta que foi deduzida
+        # da propria coordenada — ver `TETO_ENDERECO_INDICIO`.
+        "       coalesce(lr.forca,'') = 'prova' as end_prova "
         "  from radar_comercial.pois p "
         "  left join radar_comercial.logradouro_resolvido lr on lr.poi_id = p.id "
         " where p.fundido_em is null and p.pt_geo is not null "
@@ -570,7 +602,8 @@ def cruzar(base_id: int, cidade: str, aplicar: bool, raio: float,
 
     if poligono is not None:
         _n_lig, _n_poi = len(ligs), len(pois)
-        # ligs: (lig, via, num, tipo, LAT, LON); pois: (id,fonte,nome,end,via,num,LAT,LON)
+        # ligs: (lig, via, num, tipo, LAT, LON)
+        # pois: (id, fonte, nome, end, via, num, LAT, LON, end_prova)
         # `_n_poi` e nao `_np`: `_np` e o numpy importado nesta funcao — um local
         # com esse nome o sombreava e estourava em `_np.empty` logo abaixo.
         ligs = [r for r in ligs
@@ -592,11 +625,12 @@ def cruzar(base_id: int, cidade: str, aplicar: bool, raio: float,
         for (lg, via_l, num_l, tipo_l, llat, llon) in ligs:
             lx, ly = llon * kx, llat * ky
             for i in arvore.query_ball_point((lx, ly), raio):
-                pid, fonte, nome_p, end_p, via_p, num_p, plat, plon = pois[i]
+                (pid, fonte, nome_p, end_p, via_p, num_p, plat, plon,
+                 end_prova) = pois[i]
                 metros = _math.hypot(pxy[i, 0] - lx, pxy[i, 1] - ly)
                 linhas.append((lg, via_l, num_l, tipo_l, pid, fonte, nome_p,
                                end_p, via_p, num_p, metros, llat, llon,
-                               plat, plon))
+                               plat, plon, end_prova))
     _log("   %d pares ligação×POI a até %.0f m (cKDTree em memória) · %.1f s"
          % (len(linhas), raio, time.time() - t0))
 
@@ -613,7 +647,8 @@ def cruzar(base_id: int, cidade: str, aplicar: bool, raio: float,
     por_ligacao = defaultdict(list)
     placar = Counter()
     for (lig, via_l, num_l, _tipo, poi_id, fonte, _nome_poi, end_poi,
-         via_poi, num_poi, metros, llat, llon, plat, plon) in linhas:
+         via_poi, num_poi, metros, llat, llon, plat, plon,
+         end_prova) in linhas:
         # A VIA DO POI VEM DA PENEIRA DE ENDEREÇO quando ela resolveu; o campo
         # `endereco` do POI é texto solto, do jeito que a fonte escreveu.
         via_p = _via(via_poi or end_poi)
@@ -629,7 +664,11 @@ def cruzar(base_id: int, cidade: str, aplicar: bool, raio: float,
             # LONGE, SO A PORTA IDENTIFICADA PASSA. Entre 20 e 60 m, rua e
             # numero juntos sao o unico sinal que sobrevive a coordenada torta;
             # qualquer coisa menos que isso, a essa distancia, e o vizinho.
-            if not (mesmo_end and mesmo_num):
+            # E A PORTA PRECISA SER PROVA, nao indicio. Entre 20 e 60 m,
+            # aceitar rua+numero DEDUZIDOS DA COORDENADA e circular: o
+            # endereco veio do ponto, entao ele nao pode testemunhar a favor
+            # do ponto. So o endereco que a fonte publicou vale aqui.
+            if not (mesmo_end and mesmo_num and end_prova):
                 placar["descartado_longe_sem_porta"] += 1
                 continue
         elif not (mesmo_end or mesmo_num or perto):
@@ -639,9 +678,9 @@ def cruzar(base_id: int, cidade: str, aplicar: bool, raio: float,
         # "numero sem rua + 20 m" (2 acertos) passava na frente de "rua so"
         # (1 acerto) na hora de escolher os 5 candidatos por ligacao.
         por_ligacao[lig].append(
-            (confianca_de(mesmo_end, mesmo_num, perto, False, False),
+            (confianca_de(mesmo_end, mesmo_num, perto, False, False, end_prova),
              -(metros or 9e9), poi_id, fonte, mesmo_end, mesmo_num, perto,
-             metros, llat, llon, plat, plon))
+             metros, llat, llon, plat, plon, end_prova))
 
     # OS FINALISTAS DE CADA LIGACAO, E SO ELES, VAO AO TELHADO.
     #
@@ -678,19 +717,26 @@ def cruzar(base_id: int, cidade: str, aplicar: bool, raio: float,
         # A PORTA IDENTIFICADA ENTRA INTEIRA; o resto disputa as cinco vagas.
         # `c[4]` e `mesmo_end`, `c[5]` e `mesmo_num` — ver a tupla montada na
         # passada barata.
-        porta_identificada = [c for c in cands if c[4] and c[5]]
-        fracos = [c for c in cands if not (c[4] and c[5])]
+        # A PORTA SO E PORTA SE FOR PROVA. `c[12]` e `end_prova`. O
+        # privilegio de entrar sem teto existe porque um predio comercial tem
+        # varias lojas no MESMO endereco publicado; endereco deduzido da
+        # coordenada nao sustenta esse privilegio, e sem esta guarda vinte
+        # POIs vizinhos entrariam todos por um endereco que ninguem publicou.
+        porta_identificada = [c for c in cands if c[4] and c[5] and c[12]]
+        fracos = [c for c in cands if not (c[4] and c[5] and c[12])]
         escolhidos = porta_identificada + fracos[:MAX_FRACOS_POR_LIGACAO]
         if len(porta_identificada) > MAX_FRACOS_POR_LIGACAO:
             placar["ligacao_com_muitos_no_mesmo_endereco"] += 1
         aderentes = len({c[3] for c in escolhidos if c[3]})
         for (_conf, _neg, poi_id, fonte, me, mn, pe, metros,
-             llat, llon, plat, plon) in escolhidos:
+             llat, llon, plat, plon, ep) in escolhidos:
             mt, tc = telhado.julgar(llat, llon, plat, plon)
             finalistas += 1
             ok = sum((me, mn, pe, mt, tc))
+            if not ep and (me or mn):
+                placar["endereco_so_indicio"] += 1
             registros.append((base_id, str(lig), poi_id, me, mn, pe, mt, tc,
-                              metros, ok, confianca_de(me, mn, pe, mt, tc),
+                              metros, ok, confianca_de(me, mn, pe, mt, tc, ep),
                               aderentes, fontes_no_momento, fonte or None))
             placar["criterios_%d" % ok] += 1
             for chave, valor in (("mesmo_endereco", me), ("mesmo_numero", mn),

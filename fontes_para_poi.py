@@ -338,7 +338,7 @@ def _airbnb(cur, cidade, limite, extra):
     sql = """
         select a.anuncio_id, coalesce(nullif(btrim(a.nome),''), a.titulo),
                a.endereco, a.numero, a.bairro, a.cep, a.lat, a.lng,
-               a.tipo_resumo
+               a.tipo_resumo, a.coord_exata
           from radar_comercial.airbnb_anuncio a
          where a.poi_id is null and a.na_area is not false
            and a.lat is not null and a.lng is not null
@@ -350,7 +350,8 @@ def _airbnb(cur, cidade, limite, extra):
     if limite:
         sql += " limit %d" % int(limite)
     cur.execute(sql, (cidade,))
-    for aid, nome, end, num, bairro, cep, lat, lng, tipo in cur.fetchall():
+    for (aid, nome, end, num, bairro, cep, lat, lng, tipo,
+         coord_exata) in cur.fetchall():
         endereco = end or ""
         if endereco:
             endereco = montar_endereco(endereco, num, bairro, cidade, "RS", cep)
@@ -359,7 +360,31 @@ def _airbnb(cur, cidade, limite, extra):
             # SEM ENDEREÇO NÃO INVENTA UM. O Airbnb não publica rua; quem
             # resolve é o `enderecar_airbnb` pela imagem, ou a etapa 7 pela
             # coordenada — e aí sai marcado como indício, que é a verdade.
-            "endereco": endereco, "categoria": tipo or "hospedagem",
+            #
+            # A CATEGORIA É `hospedagem`, E NÃO `tipo_resumo`. Este campo
+            # guarda o SUBTÍTULO do anúncio — "Espaço inteiro: casa de
+            # hóspedes em Estância Velha, Brasil" —, que não é categoria e
+            # ainda cita um município que não é o do ponto. Medido em
+            # 06/09/2026: 26 dos 44 POIs de Canoas tinham subtítulo no lugar
+            # da categoria, e sete deles nomeavam outra cidade. O subtítulo
+            # continua inteiro em `airbnb_anuncio.tipo_resumo`, que é onde ele
+            # sempre foi verdade.
+            "endereco": endereco, "categoria": "hospedagem",
+            # A COORDENADA DO AIRBNB É EMBARALHADA DE PROPÓSITO, e sem dizer
+            # isso o resto do sistema a trata como porta.
+            #
+            # O site desloca o pino de quem não reservou — `coord_exata` é
+            # falso em 34 dos 44 de Canoas. A etapa 7 então geocodifica esse
+            # ponto ao contrário e devolve rua e número (27 dos 44 ganharam
+            # número assim), e o cruzamento, que lê `logradouro_resolvido`,
+            # marca "rua e número batem" e emite confiança 0,95. Catorze
+            # vínculos de alta confiança em Canoas nasceram disso.
+            #
+            # 200 m é o deslocamento que o próprio Airbnb descreve para o
+            # pino aproximado. Declarar a incerteza é o que permite a quem lê
+            # decidir; escondê-la produz certeza falsa.
+            "coord_precisao": "porta" if coord_exata else "aproximada",
+            "coord_incerteza_m": None if coord_exata else 200.0,
             "lat": float(lat) if lat is not None else None,
             "lng": float(lng) if lng is not None else None,
             "cep": cep, "numero": num, "telefone": None, "cnpj": None,
@@ -514,7 +539,12 @@ def do_municipio(qual: str, cidade: str, cod: str, uf: str = "RS",
             (i.get("categoria") or None), i.get("telefone"), i.get("cnpj"),
             i.get("email"), lat, lng, qual, "%s:%s" % (qual, i["chave"]),
             qual, qual, origem if lat is not None else None,
-            extra.get("id_base"), i.get("id_ligacao_base")))
+            extra.get("id_base"), i.get("id_ligacao_base"),
+            # A PRECISÃO VIAJA COM O PONTO. Quem não declara nada continua
+            # gravando nulo, que é o que todas as fontes faziam até aqui —
+            # este par de campos só existe para a fonte que SABE que a
+            # coordenada dela é aproximada e precisa dizer.
+            i.get("coord_precisao"), i.get("coord_incerteza_m")))
 
     _log("   de onde veio a coordenada:")
     for k, n in placar.most_common():
@@ -534,7 +564,8 @@ def do_municipio(qual: str, cidade: str, cod: str, uf: str = "RS",
         insert into radar_comercial.pois
             (nome, endereco, cidade, uf, categoria, telefone, cnpj, email,
              lat_origem, lng_origem, fonte, fonte_dado, status,
-             endereco_fonte, coord_fonte, id_base, id_ligacao_base)
+             endereco_fonte, coord_fonte, id_base, id_ligacao_base,
+             coord_precisao, coord_incerteza_m)
         values %s
         on conflict do nothing
     """, linhas, page_size=1000)
