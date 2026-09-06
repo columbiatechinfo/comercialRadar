@@ -67,6 +67,22 @@ services:
       #   notebook             RADAR_MAX_TRABALHADORES=10
       RADAR_MAX_TRABALHADORES: ${MAX_TRABALHADORES:-30}
 
+      # QUE TIPO DE JOB ESTA MAQUINA ACEITA. Vazio = todos, o padrao.
+      #
+      # Existe por uma medicao, e nao por preferencia: os 250 proxies BR do
+      # plano estao TODOS em `104.165.145.0/24`. Duas maquinas na colheita do
+      # Maps nao somam — para o limitador do Google e uma rede so, falando o
+      # dobro mais alto. Medido em 06/09/2026: i9 sozinho 45/min, i9 mais
+      # notebook 17,6/min NO TOTAL, i9 sozinho de novo 34,3/min.
+      #
+      #   servidor principal   (vazio)             aceita tudo
+      #   notebook             TIPOS_ACEITOS=planilha
+      #
+      # O notebook fica de fora do que passa por proxy e disponivel para o que
+      # nao passa — carga de base, cruzamento, endereco, veredito da IA —,
+      # rodado por comando enquanto nao houver tipo de job proprio para isso.
+      RADAR_TIPOS_ACEITOS: ${TIPOS_ACEITOS:-}
+
       # O LIBPOSTAL FICA NO HOST, E O WORKER NUMA REDE BRIDGE. `127.0.0.1`
       # aqui dentro e o loopback DO CONTEINER — o servico esta de pe no host e
       # nunca era alcancado: as rodadas 24 e 25 (04/09/2026) registraram

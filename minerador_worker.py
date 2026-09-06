@@ -96,10 +96,17 @@ def pegar_job(con):
                            visto_em = now()
              where id = (select id from job
                           where estado = 'fila'
+                            -- LISTA VAZIA = TODOS, e por isso o `cardinality`
+                            -- vem antes: sem ele, a maquina sem restricao
+                            -- declarada nao pegaria job nenhum, e o sintoma
+                            -- seria uma fila parada sem uma linha de log.
+                            and (cardinality(%s::text[]) = 0
+                                 or tipo = any(%s::text[]))
                           order by criado_em
                           limit 1
                           for update skip locked)
-         returning id, id_empresa, pedido_por, tipo, argumentos""", (EU,))
+         returning id, id_empresa, pedido_por, tipo, argumentos""",
+                    (EU, TIPOS_ACEITOS, TIPOS_ACEITOS))
         r = cur.fetchone()
     con.commit()
     if not r:
@@ -190,6 +197,29 @@ def encerrar(con, id_job: int, codigo: int, erro: str | None = None,
 #: levaram o contêiner a 13,8 GiB e 9,4 núcleos de 32. O servidor principal
 #: (123 GB, 32 vCPU) fica em 30; o notebook (45 GB, 32 vCPU, com nominatim,
 #: photon e dois OSRM de pé) fica em 10.
+#: Que tipos de job ESTA maquina aceita. Vazio = todos, o padrao.
+#:
+#: NASCEU DE UMA MEDICAO, e nao de uma preferencia. Os 250 proxies BR do plano
+#: estao TODOS na mesma rede `104.165.145.0/24` — "500 IPs" sao duas redes, e a
+#: metade brasileira e uma so. Rodar duas maquinas na colheita do Maps nao soma:
+#: para o limitador do Google e uma rede falando o dobro mais alto. Medido em
+#: 06/09/2026, mesma fila e mesmo codigo:
+#:
+#:     i9 sozinho          45/min
+#:     i9 + notebook       17,6/min   (total, nao por maquina)
+#:     i9 sozinho de novo  34,3/min
+#:
+#: Somar a segunda maquina cortou a vazao pela metade, e tira-la a dobrou. Nao
+#: e bloqueio — o erro ficou em 0,7% —, e estrangulamento por sub-rede.
+#:
+#: Entao a segunda maquina fica FORA do que passa por proxy, e disponivel para
+#: o que nao passa: carga de base, cruzamento, endereco, veredito da IA. Este
+#: filtro e como ela diz isso, em vez de alguem lembrar de nao ligar o worker.
+#: `RADAR_TIPOS_ACEITOS=planilha` no `.env` do notebook.
+TIPOS_ACEITOS = [s.strip() for s in
+                 (os.environ.get("RADAR_TIPOS_ACEITOS") or "").split(",")
+                 if s.strip()]
+
 MAX_TRABALHADORES = int(os.environ.get("RADAR_MAX_TRABALHADORES") or 30)
 
 #: As chaves que contam trabalhadores de navegador e por isso obedecem ao teto.
