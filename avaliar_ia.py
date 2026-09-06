@@ -702,8 +702,8 @@ def gravar(con, poi_id, v, veredito, percepcao, modelo, n_imgs, dt):
         k.execute("""
             insert into radar_comercial.poi_veredito
                 (poi_id, veredito, justificativa, especie_cnefe, secao_cnae,
-                 medidores, percepcao, modelo, imagens, segundos)
-            values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                 medidores, percepcao, modelo, imagens, segundos, confianca)
+            values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             on conflict (id_empresa, poi_id) do update set
                 veredito = excluded.veredito,
                 justificativa = excluded.justificativa,
@@ -713,11 +713,17 @@ def gravar(con, poi_id, v, veredito, percepcao, modelo, n_imgs, dt):
                 percepcao = excluded.percepcao,
                 modelo = excluded.modelo,
                 imagens = excluded.imagens,
+                confianca = excluded.confianca,
                 segundos = excluded.segundos,
                 avaliado_em = now()
         """, (poi_id, v, veredito.get("justificativa"), esp, sec, med,
               json.dumps(percepcao, ensure_ascii=False), modelo, n_imgs,
-              round(dt, 2)))
+              round(dt, 2),
+              # A CONFIANCA VEM DOS DOIS CAMINHOS. Pela ficha da fonte ela
+              # mede atualidade — loja no ar, hospede recente; pela fachada,
+              # o quanto a leitura se sustenta. Mesma regua 0..1 de
+              # `ligacao_poi.confianca`, para as duas caberem na mesma tela.
+              veredito.get("confianca")))
     con.commit()
 
 

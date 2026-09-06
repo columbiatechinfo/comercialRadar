@@ -455,6 +455,49 @@ def _observar_seguro(modelo: str, imgs: list, largura: int,
                 time.sleep(15)                 # deixa a fila do GPU esvaziar
 
 
+#: A REGUA DA FACHADA — mesma forma da de `cruzar_ligacao.confianca_de`:
+#: uma BASE pelo motivo, mais REFORCOS pelo que sustenta a leitura.
+#:
+#: Nem todo veredito por imagem vale o mesmo, e tratar todos como binarios
+#: apagava diferencas reais. "Letreiro casou com o cadastro" e quase certeza;
+#: "residencia sem comercio" e a leitura mais fragil que existe aqui — foi
+#: justamente ela que, medida em 26 POIs de Canoas, apareceu 11 vezes sem que o
+#: modelo tivesse visto UM letreiro. E "imagem insuficiente" mal e um veredito:
+#: e a confissao de que nao deu para julgar.
+#:
+#: A confianca vale para os DOIS sentidos: e o quanto o veredito se sustenta,
+#: aprovando ou reprovando.
+CONF_FACHADA = {
+    "ok": 0.70,                       # ramo compativel, pela pergunta isolada
+    "sem_estabelecimento": 0.75,      # area aberta: a cena e clara
+    "ponto_vago": 0.70,               # imovel vazio: clara, mas muda rapido
+    "atividade_divergente": 0.60,     # ve outro ramo — pode ser o vizinho
+    "residencia_sem_comercio": 0.45,  # a mais fragil: negocio dentro de casa
+    "imagem_insuficiente": 0.20,      # mal e veredito
+}
+#: Reforco de quem casou o NOME no letreiro: e a evidencia mais forte da etapa,
+#: porque nome proprio nao se repete por acaso na esquina.
+CONF_NOME_CASOU = 0.25
+#: Reforco de quem passou pela 2a olhada e voltou confirmado nas fotos DO
+#: PROPRIO ponto — evidencia melhor que o street view, que pode mostrar o
+#: vizinho.
+CONF_2LOOK = 0.10
+
+
+def _confianca_da_fachada(motivo: str, nome_ok: bool, dois_look: bool = False,
+                          n_imgs: int = 0) -> float:
+    v = CONF_FACHADA.get(motivo, 0.40)
+    if nome_ok:
+        v += CONF_NOME_CASOU
+    if dois_look:
+        v += CONF_2LOOK
+    if n_imgs >= 5:
+        # MAIS ANGULOS, MAIS CHAO. O protocolo 360 existe para nao reprovar por
+        # ter olhado de um lado so; quem passou por ele decidiu vendo mais.
+        v += 0.05
+    return round(min(1.0, v), 2)
+
+
 def _tf(x):
     if isinstance(x, bool):
         return x
@@ -463,6 +506,65 @@ def _tf(x):
 
 #: Ate quando um comentario de hospede conta como "esta operando".
 MESES_HOSPEDE_RECENTE = 12
+
+# ══════════════════════════════════════════════════════════════════════════
+# A REGUA DE CONFIANCA DO VEREDITO — 0 a 1, a mesma de `ligacao_poi`.
+#
+# Existir e estar funcionando sao coisas diferentes, e o rotulo `aprovado`
+# nao distinguia as duas. Uma loja com CNPJ que esta FORA DO AR no iFood
+# existe; uma hospedagem cujo ultimo hospede foi ha onze meses tambem. Nenhuma
+# das duas merece a mesma posicao na lista do operador que a loja aberta agora
+# ou a hospedagem com hospede no mes passado.
+#
+# As duas escalas tem a mesma forma: uma BASE, que e "a fonte registra este
+# estabelecimento", mais um PASSO DE ATUALIDADE, que e "e ele esta operando".
+# ══════════════════════════════════════════════════════════════════════════
+
+#: iFood — a ficha existe, com CNPJ ou nota.
+IFOOD_BASE = 0.55
+#: iFood — a loja esta NO AR agora (`bruto.disponivel`). E o sinal mais forte
+#: que esta fonte oferece: nao e "ja existiu", e "aceita pedido hoje".
+IFOOD_NO_AR = 0.35
+#: iFood — reforcos menores de identidade.
+IFOOD_COM_CNPJ = 0.05
+IFOOD_COM_AVALIACAO = 0.05
+#: iFood — teto de quem esta FORA DO AR. A loja existe e pode voltar, mas
+#: mandar o fiscal a uma cozinha fechada e o desperdicio que a regua evita.
+IFOOD_TETO_FORA_DO_AR = 0.50
+
+#: Airbnb — o anuncio esta no ar, com preco publicado.
+AIRBNB_BASE = 0.40
+#: Airbnb — o passo que a RECENCIA vale por inteiro, e que decai um doze avos
+#: por mes de distancia ate zerar em doze meses. Decisao do dono do produto
+#: (06/09/2026): "caindo a cada mes ate zerar quando passar de 1 ano".
+#:
+#: Decai LINEAR de proposito. Uma curva daria mais precisao aparente sobre um
+#: dado que ja e grosso — o Airbnb data o comentario por MES, sem dia.
+PESO_RECENCIA = 0.50
+#: Airbnb — reforco de historico: anuncio com muitos hospedes ao longo do
+#: tempo e operacao estabelecida, mesmo que o ultimo comentario nao seja de
+#: ontem.
+AIRBNB_MUITAS_AVALIACOES = 0.10
+AIRBNB_AVALIACOES_MUITAS = 20
+
+
+def _passo_recencia(datas) -> tuple:
+    """(passo, meses, ultimo) a partir das datas de comentario, a mais nova.
+
+    `datas` sao pares (ano, mes) ja ordenados do mais novo para o mais velho.
+    Devolve o passo de confianca — cheio no mes corrente, zero a partir de
+    `MESES_HOSPEDE_RECENTE`.
+    """
+    import datetime as _dt
+    if not datas:
+        return 0.0, None, None
+    hoje = _dt.date.today()
+    meses = (hoje.year * 12 + hoje.month) - (datas[0][0] * 12 + datas[0][1])
+    meses = max(0, meses)
+    if meses >= MESES_HOSPEDE_RECENTE:
+        return 0.0, meses, datas[0]
+    return round(PESO_RECENCIA * (1.0 - meses / float(MESES_HOSPEDE_RECENTE)),
+                 3), meses, datas[0]
 
 _MESES_PT = {"janeiro": 1, "fevereiro": 2, "março": 3, "marco": 3, "abril": 4,
              "maio": 5, "junho": 6, "julho": 7, "agosto": 8, "setembro": 9,
@@ -508,25 +610,50 @@ def _prova_da_fonte(row: dict, conn) -> dict | None:
         # avaliacoes. Uma loja anunciada no iFood, com CNPJ e nota, e um
         # estabelecimento — a foto da rua nao acrescenta nada a isso.
         with conn.cursor() as k:
-            k.execute("""select m.cnpj, m.nota, m.avaliacoes, m.categoria
+            k.execute("""select m.cnpj, m.nota, m.avaliacoes, m.categoria,
+                                (m.bruto->>'disponivel')
                            from radar_comercial.ifood_merchant m
                           where m.poi_id = %s limit 1""", (row["id"],))
             r = k.fetchone()
         if not r:
             return None
-        cnpj, nota, aval, cat = r
+        cnpj, nota, aval, cat, disp = r
         if not (cnpj or nota is not None):
             return None
+
+        no_ar = (str(disp).lower() == "true") if disp is not None else None
+        conf = IFOOD_BASE
+        if cnpj:
+            conf += IFOOD_COM_CNPJ
+        if aval:
+            conf += IFOOD_COM_AVALIACAO
+        if no_ar:
+            conf += IFOOD_NO_AR
+        if no_ar is False:
+            # FORA DO AR NAO REPROVA — a loja existe e o CNPJ e real. Mas
+            # perde a frente da fila: o fiscal nao deve sair para uma cozinha
+            # que o proprio iFood diz estar fechada.
+            conf = min(conf, IFOOD_TETO_FORA_DO_AR)
+        conf = round(min(1.0, conf), 2)
+
+        estado = ("no ar agora" if no_ar
+                  else "FORA DO AR no iFood" if no_ar is False
+                  else "sem informação de disponibilidade")
         return {
-            "confere": True, "veredito": "aprovado", "motivo": "ok",
-            "equivalencia": ("Loja anunciada no iFood com %s%s — a ficha da fonte "
+            "confere": True,
+            "veredito": "aprovado" if no_ar is not False else "revisao_humana",
+            "motivo": "ok" if no_ar is not False else "loja_fora_do_ar",
+            "confianca": conf,
+            "equivalencia": ("Loja no iFood com %s%s, %s — a ficha da fonte "
                              "prova o estabelecimento; a fachada apenas reforça."
                              % ("CNPJ" if cnpj else "nota",
-                                " e %d avaliações" % aval if aval else "")),
+                                " e %d avaliações" % aval if aval else "",
+                                estado)),
             "veredito_motivo": cat or None, "atividade_real": cat or None,
             "porte": None, "pessoas_estimadas": None,
             "tipo_construcao": None, "outro_estabelecimento": None,
-            "_percepcao": {"prova_da_fonte": "ifood"}, "_nome_ok": True,
+            "_percepcao": {"prova_da_fonte": "ifood", "disponivel": no_ar},
+            "_nome_ok": True,
         }
 
     # AIRBNB: A FACHADA NEM E DELE. O site desloca o pino de proposito — 34 dos
@@ -546,35 +673,55 @@ def _prova_da_fonte(row: dict, conn) -> dict | None:
     datas = sorted([d for d in (_mes_ano((x or {}).get("data"))
                                 for x in (avals or []) if isinstance(x, dict)) if d],
                    reverse=True)
-    import datetime as _dt
-    hoje = _dt.date.today()
-    limite = (hoje.year * 12 + hoje.month) - MESES_HOSPEDE_RECENTE
-    recente = bool(datas and (datas[0][0] * 12 + datas[0][1]) >= limite)
+    passo, meses, ultimo = _passo_recencia(datas)
 
-    if anunciado and recente:
+    conf = (AIRBNB_BASE if anunciado else 0.0) + passo
+    if qtd and qtd >= AIRBNB_AVALIACOES_MUITAS:
+        conf += AIRBNB_MUITAS_AVALIACOES
+    conf = round(min(1.0, conf), 2)
+
+    if ultimo is None:
+        quando = "sem comentário colhido"
+    elif meses == 0:
+        quando = "hóspede neste mês"
+    elif meses == 1:
+        quando = "último hóspede há 1 mês (%d/%02d)" % ultimo
+    else:
+        quando = "último hóspede há %d meses (%d/%02d)" % (meses, ultimo[0],
+                                                           ultimo[1])
+
+    if anunciado and passo > 0:
         return {
             "confere": True, "veredito": "aprovado", "motivo": "ok",
-            "equivalencia": ("Anúncio no ar e com hóspede em %d/%02d — hospedagem "
-                             "em operação. A fachada não julga: o Airbnb desloca "
-                             "o pino de propósito." % datas[0]),
+            "confianca": conf,
+            "equivalencia": ("Anúncio no ar, %s — hospedagem em operação. A "
+                             "fachada não julga: o Airbnb desloca o pino de "
+                             "propósito." % quando),
             "veredito_motivo": "hospedagem", "atividade_real": "hospedagem",
             "porte": None, "pessoas_estimadas": None, "tipo_construcao": None,
             "outro_estabelecimento": None,
-            "_percepcao": {"prova_da_fonte": "airbnb"}, "_nome_ok": True,
+            "_percepcao": {"prova_da_fonte": "airbnb", "meses_desde_hospede": meses},
+            "_nome_ok": True,
         }
     return {
         "confere": False, "veredito": "revisao_humana",
-        "motivo": "sem_sinal_de_operacao",
-        "equivalencia": ("Anúncio %s e %s — sem sinal de operação recente. Não "
-                         "reprovado pela fachada, que no Airbnb aponta para o "
-                         "prédio errado."
-                         % ("no ar" if anunciado else "fora do ar",
-                            "último hóspede em %d/%02d" % datas[0] if datas
-                            else "sem comentário colhido")),
+        "motivo": "sem_sinal_de_operacao", "confianca": conf,
+        # NAO TER COMENTARIO NAO E O MESMO QUE TER UM ANTIGO. O primeiro e
+        # falta de dado — em Canoas, 25 dos 55 anuncios estavam com o detalhe
+        # PENDENTE e por isso sem avaliacao nenhuma. O segundo e sinal. Dizer
+        # "o passo zerou porque passou de 12 meses" no caso da falta seria
+        # inventar uma medicao que nao foi feita.
+        "equivalencia": ("Anúncio %s, %s — %s. Não reprovado pela fachada, que "
+                         "no Airbnb aponta para o prédio errado."
+                         % ("no ar" if anunciado else "fora do ar", quando,
+                            "sem como medir atualidade" if ultimo is None else
+                            "o passo de atualidade zerou (mais de %d meses)"
+                            % MESES_HOSPEDE_RECENTE)),
         "veredito_motivo": "hospedagem", "atividade_real": "hospedagem",
         "porte": None, "pessoas_estimadas": None, "tipo_construcao": None,
         "outro_estabelecimento": None,
-        "_percepcao": {"prova_da_fonte": "airbnb"}, "_nome_ok": False,
+        "_percepcao": {"prova_da_fonte": "airbnb", "meses_desde_hospede": meses},
+        "_nome_ok": False,
     }
 
 
@@ -653,6 +800,7 @@ def _decidir(p: dict, row: dict, modelo: str) -> dict:
         base = f"cenário '{cenario}' incompatível"
     return {
         "confere": conf, "veredito": veredito, "motivo": motivo,
+        "confianca": _confianca_da_fachada(motivo, nome_ok),
         "equivalencia": f"{base} com a categoria '{row.get('categoria') or '(vazia)'}'.",
         "veredito_motivo": p.get("atividade_real"),
         "porte": p.get("porte"),
@@ -751,6 +899,8 @@ def _analisar_poi(modelo: str, imgs: list, largura: int, row: dict, conn=None,
                 continue                          # 400/timeout nessa foto: tenta a próxima
             res2 = _decidir(p2, row, modelo)
             if res2.get("veredito") == "aprovado":
+                res2["confianca"] = _confianca_da_fachada(
+                    res2.get("motivo"), res2.get("_nome_ok"), dois_look=True)
                 res2["equivalencia"] = ("Foto do próprio ponto confirma o ramo "
                                         "(street view mostrava o vizinho/fachada).")
                 res2["_percepcao"]["_2look"] = True
