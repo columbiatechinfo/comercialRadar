@@ -69,7 +69,8 @@ def listar():
     cur = con.cursor()
     cur.execute("""
         select id, nome, cliente, tabela_dados, linhas, estado,
-               mapa_colunas, tipos_comerciais, confirmado_por, confirmado_em,
+               mapa_colunas, tipos_comerciais, tipos_a_cruzar,
+               confirmado_por, confirmado_em,
                criado_em
           from radar_comercial.base_cliente
          order by criado_em desc
@@ -88,7 +89,8 @@ def detalhe(base_id: int):
     cur = con.cursor()
     cur.execute("""
         select id, nome, cliente, tabela_dados, linhas, estado,
-               colunas_brutas, mapa_colunas, tipos_comerciais, sugerido_por_ia
+               colunas_brutas, mapa_colunas, tipos_comerciais, tipos_a_cruzar,
+               sugerido_por_ia
           from radar_comercial.base_cliente where id = %s
     """, (base_id,))
     linhas = _linhas(cur)
@@ -159,6 +161,20 @@ def confirmar(base_id: int, corpo: dict = Body(...),
     """
     mapa = corpo.get("mapa_colunas") or {}
     tipos = corpo.get("tipos_comerciais") or []
+    # ONDE PROCURAR E UMA PERGUNTA DIFERENTE DE O QUE E COMERCIO.
+    #
+    # `tipos_comerciais` diz o que o cliente JA cobra como nao-residencial;
+    # `tipos_a_cruzar` diz em quais categorias de ligacao o cruzamento vai
+    # PROCURAR comercio escondido. Enquanto as duas eram a mesma lista, o
+    # pipeline nunca tocou nas 88.767 ligacoes RESIDENCIAIS de Canoas — que
+    # sao justamente o produto. Padrao RESIDENCIAL, migracao 0070.
+    #
+    # Tela antiga nao manda o campo: nesse caso fica o padrao, e nao vazio,
+    # porque vazio la no cruzamento significa "use tipos_comerciais".
+    cruzar = corpo.get("tipos_a_cruzar")
+    if cruzar is None:
+        cruzar = ["RESIDENCIAL"]
+    cruzar = [str(x).upper() for x in cruzar if str(x).strip()]
     # A ASSINATURA VEM DO TOKEN, E NÃO DO CORPO.
     #
     # Antes era `corpo.get("confirmado_por")` — e o front nunca mandava esse
@@ -206,6 +222,11 @@ def confirmar(base_id: int, corpo: dict = Body(...),
                         % (mapa["tipo_cliente"], schema, nome, mapa["tipo_cliente"]))
             reais = {str(v[0]) for v in cur.fetchall()}
             fora = [t for t in tipos if str(t) not in reais]
+            # A MESMA VALIDACAO para a lista de cruzamento: um tipo que a
+            # coluna nao tem faria o cruzamento varrer uma categoria vazia e
+            # devolver zero vinculo, sem nada dizendo por que.
+            maiusculas = {str(v).upper() for v in reais}
+            fora += [t for t in cruzar if t not in maiusculas]
             if fora:
                 con.close()
                 raise HTTPException(
@@ -218,11 +239,11 @@ def confirmar(base_id: int, corpo: dict = Body(...),
 
     cur.execute("""
         update radar_comercial.base_cliente
-           set mapa_colunas = %s, tipos_comerciais = %s, estado = 'pronta',
-               confirmado_por = %s, confirmado_em = now()
+           set mapa_colunas = %s, tipos_comerciais = %s, tipos_a_cruzar = %s,
+               estado = 'pronta', confirmado_por = %s, confirmado_em = now()
          where id = %s
         returning id, estado
-    """, (json.dumps(mapa), json.dumps(tipos), quem, base_id))
+    """, (json.dumps(mapa), json.dumps(tipos), cruzar, quem, base_id))
     saida = cur.fetchone()
     con.commit()
     con.close()

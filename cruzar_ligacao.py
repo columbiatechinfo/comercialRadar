@@ -403,7 +403,8 @@ def cruzar(base_id: int, cidade: str, aplicar: bool, raio: float,
     # de novo — nao a elevacao.
 
     cur.execute("""
-        select nome, tabela_dados, mapa_colunas, tipos_comerciais, estado
+        select nome, tabela_dados, mapa_colunas, tipos_comerciais, estado,
+               tipos_a_cruzar
           from radar_comercial.base_cliente where id = %s
     """, (base_id,))
     r = cur.fetchone()
@@ -411,7 +412,7 @@ def cruzar(base_id: int, cidade: str, aplicar: bool, raio: float,
         _log("   base %s não existe" % base_id)
         con.close()
         return {}
-    nome, tabela, mapa, tipos, estado = r
+    nome, tabela, mapa, tipos, estado, a_cruzar = r
     if estado != "pronta":
         # O PORTÃO BARRA A GRAVAÇÃO, NÃO O ENSAIO.
         #
@@ -434,6 +435,18 @@ def cruzar(base_id: int, cidade: str, aplicar: bool, raio: float,
         _log("      ainda não confirmado por ninguém.")
 
     tipos = [str(t).upper() for t in (tipos or [])]
+
+    # A LISTA DO PAINEL MANDA, E `--tipos` MANDA MAIS.
+    #
+    # `tipos_a_cruzar` (migracao 0070) e o que o operador marcou na tela da
+    # base: onde procurar comercio escondido. Vazio significa "use
+    # tipos_comerciais" — o comportamento anterior a 06/09/2026 —, para
+    # nenhuma base existente mudar de alvo por acidente.
+    a_cruzar = [str(x).upper() for x in (a_cruzar or [])]
+    if a_cruzar:
+        tipos = a_cruzar
+        _log("   tipos a cruzar (painel): %s" % ", ".join(tipos))
+
     if tipos_over:
         # CATEGORIA POR FORA DA BASE — para auditar o que a base nao declara como
         # comercial. Ex.: `--tipos RESIDENCIAL` acha comercio numa ligacao

@@ -1894,6 +1894,22 @@
               </label>`;
     }).join("") || "<p class='text-[12.5px] text-gray-400'>Escolha a coluna de tipo de cliente para ver os valores.</p>";
 
+    // ONDE PROCURAR e uma pergunta diferente de O QUE E COMERCIO. A lista de
+    // cima diz o que o cliente ja cobra como comercio; esta diz em quais
+    // categorias de ligacao o cruzamento vai procurar comercio escondido.
+    // Padrao RESIDENCIAL — so o operador muda, e muda aqui.
+    const aCruzar = new Set((b.tipos_a_cruzar && b.tipos_a_cruzar.length
+      ? b.tipos_a_cruzar : ["RESIDENCIAL"]).map((x) => String(x).toUpperCase()));
+    $("bases-tipos-cruzar").innerHTML = (d.valores_tipo || []).map(([v, n]) => {
+      const marcado = aCruzar.has(String(v).toUpperCase());
+      return `<label class="flex items-center gap-x-2 text-[13px]">
+                <input type="checkbox" data-cruzar="${String(v).replace(/"/g, "&quot;")}"
+                       ${marcado ? "checked" : ""} class="rounded border-gray-300">
+                <span class="text-gray-700">${v}</span>
+                <span class="ml-auto text-[11.5px] tabular-nums text-gray-400">${n.toLocaleString("pt-BR")}</span>
+              </label>`;
+    }).join("") || "<p class='text-[12.5px] text-gray-400'>Escolha a coluna de tipo de cliente para ver os valores.</p>";
+
     $("bases-aviso").textContent = "";
   }
 
@@ -1905,13 +1921,17 @@
     const tipos = [];
     document.querySelectorAll("#m-bases input[data-tipo]:checked")
       .forEach((c) => tipos.push(c.dataset.tipo));
+    const cruzar = [];
+    document.querySelectorAll("#m-bases input[data-cruzar]:checked")
+      .forEach((c) => cruzar.push(c.dataset.cruzar));
 
     const b = $("bases-confirmar");
     b.disabled = true;
     try {
       const r = await fetch(`/api/base-cliente/${basesEstado.atual}/confirmar`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mapa_colunas: mapa, tipos_comerciais: tipos }),
+        body: JSON.stringify({ mapa_colunas: mapa, tipos_comerciais: tipos,
+                               tipos_a_cruzar: cruzar }),
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) {
