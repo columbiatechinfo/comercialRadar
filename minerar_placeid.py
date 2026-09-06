@@ -1363,23 +1363,40 @@ async def principal(a):
             # Trocar de IP e caro, mas nao e fracasso: fracasso e trocar doze
             # vezes SEM colher um ponto entre elas. Um ponto colhido prova que o
             # caminho funciona, e devolve o orcamento inteiro.
+            # QUANTO TEMPO A RESERVA VALE. Generosa de proposito: um
+            # navegador saudavel fica horas no mesmo IP, e renovar de minuto em
+            # minuto seria trafego a toa. Se o processo morrer, o pior caso e
+            # este IP ficar de molho ate o prazo vencer — barato perto de dois
+            # navegadores no mesmo IP.
+            RESERVA_S = 3600
             troca_de_ip = 0
             rendeu_algo = False
             while troca_de_ip < PROXIES_POR_NAVEGADOR:
-              # PULA QUEM ESTA DE CASTIGO. O indice fixo pegava o proximo da
-              # lista sem perguntar; agora anda ate achar um IP fora do
-              # descanso, dando no maximo uma volta completa.
+              # PULA QUEM ESTA DE CASTIGO OU JA E DE OUTRO, E TOMA O QUE SOBROU.
+              #
+              # O indice fixo pegava o proximo da lista sem perguntar. Duas
+              # rodadas com a mesma formula caiam no MESMO IP ao mesmo tempo —
+              # e como o `_in_use` vivia na memoria de cada processo, nenhuma
+              # das duas sabia. Agora a escolha consulta o estado compartilhado
+              # (migração 0071) e RESERVA o que escolheu: quem chegar depois ve
+              # a reserva e anda para o proximo.
+              #
+              # A reserva tem prazo e e renovada implicitamente a cada troca;
+              # processo morto solta o IP sozinho quando o prazo vence.
               base = (i * 7 + desloca + troca_de_ip * 131) % len(usaveis)
               px = usaveis[base]
               for salto in range(len(usaveis)):
                   cand = usaveis[(base + salto) % len(usaveis)]
                   try:
-                      castigado = pool.em_castigo(cand)
+                      if pool.em_castigo(cand) or pool.de_outro_dono(cand):
+                          continue
+                      if not pool.reservar(cand, segundos=RESERVA_S,
+                                           sufixo="nav%02d" % i):
+                          continue          # outro fechou entre a pergunta e a tomada
                   except Exception:                            # noqa: BLE001
-                      castigado = False
-                  if not castigado:
-                      px = cand
-                      break
+                      pass
+                  px = cand
+                  break
               desistiu = False
               nav = None
               try:
@@ -1390,7 +1407,8 @@ async def principal(a):
                 # viaja entre IPs, em vez de 52 MB presos a um proxy so.
                 ctx = await nav.new_context(
                     viewport={"width": 1360, "height": 1000}, locale="pt-BR",
-                    timezone_id="America/Sao_Paulo", storage_state=cookie)
+                    timezone_id="America/Sao_Paulo",
+                    storage_state=cookies[i] if i < len(cookies) else cookie)
                 seguidas = 0
                 while True:
                     async with db:
@@ -1467,10 +1485,21 @@ async def principal(a):
                     # O que este navegador ganhou navegando volta para o
                     # arquivo — a sessao engorda em vez de recomecar.
                     try:
-                        colhidos.append(await ctx.storage_state())
+                        _e = await ctx.storage_state()
+                        colhidos.append(_e)
+                        if i < len(colhidos_por):
+                            colhidos_por[i].append(_e)
                     except Exception:
                         pass
                     await nav.close()
+              # O IP VOLTA PARA A PRATELEIRA assim que este navegador larga
+              # dele — por sair ou por trocar. Sem isto ele ficaria reservado
+              # ate o prazo vencer, e uma rodada de dez navegadores tiraria de
+              # circulacao dez IPs bons por vinte minutos a cada troca.
+              try:
+                  pool.soltar(px, sufixo="nav%02d" % i)
+              except Exception:                                # noqa: BLE001
+                  pass
               if not desistiu:
                   return                    # a fila secou, ou o erro nao e de IP
               # PONTO COLHIDO DEVOLVE O ORCAMENTO. Se este navegador entregou
@@ -1511,7 +1540,37 @@ async def principal(a):
                       "Parando antes de gravar 90 POIs vazios.")
                 return 4
 
+        # UM COOKIE POR NAVEGADOR, e nao um para todos.
+        #
+        # Ate 06/09/2026 os dez navegadores recebiam `storage_state=cookie` — o
+        # MESMO arquivo. Cada um saia por um IP proprio, e a rotacao de IP era
+        # tratada como se isolasse um do outro. Nao isolava: o cookie E a
+        # identidade. Uma sessao do Google aparecendo de dez enderecos ao mesmo
+        # tempo e um sinal mais forte que dez enderecos aparecendo uma vez cada.
+        #
+        # O CUSTO E REAL E VALE DIZER: cada arquivo comeca frio. Nao da para
+        # semear os dez a partir do cookie quente que ja existe — seria
+        # justamente clonar a identidade que estamos separando. O aquecimento
+        # dos dez acontece em paralelo, uma vez, e dali em diante cada um
+        # engorda com a propria navegacao.
+        #
+        # `--cookie-unico` volta ao comportamento antigo, para comparar.
+        if a.cookie_unico:
+            cookies = [cookie] * a.workers
+            print("  cookie UNICO para os %d navegadores (--cookie-unico)"
+                  % a.workers)
+        else:
+            cookies = list(await asyncio.gather(*[
+                garantir_cookie(pw, pool, "%s.nav%02d" % (a.cookie, w),
+                                a.renovar_cookie)
+                for w in range(a.workers)]))
+            print("  %d cookies, um por navegador — identidades separadas"
+                  % len(set(cookies)))
+
         colhidos, feitos, desistencias = [], [], []
+        # O que cada navegador trouxe volta para o SEU arquivo. Numa lista so,
+        # `engordar_cookie` misturaria as dez identidades de volta numa.
+        colhidos_por = [[] for _ in range(a.workers)]
         # Uma conexao para a maquina inteira, com trava: o pooler da porta
         # 7100 so aceita 20 sessoes NO TOTAL, entre todas as maquinas.
         conexao = bc.conectar()
@@ -1557,9 +1616,18 @@ async def principal(a):
                   "SEM DETALHE. Rode a mesma area de novo para completar."
                   % (len(desistencias), _sobrou))
         conexao.close()
-        cresceu = engordar_cookie(a.cookie, colhidos)
-        if cresceu:
-            print("    cookie engordado: %d → %d cookies" % cresceu)
+        if a.cookie_unico:
+            cresceu = engordar_cookie(a.cookie, colhidos)
+            if cresceu:
+                print("    cookie engordado: %d → %d cookies" % cresceu)
+        else:
+            _n = 0
+            for _w, _cam in enumerate(cookies):
+                if _w < len(colhidos_por) and colhidos_por[_w]:
+                    if engordar_cookie(_cam, colhidos_por[_w]):
+                        _n += 1
+            print("    %d de %d cookies engordaram com a propria navegacao"
+                  % (_n, len(cookies)))
         registros = [d for d in feitos if d]
         t_detalhe = time.time() - t1
 
@@ -1637,6 +1705,11 @@ if __name__ == "__main__":
                    help="o cookie que faz o Google entregar a ficha inteira. "
                         "Sobrevive entre execucoes de proposito — sessao quente "
                         "vale mais que sessao nova")
+    p.add_argument("--cookie-unico", action="store_true",
+                   help="volta ao comportamento anterior a 06/09/2026: um "
+                        "cookie compartilhado por todos os navegadores. So "
+                        "para comparar — a mesma identidade em N IPs e o "
+                        "sinal que a rotacao de IP tentava evitar")
     p.add_argument("--renovar-cookie", action="store_true",
                    help="descarta o cookie e faz um novo. NAO acontece "
                         "automaticamente ao fim da execucao")

@@ -53,6 +53,16 @@ class ProxyPool:
         self._lock = asyncio.Lock()
         # Registro de consumo (migração 0041). `etapa` é preenchida por quem
         # minera, para o gráfico saber se o IP queimou na busca ou na captura.
+        # O QUE VEM DO BANCO, E QUANDO FOI LIDO.
+        #
+        # `_cooldown` e `_in_use` acima continuam existindo e continuam sendo a
+        # resposta: sao o cache. O banco e a VERDADE compartilhada, relida a
+        # cada `_SINC_TTL_S` — quem pergunta esta num laco apertado escolhendo
+        # entre centenas de IPs, e uma ida ao banco por pergunta poria a rede
+        # dentro do caminho quente.
+        self._sinc_em = 0.0
+        self._reservas: Dict[str, tuple] = {}   # proxy_id -> (dono, expira_ts)
+        self._dono = "%s:%d" % (os.environ.get("HOSTNAME") or "?", os.getpid())
         self._con = None
         self._buffer: List[tuple] = []
         self._tenant = (os.environ.get("CR_TENANT_ID") or "").strip() or None
@@ -222,8 +232,11 @@ class ProxyPool:
         de um emprestimo por requisicao. Faltava so poder perguntar.
 
         Sincrona de proposito: e leitura de um dicionario em memoria, e quem
-        pergunta esta dentro de um laco apertado escolhendo entre centenas.
+        pergunta esta dentro de um laco apertado escolhendo entre centenas. O
+        dicionario e alimentado pelo banco (migração 0071) no maximo a cada
+        `_SINC_TTL_S`, entao o castigo que OUTRA maquina aplicou tambem conta.
         """
+        self.sincronizar()
         exp = self._cooldown.get((proxy or {}).get("id"))
         return bool(exp and exp > time.time())
 
@@ -345,6 +358,7 @@ class ProxyPool:
             self._in_use.discard(pid)
             self._burned.add(pid)
             self._evento(proxy, "castigo", motivo=motivo, segundos=segundos)
+            self._gravar_castigo(pid, segundos, motivo)
             print(f"   🔥 IP {proxy['address']}:{proxy['port']} em cooldown "
                   f"({segundos // 60}min)")
 
@@ -352,6 +366,119 @@ class ProxyPool:
         """Reset diário do estado de cooldown."""
         async with self._lock:
             self._cooldown.clear()
+
+    # ──────────────────────────────────────────────────────────────────
+    # O que e de todos (migração 0071)
+    #
+    # ANTES DISTO, `_in_use` e `_cooldown` eram dicionarios na memoria do
+    # processo. Duas rodadas na mesma maquina, ou duas maquinas, nao se
+    # enxergavam: entregavam O MESMO IP a dois navegadores ao mesmo tempo, e o
+    # castigo que uma aprendia era invisivel para a outra, que seguia batendo
+    # num IP ja punido. Era isso que doia ao rodar em paralelo — e nao "o
+    # Google punir sessoes simultaneas", que a medicao de 06/09/2026 derrubou.
+    #
+    # NADA AQUI PODE DERRUBAR UMA RODADA. Se o banco estiver fora, cada
+    # processo volta a decidir sozinho, que e exatamente o comportamento
+    # anterior: pior coordenacao, nenhuma parada.
+    # ──────────────────────────────────────────────────────────────────
+
+    _SINC_TTL_S = 20.0
+
+    def sincronizar(self, forcar: bool = False):
+        """Traz do banco os castigos e as reservas vivas. Silenciosa ao falhar."""
+        agora = time.time()
+        if not forcar and (agora - self._sinc_em) < self._SINC_TTL_S:
+            return
+        self._sinc_em = agora
+        con = self._conexao()
+        if not con:
+            return
+        try:
+            with con.cursor() as k:
+                k.execute("""select proxy_id, extract(epoch from ate)
+                               from radar_comercial.proxy_castigo
+                              where ate > now()""")
+                for pid, ate in k.fetchall():
+                    # O MAIOR PRAZO GANHA. Se este processo puniu por 2 h e
+                    # outro por 30 min, respeitar o menor traria de volta um IP
+                    # que este aqui sabe estar queimado.
+                    if float(ate) > self._cooldown.get(pid, 0.0):
+                        self._cooldown[pid] = float(ate)
+                k.execute("""select proxy_id, dono, extract(epoch from ate)
+                               from radar_comercial.proxy_reserva
+                              where ate > now()""")
+                self._reservas = {pid: (dono, float(ate))
+                                  for pid, dono, ate in k.fetchall()}
+        except Exception:                                      # noqa: BLE001
+            try:
+                con.rollback()
+            except Exception:                                  # noqa: BLE001
+                pass
+
+    def de_outro_dono(self, proxy: Dict) -> bool:
+        """Este IP esta reservado por OUTRO processo agora?
+
+        Sincrona e barata de proposito, como `em_castigo`: quem pergunta esta
+        escolhendo entre centenas num laco.
+        """
+        self.sincronizar()
+        r = self._reservas.get((proxy or {}).get("id"))
+        return bool(r and r[0] != self._dono and r[1] > time.time())
+
+    def reservar(self, proxy: Dict, segundos: int = 900, sufixo: str = "") -> bool:
+        """Toma o IP para este processo por `segundos`. False se outro chegou antes.
+
+        O PRAZO E O QUE DISPENSA FAXINA. Processo morto nao devolve o que
+        pegou; sem `ate`, o IP ficaria reservado para sempre por um dono que
+        nao existe mais — o mesmo defeito que a fila de jobs resolveu com
+        `visto_em`.
+        """
+        pid = (proxy or {}).get("id")
+        if not pid:
+            return False
+        dono = self._dono + (":" + str(sufixo) if sufixo else "")
+        con = self._conexao()
+        if not con:
+            return True            # sem banco, cada um por si: comportamento antigo
+        try:
+            with con.cursor() as k:
+                k.execute("""
+                    insert into radar_comercial.proxy_reserva (proxy_id, dono, ate)
+                    values (%s, %s, now() + make_interval(secs => %s))
+                    on conflict (proxy_id) do update
+                       set dono = excluded.dono, ate = excluded.ate, em = now()
+                     where radar_comercial.proxy_reserva.ate <= now()
+                        or radar_comercial.proxy_reserva.dono = excluded.dono
+                    returning proxy_id""", (str(pid), dono, float(segundos)))
+                venceu = k.fetchone() is not None
+            if venceu:
+                self._reservas[str(pid)] = (dono, time.time() + segundos)
+            return venceu
+        except Exception:                                      # noqa: BLE001
+            try:
+                con.rollback()
+            except Exception:                                  # noqa: BLE001
+                pass
+            return True
+
+    def soltar(self, proxy: Dict, sufixo: str = ""):
+        """Devolve o IP antes do prazo. Só apaga a PRÓPRIA reserva."""
+        pid = (proxy or {}).get("id")
+        con = self._conexao()
+        if not pid or not con:
+            return
+        dono = self._dono + (":" + str(sufixo) if sufixo else "")
+        try:
+            with con.cursor() as k:
+                k.execute("""delete from radar_comercial.proxy_reserva
+                              where proxy_id = %s and dono = %s""",
+                          (str(pid), dono))
+            self._reservas.pop(str(pid), None)
+        except Exception:                                      # noqa: BLE001
+            try:
+                con.rollback()
+            except Exception:                                  # noqa: BLE001
+                pass
 
     # ──────────────────────────────────────────────────────────────────
     # Helpers
@@ -369,6 +496,35 @@ class ProxyPool:
     # eventos numa viagem só. O buffer descarrega por tamanho ou no
     # `flush_eventos()`, que quem minera chama ao terminar.
     # ──────────────────────────────────────────────────────────────────
+
+    def _gravar_castigo(self, pid, segundos, motivo):
+        """O castigo vira linha, para as outras maquinas respeitarem.
+
+        `vezes` acumula: saber que ESTE IP foi punido tres vezes hoje vale mais
+        que a tabela estar limpa, e e o que permite depois aposentar um IP que
+        so da trabalho.
+        """
+        con = self._conexao()
+        if not con:
+            return
+        try:
+            with con.cursor() as k:
+                k.execute("""
+                    insert into radar_comercial.proxy_castigo
+                        (proxy_id, ate, motivo, por, vezes)
+                    values (%s, now() + make_interval(secs => %s), %s, %s, 1)
+                    on conflict (proxy_id) do update
+                       set ate = greatest(radar_comercial.proxy_castigo.ate,
+                                          excluded.ate),
+                           motivo = excluded.motivo, por = excluded.por,
+                           vezes = radar_comercial.proxy_castigo.vezes + 1,
+                           em = now()""",
+                          (str(pid), float(segundos), motivo, self._dono))
+        except Exception:                                      # noqa: BLE001
+            try:
+                con.rollback()
+            except Exception:                                  # noqa: BLE001
+                pass
 
     _LOTE_EVENTOS = 50
 
