@@ -983,8 +983,14 @@ async def _extrair_do_ponto(pg, alvo, navegar=True):
 
 # ------------------------------------------------------------------ gravacao --
 
-def reservar(con, sessao, maquina):
+def reservar(con, sessoes, maquina):
     """Toma UM POI da fila. Devolve (id, place_id, lat, lng) ou None.
+
+    `sessoes` e uma LISTA. Uma rodada normal tem uma so; o reprocesso de
+    pendencias tem varias, porque os POIs sem detalhe de uma cidade ficaram
+    espalhados pelas sessoes que os colheram — em Canoas, 6.696 deles em doze
+    sessoes (06/09/2026). Rodar uma por vez pagaria doze vezes o custo fixo de
+    subir dez navegadores e aquecer o cookie.
 
     `FOR UPDATE SKIP LOCKED` e o que faz duas maquinas trabalharem na mesma
     quadra sem combinarem nada: o banco entrega um POI diferente para cada
@@ -997,14 +1003,14 @@ def reservar(con, sessao, maquina):
             update radar_comercial.pois p
                set detalhado_em = now(), detalhado_por = %s
               from (select id from radar_comercial.pois
-                     where fonte = 'maps' and sessao = %s
+                     where fonte = 'maps' and sessao = any(%s)
                        and place_id is not null and detalhado_em is null
                      order by id
                      for update skip locked
                      limit 1) q
              where p.id = q.id
          returning p.id, p.place_id, p.maps_lat, p.maps_lng""",
-                  (maquina, sessao))
+                  (maquina, sessoes))
         linha = k.fetchone()
     con.commit()
     if not linha:
@@ -1225,11 +1231,23 @@ async def principal(a):
 
     pasta = None
     if not a.sem_tiles:
-        pasta = "/app/capturas/%s/tiles_z%d" % (a.sessao, ZOOM)
+        pasta = "/app/capturas/%s/tiles_z%d" % (a.sessao.split(",")[0], ZOOM)
         os.makedirs(pasta, exist_ok=True)
 
     pool = ProxyPool()
     pool.start()
+
+    # UMA RODADA, VARIAS SESSOES.
+    #
+    # A colheita continua gravando numa sessao so — ela e quem cria os POIs, e
+    # dois desenhos diferentes nao podem virar a mesma rodada. Ja o DETALHE le
+    # de uma fila do banco, e essa fila nao tem por que respeitar a fronteira
+    # de sessao: sao place_ids esperando reconsulta, venham de onde vierem.
+    SESSOES = [s.strip() for s in a.sessao.split(",") if s.strip()]
+    if len(SESSOES) > 1 and not a.sem_colheita:
+        print("  varias sessoes so com --sem-colheita: a colheita grava POI "
+              "novo, e ele precisa de UMA sessao para ser rastreavel")
+        return 2
 
     t0 = time.time()
     con0 = bc.conectar()
@@ -1238,16 +1256,16 @@ async def principal(a):
             with con0.cursor() as k:
                 k.execute("""update radar_comercial.pois
                                 set detalhado_em = null, detalhado_por = null
-                              where fonte = 'maps' and sessao = %s""",
-                          (a.sessao,))
+                              where fonte = 'maps' and sessao = any(%s)""",
+                          (SESSOES,))
                 n = k.rowcount
             con0.commit()
             print("  fila reaberta: %d POI(s) voltaram para o comeco" % n)
         with con0.cursor() as k:
             k.execute("""select count(*) from radar_comercial.pois
-                          where fonte = 'maps' and sessao = %s
+                          where fonte = 'maps' and sessao = any(%s)
                             and place_id is not null and detalhado_em is null""",
-                      (a.sessao,))
+                      (SESSOES,))
             na_fila = k.fetchone()[0]
     finally:
         con0.close()
@@ -1377,7 +1395,7 @@ async def principal(a):
                 while True:
                     async with db:
                         alvo = await asyncio.to_thread(reservar, conexao,
-                                                       a.sessao, MAQUINA)
+                                                       SESSOES, MAQUINA)
                     if not alvo:
                         return                      # a fila secou
                     try:
@@ -1477,9 +1495,9 @@ async def principal(a):
         try:
             with _c.cursor() as _k:
                 _k.execute("""select place_id from radar_comercial.pois
-                               where fonte = 'maps' and sessao = %s
+                               where fonte = 'maps' and sessao = any(%s)
                                  and place_id is not null limit 1""",
-                           (a.sessao,))
+                           (SESSOES,))
                 r = _k.fetchone()
                 amostra = r[0] if r else None
         finally:
@@ -1530,8 +1548,8 @@ async def principal(a):
             try:
                 with conexao.cursor() as _k:
                     _k.execute("""select count(*) from radar_comercial.pois
-                                   where sessao = %s and detalhado_em is null""",
-                               (a.sessao,))
+                                   where sessao = any(%s) and detalhado_em is null""",
+                               (SESSOES,))
                     _sobrou = _k.fetchone()[0]
             except Exception:                                  # noqa: BLE001
                 pass
@@ -1583,8 +1601,8 @@ async def principal(a):
         with con.cursor() as k:
             k.execute("""select coalesce(detalhado_por, '(pendente)'), count(*)
                            from radar_comercial.pois
-                          where fonte = 'maps' and sessao = %s
-                          group by 1 order by 2 desc""", (a.sessao,))
+                          where fonte = 'maps' and sessao = any(%s)
+                          group by 1 order by 2 desc""", (SESSOES,))
             print("  a quadra toda, por maquina:")
             for m, n in k.fetchall():
                 print("    %-28s %d" % (m, n))
@@ -1598,7 +1616,10 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--area", default="quadra-canoas-centro")
-    p.add_argument("--sessao", default="canoas_quadra")
+    p.add_argument("--sessao", default="canoas_quadra",
+                   help="uma sessao, ou varias separadas por virgula. Varias "
+                        "so com --sem-colheita: e uma fila de detalhe, nao "
+                        "uma colheita nova")
     p.add_argument("--workers", type=int, default=6)
     p.add_argument("--passo", type=int, default=26,
                    help="passo do clique em pixels; o icone de POI tem ~24 px")
