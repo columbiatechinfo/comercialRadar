@@ -739,7 +739,36 @@ async def garantir_cookie(pw, pool, caminho, renovar):
     # reservada, e um proxy reservado devolve pagina em branco.
     bons = [p for p in pool._proxies
             if not pool.pais or p.get("country") == pool.pais] or pool._proxies
-    px = bons[random.randrange(len(bons))]
+
+    # OUTRO IP ANTES DE DESISTIR.
+    #
+    # Antes de 06/09/2026 so UM cookie era aquecido por rodada, e um proxy
+    # ruim aqui custava uma tentativa. Com um cookie por navegador sao seis ou
+    # dez aquecimentos, e a chance de pelo menos um cair num IP morto vira
+    # quase certeza. Medido no notebook no mesmo dia: um
+    # `ERR_TUNNEL_CONNECTION_FAILED` num dos seis derrubou a RODADA INTEIRA,
+    # porque `asyncio.gather` propaga a primeira excecao.
+    #
+    # A resposta e a mesma que o detalhe ja usa: o IP falhou, pega outro.
+    ultimo_erro = None
+    for tentativa in range(TENTATIVAS_DE_AQUECIMENTO):
+        px = bons[random.randrange(len(bons))]
+        try:
+            return await _aquecer(pw, px, caminho)
+        except Exception as e:                                 # noqa: BLE001
+            ultimo_erro = e
+            print("  aquecimento de %s falhou pelo %s (%d/%d): %s"
+                  % (os.path.basename(caminho), px["server"][-15:],
+                     tentativa + 1, TENTATIVAS_DE_AQUECIMENTO, str(e)[:60]))
+    raise ultimo_erro
+
+
+#: Quantos IPs o aquecimento de um cookie queima antes de desistir.
+TENTATIVAS_DE_AQUECIMENTO = 4
+
+
+async def _aquecer(pw, px, caminho):
+    """Abre o Maps por ESTE proxy, aceita o consentimento e salva o estado."""
     nav = await pw.chromium.launch(headless=False, args=ARGS, proxy={
         "server": px["server"], "username": px["username"],
         "password": px["password"]})
@@ -1627,12 +1656,22 @@ async def principal(a):
             print("  cookie UNICO para os %d navegadores (--cookie-unico)"
                   % a.workers)
         else:
-            cookies = list(await asyncio.gather(*[
+            # `return_exceptions=True` E O PONTO. Sem ele a primeira falha
+            # cancela as outras e mata a rodada — foi o que aconteceu no
+            # notebook em 06/09/2026. Quem nao conseguiu cookie proprio cai
+            # para o compartilhado: pior isolamento naquele navegador, e nao
+            # rodada nenhuma.
+            _r = await asyncio.gather(*[
                 garantir_cookie(pw, pool, "%s.nav%02d" % (a.cookie, w),
                                 a.renovar_cookie)
-                for w in range(a.workers)]))
-            print("  %d cookies, um por navegador — identidades separadas"
-                  % len(set(cookies)))
+                for w in range(a.workers)], return_exceptions=True)
+            cookies = [cookie if isinstance(x, BaseException) else x
+                       for x in _r]
+            _caiu = sum(1 for x in _r if isinstance(x, BaseException))
+            print("  %d cookies, um por navegador — identidades separadas%s"
+                  % (len(set(cookies)),
+                     ("  (%d nao aqueceram e usam o compartilhado)" % _caiu)
+                     if _caiu else ""))
 
         colhidos, feitos, desistencias = [], [], []
         # O que cada navegador trouxe volta para o SEU arquivo. Numa lista so,
