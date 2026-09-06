@@ -172,6 +172,35 @@ def quadrantes(sw_lat, sw_lng, ne_lat, ne_lng):
             (mlat, sw_lng, ne_lat, mlng), (mlat, mlng, ne_lat, ne_lng)]
 
 
+#: Quantos anuncios o Airbnb devolve por pagina. E o passo do cursor.
+POR_PAGINA = 18
+
+
+def _cursor_da_pagina(n: int) -> str:
+    """O cursor da n-esima pagina (0 = primeira).
+
+    O Airbnb pagina por um `cursor` na URL, que e o base64 de um JSON simples:
+
+        {"section_offset":0,"items_offset":18,"version":1}   -> pagina 2
+        {"section_offset":0,"items_offset":36,"version":1}   -> pagina 3
+
+    Montar isso e melhor que clicar no botao, e a razao esta no defeito que
+    este conserto fecha: o codigo procurava `aria-label*="Proxima"` e o
+    controle se chama `Proximo`. Uma letra, e a colheita parava na PRIMEIRA
+    pagina — 18 anuncios para Canoas inteira, quando a propria paginacao
+    anunciava 12 paginas (`items_offset` ate 198, ~216 anuncios).
+
+    Rotulo e texto de interface: muda com o idioma, com o teste A/B e com a
+    reforma da pagina, e quando muda o sintoma e "a cidade tem 18 anuncios",
+    que ninguem estranha. O cursor e endereco.
+    """
+    import base64
+    import json as _json
+    corpo = _json.dumps({"section_offset": 0, "items_offset": POR_PAGINA * n,
+                         "version": 1}, separators=(",", ":"))
+    return base64.b64encode(corpo.encode()).decode()
+
+
 def uma_caixa(sessao, cx, paginas):
     """Percorre as páginas de UMA caixa. Devolve {anuncio_id: registro}."""
     sw_lat, sw_lng, ne_lat, ne_lng = cx
@@ -195,29 +224,29 @@ def uma_caixa(sessao, cx, paginas):
             if i >= len(ids):
                 break
             achado[ids[i]] = item
-        for _ in range(paginas - 1):
-            avancou = False
-            for tentativa in (
-                    lambda: page.locator('a[aria-label*="Próxima"]').first,
-                    lambda: page.locator('button[aria-label*="Próxima"]').first,
-                    lambda: page.get_by_role("link", name="Próxima").first):
-                try:
-                    el = tentativa()
-                    el.wait_for(state="visible", timeout=6000)
-                    el.scroll_into_view_if_needed(timeout=4000)
-                    el.click(timeout=6000)
-                    avancou = True
-                    break
-                except Exception:
-                    continue
-            if not avancou:
+        # A PAGINA SEGUINTE E UM ENDERECO, e nao um clique. Ver
+        # `_cursor_da_pagina`. Para de depender de rotulo de interface, e
+        # sobrevive a pagina sem controle visivel de paginacao.
+        for n in range(1, paginas):
+            antes = len(achado)
+            try:
+                page.goto(url_da_caixa(sw_lat, sw_lng, ne_lat, ne_lng,
+                                       _cursor_da_pagina(n)),
+                          wait_until="domcontentloaded", timeout=45000)
+                page.wait_for_selector('a[href*="/rooms/"]', state="attached",
+                                       timeout=20000)
+            except Exception:                                  # noqa: BLE001
                 break
-            page.wait_for_timeout(6000)
+            page.wait_for_timeout(2500)
             ids = page.evaluate(IDS) or []
             itens = page.evaluate(COLHER) or []
             for i, item in enumerate(itens):
                 if i < len(ids):
                     achado.setdefault(ids[i], item)
+            # PAGINA QUE NAO ACRESCENTA E O FIM. O Airbnb repete a ultima
+            # pagina em vez de devolver vazio quando o cursor passa do fim.
+            if len(achado) == antes:
+                break
 
     # O TETO ERA DE SETE MINUTOS, E ELE FOI GASTO INTEIRO.
     #
