@@ -94,12 +94,50 @@ def confianca_de(mesmo_end, mesmo_num, perto, mesmo_tel, tel_com) -> float:
     return min(1.0, round(v, 2))
 
 
+# O RAIO DE BUSCA E O DO CRITERIO — 20 m, decisao do dono do produto em
+# 06/09/2026, com o numero na mesa.
+#
+# Era 60 m, e a justificativa era boa: um POI a 35 m que bate rua e numero e o
+# caso interessante, o ponto de coordenada torta com endereco certo. Medido:
+# esse resgate vale 2.290 vinculos, 3% do total.
+#
+# O QUE PESOU CONTRA foi o ruido. A 60 m cada ligacao junta 21,5 POIs
+# candidatos — o quarteirao inteiro — para guardar 5. A 20 m sao ~2,4, e a
+# lista que chega ao operador para de vir cheia de vizinho. Os 2.290 se
+# recuperam depois, num passe proprio sobre quem tem endereco batendo.
+#: Ate onde a busca olha. Alem de `PERTO_M` a regra aperta — ver
+#: `LONGE_SO_COM_ENDERECO`.
 RAIO_BUSCA_M = 60.0
 PERTO_M = 20.0
 
-# Quantos candidatos por ligação. Guardar todos encheria a tabela de vínculos de
-# confiança 0,2 que ninguém vai revisar.
-MAX_POR_LIGACAO = 5
+#: Alem de PERTO_M, so entra quem bate rua E numero.
+#:
+#: A 60 m soltos cada ligacao juntava 21,5 POIs candidatos — o quarteirao
+#: inteiro — para guardar 5, e a lista chegava ao operador cheia de vizinho. A
+#: 20 m secos sao 3,8 candidatos, mas perdem-se 2.290 vinculos com rua E numero
+#: batendo entre 20 e 60 m: o POI de coordenada torta e endereco certo, que e
+#: justamente o caso que o cadastro resolve e o mapa nao.
+#:
+#: A regra hibrida fica com os dois: perto, qualquer criterio serve; longe, so
+#: a porta identificada passa. Decidido em 06/09/2026 com os numeros na mesa.
+LONGE_SO_COM_ENDERECO = True
+
+#: Teto de candidatos FRACOS por ligacao — os que nao identificam a porta.
+#:
+#: NAO VALE PARA QUEM BATE RUA E NUMERO, e a distincao e o modelo do produto.
+#: Uma ligacao e um ENDERECO FISICO, nao um ponto: um predio comercial com
+#: vinte lojas tem uma instalacao no cadastro e vinte POIs legitimos. Cortar em
+#: cinco jogava fora quinze estabelecimentos reais.
+#:
+#: Pior: o corte contaminava a eleicao do passo seguinte. `pois.id_ligacao_base`
+#: sai dos candidatos GRAVADOS; se a ligacao certa de um POI nao coubesse entre
+#: os cinco daquela ligacao, esse POI nunca a recebia — e ficava orfao ou
+#: colado numa ligacao pior.
+#:
+#: O teto continua existindo para o candidato fraco (so proximidade, sem rua e
+#: numero): esses sim sao o quarteirao ao redor, e guardar todos encheria a
+#: tabela de vinculo que ninguem vai revisar.
+MAX_FRACOS_POR_LIGACAO = 5
 
 SQL_CANDIDATOS = """
     select l.num_ligacao::text,
@@ -510,6 +548,13 @@ def cruzar(base_id: int, cidade: str, aplicar: bool, raio: float,
     cur.execute(_sql_poi, [cidade])
     pois = cur.fetchall()
 
+    # OS DOIS LADOS, EM VOZ ALTA. O log imprimia so o numero de PARES — e
+    # 1.911.705 pares, sem saber que vieram de 88.767 ligacoes e 115.518 POIs,
+    # parece que o cruzamento carregou o estado inteiro. Numero que ninguem
+    # consegue conferir e numero que nao serve.
+    _log("   %d ligações %s e %d POIs entraram no cruzamento (cidade %s)"
+         % (len(ligs), "/".join(tipos), len(pois), cidade))
+
     if poligono is not None:
         _n_lig, _n_poi = len(ligs), len(pois)
         # ligs: (lig, via, num, tipo, LAT, LON); pois: (id,fonte,nome,end,via,num,LAT,LON)
@@ -564,26 +609,73 @@ def cruzar(base_id: int, cidade: str, aplicar: bool, raio: float,
         mesmo_end = bool(via_l and via_p and _via(via_l) == via_p)
         mesmo_num = bool(num_l and num_p and _num(num_l) == num_p)
         perto = bool(metros is not None and metros <= PERTO_M)
-        mesmo_tel, tel_com = telhado.julgar(llat, llon, plat, plon)
 
-        ok = sum((mesmo_end, mesmo_num, perto, mesmo_tel, tel_com))
-        if ok == 0:
+        # SEM TELHADO AINDA. Ele e o teste caro — contorna predio em foto
+        # aerea — e so vale a pena nos finalistas de cada ligacao, logo abaixo.
+        if not perto and LONGE_SO_COM_ENDERECO:
+            # LONGE, SO A PORTA IDENTIFICADA PASSA. Entre 20 e 60 m, rua e
+            # numero juntos sao o unico sinal que sobrevive a coordenada torta;
+            # qualquer coisa menos que isso, a essa distancia, e o vizinho.
+            if not (mesmo_end and mesmo_num):
+                placar["descartado_longe_sem_porta"] += 1
+                continue
+        elif not (mesmo_end or mesmo_num or perto):
             placar["descartado_sem_criterio"] += 1
             continue
         # A ORDEM E A DA REGUA, e nao a da contagem crua: com `ok` na frente,
         # "numero sem rua + 20 m" (2 acertos) passava na frente de "rua so"
         # (1 acerto) na hora de escolher os 5 candidatos por ligacao.
         por_ligacao[lig].append(
-            (confianca_de(mesmo_end, mesmo_num, perto, mesmo_tel, tel_com),
+            (confianca_de(mesmo_end, mesmo_num, perto, False, False),
              -(metros or 9e9), poi_id, fonte, mesmo_end, mesmo_num, perto,
-             mesmo_tel, tel_com, metros, ok))
+             metros, llat, llon, plat, plon))
 
+    # OS FINALISTAS DE CADA LIGACAO, E SO ELES, VAO AO TELHADO.
+    #
+    # A lista ja esta fechada pelos criterios baratos; o telhado entra para
+    # desempatar vizinho e reforcar a confianca dos que serao gravados de
+    # qualquer forma. Rodar antes, em todos os pares, era o custo que fazia o
+    # cruzamento residencial de Canoas levar horas.
     registros = []
-    for lig, cands in por_ligacao.items():
+    finalistas = 0
+
+    # A ORDEM DAS LIGACOES E GEOGRAFICA, E NAO A DO DICIONARIO.
+    #
+    # O laco abaixo le a segmentacao do tile que cobre cada ponto, e so
+    # `SEGMENTACOES_VIVAS` (64) ficam na memoria — o resto volta do .npz em
+    # disco. Em ordem de dicionario as ligacoes consecutivas caem em bairros
+    # diferentes: medido em 06/09/2026, amostras seguidas do arquivo aberto
+    # pulavam de -29,89 a -29,94 de latitude. O cache nunca acertava e o
+    # processo releu 4 GB de .npz.
+    #
+    # Ordenar pela MESMA celula do indice de tiles (`CELULA_GRAUS`, ~1,1 km)
+    # poe as ligacoes vizinhas em sequencia: o tile que a primeira carregou
+    # serve para as centenas seguintes. Nao muda um vinculo sequer — a eleicao
+    # do vinculo do POI e feita depois, em SQL, por `confianca desc`.
+    _g = telhado.CELULA_GRAUS
+
+    def _celula_da_ligacao(item):
+        # `c[8]` e `llat`, `c[9]` e `llon` — todos os candidatos de uma ligacao
+        # trazem a coordenada dela, entao o primeiro basta.
+        c = item[1][0]
+        return (int(c[8] // _g), int(c[9] // _g))
+
+    for lig, cands in sorted(por_ligacao.items(), key=_celula_da_ligacao):
         cands.sort(reverse=True)
-        aderentes = len({c[3] for c in cands[:MAX_POR_LIGACAO] if c[3]})
-        for (_conf, _neg, poi_id, fonte, me, mn, pe, mt, tc, metros, ok) in \
-                cands[:MAX_POR_LIGACAO]:
+        # A PORTA IDENTIFICADA ENTRA INTEIRA; o resto disputa as cinco vagas.
+        # `c[4]` e `mesmo_end`, `c[5]` e `mesmo_num` — ver a tupla montada na
+        # passada barata.
+        porta_identificada = [c for c in cands if c[4] and c[5]]
+        fracos = [c for c in cands if not (c[4] and c[5])]
+        escolhidos = porta_identificada + fracos[:MAX_FRACOS_POR_LIGACAO]
+        if len(porta_identificada) > MAX_FRACOS_POR_LIGACAO:
+            placar["ligacao_com_muitos_no_mesmo_endereco"] += 1
+        aderentes = len({c[3] for c in escolhidos if c[3]})
+        for (_conf, _neg, poi_id, fonte, me, mn, pe, metros,
+             llat, llon, plat, plon) in escolhidos:
+            mt, tc = telhado.julgar(llat, llon, plat, plon)
+            finalistas += 1
+            ok = sum((me, mn, pe, mt, tc))
             registros.append((base_id, str(lig), poi_id, me, mn, pe, mt, tc,
                               metros, ok, confianca_de(me, mn, pe, mt, tc),
                               aderentes, fontes_no_momento, fonte or None))
@@ -593,6 +685,13 @@ def cruzar(base_id: int, cidade: str, aplicar: bool, raio: float,
                                  ("telhado_comercial", tc)):
                 if valor:
                     placar[chave] += 1
+    _log("   telhado julgado em %d finalistas (e nao nos %d pares)"
+         % (finalistas, len(linhas)))
+    if placar.get("ligacao_com_muitos_no_mesmo_endereco"):
+        _log("   %d ligação(ões) com mais de %d POIs no mesmo endereço — "
+             "prédio com várias lojas, todos vinculados"
+             % (placar["ligacao_com_muitos_no_mesmo_endereco"],
+                MAX_FRACOS_POR_LIGACAO))
 
     _log("   %d ligações com candidato · %d vínculos a gravar"
          % (len(por_ligacao), len(registros)))
