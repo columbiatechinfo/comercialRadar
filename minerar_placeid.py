@@ -1033,7 +1033,74 @@ def devolver(con, poi_id):
         con.rollback()
 
 
+_UM_POI_NAO_DERRUBA = True
+
+
 def gravar_um(con, poi_id, d):
+    """Grava UM POI. Falha de UMA linha nao derruba os outros navegadores.
+
+    O DEFEITO, medido em 06/09/2026 no redetalhamento de Canoas. A conexao com
+    o banco e UMA para os dez navegadores desta maquina — o log diz isso na
+    partida: "1 conexao para os 10 navegadores". Quando o navegador 00 bateu
+    numa chave duplicada, a transacao ficou abortada, e os nove seguintes
+    morreram na escrita seguinte com "current transaction is aborted". A
+    rodada parou aos 42,9 min com 1.722 de 6.696 feitos, e nada no log dizia
+    que a causa fora uma linha so.
+
+    Duas coisas consertam isso, e as duas moram aqui:
+
+    1. ROLLBACK SEMPRE, em qualquer erro. Sem ele a conexao compartilhada fica
+       envenenada e o proximo a escrever paga pelo erro do anterior.
+    2. DUPLICATA NAO E ERRO, E DESCOBERTA. `pois_sem_duplicata` guarda
+       (empresa, nome, endereco): bater nela significa que a ficha que o Maps
+       acabou de entregar JA EXISTE na base, vinda de outra fonte. O esqueleto
+       vira fundido — sai da fila e para de ser tentado — em vez de virar
+       excecao.
+    """
+    try:
+        return _gravar_um_cru(con, poi_id, d)
+    except Exception as e:                                     # noqa: BLE001
+        try:
+            con.rollback()
+        except Exception:                                      # noqa: BLE001
+            pass
+        if "pois_sem_duplicata" in str(e):
+            _marcar_fundido(con, poi_id, d)
+            return 0
+        # QUALQUER OUTRO ERRO tambem para aqui, e de proposito: a conexao ja
+        # esta limpa, e devolver 0 deixa este navegador seguir para o proximo
+        # POI. O que nao pode acontecer e um POI estranho custar a rodada
+        # inteira. O ponto fica com `detalhado_em` marcado e sem ficha; a
+        # medicao de pendencia (nome = place_id) o encontra de novo.
+        print("    poi %s nao gravou: %s" % (poi_id, str(e)[:100]))
+        return 0
+
+
+def _marcar_fundido(con, poi_id, d):
+    """O esqueleto e duplicata de um POI que ja existe: sai da fila.
+
+    `fundido_em` e o que a base ja usa para "este ponto foi absorvido" — o
+    mesmo marcador do `cruzar_fontes`. Sem isto o POI voltaria para a fila a
+    cada rodada e bateria na mesma chave para sempre.
+    """
+    try:
+        with con.cursor() as k:
+            k.execute("""update radar_comercial.pois
+                            set fundido_em = now(),
+                                revisar_motivo = coalesce(revisar_motivo, %s)
+                          where id = %s""",
+                      ("duplicata pelo nome+endereco do Maps: %s"
+                       % (d.get("nome") or "")[:80], poi_id))
+        con.commit()
+        print("    poi %s e duplicata de outro ja na base — fundido" % poi_id)
+    except Exception:                                          # noqa: BLE001
+        try:
+            con.rollback()
+        except Exception:                                      # noqa: BLE001
+            pass
+
+
+def _gravar_um_cru(con, poi_id, d):
     """Grava UM POI, logo depois de colhe-lo.
 
     Antes a gravacao era toda no fim: uma queda no minuto 10 jogava fora dez
