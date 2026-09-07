@@ -1195,8 +1195,21 @@ def rodar(area, limite, aplicar, trabalhadores, modelo, pois, refazer):
     con.close()
 
     placar = {k: 0 for k in VEREDITOS}
+    # `decidido_pela_fonte` PRECISA existir aqui.
+    #
+    # O caminho da ficha (iFood e Airbnb) grava o veredito e SO DEPOIS soma no
+    # placar. Sem a chave, o `+=` estourava `KeyError` com a linha ja gravada:
+    # o veredito ia para o banco e o log dizia FALHOU. Passou despercebido
+    # enquanto a falha era so uma linha de log — os 402 vereditos de ficha ja
+    # gravados estao corretos.
+    #
+    # O que revelou foi o freio de 07/09/2026: como agora a falha devolve o POI
+    # a fila e conta serie, e a nova ordem poe iFood e Airbnb NA FRENTE, deram
+    # 28 falhas seguidas na largada e a rodada parou — corretamente, dizendo
+    # que o problema nao era o POI.
     placar.update({"sem_evidencia": 0, "falha_percepcao": 0,
-                   "falha_julgamento": 0, "fora_da_escala": 0})
+                   "falha_julgamento": 0, "fora_da_escala": 0,
+                   "decidido_pela_fonte": 0})
     trava = threading.Lock()
     t0 = time.time()
 
