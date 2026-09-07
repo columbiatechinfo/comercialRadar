@@ -372,7 +372,12 @@ SQL_ALVO = """
             -- primeira aqui deixaria de fora justamente os POIs que a captura
             -- de fachada ja cobriu — 13.736 em Canoas quando isto foi escrito.
             or exists (select 1 from radar_comercial.streetview_imgs s
-                        where s.poi_id = p.id and s.storage_path is not null))
+                        where s.poi_id = p.id and s.storage_path is not null)
+            -- iFOOD E AIRBNB ENTRAM SEM FOTO. Ver
+            -- `FONTES_QUE_DISPENSAM_IMAGEM`: neles quem prova e a ficha da
+            -- plataforma, e 1.040 pontos ja provados estavam parados aqui
+            -- esperando uma fotografia que nao mudaria o veredito.
+            or p.fonte in ('ifood', 'airbnb'))
        and exists (select 1 from radar_comercial.categoria_catalogo cc
                     where cc.fonte = p.fonte
                       and cc.valor = btrim(p.categoria) and cc.avaliar)
@@ -507,6 +512,31 @@ AIRBNB_AVALIACOES_MUITAS = 20
 
 #: A confianca de cada veredito quando quem decide e o MODELO, e nao a ficha.
 #: Mesma regua 0..1 de `ligacao_poi.confianca`.
+#: AS FONTES QUE NAO PRECISAM DE FOTO DE RUA PARA SEREM JULGADAS.
+#:
+#: Nelas o veredito sai da FICHA DA PLATAFORMA — loja no ar no iFood, anuncio
+#: ativo no Airbnb com comentario recente —, que e prova datada de atividade
+#: economica. A foto de rua nao acrescenta prova nenhuma a isso: uma casa sem
+#: vitrine nao desmente um pedido aceito ontem.
+#:
+#: O QUE ESTA REGRA CORRIGE, medido em 07/09/2026:
+#:
+#:     Airbnb  267 POIs, 247 SEM imagem nenhuma  ->  so 7 julgados
+#:     iFood 1.348 POIs, 797 SEM imagem nenhuma  ->  488 julgados
+#:
+#: Eram ~1.040 pontos ja provados pela plataforma, parados na fila esperando
+#: uma fotografia que nao mudaria o veredito. A exigencia existia por um
+#: raciocinio que parecia solido — "a ficha prova que o negocio existe, e nao
+#: que ele esta NAQUELE endereco" — mas o preco dela era alto demais: o
+#: endereco ja e conferido no cruzamento, que e onde ele deve ser conferido, e
+#: a `ligacao_poi.confianca` diz quanto vale aquele par.
+#:
+#: A foto continua sendo capturada e continua indo para o dossie da visita.
+#: Ela deixa de ser CONDICAO para o julgamento nestas duas fontes — decisao do
+#: dono do produto em 07/09/2026: "as imagens servem para compor, nao para
+#: comprovar; o que e decisivo sao os metadados".
+FONTES_QUE_DISPENSAM_IMAGEM = ("ifood", "airbnb")
+
 CONF_VEREDITO = {
     "aprovado_exato": 0.90,       # o letreiro traz o nome do cadastro
     "aprovado_comercial": 0.70,   # ha comercio no imovel, mas nao AQUELE
@@ -1106,12 +1136,14 @@ def um_poi(poco, alvo, modelo, secoes, placar, trava, aplicar) -> None:
     # nao e evidencia do estabelecimento, e insistir nela produzia o erro que a
     # medicao de 06/09/2026 mostrou.
     #
-    # A EVIDENCIA CONTINUA SENDO EXIGIDA. Um POI sem imagem nenhuma nao entra
-    # nem por aqui: a ficha prova que o negocio existe, e nao que ele esta
-    # NAQUELE endereco, e e o endereco que a concessionaria vai cobrar.
+    # A IMAGEM DEIXOU DE SER CONDICAO onde a ficha decide. Ver
+    # `FONTES_QUE_DISPENSAM_IMAGEM`: em iFood e Airbnb o veredito sai do
+    # metadado, e exigir foto antes deixava ~1.040 pontos provados parados na
+    # fila. Nas outras fontes a exigencia continua de pe — la a imagem E a
+    # evidencia, e sem ela nao ha o que julgar.
     with poco.pegar() as con:
         forma, imgs, tipos = evidencia(con, alvo["id"])
-    if not imgs:
+    if not imgs and alvo["fonte"] not in FONTES_QUE_DISPENSAM_IMAGEM:
         with trava:
             placar["sem_evidencia"] += 1
         return
@@ -1133,6 +1165,15 @@ def um_poi(poco, alvo, modelo, secoes, placar, trava, aplicar) -> None:
                  % (alvo["id"], alvo["nome"][:26], v,
                     da_fonte.get("_fonte"),
                     (da_fonte.get("justificativa") or "")[:52]))
+        return
+
+    # SEM IMAGEM E SEM FICHA NAO HA JULGAMENTO. So chega aqui um POI das
+    # fontes que dispensam imagem cuja ficha nao pode decidir — loja que sumiu
+    # do iFood, anuncio de Airbnb sem data de comentario. Sem foto e sem
+    # metadado nao ha material: sai como veio, contado no placar.
+    if not imgs:
+        with trava:
+            placar["sem_evidencia"] += 1
         return
 
     prompt_jul = (PROMPT_JULGAR_HOSPEDAGEM if forma == "pagina"
