@@ -1511,7 +1511,7 @@ def main(argv=None) -> int:
     try:
         import telhados as _telhados
         _log("  limpando os tiles da rodada")
-        _telhados.limpar_tiles("capturas")
+        _telhados.limpar_tiles("capturas", a.sessao)
     except Exception as _e:                                    # noqa: BLE001
         _log("  ⚠️  tiles não limpos — %s: %s"
              % (type(_e).__name__, str(_e)[:70]))

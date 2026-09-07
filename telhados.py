@@ -582,14 +582,37 @@ def registrar(pasta="capturas", aplicar=False) -> dict:
     return {"tiles": len(tiles), "gravados": 0}
 
 
-def limpar_tiles(pasta="capturas") -> dict:
-    """Apaga os tiles do disco. Roda no fim da rodada.
+def limpar_tiles(pasta="capturas", sessao="") -> dict:
+    """Apaga os tiles DA SESSAO. Roda no fim da rodada que os produziu.
 
     APAGA SO O QUE E TILE, pelo mesmo `RE_TILE` que os encontra — a pasta
-    `capturas/` guarda tambem print de pagina e recorte, que nao sao rascunho
-    e nao podem ir junto. E apaga o `_tiles.json` da sessao, que sem os tiles
-    nao descreve mais nada.
+    guarda tambem print de pagina e recorte, que nao sao rascunho e nao podem
+    ir junto. E apaga o `_tiles.json` da sessao, que sem os tiles nao descreve
+    mais nada.
+
+    E APAGA SO A PASTA DA SESSAO. Este era um defeito de verdade, introduzido
+    em 07/09/2026 e pego pelo dono do produto antes de ir ao ar: a versao
+    anterior varria `capturas/` INTEIRA.
+
+    O sistema roda varias rodadas ao mesmo tempo — o painel abre "uma rodada
+    para cada area desenhada" e o compose sobe `MINERADORES=2` replicas —, e
+    cada uma escreve em `capturas/<sessao>/tiles_z20/`. Varrendo a raiz, a
+    PRIMEIRA que terminasse apagaria os tiles da outra no meio da captura, e o
+    passo dos telhados da vizinha nao acharia imagem nenhuma. Pior: falharia
+    dizendo "sem tile", que aponta para a captura e nao para quem apagou.
+
+    Sem sessao, esta funcao NAO apaga. Recusar e melhor que adivinhar: o custo
+    de nao limpar e disco; o de limpar demais e a rodada do vizinho.
     """
+    if not sessao:
+        _log("   sessao esta vazia — nao vou varrer `%s` inteira. Tile de"
+             % pasta)
+        _log("   outra rodada mora aqui do lado, e apagar o do vizinho quebra")
+        _log("   a rodada dele sem dizer por que.")
+        return {"apagados": 0, "bytes": 0, "recusado": "sem sessao"}
+    pasta = os.path.join(pasta, sessao.split(",")[0])
+    if not os.path.isdir(pasta):
+        return {"apagados": 0, "bytes": 0}
     n = bytes_ = 0
     for raiz, _, arquivos in os.walk(pasta):
         tinha = False
@@ -871,7 +894,9 @@ def main(argv=None) -> int:
     p.add_argument("--registrar", action="store_true",
                    help="lista os tiles que existem no disco")
     p.add_argument("--limpar", action="store_true",
-                   help="apaga os tiles do disco (fim da rodada)")
+                   help="apaga os tiles DA SESSAO (fim da rodada)")
+    p.add_argument("--sessao", default="",
+                   help="a sessao cujos tiles apagar; sem ela, --limpar recusa")
     p.add_argument("--pasta", default="capturas")
     p.add_argument("--base", type=int, default=0)
     p.add_argument("--area", default="")
@@ -880,8 +905,8 @@ def main(argv=None) -> int:
     a = p.parse_args(argv)
 
     if a.limpar:
-        _log("▶ limpando os tiles do disco")
-        limpar_tiles(a.pasta)
+        _log("▶ limpando os tiles da sessão")
+        limpar_tiles(a.pasta, a.sessao)
         return 0
 
     if a.registrar:
