@@ -265,6 +265,13 @@ def alvos(con, poligono, limite, pois=None):
     return saida, fora
 
 
+#: QUANTAS FALHAS SEGUIDAS ANTES DE PARAR. Sem este freio o laço varre a
+#: fila inteira falhando em milissegundos por item e termina "sem erro", com a
+#: fila zerada e nenhuma foto gravada — o pior desfecho possível, porque parece
+#: sucesso.
+FALHAS_SEGUIDAS_LIMITE = 25
+
+
 class Poco:
     """Um punhado de conexões emprestadas por gravação, e não por trabalhador.
 
@@ -295,6 +302,12 @@ class Poco:
     @contextlib.contextmanager
     def pegar(self):
         con = self.fila.get()
+        # CONEXÃO MORTA SE TROCA, e não se entrega assim mesmo. Em 07/09/2026 o
+        # banco derrubou as sessões dos dois processos de uma vez; o poço seguiu
+        # entregando os mesmos objetos mortos e cada POI seguinte estourava
+        # `connection already closed` em milissegundos.
+        if getattr(con, "closed", 0):
+            con = bc.conectar()
         try:
             yield con
         except Exception:
@@ -304,10 +317,16 @@ class Poco:
             try:
                 con.rollback()
             except Exception:                                  # noqa: BLE001
-                pass
+                # Não deu nem para desfazer: a conexão já se foi. Devolver este
+                # objeto ao poço seria devolver o defeito para o próximo.
+                try:
+                    con.close()
+                except Exception:                              # noqa: BLE001
+                    pass
+                con = None
             raise
         finally:
-            self.fila.put(con)
+            self.fila.put(con if con is not None else bc.conectar())
 
     def fechar(self):
         while not self.fila.empty():
@@ -514,6 +533,12 @@ async def rodar(area, limite, aplicar, trabalhadores, pois=None):
             for a in lista:
                 fila.put_nowait(a)
 
+            # O freio é compartilhado: quem zera e quem conta são
+            # trabalhadores diferentes, e o que interessa é a série do
+            # CONJUNTO, não a de cada um. Falha isolada é normal; falha em
+            # série significa que o problema não está no POI.
+            freio = {"seguidas": 0}
+
             async def obreiro(n):
                 ctx = await nav.new_context(
                     viewport={"width": LARG, "height": ALT})
@@ -529,8 +554,22 @@ async def rodar(area, limite, aplicar, trabalhadores, pois=None):
                             return
                         try:
                             await um_poi(page, poco, a, placar)
+                            freio["seguidas"] = 0
                         except Exception as e:                 # noqa: BLE001
+                            freio["seguidas"] += 1
                             _log("      %d FALHOU: %s" % (a["id"], str(e)[:70]))
+                            # O POI VOLTA PARA A FILA, uma vez só. Ele não tem
+                            # culpa de o banco ter caído, e sem isto uma soluço
+                            # de rede vira buraco silencioso na cobertura.
+                            a["_tentativas"] = a.get("_tentativas", 0) + 1
+                            if a["_tentativas"] < 2:
+                                fila.put_nowait(a)
+                            if freio["seguidas"] >= FALHAS_SEGUIDAS_LIMITE:
+                                _log("      PARANDO: %d falhas seguidas. Não é "
+                                     "o POI, é o banco ou o Google. A fila fica "
+                                     "com %d itens intactos."
+                                     % (freio["seguidas"], fila.qsize()))
+                                return
                             # A ABA PODE TER MORRIDO JUNTO. Sem trocá-la, o
                             # trabalhador arrasta o mesmo erro por toda a fila
                             # restante e o placar culpa POIs que estão sãos.

@@ -1055,6 +1055,15 @@ class Poco:
         @contextlib.contextmanager
         def _emprestimo():
             con = self.fila.get()
+            # CONEXAO MORTA SE TROCA, e nao se entrega assim mesmo.
+            #
+            # Em 07/09/2026 o banco derrubou as sessoes dos dois processos de
+            # uma vez. O poco continuou entregando os mesmos objetos mortos, e
+            # cada POI seguinte estourava `InterfaceError: connection already
+            # closed` em milissegundos. Sem esta troca, uma soluco de segundos
+            # no pooler consome a fila inteira sem julgar nada.
+            if getattr(con, "closed", 0):
+                con = bc.conectar()
             try:
                 yield con
             finally:
@@ -1064,8 +1073,14 @@ class Poco:
                 try:
                     con.rollback()
                 except Exception:                              # noqa: BLE001
-                    pass
-                self.fila.put(con)
+                    # Nao deu nem para desfazer: a conexao ja se foi. Devolver
+                    # este objeto ao poco seria devolver o defeito.
+                    try:
+                        con.close()
+                    except Exception:                          # noqa: BLE001
+                        pass
+                    con = None
+                self.fila.put(con if con is not None else bc.conectar())
         return _emprestimo()
 
     def fechar(self):
@@ -1074,6 +1089,17 @@ class Poco:
                 self.fila.get_nowait().close()
             except Exception:                                  # noqa: BLE001
                 pass
+
+
+#: QUANTAS FALHAS SEGUIDAS ANTES DE PARAR.
+#:
+#: Falha isolada e normal — imagem corrompida, modelo que devolve texto fora do
+#: formato. Falha em SERIE nao e: significa que o problema nao esta no POI, e
+#: sim no banco ou no modelo. Sem este freio, o laco varre a fila inteira
+#: falhando em milissegundos por item e termina "sem erro", com a fila zerada e
+#: nenhum veredito gravado — que e o pior desfecho possivel, porque parece
+#: sucesso.
+FALHAS_SEGUIDAS_LIMITE = 25
 
 
 def rodar(area, limite, aplicar, trabalhadores, modelo, pois, refazer):
@@ -1112,10 +1138,14 @@ def rodar(area, limite, aplicar, trabalhadores, modelo, pois, refazer):
 
     poco = Poco(min(CONEXOES, max(1, trabalhadores)))
 
+    # O freio e compartilhado: quem zera e quem conta sao trabalhadores
+    # diferentes, e o que interessa e a serie do CONJUNTO, nao a de cada um.
+    freio = {"seguidas": 0, "parar": False}
+
     def obreiro(_n):
         while True:
             with trava:
-                if not fila:
+                if freio["parar"] or not fila:
                     return
                 a = fila.pop(0)
             try:
@@ -1124,10 +1154,29 @@ def rodar(area, limite, aplicar, trabalhadores, modelo, pois, refazer):
                 # maior parte do tempo — ela volta para o poco e serve outro.
                 with poco.pegar() as c:
                     um_poi(c, a, modelo, secoes, placar, trava, aplicar)
+                with trava:
+                    freio["seguidas"] = 0
             except Exception as e:                             # noqa: BLE001
                 with trava:
+                    freio["seguidas"] += 1
                     _log("   %8d FALHOU %s: %s"
                          % (a["id"], type(e).__name__, str(e)[:70]))
+                    # O POI VOLTA PARA A FILA. Ele nao tem culpa de o banco ter
+                    # caido, e sem isto uma soluco de rede vira buraco
+                    # silencioso na cobertura — o item sai da fila sem veredito
+                    # e ninguem fica sabendo.
+                    # UMA segunda chance, nao infinitas: um POI que
+                    # falha sempre — JSON que nunca fecha, imagem corrompida —
+                    # voltaria para sempre e a fila nunca esvaziaria.
+                    a["_tentativas"] = a.get("_tentativas", 0) + 1
+                    if a["_tentativas"] < 2:
+                        fila.append(a)
+                    if freio["seguidas"] >= FALHAS_SEGUIDAS_LIMITE:
+                        freio["parar"] = True
+                        _log("   PARANDO: %d falhas seguidas. Nao e o POI, e o "
+                             "banco ou o modelo. A fila fica com %d itens "
+                             "intactos." % (freio["seguidas"], len(fila)))
+                time.sleep(1.0)
 
     try:
         with concurrent.futures.ThreadPoolExecutor(
