@@ -213,6 +213,20 @@ SQL_ALVO = """
                           and (e.dados is not null
                                or e.motivo_falha like 'o Google confirma%'
                                or e.motivo_falha like 'MAPS_JS_KEY%'))
+       -- QUEM JA TEM FACHADA NAO E REFOTOGRAFADO.
+       --
+       -- Ha duas capturas de rua, herdadas de duas geracoes, e desde
+       -- 07/09/2026 a IA le as DUAS: `poi_evidencia` de preferencia,
+       -- `streetview_imgs` como queda. Enquanto esta condicao nao existia, a
+       -- fila mandava fotografar de novo quem ja tinha imagem — medido:
+       -- 15.478 dos 32.440 da fila, quase metade, e como a ordem e por `id` e
+       -- a fachada varreu os ids baixos, era exatamente o que estava sendo
+       -- refeito primeiro.
+       --
+       -- O que a evidencia acrescenta a quem ja tem fachada e a visada de 180
+       -- graus e o marcador no alvo. Nao paga refazer 15 mil pontos.
+       and not exists (select 1 from radar_comercial.streetview_imgs s
+                        where s.poi_id = p.id and s.storage_path is not null)
      order by p.id
 """
 

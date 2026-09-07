@@ -362,7 +362,20 @@ SQL_ALVO = """
                       and upper(l.categoria) = 'RESIDENCIAL'
                       and upper(coalesce(l.sit_ligacao,'')) = 'ATIVA')
        %(filtro)s
-     order by p.id
+     -- A ORDEM E A CONFIANCA DO VINCULO, e nao o `id`.
+     --
+     -- `order by p.id` parecia neutro e nao era: o id conta QUANDO o POI foi
+     -- criado, e as fontes entraram em epocas diferentes. Medido em
+     -- 07/09/2026, com 6.668 vereditos ja dados: o Maps tinha 3.035 POIs
+     -- prontos e apenas 34 julgados, porque seus ids sao os mais altos —
+     -- criados por ultimo — e a fila ainda varria a base estadual.
+     --
+     -- Ordenar pela confianca do VINCULO poe na frente o par ligacao x POI que
+     -- bate rua e numero, que e o que tem mais chance de virar cobranca. Quem
+     -- tem so proximidade espera. O denominador nao muda — tudo e julgado no
+     -- fim —, mas os primeiros resultados passam a ser os melhores.
+     order by (select max(lp2.confianca) from radar_comercial.ligacao_poi lp2
+                where lp2.poi_id = p.id) desc nulls last, p.id
 """
 
 SEM_VEREDITO = """
