@@ -2549,8 +2549,58 @@
            " pontos aqui, coletados até " + (info.minha_coleta_mais_recente || "?") +
            ". Reaproveitar não mexe neles — só acrescenta o que falta.")
         : "Sua empresa ainda não tem nenhum ponto nesta área.";
+      // O BOTAO DE REFAZER SO EXISTE QUANDO HA O QUE APAGAR, e o numero vai
+      // no rotulo. `ja_tenho` e a contagem do que e da PROPRIA empresa dentro
+      // do desenho — as outras duas opcoes falam do dado de terceiros.
+      const btnRef = $("reuso-refazer");
+      if (btnRef) {
+        const meus = info.ja_tenho || 0;
+        $("reuso-refazer-n").textContent = meus.toLocaleString("pt-BR");
+        btnRef.classList.toggle("hidden", !meus);
+        btnRef.dataset.areas = JSON.stringify(areas.length ? areas : []);
+      }
       $("m-reuso").classList.remove("hidden");
       $("m-reuso").classList.add("flex");
+    });
+
+    // REFAZER APAGA, ENTAO PERGUNTA DE NOVO. Nao e paranoia: o botao fica ao
+    // lado de dois que nao destroem nada, e o clique errado nao tem volta —
+    // a decisao de 07/09/2026 foi apagar e refazer, sem guardar a leitura
+    // anterior.
+    $("reuso-refazer").addEventListener("click", async () => {
+      const n = $("reuso-refazer-n").textContent;
+      if (!window.confirm(
+            "Apagar " + n + " pontos seus desta área e coletar de novo?\n\n" +
+            "Isso remove também os vínculos, imagens e vereditos ligados a " +
+            "eles. Não há como desfazer.")) return;
+      $("m-reuso").classList.add("hidden");
+      $("m-reuso").classList.remove("flex");
+      $("log-wrap").classList.remove("hidden");
+
+      const areas = JSON.parse($("reuso-refazer").dataset.areas || "[]");
+      // SEM DESENHO, O SERVIDOR USA A AREA SALVA. O painel so tem poligono na
+      // mao quando alguem acabou de desenhar; numa sessao aberta sobre a area
+      // ja gravada, `areasPendentes` esta vazio — e o corpo vazio diz ao
+      // servidor para usar aquela.
+      const alvos = areas.length ? areas : [null];
+      let apagados = 0;
+      for (const a of alvos) {
+        const r = await fetch("/api/area/reprocessar", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(a ? { poligono: a.map(([la, ln]) => [la, ln]) } : {}),
+        }).catch(() => null);
+        const d = r ? await r.json().catch(() => ({})) : {};
+        if (!r || !r.ok) {
+          linhaLog(d.detail || "não foi possível apagar — nada foi removido",
+                   "text-amber-400");
+          return;
+        }
+        apagados += d.pois || 0;
+      }
+      linhaLog(apagados.toLocaleString("pt-BR") +
+               " ponto(s) apagado(s); coletando de novo", "text-amber-400");
+      await iniciarExtracao(false);
     });
 
     $("reuso-sim").addEventListener("click", async () => {

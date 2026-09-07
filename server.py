@@ -1248,6 +1248,88 @@ def categorias_marcar(body: dict = Body(...)):
     return {"mudadas": mudadas, "marcadas": n, "pois_marcados": int(p)}
 
 
+@app.post("/api/area/reprocessar")
+def area_reprocessar(body: dict):
+    """APAGA os POIs da minha empresa dentro do poligono. Irreversivel.
+
+    POR QUE ISTO EXISTE. A tela ja perguntava "reaproveitar o que outra empresa
+    extraiu?", mas nao tinha resposta para a outra pergunta, que e sobre o dado
+    da PROPRIA empresa: "esta area ja rodou; refazer ou aproveitar?". Decisao do
+    dono do produto em 07/09/2026: reprocessar APAGA e refaz, em vez de guardar
+    as duas leituras — banco menor e consulta mais simples, sem volta.
+
+    TRES CUIDADOS, porque isto destroi dado:
+
+    1. SO O QUE E MEU. O filtro de empresa nao esta escrito aqui: quem o aplica
+       e o RLS, linha a linha. POI de outra empresa na mesma area nao e visto e
+       nao e tocado.
+
+    2. A CASCATA E DESCOBERTA, e nao listada. Toda tabela do schema que tenha
+       `poi_id` perde as linhas daqueles POIs — e a lista sai de
+       `information_schema`, e nao de um `for` escrito a mao que envelheceria na
+       primeira tabela nova. E a mesma maquina que apaga uma run.
+
+    3. ZERO APAGADO COM POI ENCONTRADO E 403, E NAO SUCESSO. O RLS filtra
+       CALADO: um usuario sem nivel executa o delete, apaga zero e a rota
+       responderia "apaguei". O `rowcount` do proprio delete e quem manda.
+    """
+    from psycopg2 import sql as _sql
+    # SEM DESENHO, USA A AREA SALVA — o mesmo que `GET /api/area/reuso` faz.
+    # O painel so acumula poligono na tela quando alguem acabou de desenhar;
+    # numa sessao que abriu com a area ja gravada, `areasPendentes` esta vazio e
+    # exigir poligono aqui recusaria justamente o caso normal.
+    poly = body.get("poligono") or body.get("polygon") or []
+    if len(poly) < 3:
+        poly = area_utils.carregar_area(
+            body.get("area") or area_utils.AREA_PADRAO) or []
+    if len(poly) < 3:
+        raise HTTPException(status_code=400,
+                            detail="sem area: desenhe uma ou salve a atual")
+    wkt = "POLYGON((%s))" % ", ".join(
+        "%f %f" % ((p[1], p[0]) if isinstance(p, (list, tuple))
+                   else (p["lng"], p["lat"])) for p in
+        list(poly) + [poly[0]])
+
+    con = base_comum.conectar()
+    apagados = {}
+    try:
+        with con.cursor() as cur:
+            cur.execute("""select id from radar_comercial.pois
+                            where pt_geo is not null
+                              and st_within(pt_geo::geometry,
+                                            st_geomfromtext(%s, 4326))""",
+                        (wkt,))
+            ids = [r[0] for r in cur.fetchall()]
+            achados = len(ids)
+            if not ids:
+                return {"achados": 0, "apagados": {}, "pois": 0}
+            cur.execute("""select table_name from information_schema.columns
+                            where table_schema = 'radar_comercial'
+                              and column_name = 'poi_id'""")
+            for (tb,) in cur.fetchall():
+                cur.execute(_sql.SQL("delete from radar_comercial.{} "
+                                     "where poi_id = any(%s)")
+                            .format(_sql.Identifier(tb)), (ids,))
+                if cur.rowcount:
+                    apagados[tb] = cur.rowcount
+            cur.execute("delete from radar_comercial.pois where id = any(%s)",
+                        (ids,))
+            apagados["pois"] = cur.rowcount
+            if achados and not apagados["pois"]:
+                con.rollback()
+                raise HTTPException(
+                    status_code=403,
+                    detail=("Encontrei %d POIs seus nesta area, e a politica de "
+                            "acesso nao deixou apagar nenhum. Apagar POI exige "
+                            "nivel Administrador na empresa dona do dado."
+                            % achados))
+        con.commit()
+    finally:
+        con.close()
+    return {"achados": achados, "apagados": apagados,
+            "pois": apagados.get("pois", 0)}
+
+
 @app.post("/api/area/reuso")
 def area_reuso_poligono(body: dict):
     """O mesmo do GET, para um poligono que ainda NAO foi salvo.

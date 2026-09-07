@@ -590,6 +590,18 @@ Clique numa rodada para ver no mapa só os pontos que ela trouxe.
         </div>
       </div>
       <div class="flex items-center justify-end gap-x-3 border-t border-gray-100 bg-gray-50 px-6 py-4">
+        <!-- O TERCEIRO CAMINHO, e ele APAGA. As outras duas opcoes falam do
+             dado de OUTRA empresa: reaproveitar ou ignorar. Esta fala do dado
+             que e SEU e que ja esta nesta area — refazer significa apagar o que
+             esta la e coletar de novo, como decidido em 07/09/2026.
+
+             FICA ESCONDIDO quando nao ha nada seu para apagar, e o rotulo diz o
+             NUMERO: um botao destrutivo sem quantidade e um convite a clicar
+             sem saber o tamanho do estrago. -->
+        <button id="reuso-refazer" type="button"
+                class="mr-auto hidden rounded-md border border-red-200 px-3 py-2 text-[13px] font-medium text-red-700 hover:bg-red-50">
+          Refazer o meu — apaga <span id="reuso-refazer-n" class="tabular-nums font-semibold">0</span> e coleta de novo
+        </button>
         <button id="reuso-zero" type="button"
                 class="rounded-md px-3 py-2 text-[13px] font-medium text-gray-700 hover:bg-gray-100">
           Coletar tudo do zero
