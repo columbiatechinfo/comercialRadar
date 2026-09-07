@@ -804,7 +804,23 @@ def ligacoes_texto(con, alvo) -> str:
     linhas = []
     for (lig, cat, sit, logr, nro, bairro, la, lo,
          eres, ecom, eind) in cur.fetchall():
-        onde = ", ".join(x for x in (("%s %s" % (logr, nro)).strip(), bairro) if x)
+        # O BAIRRO VAI ROTULADO, e nao colado por virgula.
+        #
+        # Escrito como "R. CONCORDIA 985, NITEROI", o julgamento lia NITEROI
+        # como CIDADE e anunciava divergencia de municipio — quando Niteroi e
+        # bairro de Canoas. MEDIDO em 07/09/2026: 182 dos 2.808 casos em
+        # revisao humana citam divergencia junto com um bairro conhecido de
+        # Canoas (Niteroi, Igara, Guajuviras, Mathias Velho, Harmonia,
+        # Estancia). Sao 6,5% das revisoes penduradas numa divergencia que
+        # nao existe.
+        #
+        # A palavra "bairro" resolve porque o modelo nao tem como saber, de um
+        # nome sozinho depois de uma virgula, se aquilo e bairro ou municipio —
+        # e varios bairros brasileiros tem nome de cidade.
+        onde = ("%s %s" % (logr, nro)).strip()
+        if bairro:
+            onde = ("%s — bairro %s" % (onde, bairro)) if onde else (
+                "bairro %s" % bairro)
         dist = ""
         if la is not None and lo is not None and alvo.get("lat") is not None:
             dist = " · a %.0f m do ponto fotografado" % _metros(
