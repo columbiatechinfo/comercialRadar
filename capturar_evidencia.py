@@ -127,6 +127,53 @@ def _log(m):
 CORTE = {"esq": 0.15, "dir": 0.12, "topo": 0.20, "baixo": 0.17}
 
 
+#: QUANDO O GOOGLE FOTOGRAFOU AQUELA RUA.
+#:
+#: `capturado_em` responde "quando NOSSA rodada tirou o print", que nao e a
+#: pergunta que decide nada. A que decide e a idade da imagem: um terco das
+#: fachadas deste projeto e de 2024, e ha panorama de 2022. Uma casa
+#: fotografada ha dois anos pode ter virado loja depois — e a IA estava lendo
+#: aquilo como se fosse hoje, sem ter como desconfiar.
+#:
+#: A FONTE E A API DE METADADOS DO STREET VIEW, e ela NAO E COBRADA pelo
+#: Google: metadata request e de graca, ao contrario da imagem. Uma chamada por
+#: POI, com o `pano_id` que a captura ja tem na mao, devolve `date` no formato
+#: AAAA-MM.
+_CACHE_DATA_PANO = {}
+
+
+def _data_do_pano(pano_id: str) -> str | None:
+    """AAAA-MM do panorama, ou None. Guarda em memoria: panorama se repete."""
+    if not pano_id:
+        return None
+    if pano_id in _CACHE_DATA_PANO:
+        return _CACHE_DATA_PANO[pano_id]
+    import json as _json
+    import urllib.parse
+    import urllib.request
+    # A CHAVE TEM TRES NOMES POSSIVEIS neste projeto, e o container usa o
+    # terceiro: `MAPS_JS_KEY`. Procurar so os dois primeiros fazia a funcao
+    # devolver None em silencio, que e o pior jeito de falhar — a data
+    # simplesmente nao apareceria e nada diria por que.
+    chave = (os.environ.get("MAPS_API_KEY") or os.environ.get("MAPS_KEY")
+             or os.environ.get("MAPS_JS_KEY") or "")
+    if not chave:
+        return None
+    url = ("https://maps.googleapis.com/maps/api/streetview/metadata?"
+           + urllib.parse.urlencode({"pano": pano_id, "key": chave}))
+    data = None
+    try:
+        md = _json.loads(urllib.request.urlopen(url, timeout=12).read())
+        if md.get("status") == "OK":
+            data = md.get("date")
+    except Exception:                                          # noqa: BLE001
+        # DATA E ENFEITE UTIL, NAO CONDICAO. Falhar aqui nao pode custar a
+        # captura: a foto vale sem a data, e a data se preenche depois.
+        data = None
+    _CACHE_DATA_PANO[pano_id] = data
+    return data
+
+
 def _cortar_interface(png: bytes) -> bytes:
     """Tira as bordas onde o Maps desenha a própria interface."""
     try:
@@ -480,7 +527,8 @@ async def um_poi(page, poco, alvo, placar) -> None:
                     gravar(poco, alvo["id"], tipo, img,
                            pano_id=m["pano_id"], cam_lat=m["lat"], cam_lng=m["lng"],
                            heading=heading, pitch=5.0, fov=float(fov_aqui),
-                           distancia_m=d, largura_px=LARG, altura_px=ALT)
+                           distancia_m=d, largura_px=LARG, altura_px=ALT,
+                           data_imagem=_data_do_pano(m["pano_id"]))
                     placar[tipo] += 1
                 except Exception as e:                         # noqa: BLE001
                     gravar(poco, alvo["id"], tipo, None,
