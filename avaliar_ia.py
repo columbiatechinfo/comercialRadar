@@ -619,8 +619,27 @@ def _da_fachada(cur, poi_id):
     cur.execute("""select angulo, storage_path from radar_comercial.streetview_imgs
                     where poi_id = %s and storage_path is not null
                     order by id""", (poi_id,))
+    linhas = cur.fetchall()
+    # SOLTA A TRANSACAO ANTES DE BAIXAR.
+    #
+    # `_im.baixar` fala HTTP com o Storage e leva segundos por imagem. Com a
+    # transacao aberta durante isso, a sessao fica `idle in transaction`
+    # segurando um slot do pooler — que aceita 20 NO TOTAL, entre todas as
+    # maquinas e servicos.
+    #
+    # Medido em 07/09/2026: catorze sessoes presas exatamente nesta consulta,
+    # e a captura de evidencia nao conseguia abrir a dela — morria com
+    # `EMAXCONNSESSION` antes do primeiro POI. O sintoma apontava para a
+    # captura, e a causa estava aqui.
+    #
+    # Ler tudo, fechar, e so entao baixar. O `select` custa milissegundos; o
+    # download, segundos. Nao ha razao para os dois dividirem uma transacao.
+    try:
+        cur.connection.commit()
+    except Exception:                                          # noqa: BLE001
+        pass
     saida = {}
-    for ang, caminho in cur.fetchall():
+    for ang, caminho in linhas:
         tipo = DA_FACHADA.get(ang)
         if not tipo or tipo in saida:
             continue
