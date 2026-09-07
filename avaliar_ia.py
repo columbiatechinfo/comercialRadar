@@ -1025,6 +1025,57 @@ def gravar(con, poi_id, v, veredito, percepcao, modelo, n_imgs, dt):
     con.commit()
 
 
+#: QUANTAS CONEXOES, independentemente de quantos trabalhadores.
+#:
+#: O pooler da porta 7100 aceita 20 sessoes NO TOTAL — entre todas as maquinas,
+#: a API, o painel e as capturas. Este arquivo abria UMA POR TRABALHADOR: com
+#: seis, mais as seis da captura de evidencia, mais os servicos, o pooler
+#: saturava e ninguem mais conectava. Aconteceu duas vezes em 07/09/2026, e da
+#: segunda nem uma consulta de diagnostico entrava.
+#:
+#: Quatro bastam porque o trabalho aqui e ESPERA DE MODELO, nao de banco: cada
+#: POI faz duas chamadas ao vLLM, de segundos, e algumas consultas de
+#: milissegundos. `capturar_evidencia` chegou a mesma conclusao com o mesmo
+#: numero.
+CONEXOES = 4
+
+
+class Poco:
+    """Emprestimo de conexao. Quem nao pega, espera — nao abre outra."""
+
+    def __init__(self, n):
+        import queue
+        self.fila = queue.Queue()
+        for _ in range(n):
+            self.fila.put(bc.conectar())
+
+    def pegar(self):
+        import contextlib
+
+        @contextlib.contextmanager
+        def _emprestimo():
+            con = self.fila.get()
+            try:
+                yield con
+            finally:
+                # DEVOLVE LIMPA. Uma transacao aberta esquecida aqui vira
+                # `idle in transaction` e segura o slot do pooler — foi
+                # exatamente o que aconteceu com o download de imagem.
+                try:
+                    con.rollback()
+                except Exception:                              # noqa: BLE001
+                    pass
+                self.fila.put(con)
+        return _emprestimo()
+
+    def fechar(self):
+        while not self.fila.empty():
+            try:
+                self.fila.get_nowait().close()
+            except Exception:                                  # noqa: BLE001
+                pass
+
+
 def rodar(area, limite, aplicar, trabalhadores, modelo, pois, refazer):
     # ÁREA PEDIDA E INEXISTENTE É ERRO, e não 'sem filtro'. Com
     # `--poi` não há área a exigir: o id já é o recorte.
@@ -1059,26 +1110,31 @@ def rodar(area, limite, aplicar, trabalhadores, modelo, pois, refazer):
     import concurrent.futures
     fila = list(lista)
 
-    def obreiro(_n):
-        c = bc.conectar()
-        try:
-            while True:
-                with trava:
-                    if not fila:
-                        return
-                    a = fila.pop(0)
-                try:
-                    um_poi(c, a, modelo, secoes, placar, trava, aplicar)
-                except Exception as e:                         # noqa: BLE001
-                    with trava:
-                        _log("   %8d FALHOU %s: %s"
-                             % (a["id"], type(e).__name__, str(e)[:70]))
-        finally:
-            c.close()
+    poco = Poco(min(CONEXOES, max(1, trabalhadores)))
 
-    with concurrent.futures.ThreadPoolExecutor(
-            max_workers=max(1, trabalhadores)) as piscina:
-        list(piscina.map(obreiro, range(max(1, trabalhadores))))
+    def obreiro(_n):
+        while True:
+            with trava:
+                if not fila:
+                    return
+                a = fila.pop(0)
+            try:
+                # A CONEXAO E EMPRESTADA POR POI, e nao pelo tempo de vida do
+                # trabalhador: durante as duas chamadas ao modelo — que sao a
+                # maior parte do tempo — ela volta para o poco e serve outro.
+                with poco.pegar() as c:
+                    um_poi(c, a, modelo, secoes, placar, trava, aplicar)
+            except Exception as e:                             # noqa: BLE001
+                with trava:
+                    _log("   %8d FALHOU %s: %s"
+                         % (a["id"], type(e).__name__, str(e)[:70]))
+
+    try:
+        with concurrent.futures.ThreadPoolExecutor(
+                max_workers=max(1, trabalhadores)) as piscina:
+            list(piscina.map(obreiro, range(max(1, trabalhadores))))
+    finally:
+        poco.fechar()
 
     dt = time.time() - t0
     _log("")
