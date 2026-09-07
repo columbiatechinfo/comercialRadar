@@ -343,8 +343,14 @@ SQL_ALVO = """
            coalesce(p.cidade,''), coalesce(p.uf,''),
            st_y(p.pt_geo::geometry), st_x(p.pt_geo::geometry)
       from radar_comercial.pois p
-     where exists (select 1 from radar_comercial.poi_evidencia e
-                    where e.poi_id = p.id and e.dados is not null)
+     where (exists (select 1 from radar_comercial.poi_evidencia e
+                     where e.poi_id = p.id and e.dados is not null)
+            -- A FILA SEGUE A LEITURA. `evidencia()` cai para
+            -- `streetview_imgs` quando nao ha `poi_evidencia`; exigir so a
+            -- primeira aqui deixaria de fora justamente os POIs que a captura
+            -- de fachada ja cobriu — 13.736 em Canoas quando isto foi escrito.
+            or exists (select 1 from radar_comercial.streetview_imgs s
+                        where s.poi_id = p.id and s.storage_path is not null))
        and exists (select 1 from radar_comercial.categoria_catalogo cc
                     where cc.fonte = p.fonte
                       and cc.valor = btrim(p.categoria) and cc.avaliar)
@@ -582,6 +588,53 @@ def alvos(con, poligono, limite, pois, refazer):
     return saida, fora
 
 
+#: DE ONDE VEM A IMAGEM QUANDO NAO HA `poi_evidencia`.
+#:
+#: Ha duas capturas de rua no repositorio, herdadas de duas geracoes:
+#:
+#:   capturar_evidencia.py -> poi_evidencia    4 visadas, borda ja cortada, mira
+#:   streetview_capture.py -> streetview_imgs  3 visadas, borda crua, sem mira
+#:
+#: Sao quase a mesma foto do mesmo ponto, e manter as duas rodando significaria
+#: fotografar cada POI duas vezes para dois destinos. Em 06/09/2026 a captura de
+#: fachada ja estava em 49% dos 27.470 POIs de Canoas quando a duplicidade
+#: apareceu; jogar isso fora para recapturar do zero seria desperdicio maior que
+#: a diferenca entre as duas.
+#:
+#: Entao a leitura aceita as duas. `poi_evidencia` continua sendo a preferida —
+#: tem o fundo e a mira —, e `streetview_imgs` entra como queda, com a borda
+#: cortada AQUI, na leitura, ja que a captura dela nao corta.
+DA_FACHADA = {"facade": "sv_frente", "g90": "sv_lado_a",
+              "g180": "sv_fundo", "g270": "sv_lado_b"}
+
+
+def _da_fachada(cur, poi_id):
+    """`{tipo: bytes}` a partir de `streetview_imgs`, com a borda cortada."""
+    import imagens as _im
+    try:
+        from capturar_evidencia import _cortar_interface
+    except Exception:                                          # noqa: BLE001
+        def _cortar_interface(x):
+            return x
+    cur.execute("""select angulo, storage_path from radar_comercial.streetview_imgs
+                    where poi_id = %s and storage_path is not null
+                    order by id""", (poi_id,))
+    saida = {}
+    for ang, caminho in cur.fetchall():
+        tipo = DA_FACHADA.get(ang)
+        if not tipo or tipo in saida:
+            continue
+        b = _im.baixar(caminho)
+        if b:
+            # A BORDA SAI NA LEITURA porque a captura de fachada nao a tira. O
+            # painel do Maps no alto e o rotulo do minimapa embaixo sao lidos
+            # como se fossem placa: medido em 06/09/2026, um giro trouxe
+            # "Padaria Confeitaria e Cafeteria Sabor Do Trigo" — o nome do
+            # VIZINHO, escrito pela interface — e virou `nome_visto`.
+            saida[tipo] = _cortar_interface(b)
+    return saida
+
+
 def evidencia(con, poi_id):
     """As imagens do POI, na ordem em que a IA deve lê-las.
 
@@ -594,6 +647,8 @@ def evidencia(con, poi_id):
     por_tipo = {t: bytes(d) for t, d in cur.fetchall()}
     if por_tipo.get("pagina_airbnb"):
         return "pagina", [por_tipo["pagina_airbnb"]], ["pagina_airbnb"]
+    if not any(t in por_tipo for t in ORDEM_RUA):
+        por_tipo = _da_fachada(cur, poi_id)
     tipos = [t for t in ORDEM_RUA if t in por_tipo]
     if not tipos:
         return None, [], []
