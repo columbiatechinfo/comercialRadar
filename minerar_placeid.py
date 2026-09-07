@@ -91,6 +91,29 @@ function initMap(){
 </body></html>"""
 
 
+#: PARA QUAL COLUNA VAI O LINK QUE O MAPS CHAMA DE "site".
+#:
+#: Nos negocios de bairro esse campo quase nunca e um site: e o Instagram, a
+#: pagina do Facebook, um `wa.me` ou um Linktree. Medido em 07/09/2026 sobre os
+#: 4.249 links colhidos: 902 Instagram, 249 Facebook, 79 WhatsApp, 43 Linktree
+#: — 30% do total. Guardar tudo em `website` fazia a coluna `instagram` ficar
+#: zerada nos 11.048 POIs de Maps, e quem procurasse rede social ali concluiria
+#: que o Maps nao tem, quando tem.
+_REDES = (("instagram", ("instagram.com",)),
+          ("facebook", ("facebook.com", "fb.com", "fb.me")))
+
+
+def _separar_link(url):
+    """Devolve `(website, instagram, facebook)` — so um deles vem preenchido."""
+    if not url:
+        return None, None, None
+    baixo = str(url).lower()
+    for coluna, dominios in _REDES:
+        if any(d in baixo for d in dominios):
+            return (None, url, None) if coluna == "instagram" else (None, None, url)
+    return url, None, None
+
+
 def metros_por_pixel(lat, zoom):
     return 156543.03392 * math.cos(math.radians(lat)) / (2 ** zoom)
 
@@ -437,7 +460,23 @@ VISAO_GERAL = r"""() => {
     totalAval: Object.values(hist).reduce((a,b)=>a+b,0) || null,
     endereco : semRotulo(aria('button[data-item-id="address"]')),
     telefone : semRotulo(aria('button[data-item-id^="phone"]')),
-    site     : semRotulo(aria('a[data-item-id="authority"]')),
+    // O HREF, E NAO O ROTULO.
+    //
+    // `aria-label` do link mostra o que o Maps EXIBE, que e so o dominio:
+    // "instagram.com". O href tem "https://instagram.com/padariadoze". Medido
+    // em 07/09/2026: os 4.249 sites ja colhidos estavam TODOS truncados no
+    // dominio — 902 diziam apenas "instagram.com", 249 "facebook.com", 79
+    // "wa.me". Saber que o negocio tem Instagram sem saber QUAL perfil nao
+    // serve para nada: nao da para abrir, nao da para conferir a atividade e
+    // nao da para mandar para a IA.
+    site     : (() => {
+      const a = q('a[data-item-id="authority"]');
+      return a ? (a.href || semRotulo(a.getAttribute('aria-label'))) : null;
+    })(),
+    siteHref : (() => {
+      const a = q('a[data-item-id="authority"]');
+      return a ? a.href : null;
+    })(),
     plusCode : semRotulo(aria('button[data-item-id="oloc"]')),
     dentroDe : txt('button[data-item-id*="locatedin"]'),
     statusHorario: txt('div[jsaction*="openhours"]'),
@@ -1169,11 +1208,14 @@ def _gravar_um_cru(con, poi_id, d):
                    categoria = coalesce(%s, categoria),
                    endereco = coalesce(%s, endereco),
                    telefone = coalesce(%s, telefone),
-                   website = coalesce(%s, website),
+                   website  = coalesce(%s, website),
+                   instagram = coalesce(%s, instagram),
+                   facebook  = coalesce(%s, facebook),
                    ia_resposta = %s
              where id = %s""",
             (d.get("nome"), d.get("categoria"), d.get("endereco"),
-             d.get("telefone"), d.get("site"), extra, poi_id))
+             d.get("telefone"), *_separar_link(d.get("site")),
+             extra, poi_id))
 
         # O QUE E SO DO MAPS VAI PARA `maps_data` (migracao 0048).
         #

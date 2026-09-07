@@ -282,6 +282,8 @@ Decida pela imagem.
 E NÃO INVERTA A REGRA: ausência de avaliação não reprova nada. A maior parte \
 dos negócios de bairro não tem uma linha escrita sobre eles.
 
+PERFIL DE REDE SOCIAL CONTA COMO PRESENCA, e nao como prova. Um Instagram ou Facebook no cadastro diz que alguem manteve uma vitrine digital daquele negocio naquele endereco. Vale como indicio a favor — sobe de "reprovado" para "revisao_humana" quando a fachada e muda —, mas nao aprova sozinho: o perfil pode ser antigo, e voce nao recebe a data do ultimo post.
+
 A FOTO DE RUA TEM IDADE, e o cadastro diz qual. O Google não refotografa a \
 cidade todo ano: um terço das fachadas deste projeto é de 2024. Pese assim:
 - foto do último ano: o que ela mostra vale como está.
@@ -1029,7 +1031,28 @@ def _cadastro_texto(con, alvo) -> str:
         "dezenas de metros entre a foto e a ligação são o normal de um "
         "quarteirão. Só desconfie da distância acima de uns 60 m.",
     ]
+    # O CONTATO DO ESTABELECIMENTO, e a rede social em primeiro lugar.
+    #
+    # Perfil de rede e prova de atividade da mesma natureza da avaliacao: quem
+    # mantem um Instagram esta operando, e a data do ultimo post diria quando —
+    # mas isso exige abrir a rede, o que ainda nao fazemos. Por ora vai o
+    # perfil, que ja permite ao julgamento pesar "tem presenca digital ativa"
+    # contra "casa sem letreiro".
+    #
+    # ESTA COLUNA ESTAVA VAZIA NO MAPS ATE 07/09/2026 por um defeito de coleta,
+    # e nao por ausencia do dado: o extrator lia o ROTULO do link, que o Maps
+    # exibe como so o dominio, em vez do href. Os 4.249 links colhidos diziam
+    # "instagram.com" sem dizer QUAL perfil — 902 deles.
     cur = con.cursor()
+    cur.execute("""select instagram, facebook, website, telefone
+                     from radar_comercial.pois where id = %s""", (alvo["id"],))
+    _c = cur.fetchone()
+    if _c:
+        for _rot, _v in (("Instagram", _c[0]), ("Facebook", _c[1]),
+                         ("site", _c[2]), ("telefone", _c[3])):
+            if _v and str(_v).strip():
+                linhas.append("- %s: %s" % (_rot, str(_v).strip()[:160]))
+
     if alvo["fonte"] == "ifood":
         cur.execute("""select nota, avaliacoes, cnpj, telefone, visto_em,
                               bruto->>'disponivel'
