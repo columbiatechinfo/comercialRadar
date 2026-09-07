@@ -79,6 +79,23 @@ TIMEOUT = 480
 # primeiro dá o enquadramento (onde fica, quantas construções), a fachada
 # depois responde a pergunta, o fundo por último dá o contexto do quarteirão.
 ORDEM_RUA = ["sv_frente", "sv_lado_a", "sv_fundo", "sv_lado_b"]
+
+#: QUANTAS FOTOS DO ESTABELECIMENTO ENTRAM NA PERCEPCAO.
+#:
+#: A foto de rua mostra a FACHADA; a foto publicada no Google mostra o
+#: NEGOCIO. Sao coisas diferentes, e a segunda e justamente a que faltava: o
+#: caso que abriu esta investigacao e uma oficina cuja fachada e uma casa e
+#: cuja foto do dono, de outubro de 2025, mostra o cara lixando um para-choque.
+#:
+#: DUAS, e nao quatro. Medido em 07/09/2026: o tempo da percepcao cresce com a
+#: area das imagens, e a fila da IA ja leva ~24 h. Duas fotos a mais custam
+#: perto de 40% do tempo da percepcao; quatro dobrariam.
+#:
+#: SO AS `gps-cs-s`, que sao as fotos do estabelecimento. As
+#: `streetviewpixels` sao Street View de novo — mandar seria repetir as quatro
+#: visadas que a IA ja recebeu, gastando o dobro para ver o mesmo.
+FOTOS_DO_MAPS = 2
+ORDEM_FOTO = ["foto_maps_1", "foto_maps_2"]
 ORDEM_PAGINA = ["pagina_airbnb"]
 
 VEREDITOS = ("aprovado_exato", "aprovado_comercial", "revisao_humana", "reprovado")
@@ -121,16 +138,26 @@ VISTA_ROTULO = {
     "sv_lado_a": "LADO DIREITO - a mesma câmera girada 90°.",
     "sv_fundo": "ATRÁS - a mesma câmera girada 180°, o outro lado da rua.",
     "sv_lado_b": "LADO ESQUERDO - a mesma câmera girada 270°.",
+    "foto_maps_1": "FOTO PUBLICADA NO GOOGLE pelo dono ou por um cliente do "
+                   "lugar. NÃO é foto de rua: pode ser de dentro, do produto, "
+                   "do serviço sendo feito ou da fachada de perto.",
+    "foto_maps_2": "OUTRA FOTO PUBLICADA NO GOOGLE, mesma natureza da anterior.",
 }
 
 IGNORAR = """IGNORE, e nunca transcreva como letreiro: a marca d'água do \
 Google, placas de trânsito e nomes de rua. A mira verde foi desenhada por nós \
 sobre a foto para apontar o imóvel do endereço — ela não existe no local."""
 
-PROMPT_QUATRO = """Você recebe %(n)d fotos de rua do MESMO ponto, tiradas do \
-mesmo lugar girando a câmera. Nesta ordem:
+PROMPT_QUATRO = """Você recebe %(n)d imagens do MESMO endereço, nesta ordem:
 
 %(lista)s
+
+AS PRIMEIRAS SÃO FOTOS DE RUA, tiradas do mesmo lugar girando a câmera. \
+Quando houver FOTO PUBLICADA NO GOOGLE, ela é de outra natureza: alguém que \
+esteve no lugar fotografou o que ele faz — o produto, o serviço em execução, o \
+salão, a oficina por dentro. Ela mostra o NEGÓCIO; a foto de rua mostra a \
+FACHADA. Um mesmo endereço pode ter fachada de casa e foto de oficina, e as \
+duas coisas serem verdade.
 
 SUA TAREFA É ACHAR ESTABELECIMENTO — comércio, serviço, oficina, igreja, \
 escola, depósito, qualquer atividade que não seja só moradia. Ele pode estar em \
@@ -739,6 +766,30 @@ DA_FACHADA = {"facade": "sv_frente", "g90": "sv_lado_a",
 # corte das mesmas fotos, e a mira nunca chegava a existir.
 
 
+def _fotos_do_maps(cur, poi_id):
+    """As primeiras fotos do estabelecimento, na ordem em que o Google as mostra.
+
+    A ORDEM DO GOOGLE E A ORDEM DA RELEVANCIA: `images_urls.ordem` guarda a
+    posicao em que a foto aparecia na ficha, e o Maps poe na frente a que
+    melhor representa o lugar. Pegar as primeiras e mais barato e mais certeiro
+    do que escolher por tamanho ou por acaso.
+    """
+    cur.execute("""
+        select storage_path, dados
+          from radar_comercial.images_urls
+         where poi_id = %s
+           and url like '%%gps-cs-s%%'
+           and (storage_path is not null or dados is not null)
+         order by ordem
+         limit %s""", (poi_id, FOTOS_DO_MAPS))
+    saida = []
+    for sp, d in cur.fetchall():
+        b = imagens._de_linha(sp, d)
+        if b:
+            saida.append(b)
+    return saida
+
+
 def evidencia(con, poi_id):
     """As imagens do POI, na ordem em que a IA deve lê-las.
 
@@ -767,7 +818,13 @@ def evidencia(con, poi_id):
         return "pagina", [por_tipo["pagina_airbnb"]], ["pagina_airbnb"]
     # SEM QUEDA PARA `streetview_imgs`. Ver a nota acima: as 65.316 imagens
     # daquela tabela foram adequadas e viraram linhas desta, no Storage.
-    tipos = [t for t in ORDEM_RUA if t in por_tipo]
+    # AS FOTOS DO ESTABELECIMENTO ENTRAM DEPOIS DAS DE RUA, e nunca antes: a
+    # foto 1 tem de continuar sendo a da mira, porque o prompt manda contar
+    # medidor nela e diz que a mira marca o imovel do endereco.
+    for i, b in enumerate(_fotos_do_maps(cur, poi_id)):
+        por_tipo["foto_maps_%d" % (i + 1)] = b
+
+    tipos = [t for t in ORDEM_RUA + ORDEM_FOTO if t in por_tipo]
     if not tipos:
         return None, [], []
     return "rua", [por_tipo[t] for t in tipos], tipos

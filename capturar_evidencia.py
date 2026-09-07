@@ -174,6 +174,34 @@ def _data_do_pano(pano_id: str) -> str | None:
     return data
 
 
+def _para_webp(png: bytes, qualidade: int = 88) -> bytes:
+    """PNG -> WebP, SEM MEXER EM PIXEL.
+
+    `_cortar_interface` e `_marcar_centro` trabalham com `cv2.imencode(".png")`,
+    que grava sem perda e sem compressao util para fotografia. MEDIDO em
+    07/09/2026: as visadas gravadas assim ocupam de 837 a 998 KB cada; as mesmas
+    imagens, nos mesmos pixels, ficam perto de 85 KB em WebP.
+
+    O preco disso era cobrado duas vezes. Em disco: `poi_evidencia` virou a
+    maior tabela do banco, 53 GB de 104 GB. E em tempo de modelo: a percepcao
+    recebe quatro visadas mais duas fotos do Google, e 3,9 MB de imagem por
+    chamada arrastam a fila inteira.
+
+    A resolucao NAO muda — isso foi medido em 07/09/2026 e reprovado: reduzir
+    largura faz o modelo ler letreiro errado, e num caso trocou o comercio por
+    outro que nao existia. O que muda e so o formato.
+    """
+    try:
+        from PIL import Image
+        im = Image.open(_io.BytesIO(png)).convert("RGB")
+        b = _io.BytesIO()
+        im.save(b, "WEBP", quality=qualidade, method=4)
+        d = b.getvalue()
+        return d if len(d) < len(png) else png
+    except Exception:                                          # noqa: BLE001
+        return png                 # formato e economia, nao condicao
+
+
 def _cortar_interface(png: bytes) -> bytes:
     """Tira as bordas onde o Maps desenha a própria interface."""
     try:
@@ -524,6 +552,9 @@ async def um_poi(page, poco, alvo, placar) -> None:
                     # prova. A mira aberta já diz onde é o alvo; o texto só
                     # cobria a imagem, e o modelo ainda o lia como letreiro.
                     img = _marcar_centro(limpo, "") if tipo == "sv_frente" else limpo
+                    # O WEBP E O ULTIMO PASSO, depois do corte e da mira: as
+                    # duas etapas usam cv2 e falam PNG entre si.
+                    img = _para_webp(img)
                     gravar(poco, alvo["id"], tipo, img,
                            pano_id=m["pano_id"], cam_lat=m["lat"], cam_lng=m["lng"],
                            heading=heading, pitch=5.0, fov=float(fov_aqui),
