@@ -94,6 +94,23 @@ ORDEM_RUA = ["sv_frente", "sv_lado_a", "sv_fundo", "sv_lado_b"]
 #: SO AS `gps-cs-s`, que sao as fotos do estabelecimento. As
 #: `streetviewpixels` sao Street View de novo — mandar seria repetir as quatro
 #: visadas que a IA ja recebeu, gastando o dobro para ver o mesmo.
+#: UMA CHAMADA OU DUAS.
+#:
+#: O desenho original separa PERCEPCAO de JULGAMENTO em duas chamadas, e a
+#: separacao nao e enfeite: na primeira o modelo NAO SABE o que o cadastro
+#: afirma, entao descreve o que ve em vez de procurar o que lhe disseram para
+#: achar. Juntar poe a foto e o cadastro diante dele ao mesmo tempo.
+#:
+#: Decisao do dono do produto em 07/09/2026: juntar. A economia medida e menor
+#: do que parece — a percepcao leva ~20 s e o julgamento 2 a 8 s, entao juntar
+#: poupa a chamada curta, algo como 15% do tempo, e nao metade.
+#:
+#: FICA ATRAS DE UMA CHAVE, e o caminho de duas chamadas continua inteiro no
+#: arquivo. Se a taxa de aprovacao subir de um jeito que so se explique por o
+#: modelo estar confirmando o cadastro sem prova na imagem, volta em um minuto:
+#: `CHAMADA_UNICA = False`.
+CHAMADA_UNICA = True
+
 FOTOS_DO_MAPS = 2
 ORDEM_FOTO = ["foto_maps_1", "foto_maps_2"]
 ORDEM_PAGINA = ["pagina_airbnb"]
@@ -194,6 +211,83 @@ mal_conservado_habitado|mal_conservado_desabitado|indefinido",
  "numeros_visiveis": ["<número de porta lido, e em qual foto>", ...],
  "carater_do_quarteirao": "residencial|misto|comercial|industrial|indefinido",
  "achou_estabelecimento": true|false
+}"""
+
+
+#: O PROMPT DAS DUAS TAREFAS NUMA CHAMADA SO.
+#:
+#: Monta-se dos dois que ja existem, e nao a partir do zero: a parte de cima e
+#: `PROMPT_QUATRO` sem o fecho do JSON, a de baixo e `PROMPT_JULGAR` sem o
+#: cabecalho que reapresenta a descricao — porque aqui a descricao e feita pelo
+#: proprio modelo, na mesma resposta.
+#:
+#: A ORDEM IMPORTA: descrever ANTES de ler o cadastro. Nao e o mesmo que a
+#: percepcao cega, mas e o mais perto que se chega dela numa chamada so — e o
+#: JSON de saida guarda a descricao inteira, entao continua sendo possivel
+#: auditar o que ele disse ter visto contra o que decidiu.
+PROMPT_UNICO = """Você recebe %(n)s imagens do MESMO endereço e o que um
+cadastro afirma sobre ele. Faça DUAS coisas, nesta ordem, e não troque a ordem:
+primeiro DESCREVA o que está nas imagens; só depois COMPARE com o cadastro e
+decida.
+
+AS IMAGENS, nesta ordem:
+
+%(lista)s
+
+AS PRIMEIRAS SÃO FOTOS DE RUA, tiradas do mesmo lugar girando a câmera. \
+Quando houver FOTO PUBLICADA NO GOOGLE, ela é de outra natureza: alguém que \
+esteve no lugar fotografou o que ele faz — o produto, o serviço em execução, o \
+salão, a oficina por dentro. Ela mostra o NEGÓCIO; a foto de rua mostra a \
+FACHADA. Um mesmo endereço pode ter fachada de casa e foto de oficina, e as \
+duas coisas serem verdade.
+
+PARTE 1 — DESCREVER. Descreva o que vê, sem julgar e sem concluir. %(ignorar)s
+
+NÃO DEIXE O CADASTRO GUIAR O QUE VOCÊ VÊ. Você vai ler abaixo um nome e uma \
+atividade; eles NÃO são prova de nada nas imagens. Se o cadastro diz "padaria" \
+e não há padaria na foto, a descrição não tem padaria. Inventar na descrição o \
+que o cadastro sugere é o erro mais grave que você pode cometer aqui, porque \
+depois você vai julgar em cima da sua própria descrição.
+
+REGRAS DE LEITURA
+- Transcreva letreiro, placa, toldo, faixa e adesivo EXATAMENTE como estão \
+escritos. Ilegível é "ilegível" — não complete.
+- Diga SEMPRE em qual foto viu cada coisa. É a única forma de separar o imóvel \
+do endereço dos vizinhos.
+- Um mesmo prédio pode ter mais de um estabelecimento, inclusive nos andares \
+de cima.
+- MEDIDORES: conte as caixas de medidor de energia ou água NO IMÓVEL DA MIRA \
+(foto 1). Se não der para contar, use null — nunca zero por desencargo.
+
+PARTE 2 — DECIDIR. Só agora leia o cadastro e compare com a SUA descrição.
+
+O QUE O CADASTRO AFIRMA:
+%(cadastro)s
+
+%(julgar)s
+
+Responda SOMENTE um JSON, com as duas partes:
+{
+ "imovel_da_mira": {
+   "tipo": "casa|sobrado|predio|loja_terrea|galpao|terreno_vago|em_obra|indefinido",
+   "andares": <int|null>, "medidores": <int|null>,
+   "vitrine": true|false, "porta_comercial": true|false, "toldo": true|false,
+   "letreiros": ["<texto lido NO IMÓVEL DA MIRA>", ...],
+   "conservacao": "conservado_habitado|demolido_ou_nao_construido|\
+mal_conservado_habitado|mal_conservado_desabitado|indefinido",
+   "descricao": "<até 40 palavras>"},
+ "estabelecimentos": [
+   {"nome": "<lido, ou null>", "ramo_aparente": "<o que parece ser>",
+    "onde": "frente|lado_direito|atras|lado_esquerdo",
+    "no_imovel_da_mira": true|false,
+    "evidencia": "<o que se vê: letreiro, vitrine, mercadoria, cliente>"}],
+ "numeros_visiveis": ["<número de porta lido, e em qual foto>", ...],
+ "carater_do_quarteirao": "residencial|misto|comercial|industrial|indefinido",
+ "achou_estabelecimento": true|false,
+ "veredito": "<um dos quatro>",
+ "especie_cnefe": <1-8|null>, "secao_cnae": "<letra|null>",
+ "justificativa": "<um parágrafo, até 60 palavras, dizendo o que na SUA \
+descrição sustenta o veredito. Cite o que foi visto, não o que se supõe.>"
 }"""
 
 
@@ -766,6 +860,22 @@ DA_FACHADA = {"facade": "sv_frente", "g90": "sv_lado_a",
 # corte das mesmas fotos, e a mira nunca chegava a existir.
 
 
+def _regras_de_julgar(secoes):
+    """O miolo de `PROMPT_JULGAR`, sem cabecalho e sem o fecho do JSON.
+
+    UMA FONTE SO PARA AS REGRAS. Copiar o texto para dentro de `PROMPT_UNICO`
+    criaria duas versoes da mesma decisao, e elas divergiriam no primeiro
+    ajuste — que e como se perde a confianca no que o sistema decide. Aqui o
+    texto e recortado do original em tempo de execucao: mexer numa regra
+    continua sendo mexer num lugar so.
+    """
+    corpo = PROMPT_JULGAR % {"percepcao": "", "cadastro": "",
+                             "especies": ESPECIES, "secoes": secoes}
+    i = corpo.find("ESCOLHA UM VEREDITO:")
+    j = corpo.find("Responda SOMENTE um JSON:")
+    return corpo[i:j].strip() if i >= 0 and j > i else corpo
+
+
 def _fotos_do_maps(cur, poi_id):
     """As primeiras fotos do estabelecimento, na ordem em que o Google as mostra.
 
@@ -1267,6 +1377,47 @@ def um_poi(poco, alvo, modelo, secoes, placar, trava, aplicar) -> None:
     prompt_jul = (PROMPT_JULGAR_HOSPEDAGEM if forma == "pagina"
                   else PROMPT_JULGAR)
 
+    # O CADASTRO SAI DO BANCO ANTES DE QUALQUER CHAMADA, e nao dentro dela:
+    # montado no meio do argumento, obrigaria a segurar a conexao durante os
+    # segundos em que o modelo escreve. Sobe para ca porque o caminho de uma
+    # chamada tambem precisa dele.
+    with poco.pegar() as con:
+        cadastro = _cadastro_texto(con, alvo)
+
+    # UMA CHAMADA, QUANDO A CHAVE MANDA. Ver `CHAMADA_UNICA`: o modelo descreve
+    # e decide na mesma resposta, e o JSON traz as duas partes — a descricao
+    # continua indo para `percepcao`, entao a auditoria e a galeria seguem
+    # funcionando sem saber por qual caminho o veredito veio.
+    if CHAMADA_UNICA and forma != "pagina":
+        lista = "\n".join("%d. %s" % (i + 1, VISTA_ROTULO[tp])
+                           for i, tp in enumerate(tipos))
+        try:
+            tudo = di._chat_local(
+                modelo,
+                PROMPT_UNICO % {"n": len(tipos), "lista": lista,
+                                "ignorar": IGNORAR, "cadastro": cadastro,
+                                "julgar": _regras_de_julgar(secoes)},
+                [_b64(b) for b in imgs], max_tokens=1400, timeout=TIMEOUT)
+        except Exception as e:                                 # noqa: BLE001
+            with trava:
+                placar["falha_percepcao"] += 1
+                _log("   %8d chamada única FALHOU %s: %s"
+                     % (alvo["id"], type(e).__name__, str(e)[:70]))
+            return
+        # A DESCRICAO E O VEREDITO SAO SEPARADOS AQUI, e nao pelo modelo: ele
+        # devolve um JSON so, e o banco continua guardando as duas coisas em
+        # colunas diferentes.
+        _CHAVES_VEREDITO = ("veredito", "especie_cnefe", "secao_cnae",
+                            "medidores", "justificativa")
+        tudo = tudo if isinstance(tudo, dict) else {}
+        veredito = {k: tudo.get(k) for k in _CHAVES_VEREDITO if k in tudo}
+        percepcao = {k: v for k, v in tudo.items()
+                     if k not in _CHAVES_VEREDITO}
+        percepcao["_imagens"] = tipos
+        percepcao["_chamada_unica"] = True
+        return _fechar(poco, alvo, percepcao, veredito, imgs, modelo, secoes,
+                       cadastro, placar, trava, aplicar, t0)
+
     # 1 · percepção cega — uma chamada POR IMAGEM (ver a nota nos prompts)
     percepcao = {}
     try:
@@ -1296,12 +1447,6 @@ def um_poi(poco, alvo, modelo, secoes, placar, trava, aplicar) -> None:
     if isinstance(percepcao, dict):
         percepcao["_imagens"] = tipos
 
-    # O CADASTRO SAI DO BANCO ANTES DA CHAMADA, e nao dentro dela: montado no
-    # meio do argumento, ele obrigaria a segurar a conexao durante os segundos
-    # em que o modelo escreve.
-    with poco.pegar() as con:
-        cadastro = _cadastro_texto(con, alvo)
-
     # 2 · julgamento, só texto
     try:
         veredito = di._chat_local(
@@ -1318,6 +1463,25 @@ def um_poi(poco, alvo, modelo, secoes, placar, trava, aplicar) -> None:
                  % (alvo["id"], type(e).__name__, str(e)[:70]))
         return
 
+    return _fechar(poco, alvo, percepcao, veredito, imgs, modelo, secoes,
+                   cadastro, placar, trava, aplicar, t0)
+
+
+def _fechar(poco, alvo, percepcao, veredito, imgs, modelo, secoes,
+            cadastro, placar, trava, aplicar, t0):
+    """Valida o veredito, reconfere o reprovado, calcula a nota e grava.
+
+    ERA O FIM DE `um_poi`, E VIROU FUNCAO em 07/09/2026, quando o caminho de
+    UMA chamada passou a existir ao lado do de duas. Os dois terminam igual —
+    mesma validacao, mesma segunda leitura do reprovado, mesma regua de
+    confianca — e deixar isso duplicado seria garantir que as duas versoes
+    divergissem no primeiro ajuste.
+
+    A SEGUNDA LEITURA CONTINUA SENDO SO DE TEXTO nos dois caminhos, e isso e
+    de proposito: ela reconfere o JULGAMENTO sobre a descricao ja feita, e nao
+    a leitura das imagens. Refazer a percepcao custaria os 20 s caros para
+    responder outra pergunta.
+    """
     v = (veredito.get("veredito") or "").strip()
     if v not in VEREDITOS:
         # VEREDITO FORA DA ESCALA NÃO VIRA "reprovado" NEM SOME. Ele vira
@@ -1338,7 +1502,7 @@ def um_poi(poco, alvo, modelo, secoes, placar, trava, aplicar) -> None:
         try:
             segundo = di._chat_local(
                 modelo,
-                prompt_jul % {"percepcao": json.dumps(percepcao,
+                PROMPT_JULGAR % {"percepcao": json.dumps(percepcao,
                                                       ensure_ascii=False,
                                                       indent=1),
                               "cadastro": cadastro, "especies": ESPECIES,
