@@ -442,10 +442,38 @@ VISAO_GERAL = r"""() => {
       if (/segunda|ter[çc]a|quarta|quinta|sexta|s[áa]bado|domingo/i.test(d)) horario[d] = h;
     }
   });
+  // A FOTO VEM EM TAMANHO UTIL, E NAO NO DA MINIATURA.
+  //
+  // O `src` da grade traz o sufixo do tamanho renderizado — `=w156-h114-p-k-no`
+  // — e era ISSO que ficava gravado. Medido em 07/09/2026: 37.321 das 55.638
+  // fotos tinham menos de 15 KB, media de 6 KB, cerca de 156x114 px. Nessa
+  // resolucao a IA nao le letreiro nem ve mercadoria: a foto existia e nao
+  // servia para nada.
+  //
+  // Trocar o sufixo por `=w1280-h920-p-k-no` entrega a foto grande na mesma
+  // URL, de graca. TROCAR, e nao acrescentar: dois sufixos fazem o Google
+  // devolver 400.
+  const TAMANHO_FOTO = '=w1280-h920-p-k-no';
+  const grande = s => /=w\d+-h\d+(-[a-z0-9-]+)?$/.test(s)
+                      ? s.replace(/=w\d+-h\d+(-[a-z0-9-]+)?$/, TAMANHO_FOTO)
+                      : s + TAMANHO_FOTO;
   const fotos = [...new Set([...document.querySelectorAll('img')]
     .map(i => i.src)
     .filter(s => /googleusercontent|streetviewpixels/.test(s))
-    .filter(s => !/\/a-?\//.test(s) && !/=w\d{1,2}-h\d{1,2}/.test(s)))];
+    .filter(s => !/\/a-?\//.test(s) && !/=w\d{1,2}-h\d{1,2}/.test(s)))]
+    .map(s => /streetviewpixels/.test(s) ? s : grande(s));
+
+  // A DATA DA FOTO, SE ELA ESTIVER A VISTA.
+  //
+  // No visualizador o Maps escreve "Foto - out. de 2025", mas na ficha essa
+  // legenda nem sempre esta no DOM. Aqui e melhor esforco: varre os rotulos
+  // procurando "mes de ano" em pt-BR e devolve o que achar, sem abrir nada.
+  // Nao achar nao e erro — a data da foto e a terceira melhor que temos,
+  // depois da avaliacao do Google e do panorama do Street View.
+  const MES_ANO = /(jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)\w*\.?\s+de\s+(\d{4})/i;
+  const datasFoto = [...new Set([...document.querySelectorAll('[aria-label]')]
+    .map(e => (e.getAttribute('aria-label') || '').trim())
+    .filter(s => MES_ANO.test(s) && s.length < 60))].slice(0, 8);
 
   const h1 = q('h1');
   const cab = h1 && h1.parentElement && h1.parentElement.parentElement
@@ -483,6 +511,7 @@ VISAO_GERAL = r"""() => {
     horarioSemana: horario,
     horariosDePico: pico,
     fotos    : fotos.slice(0, 60),
+    datasFoto: datasFoto,
     resumoIA : (() => {
       const e = q('[data-about-this-summary-url]');
       if (!e) return null;
