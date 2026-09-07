@@ -398,10 +398,17 @@ SQL_ALVO = """
      -- iFood e Airbnb vem na frente de tudo porque sao decididos pela ficha da
      -- fonte, em milissegundos: adiar quem nao consome modelo nao economiza
      -- nada e so atrasa o resultado.
+     -- O MAPS ABRE A FILA. Pedido direto do usuario em 07/09/2026, e a
+     -- medicao concorda: 10,9%% de reprovacao contra 51,7%% da Receita, e
+     -- 21,5%% de aprovado exato, a maior taxa de todas as fontes.
+     --
+     -- iFood e Airbnb vem logo atras, e nao na frente: sao decididos pela
+     -- ficha em milissegundos, entao a posicao deles quase nao muda o relogio
+     -- — sao 95 itens, algo como seis segundos de fila.
      order by case p.fonte
-                when 'ifood'    then 1
-                when 'airbnb'   then 1
-                when 'maps'     then 2
+                when 'maps'     then 1
+                when 'ifood'    then 2
+                when 'airbnb'   then 2
                 when 'estadual' then 3
                 when 'cadastur' then 3
                 when 'ibge'     then 4
