@@ -383,6 +383,181 @@ SQL_POR_ID = """
 """
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# QUANDO A FONTE JA PROVA, A IMAGEM SO REFORCA
+#
+# Medido em 26 POIs de Canoas (06/09/2026), julgados so pela rua: 11 foram
+# reprovados como "residencia sem comercio" e, nos ONZE, o observador nao tinha
+# visto letreiro nenhum. Nao era o julgamento descartando evidencia — nao havia
+# evidencia na rua. Uma cozinha de delivery e uma hospedagem por temporada
+# funcionam DENTRO DE CASA.
+#
+# E NO IFOOD A INVERSAO E COMPLETA: "parece uma casa" e prova A FAVOR da tese.
+# O produto procura comercio pagando tarifa residencial — a cozinha na casa E o
+# achado. Reprovar por isso e descartar o alvo por ele parecer com o alvo.
+#
+# Isto roda ANTES das duas chamadas ao modelo, e economiza as duas.
+# ══════════════════════════════════════════════════════════════════════════
+
+#: Ate quando um comentario de hospede conta como "esta operando".
+MESES_HOSPEDE_RECENTE = 12
+
+#: iFood — a ficha existe, com CNPJ ou nota.
+IFOOD_BASE = 0.55
+#: iFood — a loja esta NO AR agora (`bruto.disponivel`). E o sinal mais forte
+#: que esta fonte oferece: nao e "ja existiu", e "aceita pedido hoje".
+IFOOD_NO_AR = 0.35
+IFOOD_COM_CNPJ = 0.05
+IFOOD_COM_AVALIACAO = 0.05
+#: iFood — teto de quem esta FORA DO AR. A loja existe e pode voltar, mas nao
+#: merece a frente da fila: o fiscal nao deve sair para uma cozinha fechada.
+IFOOD_TETO_FORA_DO_AR = 0.50
+
+#: Airbnb — o anuncio esta no ar, com preco publicado.
+AIRBNB_BASE = 0.40
+#: Airbnb — o passo que a RECENCIA vale por inteiro, decaindo um doze avos por
+#: mes ate zerar em doze meses. Decisao do dono do produto (06/09/2026).
+#: Linear de proposito: o Airbnb data o comentario por MES, sem dia, e uma
+#: curva daria precisao aparente sobre um dado grosso.
+PESO_RECENCIA = 0.50
+AIRBNB_MUITAS_AVALIACOES = 0.10
+AIRBNB_AVALIACOES_MUITAS = 20
+
+#: A confianca de cada veredito quando quem decide e o MODELO, e nao a ficha.
+#: Mesma regua 0..1 de `ligacao_poi.confianca`.
+CONF_VEREDITO = {
+    "aprovado_exato": 0.90,       # o letreiro traz o nome do cadastro
+    "aprovado_comercial": 0.70,   # ha comercio no imovel, mas nao AQUELE
+    "revisao_humana": 0.40,       # indicio sem prova
+    "reprovado": 0.55,            # nada indica atividade — e uma leitura fragil
+}
+
+_MESES_PT = {"janeiro": 1, "fevereiro": 2, "março": 3, "marco": 3, "abril": 4,
+             "maio": 5, "junho": 6, "julho": 7, "agosto": 8, "setembro": 9,
+             "outubro": 10, "novembro": 11, "dezembro": 12}
+
+
+def _mes_ano(txt):
+    """'junho de 2026' -> (2026, 6). O Airbnb data o comentario assim."""
+    if not txt:
+        return None
+    ano = mes = None
+    for x in str(txt).lower().replace(" de ", " ").split():
+        if x in _MESES_PT:
+            mes = _MESES_PT[x]
+        elif x.isdigit() and len(x) == 4:
+            ano = int(x)
+    return (ano, mes) if ano and mes else None
+
+
+def _passo_recencia(datas):
+    """(passo, meses, ultimo) — cheio no mes corrente, zero a partir de 12."""
+    import datetime as _dt
+    if not datas:
+        return 0.0, None, None
+    hoje = _dt.date.today()
+    meses = max(0, (hoje.year * 12 + hoje.month)
+                - (datas[0][0] * 12 + datas[0][1]))
+    if meses >= MESES_HOSPEDE_RECENTE:
+        return 0.0, meses, datas[0]
+    return (round(PESO_RECENCIA * (1.0 - meses / float(MESES_HOSPEDE_RECENTE)),
+                  3), meses, datas[0])
+
+
+def _prova_da_fonte(con, alvo):
+    """O veredito que o REGISTRO da fonte ja decide. None para seguir na imagem."""
+    fonte = (alvo.get("fonte") or "").strip().lower()
+    if fonte not in ("ifood", "airbnb"):
+        return None
+
+    if fonte == "ifood":
+        # A FICHA DO MERCHANT E MAIS FORTE QUE QUALQUER FACHADA. Em Canoas,
+        # das 950 lojas: 100% com CNPJ, 100% com rua, 100% com nota, 96,7%
+        # com avaliacoes. Uma loja anunciada com CNPJ e nota E um
+        # estabelecimento; a foto da rua nao acrescenta nada a isso.
+        with con.cursor() as k:
+            k.execute("""select m.cnpj, m.nota, m.avaliacoes, m.categoria,
+                                (m.bruto->>'disponivel')
+                           from radar_comercial.ifood_merchant m
+                          where m.poi_id = %s limit 1""", (alvo["id"],))
+            r = k.fetchone()
+        if not r:
+            return None
+        cnpj, nota, aval, cat, disp = r
+        if not (cnpj or nota is not None):
+            return None
+        no_ar = (str(disp).lower() == "true") if disp is not None else None
+        conf = IFOOD_BASE + (IFOOD_COM_CNPJ if cnpj else 0) \
+            + (IFOOD_COM_AVALIACAO if aval else 0) + (IFOOD_NO_AR if no_ar else 0)
+        if no_ar is False:
+            conf = min(conf, IFOOD_TETO_FORA_DO_AR)
+        estado = ("no ar agora" if no_ar else "FORA DO AR no iFood"
+                  if no_ar is False else "sem informação de disponibilidade")
+        return {
+            "veredito": "aprovado_exato" if no_ar is not False else "revisao_humana",
+            "confianca": round(min(1.0, conf), 2),
+            "especie_cnefe": 6,
+            "justificativa": ("Loja no iFood com %s%s, %s — a ficha da fonte "
+                              "prova o estabelecimento; a rua apenas reforça."
+                              % ("CNPJ" if cnpj else "nota",
+                                 " e %d avaliações" % aval if aval else "",
+                                 estado)),
+            "_fonte": "ifood", "_categoria": cat, "_no_ar": no_ar,
+        }
+
+    # AIRBNB — a rua nem e dele: o site desloca o pino de proposito (34 dos 44
+    # POIs de Canoas com `coord_exata` falso). O que prova operacao e o proprio
+    # anuncio: no ar, e com hospede no ultimo ano.
+    with con.cursor() as k:
+        k.execute("""select a.preco_total is not null, a.avaliacoes,
+                            a.avaliacoes_qtd
+                       from radar_comercial.airbnb_anuncio a
+                      where a.poi_id = %s limit 1""", (alvo["id"],))
+        r = k.fetchone()
+    if not r:
+        return None
+    anunciado, avals, qtd = r
+    datas = sorted([d for d in (_mes_ano((x or {}).get("data"))
+                                for x in (avals or []) if isinstance(x, dict))
+                    if d], reverse=True)
+    passo, meses, ultimo = _passo_recencia(datas)
+    conf = (AIRBNB_BASE if anunciado else 0.0) + passo
+    if qtd and qtd >= AIRBNB_AVALIACOES_MUITAS:
+        conf += AIRBNB_MUITAS_AVALIACOES
+
+    if ultimo is None:
+        quando = "sem comentário colhido"
+    elif meses == 0:
+        quando = "hóspede neste mês"
+    elif meses == 1:
+        quando = "último hóspede há 1 mês (%d/%02d)" % ultimo
+    else:
+        quando = "último hóspede há %d meses (%d/%02d)" % (meses, ultimo[0],
+                                                           ultimo[1])
+    if anunciado and passo > 0:
+        return {
+            "veredito": "aprovado_exato", "confianca": round(min(1.0, conf), 2),
+            "especie_cnefe": 2,
+            "justificativa": ("Anúncio no ar, %s — hospedagem em operação. A "
+                              "rua não julga: o Airbnb desloca o pino de "
+                              "propósito." % quando),
+            "_fonte": "airbnb", "_meses": meses,
+        }
+    return {
+        "veredito": "revisao_humana", "confianca": round(min(1.0, conf), 2),
+        "especie_cnefe": 2,
+        # NAO TER COMENTARIO NAO E O MESMO QUE TER UM ANTIGO. O primeiro e
+        # falta de dado; o segundo e sinal.
+        "justificativa": ("Anúncio %s, %s — %s. Não reprovado pela rua, que no "
+                          "Airbnb aponta para o prédio errado."
+                          % ("no ar" if anunciado else "fora do ar", quando,
+                             "sem como medir atualidade" if ultimo is None else
+                             "o passo de atualidade zerou (mais de %d meses)"
+                             % MESES_HOSPEDE_RECENTE)),
+        "_fonte": "airbnb", "_meses": meses,
+    }
+
+
 def alvos(con, poligono, limite, pois, refazer):
     cur = con.cursor()
     if pois:
@@ -610,10 +785,36 @@ def _nomes_de_cnae(con, alvos_lista):
 
 def um_poi(con, alvo, modelo, secoes, placar, trava, aplicar) -> None:
     t0 = time.time()
+
+    # A FONTE DECIDE PRIMEIRO, QUANDO ELA PODE DECIDIR — e isso economiza as
+    # DUAS chamadas ao modelo. Ver `_prova_da_fonte`: para iFood e Airbnb a rua
+    # nao e evidencia do estabelecimento, e insistir nela produzia o erro que a
+    # medicao de 06/09/2026 mostrou.
+    #
+    # A EVIDENCIA CONTINUA SENDO EXIGIDA. Um POI sem imagem nenhuma nao entra
+    # nem por aqui: a ficha prova que o negocio existe, e nao que ele esta
+    # NAQUELE endereco, e e o endereco que a concessionaria vai cobrar.
     forma, imgs, tipos = evidencia(con, alvo["id"])
     if not imgs:
         with trava:
             placar["sem_evidencia"] += 1
+        return
+
+    da_fonte = _prova_da_fonte(con, alvo)
+    if da_fonte is not None:
+        v = da_fonte["veredito"]
+        percep = {"_imagens": tipos, "prova_da_fonte": da_fonte.get("_fonte"),
+                  "_sem_modelo": True}
+        if aplicar:
+            gravar(con, alvo["id"], v, da_fonte, percep, modelo, len(imgs),
+                   time.time() - t0)
+        with trava:
+            placar[v] += 1
+            placar["decidido_pela_fonte"] += 1
+            _log("   %8d %-26s %-19s [%s] %s"
+                 % (alvo["id"], alvo["nome"][:26], v,
+                    da_fonte.get("_fonte"),
+                    (da_fonte.get("justificativa") or "")[:52]))
         return
 
     prompt_jul = (PROMPT_JULGAR_HOSPEDAGEM if forma == "pagina"
@@ -673,6 +874,16 @@ def um_poi(con, alvo, modelo, secoes, placar, trava, aplicar) -> None:
             placar["fora_da_escala"] += 1
         percepcao["_veredito_cru"] = veredito
         v = "revisao_humana"
+
+    # A CONFIANCA DO QUE O MODELO DECIDIU. Ele nao devolve numero, e pedir um
+    # seria pedir que ele estimasse a propria certeza — coisa que modelo de
+    # linguagem faz mal. O numero sai do VEREDITO, que e o que ele de fato
+    # escolheu, na mesma regua 0..1 de `ligacao_poi.confianca`.
+    #
+    # `reprovado` nao fica no fundo da escala de proposito: "nada indica
+    # atividade" e uma leitura fragil — foi ela que, medida em 26 POIs, apareceu
+    # 11 vezes sem o observador ter visto um letreiro sequer.
+    veredito.setdefault("confianca", CONF_VEREDITO.get(v, 0.50))
 
     dt = time.time() - t0
     if aplicar:

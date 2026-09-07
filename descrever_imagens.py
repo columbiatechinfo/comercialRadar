@@ -1,5 +1,22 @@
 """
-descrever_imagens.py — Análise visual dos POIs por IA (Ollama qwen2.5vl na GPU).
+descrever_imagens.py — CAMINHO ANTIGO da análise visual. Não é a IA em produção.
+
+QUEM JULGA HOJE É `avaliar_ia.py`. Ele lê `poi_evidencia` — as quatro visadas de
+rua que `capturar_evidencia.py` grava, já cortadas da interface do Maps —, tem
+prompt próprio para hospedagem e grava em `poi_veredito`. Este arquivo lê
+`streetview_imgs` e grava em `analise_ia`: outra tabela, outra geração.
+
+O QUE AINDA VIVE AQUI é `_chat_local`, o cliente HTTP da Spark, que o
+`avaliar_ia` importa de propósito para não haver dois clientes a manter.
+
+POR QUE O AVISO ESTÁ AQUI. Em 06/09/2026 consertei neste arquivo três coisas que
+pertenciam ao outro: a decisão pela ficha da fonte, a régua de confiança, e uma
+máscara de interface que o caminho vivo já resolvia — e melhor, cortando a borda
+em vez de cobrir com cinza. Foram horas gastas num arquivo que ninguém executa.
+Nada no código dizia qual dos dois estava em produção, e os dois têm nome
+plausível. Agora diz.
+
+Análise visual dos POIs por IA (histórico: Ollama qwen2.5vl na GPU).
 
 Arquitetura em 2 etapas (mais confiável que jogar tudo no prompt):
   ETAPA 1 (modelo): OBSERVA as imagens e descreve o que vê — cenário, ramo visto,
