@@ -374,7 +374,41 @@ SQL_ALVO = """
      -- bate rua e numero, que e o que tem mais chance de virar cobranca. Quem
      -- tem so proximidade espera. O denominador nao muda — tudo e julgado no
      -- fim —, mas os primeiros resultados passam a ser os melhores.
-     order by (select max(lp2.confianca) from radar_comercial.ligacao_poi lp2
+     -- A FONTE VEM ANTES DA CONFIANCA DO VINCULO.
+     --
+     -- Ordenar so pela confianca parecia certo e tinha um vies escondido: o
+     -- endereco do CNPJ bate rua e numero EXATO, porque e o endereco de
+     -- REGISTRO. Registro nao e operacao — MEI e empresa de fundo de quintal
+     -- declaram a propria casa. A precisao do dado enganava o criterio, e a
+     -- Receita subia na fila justamente por isso.
+     --
+     -- MEDIDO em 07/09/2026, com 7.744 vereditos dados:
+     --
+     --     fonte      a julgar   % da fila   reprovados
+     --     receita      13.917        44%        51,7%
+     --     ibge         10.326        33%        18,3%
+     --     estadual      3.852        12%        21,9%
+     --     maps          3.432        11%        10,9%   (21,5% aprovado exato)
+     --
+     -- A Receita ocupa quase metade do trabalho e reprova metade do que
+     -- recebe; o Maps, que e a melhor fonte, e um nono da fila. Nada deixa de
+     -- ser julgado — o denominador e o mesmo —, mas os primeiros resultados
+     -- passam a vir de quem tem mais chance de virar cobranca.
+     --
+     -- iFood e Airbnb vem na frente de tudo porque sao decididos pela ficha da
+     -- fonte, em milissegundos: adiar quem nao consome modelo nao economiza
+     -- nada e so atrasa o resultado.
+     order by case p.fonte
+                when 'ifood'    then 1
+                when 'airbnb'   then 1
+                when 'maps'     then 2
+                when 'estadual' then 3
+                when 'cadastur' then 3
+                when 'ibge'     then 4
+                when 'receita'  then 5
+                else 6
+              end,
+              (select max(lp2.confianca) from radar_comercial.ligacao_poi lp2
                 where lp2.poi_id = p.id) desc nulls last, p.id
 """
 
@@ -1128,6 +1162,11 @@ class Poco:
 #: nenhum veredito gravado — que e o pior desfecho possivel, porque parece
 #: sucesso.
 FALHAS_SEGUIDAS_LIMITE = 25
+
+#: A ORDEM DAS FONTES vive no `order by` de `SQL_ALVO`, e nao aqui — ela precisa
+#: ser SQL para caber no mesmo plano da consulta. Este nome existe so para quem
+#: procurar "PESO_DA_FONTE" achar o lugar certo.
+PESO_DA_FONTE = "ver o `case p.fonte` em SQL_ALVO"
 
 
 def rodar(area, limite, aplicar, trabalhadores, modelo, pois, refazer):
