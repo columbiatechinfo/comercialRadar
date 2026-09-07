@@ -57,6 +57,7 @@ import base_comum as bc
 # protocolo da OpenAI, lê `VLLM_URL` do ambiente e já carrega a nota sobre por
 # que `num_ctx` sumiu. Reescrevê-lo aqui criaria dois clientes para manter.
 import descrever_imagens as di
+import imagens
 
 # O MODELO É O QUE A SPARK SERVE HOJE, e o nome vem do `.env` — não do padrão
 # histórico do `descrever_imagens`, que ainda aponta para `qwen3vl-moe`. Medido
@@ -280,6 +281,15 @@ Decida pela imagem.
 
 E NÃO INVERTA A REGRA: ausência de avaliação não reprova nada. A maior parte \
 dos negócios de bairro não tem uma linha escrita sobre eles.
+
+A FOTO DE RUA TEM IDADE, e o cadastro diz qual. O Google não refotografa a \
+cidade todo ano: um terço das fachadas deste projeto é de 2024. Pese assim:
+- foto do último ano: o que ela mostra vale como está.
+- foto de dois anos ou mais CONTRA uma avaliação recente: acredite na \
+avaliação. A fachada não muda quando o negócio abre; a casa da foto pode já \
+ter virado loja. Nesse caso o piso é "revisao_humana", nunca "reprovado".
+- foto de dois anos ou mais e nada mais: decida pela foto, mas diga a idade \
+dela na justificativa, para quem for à porta saber o que esperar.
 
 QUANDO REPROVAR DIRETO, SEM PASSAR POR REVISÃO. "revisao_humana" é para dúvida \
 REAL, e não para desconforto de decidir. Se a descrição das quatro fotos diz \
@@ -767,9 +777,23 @@ def evidencia(con, poi_id):
     dela que sai a lista que o prompt anuncia.
     """
     cur = con.cursor()
-    cur.execute("""select tipo, dados from radar_comercial.poi_evidencia
-                    where poi_id = %s and dados is not null""", (poi_id,))
-    por_tipo = {t: bytes(d) for t, d in cur.fetchall()}
+    # OS BYTES PODEM ESTAR EM DOIS LUGARES.
+    #
+    # `poi_evidencia` sempre teve `dados` e `storage_path`; ate 07/09/2026 so o
+    # primeiro era usado, e a tabela virou a maior do banco — 53 GB de 104 GB.
+    # As imagens adequadas da captura antiga entram pelo Storage, e as 63.308
+    # antigas continuam em bytea. `imagens._de_linha` resolve os dois: prefere o
+    # caminho e cai no bytea quando nao ha caminho ou o download falha.
+    cur.execute("""select tipo, dados, storage_path
+                     from radar_comercial.poi_evidencia
+                    where poi_id = %s
+                      and (dados is not null or storage_path is not null)""",
+                (poi_id,))
+    por_tipo = {}
+    for tp, d, sp in cur.fetchall():
+        b = imagens._de_linha(sp, d)
+        if b:
+            por_tipo[tp] = b
     if por_tipo.get("pagina_airbnb"):
         return "pagina", [por_tipo["pagina_airbnb"]], ["pagina_airbnb"]
     if not any(t in por_tipo for t in ORDEM_RUA):
@@ -1074,6 +1098,23 @@ def _cadastro_texto(con, alvo) -> str:
     if alvo.get("lat") is not None:
         linhas.append("- coordenada de onde as fotos foram tiradas: %.6f, %.6f"
                       % (alvo["lat"], alvo["lng"]))
+    # QUANDO O GOOGLE FOTOGRAFOU A RUA. Ver a migracao 0077: um terco das
+    # fachadas julgadas e de 2024, e o modelo estava lendo aquilo como se fosse
+    # hoje. Uma casa fotografada ha dois anos pode ter virado loja depois — e
+    # tambem o contrario, uma loja pode ter fechado. Sem a data, o modelo nao
+    # tem como pesar isso.
+    cur.execute("""select min(data_imagem), max(data_imagem)
+                     from radar_comercial.poi_evidencia
+                    where poi_id = %s and data_imagem is not null""",
+                (alvo["id"],))
+    _dt_img = cur.fetchone()
+    if _dt_img and _dt_img[1]:
+        if _dt_img[0] == _dt_img[1]:
+            linhas.append("- as fotos de rua sao de %s" % _dt_img[1])
+        else:
+            linhas.append("- as fotos de rua sao de %s a %s"
+                          % (_dt_img[0], _dt_img[1]))
+
     # O SINAL DO GOOGLE ENTRA AQUI, junto do que o iFood e o Airbnb ja
     # entregavam — e pela mesma razao: e prova de terceiro sobre atividade,
     # com data, que a foto de rua nao tem como dar.
