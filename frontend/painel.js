@@ -2394,7 +2394,12 @@
       const r = await fetch("/api/jobs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ modo: "avaliar_ia", opcoes: { workers: 4 } }),
+        // ERA 4, FIXO NO CODIGO. Medido em 07/09/2026: com 12 a vazao
+        // sobe 33% porque o teto deixa de ser o numero de trabalhadores e
+        // volta a ser a Spark. O campo permite pedir menos numa maquina
+        // ocupada — o que o numero fixo nao permitia em nenhuma direcao.
+        body: JSON.stringify({ modo: "avaliar_ia", opcoes: {
+          workers: parseInt($("np-ia-workers")?.value) || 12 } }),
       }).catch(() => null);
       const j = r ? await r.json().catch(() => ({})) : {};
       if (!r || !r.ok) {
@@ -2443,7 +2448,11 @@
 
       let enfileiradas = 0;
       for (let i = 0; i < areas.length; i += 1) {
-        const opcoes = { sessao: "painel", reusar: !!reusar };
+        // QUANTOS NAVEGADORES. Vai como `trabalhadores` porque e assim
+        // que o servidor o transforma em `workers` e `capture_workers`, e a
+        // maquina que pegar o job corta pelo teto dela.
+        const opcoes = { sessao: "painel", reusar: !!reusar,
+                         trabalhadores: parseInt($("np-trabalhadores")?.value) || 20 };
         if (areas[i]) opcoes.poligono = areas[i].map(([la, ln]) => [la, ln]);
         const r = await fetch("/api/jobs", {
           method: "POST",
