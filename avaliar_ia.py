@@ -859,6 +859,24 @@ def _cadastro_texto(con, alvo) -> str:
         "- fonte do dado: %s" % alvo["fonte"],
         "- endereço: %s — %s/%s" % (alvo["endereco"] or "(sem endereço)",
                                     alvo["cidade"], alvo["uf"]),
+        # DUAS FRASES QUE EVITAM DIVERGENCIA INVENTADA.
+        #
+        # A primeira: o Google devolve o BAIRRO dentro do endereço, e muitos
+        # bairros brasileiros têm nome de cidade. Sem esta linha o julgamento
+        # escrevia "o cadastro cita R. Quaraí em Canoas, mas as fotos foram
+        # tiradas em Niterói" — e Niterói é bairro de Canoas. Medido em
+        # 07/09/2026: 182 dos 2.808 casos em revisão humana citavam
+        # divergência ao lado de um bairro conhecido da própria cidade.
+        #
+        # A segunda: a foto sai do ponto de rua mais próximo, não da porta.
+        # Algumas dezenas de metros são o normal de um quarteirão urbano, e o
+        # julgamento estava lendo 23 m como indício de imóvel errado.
+        "- o MUNICÍPIO é o declarado nesta linha. Qualquer outro nome de lugar "
+        "que apareça no endereço ou nas ligações é BAIRRO, não cidade — e não "
+        "é divergência.",
+        "- a foto é tirada do ponto de rua mais próximo, e não da porta: "
+        "dezenas de metros entre a foto e a ligação são o normal de um "
+        "quarteirão. Só desconfie da distância acima de uns 60 m.",
     ]
     cur = con.cursor()
     if alvo["fonte"] == "ifood":
