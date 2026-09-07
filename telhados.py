@@ -555,79 +555,86 @@ def achar_tiles_no_disco(pasta="capturas"):
 
 
 def registrar(pasta="capturas", aplicar=False) -> dict:
-    """Cataloga em `tile_captura` o que existe no disco.
+    """LISTA o que existe no disco. Nao cataloga mais nada no banco.
 
-    A TABELA GUARDA CAMINHO, NÃO BYTES. Um tile de satélite tem 1 MB e são
-    milhares por cidade; o que a tabela precisa responder é "que tile cobre este
-    ponto?", e para isso bastam a caixa e o caminho.
+    # O TILE E RASCUNHO, E NAO ACERVO.
+#
+# Decisao do dono do produto em 07/09/2026: o tile e recapturado toda vez que a
+# area roda, entao guarda-lo nao poupa nada — so ocupa disco e Storage. Sao
+# 50.880 arquivos e 1,1 GB em `capturas/`, mais 51.504 linhas de catalogo.
+#
+# O QUE ELE PRECISA RESPONDER e "que tile cobre este ponto?", e para isso basta
+# o disco: o nome do arquivo carrega o centro
+# (`tile_r_008_-29.91725_-51.19778.webp`) e o `_tiles.json` ao lado guarda a
+# caixa que o proprio mapa reportou ter desenhado. `achar_tiles_no_disco` ja
+# lia tudo isso — a tabela era uma copia do que o diretorio ja sabia.
+    #
+    # O `--aplicar` continua aceito e nao faz nada: a etapa 10 do pipeline
+    # ainda o passa, e mudar os dois de uma vez daria uma janela em que um
+    # deles esta velho.
     """
     tiles = achar_tiles_no_disco(pasta)
     _log("   %d tile(s) georreferenciado(s) em %s/" % (len(tiles), pasta))
     for t in tiles:
-        a, b, c, d = t.caixa
         _log("      %-46s z%d %dx%d  %.0f x %.0f m"
              % (os.path.basename(t.caminho), t.zoom, t.largura, t.altura,
                 t.largura * mpp(t.lat, t.zoom), t.altura * mpp(t.lat, t.zoom)))
-    if not aplicar:
-        _log("   (ensaio: nada gravado. Use --aplicar)")
-        return {"tiles": len(tiles), "gravados": 0}
+    return {"tiles": len(tiles), "gravados": 0}
 
-    con = bc.conectar()
-    n = ja = 0
-    with con.cursor() as cur:
-        for t in tiles:
-            a, b, c, d = t.caixa
-            # POR CAMINHO, E NÃO CEGO. Este passo é rodado de novo a cada
-            # captura nova, e sem a checagem o mesmo tile entraria mais uma vez
-            # a cada vez — a busca por "que tile cobre este ponto" passaria a
-            # devolver duplicatas e o passo dos telhados a contar a mesma
-            # construção várias vezes.
-            cur.execute("select id from radar_comercial.tile_captura "
-                        "where storage_path = %s", (t.caminho,))
-            achado = cur.fetchone()
-            if achado:
-                cur.execute("""
-                    update radar_comercial.tile_captura
-                       set lat=%s, lng=%s, zoom=%s, largura_px=%s, altura_px=%s,
-                           lat_min=%s, lat_max=%s, lng_min=%s, lng_max=%s,
-                           bytes_tam=%s
-                     where id = %s
-                """, (t.lat, t.lng, t.zoom, t.largura, t.altura, a, b, c, d,
-                      os.path.getsize(t.caminho), achado[0]))
-                ja += 1
+
+def limpar_tiles(pasta="capturas") -> dict:
+    """Apaga os tiles do disco. Roda no fim da rodada.
+
+    APAGA SO O QUE E TILE, pelo mesmo `RE_TILE` que os encontra — a pasta
+    `capturas/` guarda tambem print de pagina e recorte, que nao sao rascunho
+    e nao podem ir junto. E apaga o `_tiles.json` da sessao, que sem os tiles
+    nao descreve mais nada.
+    """
+    n = bytes_ = 0
+    for raiz, _, arquivos in os.walk(pasta):
+        tinha = False
+        for a in arquivos:
+            if not RE_TILE.search(a):
                 continue
-            cur.execute("""
-                insert into radar_comercial.tile_captura
-                       (sessao, tipo, lat, lng, zoom, largura_px, altura_px,
-                        lat_min, lat_max, lng_min, lng_max, storage_path,
-                        bytes_tam)
-                values (%s,'satelite',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-            """, (t.sessao, t.lat, t.lng, t.zoom, t.largura, t.altura,
-                  a, b, c, d, t.caminho, os.path.getsize(t.caminho)))
-            n += 1
-    con.commit()
-    con.close()
-    _log("   %d novo(s), %d já catalogado(s) e atualizado(s)" % (n, ja))
-    return {"tiles": len(tiles), "gravados": n, "atualizados": ja}
+            p = os.path.join(raiz, a)
+            try:
+                bytes_ += os.path.getsize(p)
+                os.remove(p)
+                n += 1
+                tinha = True
+            except OSError:
+                pass
+        if tinha:
+            ij = os.path.join(raiz, "_tiles.json")
+            if os.path.exists(ij):
+                try:
+                    os.remove(ij)
+                except OSError:
+                    pass
+    _log("   %d tile(s) apagado(s), %.2f GB liberados"
+         % (n, bytes_ / 1073741824.0))
+    return {"apagados": n, "bytes": bytes_}
 
 
-def carregar_tiles(con):
-    """Os tiles do banco que ainda existem no disco."""
-    tiles = []
-    with con.cursor() as cur:
-        cur.execute("""
-            select id, sessao, lat, lng, zoom, largura_px, altura_px,
-                   storage_path
-              from radar_comercial.tile_captura
-             where tipo = 'satelite' and storage_path is not null
-             order by id
-        """)
-        for tid, sessao, lat, lng, zoom, larg, alt, caminho in cur.fetchall():
-            if os.path.exists(caminho):
-                tiles.append(Tile(caminho, float(lat), float(lng), int(zoom),
-                                  int(larg), int(alt), tile_id=tid,
-                                  sessao=sessao))
-    return tiles
+def carregar_tiles(con=None, pasta="capturas"):
+    """Os tiles que existem no disco AGORA.
+
+    # O TILE E RASCUNHO, E NAO ACERVO.
+#
+# Decisao do dono do produto em 07/09/2026: o tile e recapturado toda vez que a
+# area roda, entao guarda-lo nao poupa nada — so ocupa disco e Storage. Sao
+# 50.880 arquivos e 1,1 GB em `capturas/`, mais 51.504 linhas de catalogo.
+#
+# O QUE ELE PRECISA RESPONDER e "que tile cobre este ponto?", e para isso basta
+# o disco: o nome do arquivo carrega o centro
+# (`tile_r_008_-29.91725_-51.19778.webp`) e o `_tiles.json` ao lado guarda a
+# caixa que o proprio mapa reportou ter desenhado. `achar_tiles_no_disco` ja
+# lia tudo isso — a tabela era uma copia do que o diretorio ja sabia.
+    #
+    # `con` continua na assinatura e e ignorado: quem chama ja tem a conexao na
+    # mao e trocar a chamada junto so aumentaria a superficie deste commit.
+    """
+    return achar_tiles_no_disco(pasta)
 
 
 # ── a suspeita ─────────────────────────────────────────────────────────────
@@ -679,8 +686,9 @@ def suspeitar(base_id: int, area: str = "", aplicar: bool = False,
     tiles = carregar_tiles(con)
     _log("   %d tile(s) no catálogo e no disco" % len(tiles))
     if not tiles:
-        _log("   Sem tile não há telhado. Rode `--registrar` depois de uma")
-        _log("   captura; este passo não inventa imagem.")
+        _log("   Sem tile não há telhado — a captura da área precisa ter")
+        _log("   rodado ANTES, na mesma máquina: o tile vive em disco e é")
+        _log("   apagado no fim da rodada. Este passo não inventa imagem.")
         con.close()
         return {"erro": "sem tile"}
 
@@ -798,7 +806,13 @@ def suspeitar(base_id: int, area: str = "", aplicar: bool = False,
                 base_id, str(ligacao), o["id"],
                 False, False, perto_20, True, bool(prop["comercial"]),
                 metros, criterios, round(criterios / 5.0, 3),
-                o["fonte"] or None, "telhado", tile.tile_id,
+                # SEM `tile_id`. A coluna apontava para `tile_captura`, que
+                # deixou de existir em 07/09/2026 — o tile virou rascunho da
+                # rodada. A procedencia nao se perde: `origem='telhado'` diz o
+                # criterio e `suspeita_motivo` diz a medida que o sustentou
+                # ("telhado de 697 m2; sem semelhanca de dados"). Conferido nas
+                # 98 linhas que tinham tile_id: as 98 ja traziam o motivo.
+                o["fonte"] or None, "telhado",
                 ("telhado de %.0f m2%s%s"
                  % (prop["area_m2"],
                     "; comercial" if prop["comercial"] else "",
@@ -838,7 +852,7 @@ def suspeitar(base_id: int, area: str = "", aplicar: bool = False,
         insert into radar_comercial.ligacao_poi
             (id_base, ligacao, poi_id, mesmo_endereco, mesmo_numero, ate_20m,
              mesmo_telhado, telhado_comercial, metros, criterios_ok, confianca,
-             fonte_poi, origem, tile_id, suspeita_motivo)
+             fonte_poi, origem, suspeita_motivo)
         values %s
         on conflict (id_base, ligacao, poi_id) do nothing
     """, registros, page_size=1000)
@@ -855,7 +869,9 @@ def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--registrar", action="store_true",
-                   help="cataloga os tiles do disco em tile_captura")
+                   help="lista os tiles que existem no disco")
+    p.add_argument("--limpar", action="store_true",
+                   help="apaga os tiles do disco (fim da rodada)")
     p.add_argument("--pasta", default="capturas")
     p.add_argument("--base", type=int, default=0)
     p.add_argument("--area", default="")
@@ -863,8 +879,13 @@ def main(argv=None) -> int:
     p.add_argument("--aplicar", action="store_true")
     a = p.parse_args(argv)
 
+    if a.limpar:
+        _log("▶ limpando os tiles do disco")
+        limpar_tiles(a.pasta)
+        return 0
+
     if a.registrar:
-        _log("▶ catálogo dos tiles")
+        _log("▶ os tiles que existem no disco")
         r = registrar(a.pasta, a.aplicar)
         return 1 if r.get("erro") else 0
 

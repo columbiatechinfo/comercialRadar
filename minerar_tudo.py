@@ -1491,6 +1491,31 @@ def main(argv=None) -> int:
         _log("  ⚠️  links do POI não recarregados — %s: %s"
              % (type(_e).__name__, str(_e)[:70]))
 
+    # ── o rascunho da rodada vai embora ──────────────────────────────────
+    # O TILE E RASCUNHO, E NAO ACERVO.
+#
+# Decisao do dono do produto em 07/09/2026: o tile e recapturado toda vez que a
+# area roda, entao guarda-lo nao poupa nada — so ocupa disco e Storage. Sao
+# 50.880 arquivos e 1,1 GB em `capturas/`, mais 51.504 linhas de catalogo.
+#
+# O QUE ELE PRECISA RESPONDER e "que tile cobre este ponto?", e para isso basta
+# o disco: o nome do arquivo carrega o centro
+# (`tile_r_008_-29.91725_-51.19778.webp`) e o `_tiles.json` ao lado guarda a
+# caixa que o proprio mapa reportou ter desenhado. `achar_tiles_no_disco` ja
+# lia tudo isso — a tabela era uma copia do que o diretorio ja sabia.
+    #
+    # Limpar AQUI e nao na etapa 10: a etapa 4 tambem produz tile, e uma rodada
+    # que pula os telhados deixaria o disco cheio do mesmo jeito. E dentro de
+    # try porque disco cheio nao pode transformar rodada concluida em rodada
+    # com erro.
+    try:
+        import telhados as _telhados
+        _log("  limpando os tiles da rodada")
+        _telhados.limpar_tiles("capturas")
+    except Exception as _e:                                    # noqa: BLE001
+        _log("  ⚠️  tiles não limpos — %s: %s"
+             % (type(_e).__name__, str(_e)[:70]))
+
     _log("─" * 62)
     if _ETAPAS_COM_FALHA:
         _log("✅ Mineração completa, com %d etapa(s) que falharam e foram"
