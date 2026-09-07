@@ -135,9 +135,13 @@ def coletar(poi_id: int, con) -> dict:
         # O LINK PARA A CENA VIVA. O supervisor precisa poder girar a câmera:
         # a foto é um recorte de um panorama, e o que decide a dúvida costuma
         # estar dez graus fora do enquadramento.
-        cur.execute("""select pano_id, heading, fov, data_captura, cam_lat, cam_lng
-                         from streetview_imgs
-                        where poi_id = %s and angulo = 'facade'
+        # A TABELA MUDOU, O DADO E O MESMO. `streetview_imgs` foi aposentada
+        # em 07/09/2026; `poi_evidencia` guarda as mesmas colunas de camera, e
+        # `data_imagem` e a antiga `data_captura` — quando o Google fotografou,
+        # e nao quando nos capturamos.
+        cur.execute("""select pano_id, heading, fov, data_imagem, cam_lat, cam_lng
+                         from radar_comercial.poi_evidencia
+                        where poi_id = %s and tipo = 'sv_frente'
                         order by id desc limit 1""", (poi_id,))
         sv = cur.fetchone()
         if sv:

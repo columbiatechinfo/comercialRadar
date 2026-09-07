@@ -62,7 +62,8 @@ select p.id, p.nome, p.fonte, p.categoria, p.endereco, p.telefone, p.website,
        p.place_id,
        la.logradouro_marcado, la.logradouro_original, la.numero_canonico, la.tier,
        p.cruzado_em,
-       (select count(*) from streetview_imgs s where s.poi_id = p.id)
+       (select count(*) from radar_comercial.poi_evidencia s
+        where s.poi_id = p.id)
      + (select count(*) from analise_ia a where a.poi_id = p.id) as evid
   from pois p
   left join logradouro_ajustado la

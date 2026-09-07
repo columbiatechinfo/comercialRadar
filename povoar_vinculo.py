@@ -172,7 +172,8 @@ def juntar(cidade: str, empresa: str, aplicar: bool) -> None:
                  lower(translate(coalesce(nome,''),
                        'áàâãéêíóôõúüçÁÀÂÃÉÊÍÓÔÕÚÜÇ','aaaaeeiooouucaaaaeeiooouuc')) nm,
                  round(maps_lat::numeric, 5) la, round(maps_lng::numeric, 5) lo,
-                 (select count(*) from streetview_imgs s where s.poi_id = pois.id)
+                 (select count(*) from radar_comercial.poi_evidencia s
+                   where s.poi_id = pois.id)
                + (select count(*) from analise_ia a where a.poi_id = pois.id) evid
             from pois
            where maps_lat is not null and coalesce(nome,'') <> ''

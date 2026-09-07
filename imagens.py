@@ -215,13 +215,35 @@ def gravar_foto(img_id: int, dados: bytes, con, tipo: str = "image/jpeg", **extr
 
 
 def streetview_por_id(sv_id: int, con) -> bytes | None:
-    r = _buscar(con, "streetview_imgs", "id = %s", (sv_id,))
+    """Uma linha de evidencia pelo id. Ver `streetview_do_poi`."""
+    r = _buscar(con, "poi_evidencia", "id = %s", (sv_id,))
     return r[0] if r else None
 
 
+#: O NOME ANTIGO DA VISADA, E O NOVO.
+#:
+#: `streetview_imgs` chamava as tomadas de `facade`, `g90`, `g180` e `g270`;
+#: `poi_evidencia` as chama de `sv_frente`, `sv_lado_a`, `sv_fundo` e
+#: `sv_lado_b`. Quem pede continua pedindo pelo nome antigo — o painel monta
+#: `/api/sv/<poi>/facade` no navegador, e trocar a URL obrigaria a mexer no
+#: front por causa de uma tabela que sumiu.
+ANGULO_PARA_TIPO = {"facade": "sv_frente", "g90": "sv_lado_a",
+                    "g180": "sv_fundo", "g270": "sv_lado_b"}
+
+
 def streetview_do_poi(poi_id: int, con, angulo: str = "facade", limite: int = 1) -> list:
-    return _buscar(con, "streetview_imgs",
-                   "poi_id = %s and angulo = %s order by id", (poi_id, angulo), limite)
+    """A foto de rua do POI, da tabela que existe hoje.
+
+    A FONTE MUDOU E A ASSINATURA NAO. Ate 07/09/2026 isto lia
+    `streetview_imgs`, que foi aposentada depois que as 65.316 imagens dela
+    foram adequadas e migradas para `poi_evidencia`. Quem chama — a rota
+    `/api/sv/<poi>/<angulo>` e o dossie — nao precisou saber: e o mesmo POI, a
+    mesma visada e os mesmos bytes, noutra tabela e com outro nome.
+    """
+    tipo = ANGULO_PARA_TIPO.get(angulo, angulo)
+    return _buscar(con, "poi_evidencia",
+                   "poi_id = %s and tipo = %s order by id", (poi_id, tipo),
+                   limite)
 
 
 def fotos_do_poi(poi_id: int, con, limite: int = 4) -> list:

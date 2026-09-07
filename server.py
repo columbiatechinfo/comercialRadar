@@ -1938,8 +1938,11 @@ def detalhe_poi(poi_id: int):
                 ia["ramo_visto"] = perc.get("ramo_visto")
                 ia["nome_visto"] = perc.get("nome_visto")
                 # todos os ângulos do street view (fachada + giro 360 + panoramas)
-                cur.execute("""SELECT angulo FROM streetview_imgs
-                               WHERE poi_id=%s AND angulo IS NOT NULL ORDER BY id""", (poi_id,))
+                # OS TIPOS, QUE ERAM ANGULOS. Ver `imagens.ANGULO_PARA_TIPO`:
+                # a tabela antiga foi aposentada e as visadas mudaram de nome.
+                cur.execute("""SELECT tipo FROM radar_comercial.poi_evidencia
+                               WHERE poi_id=%s AND tipo IS NOT NULL ORDER BY id""",
+                            (poi_id,))
                 ia["angulos_sv"] = [r[0] for r in cur.fetchall()]
                 poi["ia"] = ia
 
@@ -2550,7 +2553,8 @@ def dashboard(cidade: str = ""):
             # quanto ocupa e quanto DEIXOU de ser capturado por não haver panorama.
             cur.execute(f"""SELECT count(*), coalesce(sum(s.bytes_tam),0),
                                    count(DISTINCT s.poi_id)
-                              FROM streetview_imgs s JOIN pois p ON p.id = s.poi_id
+                              FROM radar_comercial.poi_evidencia s
+                                   JOIN pois p ON p.id = s.poi_id
                              WHERE {w}""", pc)
             sv_n, sv_bytes, sv_pois = cur.fetchone()
 
