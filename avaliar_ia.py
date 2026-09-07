@@ -384,11 +384,11 @@ SQL_ALVO = """
      --
      -- MEDIDO em 07/09/2026, com 7.744 vereditos dados:
      --
-     --     fonte      a julgar   % da fila   reprovados
-     --     receita      13.917        44%        51,7%
-     --     ibge         10.326        33%        18,3%
-     --     estadual      3.852        12%        21,9%
-     --     maps          3.432        11%        10,9%   (21,5% aprovado exato)
+     --     fonte      a julgar   %% da fila   reprovados
+     --     receita      13.917        44%%        51,7%%
+     --     ibge         10.326        33%%        18,3%%
+     --     estadual      3.852        12%%        21,9%%
+     --     maps          3.432        11%%        10,9%%   (21,5%% aprovado exato)
      --
      -- A Receita ocupa quase metade do trabalho e reprova metade do que
      -- recebe; o Maps, que e a melhor fonte, e um nono da fila. Nada deixa de
