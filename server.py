@@ -3223,12 +3223,29 @@ def iniciar_job(body: dict):
                              % (type(e).__name__, str(e).splitlines()[0][:160])},
                     status_code=500)
 
+            # QUANTOS NAVEGADORES, VINDO DO PAINEL.
+            #
+            # O painel manda um numero so — "navegadores em paralelo" — porque
+            # quem dispara pensa na MAQUINA, e nao nas duas etapas que por acaso
+            # tem contadores separados. Aqui ele vira os dois: `workers` (a
+            # colheita) e `capture_workers` (o detalhe). Quem quiser separa-los
+            # ainda pode mandar cada um.
+            #
+            # O TETO NAO E APLICADO AQUI, e isso e de proposito: quem sabe o
+            # limite e a MAQUINA que vai pegar o job, e ela ja corta —
+            # `minerador_worker._CHAVES_DE_TRABALHADOR` reconhece as tres
+            # chaves e registra no log quando corta. Cortar aqui usaria o teto
+            # do servidor para decidir pelo notebook.
+            try:
+                _padrao = int(op.get("trabalhadores") or 0) or 10
+            except (TypeError, ValueError):
+                _padrao = 10
             argumentos = {
                 "area": nome_area,
                 "sessao": sessao,
                 "zoom": int(op.get("zoom", 19)),
-                "workers": int(op.get("workers", 10)),
-                "capture_workers": int(op.get("capture_workers", 10)),
+                "workers": int(op.get("workers", _padrao)),
+                "capture_workers": int(op.get("capture_workers", _padrao)),
                 "empresa": _empresa_do_pedido(),
             }
             # AS ETAPAS QUE SE PULA, TODAS AS CINCO.

@@ -1887,6 +1887,11 @@ $("btn-iniciar").onclick = async () => {
     // cidade errada inteira.
     opcoes = { sessao: $("op-sessao").value.trim() || "mineracao",
                zoom: parseInt($("op-zoom").value) || 19,
+               // QUANTOS NAVEGADORES. Vai como `trabalhadores` porque e assim
+               // que `minerador_worker._CHAVES_DE_TRABALHADOR` reconhece o
+               // campo e aplica o teto da maquina. Mandar outro nome faria o
+               // teto nao valer, que e pior do que nao mandar nada.
+               trabalhadores: parseInt($("op-trabalhadores")?.value) || 20,
                // Sem o dataset da UF a etapa 1 PARA e diz o comando que o
                // produz. Esta caixa é a saída para quem quer rodar só a captura
                // enquanto o dataset não existe.
