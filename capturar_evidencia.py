@@ -210,23 +210,24 @@ SQL_ALVO = """
        -- gastar navegador para receber a mesma resposta.
        and not exists (select 1 from radar_comercial.poi_evidencia e
                         where e.poi_id = p.id and e.tipo = 'sv_frente'
+                          -- `storage_path` CONTA COMO FOTO TIRADA.
+                          --
+                          -- A adequacao de 07/09/2026 gravou 65.316 imagens no
+                          -- Storage, com `dados` NULO. Sem esta linha a fila
+                          -- leria "sem bytes" e mandaria refotografar os 21.787
+                          -- POIs que acabaram de ser adequados — abrindo o
+                          -- Street View de graca para obter o que ja esta la.
                           and (e.dados is not null
+                               or e.storage_path is not null
                                or e.motivo_falha like 'o Google confirma%'
                                or e.motivo_falha like 'MAPS_JS_KEY%'))
-       -- QUEM JA TEM FACHADA NAO E REFOTOGRAFADO.
+-- A CONDICAO QUE OLHAVA `streetview_imgs` SAIU em 07/09/2026.
        --
-       -- Ha duas capturas de rua, herdadas de duas geracoes, e desde
-       -- 07/09/2026 a IA le as DUAS: `poi_evidencia` de preferencia,
-       -- `streetview_imgs` como queda. Enquanto esta condicao nao existia, a
-       -- fila mandava fotografar de novo quem ja tinha imagem — medido:
-       -- 15.478 dos 32.440 da fila, quase metade, e como a ordem e por `id` e
-       -- a fachada varreu os ids baixos, era exatamente o que estava sendo
-       -- refeito primeiro.
-       --
-       -- O que a evidencia acrescenta a quem ja tem fachada e a visada de 180
-       -- graus e o marcador no alvo. Nao paga refazer 15 mil pontos.
-       and not exists (select 1 from radar_comercial.streetview_imgs s
-                        where s.poi_id = p.id and s.storage_path is not null)
+       -- Ela existia para nao refotografar quem ja tinha a captura antiga.
+       -- Depois da adequacao nao ha mais ninguem so naquela tabela: as 65.316
+       -- imagens viraram linhas de `poi_evidencia`, e a condicao acima ja as
+       -- enxerga pelo `storage_path`. Medido: zero POIs dependendo so da
+       -- tabela antiga.
      order by p.id
 """
 

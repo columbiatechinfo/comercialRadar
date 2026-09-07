@@ -377,12 +377,12 @@ SQL_ALVO = """
       from radar_comercial.pois p
      where (exists (select 1 from radar_comercial.poi_evidencia e
                      where e.poi_id = p.id and e.dados is not null)
-            -- A FILA SEGUE A LEITURA. `evidencia()` cai para
-            -- `streetview_imgs` quando nao ha `poi_evidencia`; exigir so a
-            -- primeira aqui deixaria de fora justamente os POIs que a captura
-            -- de fachada ja cobriu — 13.736 em Canoas quando isto foi escrito.
-            or exists (select 1 from radar_comercial.streetview_imgs s
-                        where s.poi_id = p.id and s.storage_path is not null)
+            -- O BYTE PODE ESTAR NO STORAGE. Desde 07/09/2026
+            -- `poi_evidencia` guarda caminho para as imagens adequadas e bytea
+            -- para as antigas; exigir so `dados` deixaria de fora as 65.316
+            -- que vieram da captura de fachada.
+            or exists (select 1 from radar_comercial.poi_evidencia e2
+                        where e2.poi_id = p.id and e2.storage_path is not null)
             -- iFOOD E AIRBNB ENTRAM SEM FOTO. Ver
             -- `FONTES_QUE_DISPENSAM_IMAGEM`: neles quem prova e a ficha da
             -- plataforma, e 1.040 pontos ja provados estavam parados aqui
@@ -724,50 +724,17 @@ DA_FACHADA = {"facade": "sv_frente", "g90": "sv_lado_a",
               "g180": "sv_fundo", "g270": "sv_lado_b"}
 
 
-def _da_fachada(cur, poi_id):
-    """`{tipo: bytes}` a partir de `streetview_imgs`, com a borda cortada."""
-    import imagens as _im
-    try:
-        from capturar_evidencia import _cortar_interface
-    except Exception:                                          # noqa: BLE001
-        def _cortar_interface(x):
-            return x
-    cur.execute("""select angulo, storage_path from radar_comercial.streetview_imgs
-                    where poi_id = %s and storage_path is not null
-                    order by id""", (poi_id,))
-    linhas = cur.fetchall()
-    # SOLTA A TRANSACAO ANTES DE BAIXAR.
-    #
-    # `_im.baixar` fala HTTP com o Storage e leva segundos por imagem. Com a
-    # transacao aberta durante isso, a sessao fica `idle in transaction`
-    # segurando um slot do pooler — que aceita 20 NO TOTAL, entre todas as
-    # maquinas e servicos.
-    #
-    # Medido em 07/09/2026: catorze sessoes presas exatamente nesta consulta,
-    # e a captura de evidencia nao conseguia abrir a dela — morria com
-    # `EMAXCONNSESSION` antes do primeiro POI. O sintoma apontava para a
-    # captura, e a causa estava aqui.
-    #
-    # Ler tudo, fechar, e so entao baixar. O `select` custa milissegundos; o
-    # download, segundos. Nao ha razao para os dois dividirem uma transacao.
-    try:
-        cur.connection.commit()
-    except Exception:                                          # noqa: BLE001
-        pass
-    saida = {}
-    for ang, caminho in linhas:
-        tipo = DA_FACHADA.get(ang)
-        if not tipo or tipo in saida:
-            continue
-        b = _im.baixar(caminho)
-        if b:
-            # A BORDA SAI NA LEITURA porque a captura de fachada nao a tira. O
-            # painel do Maps no alto e o rotulo do minimapa embaixo sao lidos
-            # como se fossem placa: medido em 06/09/2026, um giro trouxe
-            # "Padaria Confeitaria e Cafeteria Sabor Do Trigo" — o nome do
-            # VIZINHO, escrito pela interface — e virou `nome_visto`.
-            saida[tipo] = _cortar_interface(b)
-    return saida
+# `_da_fachada` FOI EMBORA em 07/09/2026.
+#
+# Ela lia `streetview_imgs` e cortava a borda na hora da leitura, porque a
+# captura antiga guardava a imagem com a interface do Google por cima. Isso
+# deixou de ser necessario: as 65.316 imagens daquela tabela foram adequadas de
+# uma vez — cortadas, com a mira desenhada e a data do Google preservada — e
+# viraram linhas de `poi_evidencia` no Storage. Medido depois: ZERO POIs
+# dependiam so da tabela antiga.
+#
+# Cortar na leitura era caro e escondia o problema: cada julgamento refazia o
+# corte das mesmas fotos, e a mira nunca chegava a existir.
 
 
 def evidencia(con, poi_id):
@@ -796,8 +763,8 @@ def evidencia(con, poi_id):
             por_tipo[tp] = b
     if por_tipo.get("pagina_airbnb"):
         return "pagina", [por_tipo["pagina_airbnb"]], ["pagina_airbnb"]
-    if not any(t in por_tipo for t in ORDEM_RUA):
-        por_tipo = _da_fachada(cur, poi_id)
+    # SEM QUEDA PARA `streetview_imgs`. Ver a nota acima: as 65.316 imagens
+    # daquela tabela foram adequadas e viraram linhas desta, no Storage.
     tipos = [t for t in ORDEM_RUA if t in por_tipo]
     if not tipos:
         return None, [], []
