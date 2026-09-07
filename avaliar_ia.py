@@ -252,12 +252,34 @@ de metros, ou rua com nome diferente.
 
 PROVA DE PLATAFORMA VENCE FACHADA MUDA. Se o cadastro disser que a loja \
 estava ATIVA numa plataforma (iFood disponível, anúncio de hospedagem com \
-avaliação recente), isso é prova de atividade econômica FUNCIONANDO, com data. \
+avaliação recente, AVALIAÇÃO DE CLIENTE NO GOOGLE), isso é prova de atividade \
+econômica FUNCIONANDO, com data. \
 Fachada sem vitrine não a desmente: delivery de comida, doceria, marmita e \
 salão de casa operam sem porta de loja — é o negócio mais comum do bairro. \
 Nesse caso o piso é "aprovado_comercial"; use "revisao_humana" só se a foto \
 contradisser a plataforma (terreno vago, imóvel demolido, obra). NUNCA \
 reprove um estabelecimento que a plataforma dá como ativo.
+
+AVALIAÇÃO DE CLIENTE NO GOOGLE É PROVA DE TERCEIRO, e você recebe a data de \
+cada uma. Quem escreveu esteve lá: "levei meu carro", "cortei o cabelo com \
+ele", "encomendei o bolo" descrevem um serviço prestado NAQUELE endereço, e \
+descrevem melhor do que a fachada, porque a fachada não muda quando o negócio \
+fecha e a avaliação para de aparecer.
+
+Leia as avaliações e pese pela DATA e pelo que elas contam:
+- avaliação de até um ano descrevendo serviço prestado: o piso é \
+"aprovado_comercial", mesmo que a casa não tenha vitrine, letreiro nem toldo. \
+Barbeiro, manicure, doceira, costureira e oficina de fundo de quintal são o \
+negócio mais comum do bairro e nenhum deles põe placa.
+- avaliação entre um e três anos: sustenta "revisao_humana", não reprovação. \
+O negócio existiu ali; falta saber se ainda opera.
+- avaliação com mais de três anos e nada mais: não sustenta nada sozinha. \
+Decida pela imagem.
+- horário de funcionamento declarado no Google (por exemplo "Abre seg. às \
+08:00") é o dono dizendo que atende — vale como indício, não como prova.
+
+E NÃO INVERTA A REGRA: ausência de avaliação não reprova nada. A maior parte \
+dos negócios de bairro não tem uma linha escrita sobre eles.
 
 QUANDO REPROVAR DIRETO, SEM PASSAR POR REVISÃO. "revisao_humana" é para dúvida \
 REAL, e não para desconforto de decidir. Se a descrição das quatro fotos diz \
@@ -732,6 +754,7 @@ def _b64(b: bytes) -> str:
     return base64.b64encode(b).decode()
 
 
+import datetime as _dt
 import re as _re
 
 # NOME DE MEI NÃO É NOME DE PORTA, e mandar procurá-lo torna o diagnóstico
@@ -838,6 +861,113 @@ def ligacoes_texto(con, alvo) -> str:
     return "\n".join(linhas)
 
 
+#: QUANTOS COMENTARIOS VAO NO PROMPT. Os mais RECENTES, porque o que decide
+#: tarifa e se o negocio opera AGORA — comentario de sete anos prova que existiu.
+COMENTARIOS_NO_PROMPT = 6
+
+#: Como o Google escreve "quando". Medido em 07/09/2026 sobre 75.563
+#: comentarios: 74 formas distintas, todas cobertas por estes sete padroes.
+_UNIDADE_EM_DIAS = {"minuto": 0, "hora": 0, "dia": 1, "semana": 7,
+                    "mes": 30, "mês": 30, "ano": 365}
+
+
+def _dias_atras(texto):
+    """'5 meses atrás' -> 150. Devolve None quando nao reconhece.
+
+    A DATA VEM RELATIVA e nao absoluta: o Google escreve "5 meses atrás" na
+    pagina, e e isso que a coleta guardou. Para virar data de calendario falta
+    a ancora, que e `pois.detalhado_em` — quando a pagina foi lida.
+    """
+    if not texto:
+        return None
+    s = str(texto).strip().lower()
+    if s.startswith("hoje") or s.startswith("agora"):
+        return 0
+    n = 1
+    m = _re.match(r"^(\d+)", s)
+    if m:
+        n = int(m.group(1))
+    elif not _re.match(r"^(um|uma)\b", s):
+        return None
+    for unidade, dias in _UNIDADE_EM_DIAS.items():
+        if unidade in s:
+            return n * dias
+    return None
+
+
+def _quando_em_palavras(dias, ancora):
+    """Diz a data em calendario, e nao so 'ha tanto tempo'."""
+    if dias is None:
+        return "quando não se sabe"
+    if ancora is None:
+        return "há %d dia(s) quando a página foi lida" % dias
+    d = ancora - _dt.timedelta(days=dias)
+    meses = ["jan", "fev", "mar", "abr", "mai", "jun",
+             "jul", "ago", "set", "out", "nov", "dez"]
+    return "%s/%d" % (meses[d.month - 1], d.year)
+
+
+def _sinal_do_maps(con, alvo) -> list:
+    """Nota, horario e comentarios — a prova que o Google ja tinha.
+
+    POR QUE ISTO EXISTE, medido em 07/09/2026: dos 542 POIs de Maps que a IA
+    REPROVOU, 356 tinham comentario de cliente no Google e 369 tinham nota. Um
+    deles e uma barbearia com cinco pessoas descrevendo o corte de cabelo,
+    reprovada porque a fachada e uma casa — que e exatamente o negocio que este
+    projeto procura: comercio sem vitrine em ligacao residencial.
+
+    Comentario datado e prova de TERCEIRO sobre atividade em curso, da mesma
+    natureza da loja no ar no iFood. A fachada muda nao desmente nenhum dos
+    dois: barbeiro, manicure, oficina de fundo de quintal e doceira operam sem
+    porta de loja, e sao a maior parte do que se procura aqui.
+    """
+    linhas = []
+    cur = con.cursor()
+    cur.execute("""select avaliacao, total_avaliacoes, status_horario,
+                          resumo_avaliacoes
+                     from radar_comercial.maps_data where poi_id = %s""",
+                (alvo["id"],))
+    r = cur.fetchone()
+    if r and (r[0] is not None or r[1]):
+        linhas.append("- Google Maps: nota %s de 5, com %s avaliação(ões)"
+                      % (r[0] if r[0] is not None else "?",
+                         r[1] if r[1] is not None else "?"))
+    if r and r[2]:
+        linhas.append("- horário declarado no Google: %s" % str(r[2]).strip())
+    if r and r[3]:
+        linhas.append("- o que o Google resume das avaliações: %s"
+                      % str(r[3])[:400])
+
+    cur.execute("""select detalhado_em from radar_comercial.pois
+                    where id = %s""", (alvo["id"],))
+    a = cur.fetchone()
+    ancora = a[0] if a and a[0] else None
+
+    cur.execute("""select autor, data, nota, texto
+                     from radar_comercial.comentarios
+                    where poi_id = %s""", (alvo["id"],))
+    coments = []
+    for autor, quando, nota, texto in cur.fetchall():
+        coments.append((_dias_atras(quando), autor, quando, nota, texto))
+    if not coments:
+        return linhas
+
+    # OS MAIS NOVOS PRIMEIRO. Quem nao teve a data entendida vai para o fim, e
+    # nao para o comeco: sem data ele nao serve para dizer "opera agora".
+    coments.sort(key=lambda c: (c[0] is None, c[0] if c[0] is not None else 0))
+    recentes = coments[:COMENTARIOS_NO_PROMPT]
+    linhas.append("- avaliações de clientes no Google (%d no total, as %d mais "
+                  "recentes abaixo, com a data em que foram escritas):"
+                  % (len(coments), len(recentes)))
+    for dias, autor, quando, nota, texto in recentes:
+        linhas.append("  · %s, nota %s: %s"
+                      % (_quando_em_palavras(dias, ancora),
+                         "?" if nota is None else ("%.0f" % nota),
+                         (str(texto or "(sem texto, só a nota)")
+                          .replace("\n", " ")[:180])))
+    return linhas
+
+
 def _cadastro_texto(con, alvo) -> str:
     """O que o cadastro afirma, em texto — inclusive o que o iFood já sabe.
 
@@ -914,6 +1044,12 @@ def _cadastro_texto(con, alvo) -> str:
     if alvo.get("lat") is not None:
         linhas.append("- coordenada de onde as fotos foram tiradas: %.6f, %.6f"
                       % (alvo["lat"], alvo["lng"]))
+    # O SINAL DO GOOGLE ENTRA AQUI, junto do que o iFood e o Airbnb ja
+    # entregavam — e pela mesma razao: e prova de terceiro sobre atividade,
+    # com data, que a foto de rua nao tem como dar.
+    if alvo["fonte"] == "maps":
+        linhas.extend(_sinal_do_maps(con, alvo))
+
     ligs = ligacoes_texto(con, alvo)
     if ligs:
         linhas.append("- ligações de água vinculadas a este ponto:")
