@@ -870,7 +870,24 @@ def _nomes_de_cnae(con, alvos_lista):
         a["categoria_nome"] = m.get((a["categoria"] or "").strip())
 
 
-def um_poi(con, alvo, modelo, secoes, placar, trava, aplicar) -> None:
+def um_poi(poco, alvo, modelo, secoes, placar, trava, aplicar) -> None:
+    """Um POI, com a conexao EMPRESTADA POR TOQUE — nunca pela rodada inteira.
+
+    O DEFEITO QUE ISTO CORRIGE, medido em 07/09/2026: `obreiro` embrulhava esta
+    funcao inteira num `with poco.pegar()`, e a funcao passa 28,9 s dos seus
+    29 s esperando o modelo. Ou seja, cada trabalhador segurava uma das 20
+    sessoes do pooler por 29 segundos para usa-la por milissegundos.
+
+    Com `CONEXOES = 4` e seis trabalhadores, dois ficavam PARADOS na fila do
+    poco o tempo todo. A medicao: 94 vereditos em 650 s, 28,9 s por POI — 4,1
+    trabalhadores efetivos de 6 configurados. O poco era o teto, e nao o
+    modelo: a vLLM da Spark mostrava 2,4 requisicoes em curso e ZERO na espera.
+
+    Os cinco toques no banco aqui somam milissegundos: `evidencia`,
+    `_prova_da_fonte`, `_cadastro_texto` e as duas gravacoes. Emprestando por
+    toque, quatro conexoes atendem dez ou vinte trabalhadores — como ja
+    acontece em `capturar_evidencia`, que empresta por gravacao.
+    """
     t0 = time.time()
 
     # A FONTE DECIDE PRIMEIRO, QUANDO ELA PODE DECIDIR — e isso economiza as
@@ -881,20 +898,23 @@ def um_poi(con, alvo, modelo, secoes, placar, trava, aplicar) -> None:
     # A EVIDENCIA CONTINUA SENDO EXIGIDA. Um POI sem imagem nenhuma nao entra
     # nem por aqui: a ficha prova que o negocio existe, e nao que ele esta
     # NAQUELE endereco, e e o endereco que a concessionaria vai cobrar.
-    forma, imgs, tipos = evidencia(con, alvo["id"])
+    with poco.pegar() as con:
+        forma, imgs, tipos = evidencia(con, alvo["id"])
     if not imgs:
         with trava:
             placar["sem_evidencia"] += 1
         return
 
-    da_fonte = _prova_da_fonte(con, alvo)
+    with poco.pegar() as con:
+        da_fonte = _prova_da_fonte(con, alvo)
     if da_fonte is not None:
         v = da_fonte["veredito"]
         percep = {"_imagens": tipos, "prova_da_fonte": da_fonte.get("_fonte"),
                   "_sem_modelo": True}
         if aplicar:
-            gravar(con, alvo["id"], v, da_fonte, percep, modelo, len(imgs),
-                   time.time() - t0)
+            with poco.pegar() as con:
+                gravar(con, alvo["id"], v, da_fonte, percep, modelo, len(imgs),
+                       time.time() - t0)
         with trava:
             placar[v] += 1
             placar["decidido_pela_fonte"] += 1
@@ -936,13 +956,19 @@ def um_poi(con, alvo, modelo, secoes, placar, trava, aplicar) -> None:
     if isinstance(percepcao, dict):
         percepcao["_imagens"] = tipos
 
+    # O CADASTRO SAI DO BANCO ANTES DA CHAMADA, e nao dentro dela: montado no
+    # meio do argumento, ele obrigaria a segurar a conexao durante os segundos
+    # em que o modelo escreve.
+    with poco.pegar() as con:
+        cadastro = _cadastro_texto(con, alvo)
+
     # 2 · julgamento, só texto
     try:
         veredito = di._chat_local(
             modelo,
             prompt_jul % {"percepcao": json.dumps(percepcao, ensure_ascii=False,
                                                   indent=1),
-                          "cadastro": _cadastro_texto(con, alvo),
+                          "cadastro": cadastro,
                           "especies": ESPECIES, "secoes": secoes},
             None, max_tokens=400, timeout=TIMEOUT)
     except Exception as e:                                     # noqa: BLE001
@@ -974,7 +1000,9 @@ def um_poi(con, alvo, modelo, secoes, placar, trava, aplicar) -> None:
 
     dt = time.time() - t0
     if aplicar:
-        gravar(con, alvo["id"], v, veredito, percepcao, modelo, len(imgs), dt)
+        with poco.pegar() as con:
+            gravar(con, alvo["id"], v, veredito, percepcao, modelo, len(imgs),
+                   dt)
     with trava:
         placar[v] += 1
         _log("   %8d %-26s %-19s %s"
@@ -1149,11 +1177,10 @@ def rodar(area, limite, aplicar, trabalhadores, modelo, pois, refazer):
                     return
                 a = fila.pop(0)
             try:
-                # A CONEXAO E EMPRESTADA POR POI, e nao pelo tempo de vida do
-                # trabalhador: durante as duas chamadas ao modelo — que sao a
-                # maior parte do tempo — ela volta para o poco e serve outro.
-                with poco.pegar() as c:
-                    um_poi(c, a, modelo, secoes, placar, trava, aplicar)
+                # QUEM EMPRESTA E `um_poi`, e nao este laco. Embrulhar a
+                # chamada inteira aqui era o que segurava uma sessao do pooler
+                # durante os 29 s de modelo — ver a docstring de `um_poi`.
+                um_poi(poco, a, modelo, secoes, placar, trava, aplicar)
                 with trava:
                     freio["seguidas"] = 0
             except Exception as e:                             # noqa: BLE001
