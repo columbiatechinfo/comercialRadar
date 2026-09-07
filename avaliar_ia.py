@@ -1063,6 +1063,45 @@ def um_poi(poco, alvo, modelo, secoes, placar, trava, aplicar) -> None:
         percepcao["_veredito_cru"] = veredito
         v = "revisao_humana"
 
+    # SEGUNDA LEITURA DO QUE SERIA DESCARTADO. Ver `RECONFERIR_REPROVADO`.
+    #
+    # A percepcao NAO e refeita: as imagens ja foram lidas e a descricao e a
+    # mesma. O que se repete e so o julgamento, que e a chamada curta — e e ele
+    # que estava balancando.
+    if RECONFERIR_REPROVADO and v == "reprovado":
+        segundo = None
+        try:
+            segundo = di._chat_local(
+                modelo,
+                prompt_jul % {"percepcao": json.dumps(percepcao,
+                                                      ensure_ascii=False,
+                                                      indent=1),
+                              "cadastro": cadastro, "especies": ESPECIES,
+                              "secoes": secoes},
+                None, max_tokens=400, timeout=TIMEOUT)
+        except Exception:                                      # noqa: BLE001
+            # A reconferencia que falha NAO derruba o POI: fica valendo a
+            # primeira leitura, que foi valida. Transformar erro de rede em
+            # revisao humana encheria a fila de gente com defeito de rede.
+            segundo = None
+        v2 = ((segundo or {}).get("veredito") or "").strip()
+        if segundo is not None and v2 in VEREDITOS and v2 != "reprovado":
+            with trava:
+                placar["reconferido_virou_revisao"] = placar.get(
+                    "reconferido_virou_revisao", 0) + 1
+            percepcao["_reconferencia"] = {
+                "primeira": "reprovado", "segunda": v2,
+                "justificativa_da_segunda":
+                    (segundo.get("justificativa") or "")[:400]}
+            veredito["justificativa"] = (
+                "RECONFERIDO: a primeira leitura reprovou e a segunda disse "
+                "'%s'. Duas leituras da MESMA descrição discordaram, então a "
+                "decisão não é estável o bastante para descartar o imóvel. "
+                "Primeira leitura: %s"
+                % (v2, (veredito.get("justificativa") or "")[:200]))
+            v = "revisao_humana"
+            veredito["veredito"] = v
+
     # A CONFIANCA DO QUE O MODELO DECIDIU. Ele nao devolve numero, e pedir um
     # seria pedir que ele estimasse a propria certeza — coisa que modelo de
     # linguagem faz mal. O numero sai do VEREDITO, que e o que ele de fato
@@ -1204,6 +1243,35 @@ class Poco:
 #: sucesso.
 FALHAS_SEGUIDAS_LIMITE = 25
 
+#: RECONFERIR O VEREDITO QUE DESCARTA.
+#:
+#: MEDIDO em 07/09/2026, com 40 POIs julgados tres vezes cada: a MESMA pergunta,
+#: com o MESMO prompt e temperatura 0, muda de resposta em 8% dos casos. Nao e
+#: amostragem aleatoria — `_chat_local` ja manda `temperature: 0`. E
+#: nao-determinismo de lote: a vLLM junta requisicoes em lotes continuos, a
+#: composicao do lote nunca se repete, muda a ordem das reducoes em ponto
+#: flutuante, e num caso de fronteira o token escolhido muda.
+#:
+#: Os dois casos de ruido que deu para observar cairam os dois na mesma
+#: fronteira:
+#:
+#:     375957  A=reprovado       B=revisao_humana
+#:      86874  A=revisao_humana  B=reprovado
+#:
+#: E a pior fronteira que existe aqui. `reprovado` arquiva o POI para sempre;
+#: `revisao_humana` manda uma pessoa olhar. A diferenca entre perder um caso de
+#: subfaturamento e investiga-lo estava saindo de arredondamento.
+#:
+#: Entao so o veredito que DESCARTA e reconferido — e nao todos. Reconferir
+#: tudo custaria ~15% do tempo e devolveria ~8% para a pilha de revisao, que
+#: acabou de cair de 48% para 32%. Reconferir so os reprovados custa ~3%,
+#: porque reprovado e um quinto dos casos e o julgamento e a chamada curta
+#: (2 a 8 s contra os 20 s da percepcao).
+#:
+#: Discordancia nao vira aprovacao: vira `revisao_humana`, que e o balde certo
+#: para "o modelo nao sabe".
+RECONFERIR_REPROVADO = True
+
 #: A ORDEM DAS FONTES vive no `order by` de `SQL_ALVO`, e nao aqui — ela precisa
 #: ser SQL para caber no mesmo plano da consulta. Este nome existe so para quem
 #: procurar "PESO_DA_FONTE" achar o lugar certo.
@@ -1250,7 +1318,8 @@ def rodar(area, limite, aplicar, trabalhadores, modelo, pois, refazer):
     # que o problema nao era o POI.
     placar.update({"sem_evidencia": 0, "falha_percepcao": 0,
                    "falha_julgamento": 0, "fora_da_escala": 0,
-                   "decidido_pela_fonte": 0})
+                   "decidido_pela_fonte": 0,
+                   "reconferido_virou_revisao": 0})
     trava = threading.Lock()
     t0 = time.time()
 
