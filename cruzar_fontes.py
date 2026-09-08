@@ -369,6 +369,33 @@ def filtrar_para_ia(perguntar: list, tudo: bool = False) -> tuple:
     return fica, sai
 
 
+def _do_google(p: dict) -> bool:
+    """O `place_id` deste POI e do Google, ou e cracha de outra base?
+
+    ATE 08/09/2026 ISTO ERA `bool(p.get("place_id"))`, e a conta estava certa
+    quando foi escrita: so o Maps preenchia a coluna. Deixou de estar quando a
+    base estadual entrou carimbando um identificador PROPRIO ali —
+    `estadual:fsq:0004b442f78b4a59d08d2`, do Foursquare. Sao 223.511 POIs, a
+    maior fonte da base.
+
+    O ESTRAGO QUE ISSO FARIA na fusao, medido no caso que abriu a
+    investigacao: a Madeireira Maravilha existe seis vezes, e o par que
+    interessa e o POI estadual 78458 (endereco "Índio Sepe, Canoas", sem nota,
+    sem comentario) com o POI do Maps 380891 (endereco "R. da Associação,
+    292", nota 4,0, 18 comentarios). Com o teste antigo os dois "tem
+    place_id", o criterio cai no menor id, e o CEGO absorve o RICO — o mapa
+    passaria a mostrar a rua errada e os 18 comentarios virariam aba de um
+    ponto que aponta 108 m ao lado.
+
+    O identificador do Google nunca tem dois-pontos; o de outra base sempre
+    tem, porque e prefixado com o nome dela. Testar a forma e melhor que
+    testar a fonte: um POI do Maps que perdesse o rotulo continuaria sendo
+    reconhecido pelo `ChIJ...`.
+    """
+    pid = str(p.get("place_id") or "")
+    return bool(pid) and ":" not in pid
+
+
 def _sobrevivente(a: dict, b: dict) -> tuple:
     """Quem vive é quem tem o dado MAIS VERIFICÁVEL, não só o mais volumoso.
 
@@ -397,7 +424,7 @@ def _sobrevivente(a: dict, b: dict) -> tuple:
        mesmos dados poderiam eleger sobreviventes diferentes, e a ficha do
        ponto mudaria de dono sem nada ter mudado no mundo.
     """
-    ma, mb = bool(a.get("place_id")), bool(b.get("place_id"))
+    ma, mb = _do_google(a), _do_google(b)
     if ma != mb:
         return (a, b) if ma else (b, a)
     if a["evid"] != b["evid"]:

@@ -106,6 +106,58 @@ SQL = """
 """
 
 
+#: QUEM ENTRA NO MODO `--evidencia`, e a peneira e outra de proposito.
+#:
+#: A do `SQL` acima pergunta "falta dado que identifique a ligacao?". Esta
+#: pergunta "falta evidencia para julgar?" — e as respostas divergem
+#: exatamente onde doi: a Madeireira Maravilha TEM telefone (logo, sai da
+#: primeira) e NAO TEM uma linha de `maps_data` (logo, entra nesta).
+#:
+#: `fonte <> 'maps'` porque quem veio do Google ja trouxe tudo na origem.
+#: `categoria_catalogo.avaliar` porque nao adianta gastar navegador com POI
+#: que nunca sera julgado. E o veredito aprovado sai da fila por ordem do dono
+#: do produto: quem ja passou nao precisa de mais prova.
+SQL_EVIDENCIA = """
+    select p.id, p.nome, p.cidade, p.uf
+      from radar_comercial.pois p
+     where p.fundido_em is null and coalesce(p.nome,'') <> ''
+       and coalesce(p.fonte,'') <> 'maps'
+       and length(coalesce(p.nome,'')) >= %s
+       -- SEM UMA LINHA DE `maps_data` — e este o buraco que se fecha.
+       and not exists (select 1 from radar_comercial.maps_data m
+                        where m.poi_id = p.id)
+       -- SO O QUE SERIA JULGADO. Sem isto a fila traz depósito, terreno e
+       -- residencia, que nao chegam a ver a IA.
+       and exists (select 1 from radar_comercial.categoria_catalogo cc
+                    where cc.fonte = p.fonte
+                      and cc.valor = btrim(p.categoria) and cc.avaliar)
+       -- QUEM JA FOI APROVADO NAO VOLTA. Ordem do dono do produto em
+       -- 08/09/2026: a evidencia serve para decidir, e esses ja decidiram.
+       and not exists (select 1 from radar_comercial.poi_veredito v
+                        where v.poi_id = p.id
+                          -- QUATRO POR-CENTO AQUI, e nao dois.
+                          --
+                          -- Esta string passa por DUAS formatacoes antes de
+                          -- chegar ao Postgres: primeiro a que encaixa o
+                          -- filtro de area, depois a do psycopg que encaixa o
+                          -- parametro. Cada uma come metade dos por-cento.
+                          --
+                          -- Com dois, a primeira formatacao deixa um por-cento
+                          -- solto e o psycopg estoura com "IndexError: tuple
+                          -- index out of range" — erro que fala de tupla e nao
+                          -- menciona LIKE nenhum.
+                          --
+                          -- E ATENCAO AO ESCREVER COMENTARIO AQUI DENTRO: o
+                          -- texto tambem atravessa as duas formatacoes. A
+                          -- primeira versao desta nota citava o operador com o
+                          -- simbolo literal e derrubou a consulta com
+                          -- "unsupported format character".
+                          and v.veredito like 'aprovado%%%%')
+       %s
+     order by p.id
+"""
+
+
 def _log(m: str) -> None:
     print(m, flush=True)
 
@@ -136,7 +188,11 @@ def alvos(cur, cidade: str, limite: int, fontes: list, nome_min: int,
     if fontes:
         filtros += " and coalesce(p.fonte,'') = any(%s)"
         valores.append(list(fontes))
-    sql = SQL % ("%s", filtros)
+    # A PENEIRA DEPENDE DO QUE SE FOI BUSCAR. Ver `SQL_EVIDENCIA`: uma
+    # pergunta "falta dado que identifique a ligacao?", a outra "falta
+    # evidencia para julgar?", e as duas divergem justamente nos POIs que
+    # importam.
+    sql = (SQL_EVIDENCIA if EVIDENCIA else SQL) % ("%s", filtros)
     if limite:
         sql += " limit %s"
         valores.append(limite)
@@ -208,6 +264,42 @@ def gravar(con, cur, item: dict, rec: dict) -> tuple:
     return notas, gravados
 
 
+#: Ligado por `--evidencia`. Fora dele nada muda.
+EVIDENCIA = False
+
+
+async def _colher_ficha(sess, con, item, rec) -> bool:
+    """Abre o lugar que a busca casou e colhe a ficha inteira.
+
+    NAO HA COLHEITA NOVA AQUI, e essa e a graca: `minerar_placeid` faz isto ha
+    meses para os POIs do Maps — nome, categoria, endereco, telefone, site,
+    NOTA, TOTAL DE AVALIACOES, os comentarios com data, o horario e as fotos
+    publicadas. O que faltava era so alguem levar a pagina certa ate ele.
+
+    `navegar=False` porque quem navega e este codigo: `_extrair_do_ponto` so
+    sabe montar a URL a partir de um `placeId` do Google, e um POI do
+    Foursquare ou da Receita nao tem um. O que ele tem, depois da busca, e a
+    `maps_url` do lugar casado — que leva ao mesmo lugar.
+
+    FALHA AQUI NAO DERRUBA O POI. O telefone e o site que o `gravar` acabou de
+    escrever continuam valendo; perde-se a evidencia desta tentativa, e o POI
+    volta a fila na proxima rodada porque continua sem `maps_data`.
+    """
+    import minerar_placeid as mp
+    try:
+        await sess.page.goto(rec["maps_url"], wait_until="domcontentloaded",
+                             timeout=60000)
+        alvo = {"placeId": None, "lat": None, "lng": None}
+        d = await mp._extrair_do_ponto(sess.page, alvo, navegar=False)
+        if not d or not d.get("nome"):
+            return False
+        return bool(mp.gravar_um(con, item["id"], d))
+    except Exception as e:                                     # noqa: BLE001
+        _log("         ficha nao colhida: %s: %s"
+             % (type(e).__name__, str(e)[:70]))
+        return False
+
+
 async def _trabalhador(wid, fila, pw, pool, cidade, uf, con, cur, placar,
                        usar_proxy, headless):
     """Um lote por vez, um IP por lote — a forma do `search_from_sheet`."""
@@ -254,6 +346,14 @@ async def _trabalhador(wid, fila, pw, pool, cidade, uf, con, cur, placar,
                 rec = await sfs.buscar_linha(sess, item, cidade, "radar", uf)
                 notas, achou = gravar(con, cur, item, rec)
                 placar["achou_algo" if achou else "esgotado"] += 1
+                # A FICHA INTEIRA, quando se pediu evidencia e o lugar foi
+                # CASADO. `match_valido` ja foi conferido dentro do `gravar`:
+                # sem ele, o painel responde qualquer coisa e a nota do
+                # vizinho viraria a nota deste POI.
+                if EVIDENCIA and rec and rec.get("match_valido") \
+                        and rec.get("maps_url"):
+                    ok = await _colher_ficha(sess, con, item, rec)
+                    placar["ficha_colhida" if ok else "ficha_falhou"] += 1
                 for k in achou:
                     placar["campo_" + k] += 1
                 _log("      %-32s %s"
@@ -370,8 +470,14 @@ def main(argv=None) -> int:
     p.add_argument("--trabalhadores", type=int, default=4,
                    help="lotes simultâneos, um IP cada")
     p.add_argument("--sem-proxy", action="store_true")
+    p.add_argument("--evidencia", action="store_true",
+                   help="busca EVIDENCIA para a IA (nota, comentarios com "
+                        "data, fotos publicadas) em vez de dado identificador "
+                        "— e colhe a ficha inteira do lugar casado")
     p.add_argument("--aplicar", action="store_true")
     a = p.parse_args(argv)
+    global EVIDENCIA
+    EVIDENCIA = bool(a.evidencia)
     _log("▶ Maps, painel do estabelecimento%s"
          % (" · " + a.cidade if a.cidade else ""))
     rodar(a.cidade, a.uf, a.limite, a.fonte, a.nome_minimo, a.trabalhadores,
