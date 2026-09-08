@@ -111,6 +111,71 @@ sustentam o veredito e o que nas imagens confirma ou contradiz. Cite o que foi
 visto, nao o que se supoe.>"}"""
 
 
+#: QUANTAS CONEXOES, independentemente de quantos trabalhadores.
+#:
+#: O DEFEITO QUE ISTO CORRIGE, medido em 08/09/2026 na primeira corrida deste
+#: modulo: ele abria UMA CONEXAO POR TRABALHADOR e foi disparado com 80. O
+#: pooler da porta 7100 aceita 20 sessoes NO TOTAL — entre todas as maquinas, a
+#: API, o painel e as capturas —, e 64 threads morreram com
+#: `(EMAXCONNSESSION) max clients reached in session mode`.
+#:
+#: Pior: o comentario que eu tinha escrito ali dizia "o teto de trabalhadores e
+#: quem protege o pooler", e isso e falso. O teto de trabalhadores protege o
+#: MODELO; o pooler tem 20 e nao sabe quantos trabalhadores existem. O
+#: `avaliar_ia` ja tinha aprendido isso — `CONEXOES = 4` e a mesma nota no
+#: cabecalho — e eu nao segui.
+#:
+#: SEIS BASTAM porque o dossie usa o banco em rajadas curtas e a chamada ao
+#: modelo, que e o grosso do tempo, nao usa banco NENHUM. Ver `Poco.pegar`.
+CONEXOES = 6
+
+
+class Poco:
+    """Emprestimo de conexao. Quem nao pega, espera — nao abre outra.
+
+    A CONEXAO E DEVOLVIDA ANTES DA CHAMADA AO MODELO, e e isso que faz seis
+    atenderem oitenta. Montar o dossie sao dezenas de consultas de
+    milissegundos; julgar sao dez segundos de espera pela Spark. Segurar a
+    conexao durante a espera seria deixar 74 trabalhadores parados na fila do
+    banco enquanto o banco esta ocioso.
+    """
+
+    def __init__(self, n):
+        import queue
+        self.fila = queue.Queue()
+        for _ in range(max(1, n)):
+            self.fila.put(bc.conectar())
+
+    def pegar(self):
+        import contextlib
+
+        @contextlib.contextmanager
+        def _emprestar():
+            con = self.fila.get()
+            try:
+                yield con
+            except Exception:
+                # CONEXAO QUE VIU ERRO VOLTA LIMPA. Sem o rollback, a proxima
+                # a peg&-la herda a transacao abortada e morre com "current
+                # transaction is aborted" — defeito que ja custou uma rodada
+                # inteira no `minerar_placeid`.
+                try:
+                    con.rollback()
+                except Exception:                              # noqa: BLE001
+                    pass
+                raise
+            finally:
+                self.fila.put(con)
+        return _emprestar()
+
+    def fechar(self):
+        while not self.fila.empty():
+            try:
+                self.fila.get_nowait().close()
+            except Exception:                                  # noqa: BLE001
+                pass
+
+
 def _log(m):
     print(m, flush=True)
 
@@ -210,9 +275,12 @@ def marcar_intrusos(con, ligacao, resposta, ids_validos, modelo):
     return len(alvos)
 
 
-def uma(con, ligacao, modelo, secoes, placar, trava, aplicar):
+def uma(poco, ligacao, modelo, secoes, placar, trava, aplicar):
     t0 = time.time()
-    texto, imgs, tipos, resumo = dl.montar(con, ligacao, ia, imagens)
+    # O BANCO SO ENQUANTO SE MONTA O DOSSIE. Depois a conexao volta ao poco e
+    # a espera pela Spark acontece sem segurar nada.
+    with poco.pegar() as con:
+        texto, imgs, tipos, resumo = dl.montar(con, ligacao, ia, imagens)
     if texto is None:
         with trava:
             placar["sem_poi"] += 1
@@ -238,10 +306,11 @@ def uma(con, ligacao, modelo, secoes, placar, trava, aplicar):
     dt = time.time() - t0
     fora = 0
     if aplicar:
-        gravar(con, ligacao, v, resposta or {}, percepcao, resumo, modelo,
-               len(imgs), dt)
-        fora = marcar_intrusos(con, ligacao, resposta,
-                               set(resumo.get("ids") or []), modelo)
+        with poco.pegar() as con:
+            gravar(con, ligacao, v, resposta or {}, percepcao, resumo, modelo,
+                   len(imgs), dt)
+            fora = marcar_intrusos(con, ligacao, resposta,
+                                   set(resumo.get("ids") or []), modelo)
         if fora:
             with trava:
                 placar["poi_de_outro_endereco"] += fora
@@ -269,19 +338,22 @@ def rodar(limite, aplicar, trabalhadores, modelo, ligacoes, refazer):
     # UMA CONEXAO POR TRABALHADOR aqui, e nao emprestimo: o dossie faz muitas
     # consultas curtas em sequencia e a disputa por uma conexao unica seria o
     # gargalo. O teto de trabalhadores e quem protege o pooler.
+    poco = Poco(CONEXOES)
+
     def worker(fatia):
-        c = bc.conectar()
-        try:
-            for lig in fatia:
-                try:
-                    uma(c, lig, modelo, secoes, placar, trava, aplicar)
-                except Exception as e:                         # noqa: BLE001
-                    with trava:
-                        placar["falha"] += 1
-                        _log("   %-10s ERRO %s: %s"
-                             % (lig, type(e).__name__, str(e)[:60]))
-        finally:
-            c.close()
+        for lig in fatia:
+            try:
+                uma(poco, lig, modelo, secoes, placar, trava, aplicar)
+            except Exception as e:                             # noqa: BLE001
+                # A FALHA DE UMA LIGACAO NAO DERRUBA O TRABALHADOR. Na primeira
+                # corrida a excecao subia ate o `threading` e matava a thread
+                # inteira: 64 delas morreram e a fila parou de andar sem que o
+                # placar acusasse — o log dizia "Exception in thread" e mais
+                # nada.
+                with trava:
+                    placar["falha"] += 1
+                    _log("   %-10s ERRO %s: %s"
+                         % (lig, type(e).__name__, str(e)[:70]))
 
     n = max(1, trabalhadores)
     fatias = [alvos[i::n] for i in range(n)]
@@ -290,6 +362,7 @@ def rodar(limite, aplicar, trabalhadores, modelo, ligacoes, refazer):
         t.start()
     for t in threads:
         t.join()
+    poco.fechar()
 
     dt = time.time() - t0
     _log("")
