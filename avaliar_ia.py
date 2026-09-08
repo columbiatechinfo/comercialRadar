@@ -427,14 +427,20 @@ mercadoria empilhada no pátio; dois ou mais medidores numa casa aparentemente \
 comum; imagem antiga demais para o que o cadastro afirma. Se você não consegue \
 escrever qual é o sinal ambíguo, não é revisão — é reprovado.
 
-FOTO DE OFICIO NAO PROVA ENDERECO, e esta distinção é sua para fazer. A foto publicada no Google mostra o negócio, mas ela não vem com endereço: quem a tirou pode ter fotografado em casa, na casa do cliente ou num salão alugado. Separe as duas coisas:
-- INSTALAÇÃO FIXA: a foto mostra algo PRESO AO IMÓVEL — toldo, letreiro montado, fachada pintada, balcão, vitrine, prateleira, freezer de produção, box de oficina, sala de espera. Isso é o negócio ancorado num lugar.
-- SÓ O OFÍCIO: a foto mostra o produto na mão, o serviço em execução, uma bancada de trabalho, um prato, uma peça de divulgação feita em aplicativo. Isso prova que a pessoa exerce a atividade, e não onde.
+FOTO DE OFICIO NAO PROVA ENDERECO, e esta distinção é sua para fazer. A foto publicada no Google mostra o negócio, mas ela não vem com endereço: quem a tirou pode ter fotografado em casa, na casa do cliente ou num salão alugado.
 
-Responda em "sinal_no_imovel" qual dos três é o caso, olhando O CONJUNTO — as fotos de rua e a publicada:
-- "instalacao_fixa": há sinal comercial preso ao imóvel da mira, na rua ou na foto publicada.
-- "so_oficio": não há nada preso ao imóvel, e a única prova é foto de produto, de serviço ou de divulgação.
-- "nenhum": não há sinal comercial de espécie alguma.
+A PERGUNTA "sinal_no_imovel" TEM DUAS FONTES, E VOCÊ PRECISA OLHAR AS DUAS. Ela NÃO é sobre a fachada, e não repita aqui o que respondeu sobre ela — as regras acima, que mandam aprovar só o que está na fachada, valem para o VEREDITO e não para esta pergunta.
+
+A FOTO PUBLICADA FOI TIRADA DENTRO OU EM FRENTE AO ESTABELECIMENTO, por alguém que esteve lá. Quando ela mostra ESTRUTURA CONSTRUÍDA, essa estrutura está no imóvel — não se leva um toldo, um balcão nem um teto de luminárias para a casa do cliente. Então:
+
+- "instalacao_fixa": aparece algo PRESO AO IMÓVEL em QUALQUER das fontes. Vale se estiver só na foto de rua, vale se estiver só na foto publicada, vale se estiver nas duas. São coisas assim: toldo, letreiro montado, fachada pintada, balcão de atendimento, vitrine, prateleira com mercadoria, freezer cheio de produto, box de oficina, maca, cadeira de barbeiro, sala de espera, teto ou parede com a marca do negócio.
+- "so_oficio": NENHUMA das duas fontes mostra estrutura, e o que existe é produto na mão, serviço em execução em primeiro plano, um prato, uma peça de divulgação feita em aplicativo, ou uma bancada solta sem nada em volta que diga onde ela está.
+- "nenhum": nenhuma das fontes mostra sinal comercial de espécie alguma.
+
+TRÊS CASOS REAIS, para calibrar — nos três a foto de rua mostra uma casa comum, e ainda assim os dois primeiros são "instalacao_fixa":
+- toldo iluminado com o nome e o telefone montado sobre o portão da casa: instalacao_fixa. O toldo está preso ali.
+- oficina fotografada por dentro, com o logotipo na parede e luminárias no teto: instalacao_fixa. Aquele teto é do imóvel.
+- uma mão com as unhas feitas, ou um computador aberto sobre a bancada: so_oficio. Prova o trabalho, e nada diz onde ele foi feito.
 
 Responda isso SEMPRE, e responda pelo que viu — o veredito é outra pergunta.
 
