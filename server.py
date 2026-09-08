@@ -1735,6 +1735,16 @@ def listar_pois(sessao: str | None = None, area: str | None = None,
                        -- vazia; os julgamentos vivem em `poi_veredito` desde a
                        -- migracao 0066 (143 linhas hoje).
                        iv.veredito, iv.justificativa AS motivo,
+                       -- ALOCAR INSTALACAO: ha veredito e nao ha ligacao.
+                       --
+                       -- Sao 873 pontos de iFood e Airbnb que o cruzamento
+                       -- automatico nao conseguiu ligar a nenhum hidrometro.
+                       -- A IA ja os julgou pela ficha da plataforma — loja no
+                       -- ar, hospede recente —, e o unico dado que falta e
+                       -- justamente o mais facil de completar com o endereco
+                       -- na mao. A bandeira existe para o operador achar
+                       -- essa fila em vez de o trabalho da maquina se perder.
+                       iv.alocar_instalacao,
                        NULL::boolean AS recomendar_visita,
                        NULL::text AS tipo_construcao,
                        COALESCE(p.revisar_manual, false) AS revisar_manual, p.cidade,
@@ -1745,7 +1755,8 @@ def listar_pois(sessao: str | None = None, area: str | None = None,
                 -- sido julgado mais de uma vez (recalibracao do prompt, segunda
                 -- olhada); sem o `distinct on` o ponto se duplicaria no mapa.
                 LEFT JOIN LATERAL (
-                    SELECT pv.veredito, pv.justificativa
+                    SELECT pv.veredito, pv.justificativa,
+                           pv.alocar_instalacao
                       FROM poi_veredito pv
                      WHERE pv.poi_id = p.id
                      ORDER BY pv.avaliado_em DESC NULLS LAST, pv.id DESC
@@ -1872,7 +1883,8 @@ def listar_pois(sessao: str | None = None, area: str | None = None,
                     "tem_cnpj", "situacao_cadastral", "endereco_fonte", "tem_tel", "tem_sv", "tem_foto",
                     "multiorigem", "n_fontes", "cruz_flag", "num_ligacao",
                     "e_comercial", "categoria_ligacao",
-                    "veredito", "motivo", "recomendar_visita", "tipo_construcao", "revisar_manual",
+                    "veredito", "motivo", "alocar_instalacao",
+                    "recomendar_visita", "tipo_construcao", "revisar_manual",
                     "cidade", "place_id"]
             pois = [dict(zip(cols, row)) for row in cur.fetchall()]
             # CORTE DECLARADO. Um mapa que mostra 8 mil de 301 mil sem dizer

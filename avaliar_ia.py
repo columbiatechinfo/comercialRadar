@@ -514,13 +514,44 @@ SQL_ALVO = """
        and exists (select 1 from radar_comercial.categoria_catalogo cc
                     where cc.fonte = p.fonte
                       and cc.valor = btrim(p.categoria) and cc.avaliar)
-       and exists (select 1
-                     from radar_comercial.ligacao_poi lp
-                     join resources_root.cadastro_corsan l
-                          on l.num_ligacao::text = lp.ligacao
-                    where lp.poi_id = p.id
-                      and upper(l.categoria) = 'RESIDENCIAL'
-                      and upper(coalesce(l.sit_ligacao,'')) = 'ATIVA')
+       -- TER LIGACAO RESIDENCIAL ATIVA, OU NAO TER LIGACAO NENHUMA.
+       --
+       -- A primeira metade e a regra de sempre, e continua sendo o caminho
+       -- normal: o achado que vale dinheiro e o comercio sentado num
+       -- hidrometro residencial, e sem saber QUAL hidrometro o veredito nao
+       -- vira cobranca.
+       --
+       -- A segunda metade e o ALOCAR INSTALACAO, aberto em 07/09/2026. O
+       -- cruzamento automatico nao acha ligacao para todo ponto — sao 873 de
+       -- iFood e Airbnb sem nenhuma. Ate aqui eles simplesmente nao existiam
+       -- para o sistema, e sao justamente os casos de MAIOR certeza que
+       -- temos: a loja esta no ar e o anuncio recebeu hospede recente, prova
+       -- que nenhuma fachada da. Descartar o mais certo por falta do dado
+       -- mais facil de completar e o pior negocio possivel.
+       --
+       -- Entao a IA julga, o veredito e gravado, e `alocar_instalacao` marca
+       -- que falta escolher a instalacao — trabalho de humano, com o endereco
+       -- na mao. Ver a migracao 0078.
+       --
+       -- SO VALE PARA QUEM NAO TEM LIGACAO ALGUMA. Quem tem uma ligacao
+       -- COMERCIAL ja esta cobrado certo e nao e achado nenhum; quem tem
+       -- residencial cai na primeira metade. O buraco e so o vazio.
+       --
+       -- E SO PARA iFOOD E AIRBNB porque so eles se provam sem imagem. As
+       -- outras fontes sem ligacao — 19.809 pontos — tambem nao tem foto, ja
+       -- que a fila da captura exige ligacao pelo mesmo motivo: seriam
+       -- julgadas sem evidencia nenhuma, o que nao e julgar.
+       and (exists (select 1
+                      from radar_comercial.ligacao_poi lp
+                      join resources_root.cadastro_corsan l
+                           on l.num_ligacao::text = lp.ligacao
+                     where lp.poi_id = p.id
+                       and upper(l.categoria) = 'RESIDENCIAL'
+                       and upper(coalesce(l.sit_ligacao,'')) = 'ATIVA')
+            or (p.fonte in ('ifood', 'airbnb')
+                and not exists (select 1
+                                  from radar_comercial.ligacao_poi lp0
+                                 where lp0.poi_id = p.id)))
        %(filtro)s
      -- A ORDEM E A CONFIANCA DO VINCULO, e nao o `id`.
      --
@@ -597,8 +628,17 @@ SQL_POR_ID = """
            st_y(p.pt_geo::geometry), st_x(p.pt_geo::geometry)
       from radar_comercial.pois p
      where p.id = any(%s)
+       -- O BYTE PODE ESTAR NO STORAGE.
+       --
+       -- Mesmo descuido que a fila principal teve e que foi corrigido nela:
+       -- desde 07/09/2026 `poi_evidencia` guarda CAMINHO para as 65.316
+       -- imagens adequadas da captura antiga, e bytea so para as capturadas
+       -- pelo caminho novo. Exigir `dados` aqui fazia o `--poi` responder
+       -- "0 POI(s) com evidencia na fila" para POIs que TEM imagem — e a
+       -- mensagem culpava a captura, que nao tinha nada a ver.
        and exists (select 1 from radar_comercial.poi_evidencia e
-                    where e.poi_id = p.id and e.dados is not null)
+                    where e.poi_id = p.id
+                      and (e.dados is not null or e.storage_path is not null))
      order by p.id
 """
 
@@ -1571,9 +1611,24 @@ def gravar(con, poi_id, v, veredito, percepcao, modelo, n_imgs, dt):
         k.execute("""
             insert into radar_comercial.poi_veredito
                 (poi_id, veredito, justificativa, especie_cnefe, secao_cnae,
-                 medidores, percepcao, modelo, imagens, segundos, confianca)
-            values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                 medidores, percepcao, modelo, imagens, segundos, confianca,
+                 alocar_instalacao)
+            -- A BANDEIRA E CALCULADA AQUI, e nao recebida como parametro.
+            --
+            -- ALOCAR INSTALACAO quer dizer: existe veredito e nao existe
+            -- ligacao vinculada, entao um humano precisa escolher qual
+            -- instalacao recebe este ponto. E um fato do banco, nao uma
+            -- decisao de quem chamou a funcao — e por isso ele nao pode
+            -- esquecer de passa-la, nem passa-la errada.
+            --
+            -- Derivar no proprio INSERT tambem faz a bandeira se corrigir
+            -- sozinha: apareceu o vinculo depois, o proximo julgamento a
+            -- apaga. Guardada como parametro, ela envelheceria em silencio.
+            values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                    not exists (select 1 from radar_comercial.ligacao_poi lp
+                                 where lp.poi_id = %s))
             on conflict (id_empresa, poi_id) do update set
+                alocar_instalacao = excluded.alocar_instalacao,
                 veredito = excluded.veredito,
                 justificativa = excluded.justificativa,
                 especie_cnefe = excluded.especie_cnefe,
@@ -1592,7 +1647,10 @@ def gravar(con, poi_id, v, veredito, percepcao, modelo, n_imgs, dt):
               # mede atualidade — loja no ar, hospede recente; pela fachada,
               # o quanto a leitura se sustenta. Mesma regua 0..1 de
               # `ligacao_poi.confianca`, para as duas caberem na mesma tela.
-              veredito.get("confianca")))
+              veredito.get("confianca"),
+              # DE NOVO O `poi_id`: e o argumento do `not exists` acima. O
+              # psycopg posiciona por ordem, nao por nome.
+              poi_id))
     con.commit()
 
 

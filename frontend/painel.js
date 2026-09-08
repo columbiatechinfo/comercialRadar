@@ -720,7 +720,16 @@
       ` · ${escapar(e.rotulo)}</small>` +
       (p.veredito
         ? `<br><small style="color:${corDoPoi(p)}">IA: ${escapar(p.veredito)}</small>`
-        : '<br><small style="color:#94a3b8">IA: ainda não julgado</small>');
+        : '<br><small style="color:#94a3b8">IA: ainda não julgado</small>') +
+      // O VEREDITO SAIU, A LIGAÇÃO NÃO. Este ponto tem julgamento da IA e
+      // nenhum hidrômetro vinculado — o cruzamento automático não achou
+      // qual é. Não é erro nem dúvida sobre o comércio: é uma tarefa de
+      // gente, com o endereço na mão. Fica embaixo do veredito porque é
+      // exatamente isso que ele quer dizer aqui — "aprovado, e agora
+      // alguém escolhe onde".
+      (p.alocar_instalacao
+        ? '<br><small style="color:#b45309;font-weight:600">⚑ ALOCAR INSTALAÇÃO</small>'
+        : "");
   }
 
   function escapar(s) {
@@ -743,6 +752,7 @@
         if (a === "tel" && !p.tem_tel) return false;
         if (a === "foto" && !p.tem_foto) return false;
         if (a === "sv" && !p.tem_sv) return false;
+        if (a === "alocar" && !p.alocar_instalacao) return false;
         if (a === "multi" && !p.multiorigem) return false;
       }
       if (q) {
@@ -781,6 +791,9 @@
     const attrs = [
       ["cnpj", "Com CNPJ"], ["tel", "Com telefone"], ["foto", "Com foto"],
       ["sv", "Com visão de fachada"], ["multi", "Multiorigem"],
+      // A FILA DE TRABALHO HUMANO, num clique. Sem este filtro os 873 pontos
+      // que esperam uma instalação ficam espalhados no meio de 300 mil.
+      ["alocar", "Alocar instalação"],
     ];
     const alvoAttr = $("f-atributos");
     alvoAttr.innerHTML = "";
