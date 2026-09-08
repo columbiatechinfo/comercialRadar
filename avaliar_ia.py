@@ -225,14 +225,30 @@ mal_conservado_habitado|mal_conservado_desabitado|indefinido",
 #: percepcao cega, mas e o mais perto que se chega dela numa chamada so — e o
 #: JSON de saida guarda a descricao inteira, entao continua sendo possivel
 #: auditar o que ele disse ter visto contra o que decidiu.
-PROMPT_UNICO = """Você recebe %(n)s imagens do MESMO endereço e o que um
+#: A ORDEM DAS PARTES E ESCOLHIDA PELO CACHE DE PREFIXO, e nao por estilo.
+#:
+#: TUDO QUE VARIA POR POI FICA NO FIM. O vLLM guarda o calculo do prefixo
+#: comum entre requisicoes, mas so ate o primeiro token que muda — dai em
+#: diante recalcula. Entao a ordem do texto decide quanto se aproveita.
+#:
+#: MEDIDO em 07/09/2026, comparando os prompts de dois POIs: o prefixo comum
+#: era de DOZE caracteres. A abertura dizia "Você recebe %(n)s imagens", e o
+#: numero muda — um POI tem cinco imagens, outro tem tres. O bloco de 8.685
+#: caracteres de regras, identico em toda chamada, vinha DEPOIS do cadastro,
+#: que muda sempre. Ligar o cache no servidor sem mexer nisto nao renderia
+#: nada.
+#:
+#: Agora a abertura nao cita quantidade, a lista das visadas desceu para
+#: junto do cadastro, e as regras subiram: o prefixo constante passa a ser
+#: todo o texto ate o fim das regras.
+#:
+#: AS IMAGENS VAO NO FIM por construcao — `_chat_local` monta o conteudo com
+#: o texto primeiro e as imagens depois. Se fosse ao contrario, o prefixo
+#: quebraria na primeira imagem e nada disto adiantaria.
+PROMPT_UNICO = """Você recebe VÁRIAS imagens do MESMO endereço e o que um
 cadastro afirma sobre ele. Faça DUAS coisas, nesta ordem, e não troque a ordem:
 primeiro DESCREVA o que está nas imagens; só depois COMPARE com o cadastro e
-decida.
-
-AS IMAGENS, nesta ordem:
-
-%(lista)s
+decida. A lista exata do que você recebeu vem no fim, antes do cadastro.
 
 AS PRIMEIRAS SÃO FOTOS DE RUA, tiradas do mesmo lugar girando a câmera. \
 Quando houver FOTO PUBLICADA NO GOOGLE, ela é de outra natureza: alguém que \
@@ -261,10 +277,14 @@ de cima.
 
 PARTE 2 — DECIDIR. Só agora leia o cadastro e compare com a SUA descrição.
 
+%(julgar)s
+
+AS IMAGENS QUE VOCÊ RECEBEU, nesta ordem:
+
+%(lista)s
+
 O QUE O CADASTRO AFIRMA:
 %(cadastro)s
-
-%(julgar)s
 
 Responda SOMENTE um JSON, com as duas partes:
 {

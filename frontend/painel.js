@@ -2491,7 +2491,7 @@
         // volta a ser a Spark. O campo permite pedir menos numa maquina
         // ocupada — o que o numero fixo nao permitia em nenhuma direcao.
         body: JSON.stringify({ modo: "avaliar_ia", opcoes: {
-          workers: parseInt($("np-ia-workers")?.value) || 40 } }),
+          workers: parseInt($("np-ia-workers")?.value) || 80 } }),
       }).catch(() => null);
       const j = r ? await r.json().catch(() => ({})) : {};
       if (!r || !r.ok) {
