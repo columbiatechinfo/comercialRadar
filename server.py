@@ -1160,6 +1160,60 @@ def avaliacao_fila():
             cur.execute("""select veredito, count(*)
                              from radar_comercial.poi_veredito group by 1""")
             todos_vereditos = dict(cur.fetchall())
+            # O ANDAMENTO REAL E POR LIGACAO desde 08/09/2026.
+            #
+            # O mapa passou a pintar pelo veredito do hidrometro (migracao
+            # 0082) e este bloco continuava somando `poi_veredito`: o operador
+            # veria o mapa de uma cor e o numero de outra, que e exatamente a
+            # contradicao que a mudanca existe para acabar.
+            #
+            # Os dois viajam: `por_veredito` segue sendo do POI, porque a
+            # ficha do ponto ainda o mostra como "o que esta fonte observou".
+            # O que manda na tela de andamento e este.
+            cur.execute("""
+                select v.veredito, v.modelo = 'regra' as pela_regra, count(*)
+                  from radar_comercial.ligacao_veredito v
+                 group by 1, 2""")
+            lig_por_veredito, lig_pela_regra = {}, 0
+            for ver, regra, n in cur.fetchall():
+                lig_por_veredito[ver] = lig_por_veredito.get(ver, 0) + n
+                if regra:
+                    lig_pela_regra += n
+            # A FILA E O QUE FALTA, e nao o total: RESIDENCIAL ATIVA, com POI
+            # de categoria avaliavel, sem veredito de ligacao ainda. E a mesma
+            # peneira do `avaliar_ligacao.fila`, para os dois numeros nao
+            # divergirem na tela.
+            # ANTI-JOIN, e nao `not exists` correlacionado.
+            #
+            # MEDIDO em 08/09/2026: 17,3 s na primeira escrita. O `not exists`
+            # roda uma busca por LIGACAO — sao 236 mil vinculos —, e esta e
+            # justamente a rota que o painel chama ao abrir. Somada ao resto da
+            # rota, que ja era pesada, ela passava de cinco minutos.
+            #
+            # Reduzir primeiro e juntar depois muda a ordem do trabalho: o
+            # `distinct` interno deixa dezenas de milhares de ligacoes, e o
+            # `left join ... is null` casa esse punhado contra a tabela de
+            # vereditos numa hash so.
+            cur.execute("""
+                with candidatas as (
+                  select distinct lp.ligacao
+                    from radar_comercial.ligacao_poi lp
+                    join resources_root.cadastro_corsan l
+                         on l.num_ligacao::text = lp.ligacao
+                    join radar_comercial.pois p
+                         on p.id = lp.poi_id and p.fundido_em is null
+                   where upper(l.categoria) = 'RESIDENCIAL'
+                     and upper(coalesce(l.sit_ligacao,'')) = 'ATIVA'
+                     and lp.descartado_em is null
+                     and exists (select 1 from radar_comercial.categoria_catalogo cc
+                                  where cc.fonte = p.fonte
+                                    and cc.valor = btrim(p.categoria) and cc.avaliar))
+                select count(*)
+                  from candidatas c
+                  left join radar_comercial.ligacao_veredito v
+                         on v.ligacao = c.ligacao
+                 where v.ligacao is null""")
+            lig_na_fila = cur.fetchone()[0]
     finally:
         conn.close()
 
@@ -1179,7 +1233,11 @@ def avaliacao_fila():
             julgados += 1
             por_veredito[ver] = por_veredito.get(ver, 0) + 1
     return {"alvos": alvos, "com_evidencia": com_img, "julgados": julgados,
-            "por_veredito": por_veredito, "vereditos_no_banco": todos_vereditos}
+            "por_veredito": por_veredito, "vereditos_no_banco": todos_vereditos,
+            "ligacoes_julgadas": sum(lig_por_veredito.values()),
+            "ligacoes_por_veredito": lig_por_veredito,
+            "ligacoes_pela_regra": lig_pela_regra,
+            "ligacoes_na_fila": lig_na_fila}
 
 
 @app.post("/api/categorias/marcar")

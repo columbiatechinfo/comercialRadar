@@ -1177,11 +1177,45 @@
     barras($("s-atributos"), linhas, total, true);
     barras($("m-atributos"), linhas, total, false);
 
-    const pv = s.por_veredito || {};
+    // AS BARRAS CONTAM HIDRÔMETROS, e não pontos, desde 08/09/2026.
+    //
+    // O mapa passou a pintar pelo veredito da ligação e este bloco somava
+    // `poi_veredito`: o operador veria o mapa de uma cor e o número de outra,
+    // que é exatamente a contradição que a mudança existe para acabar.
+    //
+    // O de POI fica como reserva, para o caso de a nova contagem ainda não
+    // ter chegado — um painel sem barra nenhuma é pior que uma barra velha.
+    const lv = s.ligacoes_por_veredito;
+    const pv = lv || s.por_veredito || {};
+    const baseIa = lv
+      ? (s.ligacoes_julgadas || 0) + (s.ligacoes_na_fila || 0)
+      : total;
     const ia = VEREDITOS.map(([k, rot, cor]) => [rot, pv[k] || 0, cor])
       .filter((r) => r[1] > 0);
-    barrasIa($("s-ia"), ia, total, true);
-    barrasIa($("m-ia"), ia, total, false);
+    barrasIa($("s-ia"), ia, baseIa, true);
+    barrasIa($("m-ia"), ia, baseIa, false);
+
+    // O ANDAMENTO EM UMA LINHA, abaixo das barras. Sem ele o operador vê a
+    // repartição e não sabe se ela cobre a cidade toda ou um décimo dela.
+    if (lv) {
+      const feito = s.ligacoes_julgadas || 0;
+      const falta = s.ligacoes_na_fila || 0;
+      const regra = s.ligacoes_pela_regra || 0;
+      const txt = `${feito.toLocaleString("pt-BR")} hidrômetros decididos` +
+        (regra ? ` · ${regra.toLocaleString("pt-BR")} por regra` : "") +
+        (falta ? ` · faltam ${falta.toLocaleString("pt-BR")}` : " · fila vazia");
+      ["s-ia", "m-ia"].forEach((id) => {
+        const el = $(id);
+        if (!el) return;
+        let p = el.parentElement.querySelector(".andamento-lig");
+        if (!p) {
+          p = document.createElement("p");
+          p.className = "andamento-lig mt-1.5 text-[11px] text-gray-400";
+          el.parentElement.appendChild(p);
+        }
+        p.textContent = txt;
+      });
+    }
   }
 
   // "JÁ COBRADO COMO COMÉRCIO" É O CONTRAPONTO do cartão de cima: quanto do
