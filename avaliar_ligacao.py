@@ -43,6 +43,21 @@ VEREDITOS = ia.VEREDITOS
 #: A escala e a MESMA do `avaliar_ia`, de proposito. O painel ja pinta por ela,
 #: o operador ja a leu mil vezes, e o que mudou foi o sujeito do julgamento —
 #: nao o vocabulario dele.
+#: A ORDEM DAS PARTES E ESCOLHIDA PELO CACHE DE PREFIXO.
+#:
+#: O DOSSIE VEM NO FIM, e nao no meio. O vLLM guarda o calculo do prefixo
+#: comum entre requisicoes, mas so ate o primeiro token que muda — dai em
+#: diante recalcula tudo.
+#:
+#: A PRIMEIRA VERSAO DESTE MODULO punha `%(dossie)s` antes do bloco de regras,
+#: que tem 8.685 caracteres identicos em toda chamada. Medido na fila real:
+#: ZERO por cento de acerto de cache, contra os 42 por cento que o
+#: `avaliar_ia` tira do mesmo modelo. Foi o mesmo erro que eu havia corrigido
+#: nele em 07/09 e documentado; escrevi o modulo novo sem aplicar.
+#:
+#: Agora todo o texto invariavel vem primeiro — a explicacao, as regras de
+#: pesar testemunhas, as regras de julgar e o esquema do JSON — e so entao o
+#: dossie e a lista de imagens, que mudam a cada hidrometro.
 PROMPT = """Você decide se UMA LIGACAO DE AGUA esta com a tarifa errada.
 
 O contexto: a companhia cobra este hidrometro como RESIDENCIAL. Se houver
@@ -55,13 +70,7 @@ Maps, o iFood — registrou o lugar por conta propria, em epocas diferentes e
 sem falar com as outras. Elas NAO sao copias a descartar: sao observacoes
 independentes, e quando convergem valem mais do que qualquer uma sozinha.
 
-%(dossie)s
-
-AS IMAGENS, nesta ordem:
-
-%(lista)s
-
-AS PRIMEIRAS SAO FOTOS DE RUA do imovel MAIS PROXIMO DO HIDROMETRO, tiradas do
+AS PRIMEIRAS IMAGENS SAO FOTOS DE RUA do imovel MAIS PROXIMO DO HIDROMETRO, tiradas do
 mesmo ponto girando a camera; a primeira tem uma mira no centro marcando o
 alvo. Quando houver FOTO PUBLICADA NO GOOGLE, ela e de outra natureza: alguem
 que esteve no lugar fotografou o que ele faz.
@@ -108,7 +117,15 @@ Responda SOMENTE um JSON:
  "sinal_no_imovel": "instalacao_fixa|so_oficio|nenhum",
  "justificativa": "<um paragrafo, ate 70 palavras, dizendo QUAIS fontes
 sustentam o veredito e o que nas imagens confirma ou contradiz. Cite o que foi
-visto, nao o que se supoe.>"}"""
+visto, nao o que se supoe.>"}
+
+────────────────────────────────────────────────────────────────────────
+
+%(dossie)s
+
+AS IMAGENS QUE VOCE RECEBEU, nesta ordem:
+
+%(lista)s"""
 
 
 #: QUANTAS CONEXOES, independentemente de quantos trabalhadores.
