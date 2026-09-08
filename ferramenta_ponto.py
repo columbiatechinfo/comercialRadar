@@ -130,6 +130,46 @@ def guardar_ponto(nome: str, lat: float = None, lng: float = None,
     return saida
 
 
+def _tem_fachada(poi_id: int) -> bool:
+    """Ja existe foto de rua deste POI, com byte de verdade?
+
+    `storage_path` CONTA COMO FOTO. A adequacao de 07/09/2026 moveu 65.316
+    imagens para o Storage e deixou `dados` nulo; olhar so os bytes mandaria
+    refotografar tudo o que acabou de ser adequado.
+    """
+    con = bc.conectar()
+    try:
+        with con.cursor() as k:
+            k.execute("""select exists (
+                             select 1 from radar_comercial.poi_evidencia e
+                              where e.poi_id = %s and e.tipo = 'sv_frente'
+                                and (e.dados is not null
+                                     or e.storage_path is not null))""",
+                      (poi_id,))
+            return bool((k.fetchone() or [False])[0])
+    finally:
+        con.close()
+
+
+def _motivo_sem_fachada(poi_id: int):
+    """'NA' quando o Google confirma que nao ha panorama; None se so falhou.
+
+    A DISTINCAO E O VALOR DESTA FUNCAO, e ela ja custou uma mensagem errada
+    antes: sem panorama e definitivo por ora, falha e para tentar de novo.
+    """
+    con = bc.conectar()
+    try:
+        with con.cursor() as k:
+            k.execute("""select motivo_falha
+                           from radar_comercial.poi_evidencia
+                          where poi_id = %s and tipo = 'sv_frente'
+                          order by id desc limit 1""", (poi_id,))
+            m = (k.fetchone() or [None])[0] or ""
+        return "NA" if m.startswith("o Google confirma") else None
+    finally:
+        con.close()
+
+
 def _fachada(poi_id: int, la: float, lo: float) -> dict:
     """Captura o Street View, se ainda não houver.
 
@@ -138,41 +178,29 @@ def _fachada(poi_id: int, la: float, lo: float) -> dict:
     por um erro de captura seria o pior negócio possível.
     """
     try:
-        con = bc.conectar()
-        try:
-            with con.cursor() as k:
-                k.execute("""select streetview_path is not null
-                                    and streetview_path not in ('', 'NA')
-                               from radar_comercial.pois where id = %s""",
-                          (poi_id,))
-                linha = k.fetchone()
-        finally:
-            con.close()
-        if linha and linha[0]:
+        # A PROVA MUDOU DE LUGAR. Ate 07/09/2026 "tem fachada" era
+        # `pois.streetview_path` preenchido, apontando para arquivo em disco.
+        # A captura de hoje grava linha em `poi_evidencia`, com os bytes ou o
+        # caminho no Storage, e nao volta para carimbar a coluna antiga.
+        # Perguntar pela coluna era perguntar por um mundo que acabou: a
+        # resposta seria sempre "nao tem", e o ponto seria refotografado a
+        # cada chamada.
+        if _tem_fachada(poi_id):
             return {"estado": "ja_tinha"}
 
         import asyncio
 
-        import streetview_capture as SV
+        import capturar_evidencia as CE
 
-        # `run` já aceita uma lista de ids — é o mesmo caminho da captura em
-        # lote, com um alvo só. Escrever uma captura própria aqui criaria uma
-        # segunda versão da lógica de panorama, giro e recorte, e as duas
+        # `rodar` aceita uma lista de ids — e o mesmo caminho da captura em
+        # lote, com um alvo so. Escrever uma captura propria aqui criaria uma
+        # segunda versao da logica de panorama, giro e recorte, e as duas
         # divergiriam no primeiro ajuste.
-        asyncio.run(SV.run(workers=1, limit=0, refazer=False, ids=[poi_id]))
+        asyncio.run(CE.rodar(None, 0, True, 1, pois=[poi_id]))
 
-        con = bc.conectar()
-        try:
-            with con.cursor() as k:
-                k.execute("""select streetview_path
-                               from radar_comercial.pois where id = %s""",
-                          (poi_id,))
-                caminho = (k.fetchone() or [None])[0]
-        finally:
-            con.close()
-
-        if caminho and caminho not in ("", "NA"):
+        if _tem_fachada(poi_id):
             return {"estado": "capturada"}
+        caminho = _motivo_sem_fachada(poi_id)
         # TRÊS RESULTADOS, e confundi-los engana quem lê.
         #
         # 'NA' é o Street View respondendo que ali não há panorama — definitivo

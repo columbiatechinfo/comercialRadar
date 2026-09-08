@@ -36,7 +36,7 @@ import avaliar_fachada as AF
 import base_comum as bc
 import imagens
 import prompts_fachada as P
-import streetview_capture as SV
+import streetview_geo as SV
 import endpoints
 
 MODELO = os.environ.get("VLLM_MODELO", "qwen3vl-moe")

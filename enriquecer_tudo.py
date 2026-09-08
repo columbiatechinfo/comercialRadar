@@ -42,7 +42,7 @@ from extract_full import enriquecer_poi
 
 import enriquecer_maps as EM
 import minerar_web as MW
-import streetview_capture as SV
+import capturar_evidencia as CE
 
 BASE = Path(__file__).resolve().parent
 
@@ -420,10 +420,11 @@ def _sem_streetview_na_area(poligono, so_pobres: bool = False,
     nota."""
     conn = realtime_ingest.conectar()
     try:
-        # Quem tem `streetview_path` gravado mas nenhuma imagem em
-        # `streetview_imgs` volta para a fila aqui — senão o filtro logo abaixo
-        # o pula para sempre, e ele também nunca chega à avaliação por IA.
-        SV.soltar_presos(conn)
+        # `soltar_presos` SAIU em 07/09/2026, junto com a tabela que ela
+        # destravava. Ela devolvia à fila quem tinha `streetview_path` gravado
+        # e nenhuma imagem em `streetview_imgs`; `streetview_imgs` não existe
+        # mais, e o filtro abaixo agora pergunta direto a `poi_evidencia`, que
+        # é onde a foto está — sem intermediário para ficar preso.
         with conn.cursor() as cur:
             cur.execute(f"""
                 SELECT p.id, COALESCE(p.maps_lat, p.lat_origem),
@@ -431,11 +432,20 @@ def _sem_streetview_na_area(poligono, so_pobres: bool = False,
                   FROM pois p
                  WHERE p.match_valido IS NOT FALSE
                    AND COALESCE(p.maps_lat, p.lat_origem) IS NOT NULL
+                   -- QUEM NAO TEM FOTO EM `poi_evidencia`, e nao mais quem
+                   -- tem `streetview_path` vazio. A coluna antiga apontava
+                   -- para arquivo em disco e a captura de hoje nao a preenche:
+                   -- perguntar por ela devolveria a base inteira, sempre.
+                   --
                    -- 'NA' volta à fila a cada rodada da ÁREA: cobertura nova
                    -- aparece, e a marca já se provou falha demais para ser
                    -- definitiva. Quem não tem panorama mesmo custa uma consulta
-                   -- de metadados, que é grátis.
-                   AND (p.streetview_path IS NULL OR p.streetview_path IN ('', 'NA'))
+                   -- de metadados, que é grátis. Por isso o `motivo_falha` nao
+                   -- entra aqui: so os bytes contam como feito.
+                   AND NOT EXISTS (SELECT 1 FROM radar_comercial.poi_evidencia e
+                                    WHERE e.poi_id = p.id AND e.tipo = 'sv_frente'
+                                      AND (e.dados IS NOT NULL
+                                           OR e.storage_path IS NOT NULL))
                    {"AND p.id = ANY(%(alvo)s::bigint[])" if alvo else ""}
                    {f'AND {_SQL_POBRE}' if so_pobres else ''}
                    {'' if incluir_ja_comerciais else f'AND NOT {_SQL_JA_COMERCIAL}'}""",
@@ -469,8 +479,8 @@ async def fase_streetview(workers, prog, poligono, so_pobres: bool = False,
           flush=True)
     if not ids:
         return
-    # grava streetview_path direto no banco
-    await SV.run(workers=workers, limit=0, refazer=False, ids=ids)
+    # grava as quatro visadas em `poi_evidencia`, com mira e recorte
+    await CE.rodar(None, 0, True, workers, pois=ids)
 
 
 # ──────────────────────────────────────────────────────────────────────────
