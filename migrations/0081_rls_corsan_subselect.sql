@@ -1,0 +1,40 @@
+-- 0081 · a politica de leitura da `cadastro_corsan` chamava a funcao POR LINHA.
+--
+-- MEDIDO em 07/09/2026, cronometrando `avaliar_ia.um_poi` trecho a trecho:
+-- 14,5 s dos 23,1 s por POI — 63 por cento do tempo — eram UMA consulta, a de
+-- `ligacoes_texto`. O plano lia 10 milhoes de buffers para devolver 2 linhas.
+--
+-- A mesma consulta, rodada como superusuario (RLS desligada), levava 282 ms.
+-- Cinquenta e duas vezes mais rapido. A diferenca inteira era a politica.
+--
+--     p_corsan_le      (core.eh_suporte() OR (id_empresa = core.empresa_atual()))
+--     p_corsan_escreve (core.eh_suporte() OR ((id_empresa = core.empresa_atual())
+--                       AND ((SELECT core.hierarquia_atual()) >= 40)))
+--
+-- Repare que a politica de ESCRITA ja envolvia a chamada em subselect. So a de
+-- leitura ficou sem — e e a que todo mundo usa.
+--
+-- POR QUE O SUBSELECT MUDA TUDO: sem ele o Postgres trata a chamada como parte
+-- do predicado de cada linha e a executa 2.516.709 vezes, e um predicado assim
+-- nao permite usar indice. Envolvida em `(select ...)`, ela vira um InitPlan —
+-- avaliada UMA VEZ por consulta, com o resultado tratado como constante.
+--
+-- E POR QUE E EQUIVALENTE, e nao um atalho: `core.eh_suporte()` e
+-- `core.empresa_atual()` sao declaradas STABLE (`provolatile = 's'`), o que
+-- significa, por definicao do Postgres, que devolvem o mesmo valor para todas
+-- as linhas dentro de uma mesma instrucao. Levar a chamada para fora do laco
+-- nao pode mudar o resultado — so o numero de vezes que ela roda. Este e o
+-- padrao que o `CLAUDE.md` deste projeto exige, e que a politica irma ja usa.
+--
+-- A TABELA E DE OUTRO SERVICO. `resources_root` pertence ao servico de
+-- recursos, e mexer nela foi decisao explicita do dono do produto em
+-- 07/09/2026, depois de ver a medicao. O `server.py` ja tinha esbarrado neste
+-- mesmo custo em 04/09 e contornou copiando a categoria para `ligacao_poi`
+-- (migracao 0068) — o contorno resolveu um consumidor; isto resolve todos.
+--
+-- PARA VOLTAR, se algum dia for preciso:
+--   alter policy p_corsan_le on resources_root.cadastro_corsan
+--       using (core.eh_suporte() or id_empresa = core.empresa_atual());
+alter policy p_corsan_le on resources_root.cadastro_corsan
+    using ((select core.eh_suporte())
+           or id_empresa = (select core.empresa_atual()));
