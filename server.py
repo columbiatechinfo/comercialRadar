@@ -4341,6 +4341,76 @@ async def portao(request: Request, call_next):
         _auth.USUARIO_DA_REQUISICAO.reset(ficha)
 
 
+# ── Regras destraváveis ──────────────────────────────────────────────────────
+#
+# Decisão de produto que muda de resposta conforme a operação mora em
+# `radar_comercial.regra` (migração 0080), e não em constante no código. O
+# motivo é operacional antes de ser elegante: inverter um booleano em Python
+# custaria commit, build, deploy e reinício de container, e — pior — ninguém
+# que opera o sistema conseguiria ver qual regra está valendo sem ler código.
+#
+# A LEITURA É PARA QUEM ENTRA; A ESCRITA É NÍVEL 4. Ver a regra é parte de
+# entender o que o sistema está fazendo, e esconder isso de quem opera produz
+# exatamente a surpresa que a tabela existe para evitar. Já destravar a captura
+# de 19 mil pontos, ou mudar o teto do veredito, move dinheiro: é decisão de
+# quem responde pelo produto. A policy `regra_mexer` já exige nível 4 — o
+# `exige("admin")` aqui é a mesma porta, fechada um passo antes, para o
+# usuário receber 403 com explicação em vez de um UPDATE que afeta zero linhas
+# e volta dizendo "ok".
+
+
+class RegraEntrada(BaseModel):
+    ativo: bool
+
+
+@app.get("/api/regras")
+def regras_listar(u: _auth.Usuario = Depends(_auth.usuario_atual)):
+    con = _auth.conectar_como(u)
+    try:
+        with con.cursor() as cur:
+            cur.execute("""select chave, ativo, rotulo, descricao, custo,
+                                  atualizado_em, atualizado_por
+                             from radar_comercial.regra order by chave""")
+            return {"regras": [
+                {"chave": c, "ativo": a, "rotulo": r, "descricao": d,
+                 "custo": k, "atualizado_em": e.isoformat() if e else None,
+                 "atualizado_por": p}
+                for c, a, r, d, k, e, p in cur.fetchall()]}
+    finally:
+        con.close()
+
+
+@app.put("/api/regras/{chave}")
+def regras_mexer(chave: str, e: RegraEntrada,
+                 u: _auth.Usuario = Depends(_auth.exige("admin"))):
+    """Destrava ou trava uma regra.
+
+    A CONTA É POR `rowcount`, E NÃO POR EXCEÇÃO. A policy `regra_mexer` filtra
+    pelo `USING`, e UPDATE barrado por RLS não levanta erro nenhum: ele afeta
+    zero linhas e a transação responde sucesso. Medir pela exceção devolveria
+    "regra alterada" para quem não tinha permissão, e a tela mostraria o botão
+    virado enquanto o banco continuava como estava.
+    """
+    con = _auth.conectar_como(u)
+    try:
+        with con.cursor() as cur:
+            cur.execute("""update radar_comercial.regra
+                              set ativo = %s, atualizado_em = now(),
+                                  atualizado_por = %s
+                            where chave = %s""",
+                        (e.ativo, (u.email or str(u.id))[:120], chave))
+            n = cur.rowcount
+        if not n:
+            con.rollback()
+            raise HTTPException(
+                403, "não deu para mudar a regra '%s': ou ela não existe, ou "
+                     "seu nível não alcança (é preciso nível 4)" % chave)
+        con.commit()
+        return {"chave": chave, "ativo": e.ativo}
+    finally:
+        con.close()
+
+
 # ── Empresas clientes (CRUD) ─────────────────────────────────────────────────
 #
 # A conexão vem de `auth.conectar_como(u)`: o papel muda conforme o nível e a

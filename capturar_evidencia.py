@@ -44,7 +44,7 @@ import time
 
 import area_utils
 import base_comum as bc
-import streetview_capture as sv
+import streetview_geo as sv
 
 LARG, ALT = 1280, 900
 
@@ -263,14 +263,40 @@ SQL_ALVO = """
     select distinct p.id, st_y(p.pt_geo::geometry), st_x(p.pt_geo::geometry),
            coalesce(p.nome,''), coalesce(p.fonte,''), coalesce(p.categoria,'')
       from radar_comercial.pois p
-      join radar_comercial.ligacao_poi lp on lp.poi_id = p.id
-      join resources_root.cadastro_corsan l on l.num_ligacao::text = lp.ligacao
       join radar_comercial.categoria_catalogo cc
             on cc.fonte = p.fonte and cc.valor = btrim(p.categoria)
      where p.pt_geo is not null
        and cc.avaliar
-       and upper(l.categoria) = 'RESIDENCIAL'
-       and upper(coalesce(l.sit_ligacao,'')) = 'ATIVA'
+       -- TER LIGACAO RESIDENCIAL ATIVA, OU — se a regra estiver destravada —
+       -- NAO TER LIGACAO NENHUMA.
+       --
+       -- A primeira metade e a regra de sempre, e o motivo dela e bom: sem
+       -- saber qual imovel a ligacao serve, a foto nao vira cobranca. Mas ela
+       -- deixa 20.905 pontos invisiveis duas vezes — sem vinculo e, por causa
+       -- disso, sem foto —, e entre eles estao 2.100 do Maps, a fonte de
+       -- menor reprovacao medida.
+       --
+       -- A segunda metade abre por `radar_comercial.regra`, e nao por
+       -- constante no codigo: destravar custa 11 h de proxy e a fila da IA
+       -- depois, e essa e decisao de quem responde pelo produto, tomada na
+       -- tela e nao num deploy. Ver a migracao 0080.
+       --
+       -- OS DOIS JOINS VIRARAM `exists` de proposito. Como `or`, eles
+       -- multiplicariam as linhas do POI por cada ligacao candidata antes de o
+       -- `distinct` limpar — e o produto de 300 mil POIs por 65 mil vinculos
+       -- ja custou 4 minutos parados na fila da IA, em 04/09/2026. Em
+       -- `exists` cada condicao para no primeiro acerto e nada e duplicado.
+       and (exists (select 1
+                      from radar_comercial.ligacao_poi lp
+                      join resources_root.cadastro_corsan l
+                           on l.num_ligacao::text = lp.ligacao
+                     where lp.poi_id = p.id
+                       and upper(l.categoria) = 'RESIDENCIAL'
+                       and upper(coalesce(l.sit_ligacao,'')) = 'ATIVA')
+            or (%(sem_ligacao)s::int = 1
+                and not exists (select 1
+                                  from radar_comercial.ligacao_poi lp0
+                                 where lp0.poi_id = p.id)))
        -- QUEM JA TEM FOTO NAO VOLTA. Quem FALHOU volta, e essa distincao
        -- custou 17 POIs de 143 na primeira corrida do bloco de Canoas.
        --
@@ -294,8 +320,18 @@ SQL_ALVO = """
                           -- Street View de graca para obter o que ja esta la.
                           and (e.dados is not null
                                or e.storage_path is not null
-                               or e.motivo_falha like 'o Google confirma%'
-                               or e.motivo_falha like 'MAPS_JS_KEY%'))
+                          -- OS POR-CENTO SAO LITERAIS DO `LIKE`, E VAO
+                          -- DOBRADOS. Enquanto esta consulta rodava sem
+                          -- parametro nenhum — `cur.execute(SQL_ALVO)` —, o
+                          -- psycopg nao olhava a string e um por-cento solto
+                          -- passava batido. Agora ela recebe `sem_ligacao`, o
+                          -- driver interpreta a string inteira, e o solitario
+                          -- vira "argument formats can't be mixed": um erro
+                          -- que fala de formato de argumento e nao menciona
+                          -- LIKE nenhum, entao quem o ler vai procurar no
+                          -- lugar errado.
+                               or e.motivo_falha like 'o Google confirma%%'
+                               or e.motivo_falha like 'MAPS_JS_KEY%%'))
 -- A CONDICAO QUE OLHAVA `streetview_imgs` SAIU em 07/09/2026.
        --
        -- Ela existia para nao refotografar quem ja tinha a captura antiga.
@@ -316,6 +352,29 @@ SQL_POR_ID = """
 """
 
 
+#: O QUE VALE SE A TABELA DE REGRAS NAO RESPONDER.
+#:
+#: Fechado. Uma trava que abre sozinha porque o banco piscou nao e trava: o
+#: custo de nao capturar e adiar; o de capturar 19 mil pontos sem ninguem ter
+#: pedido sao 11 h de proxy pago do usuario.
+CAPTURAR_SEM_LIGACAO_PADRAO = False
+
+
+def regra_ativa(con, chave: str) -> bool:
+    """A regra `chave` esta destravada? Ver a migracao 0080."""
+    try:
+        with con.cursor() as k:
+            k.execute("select ativo from radar_comercial.regra "
+                      "where chave = %s", (chave,))
+            r = k.fetchone()
+            if r is not None:
+                return bool(r[0])
+    except Exception as e:                                     # noqa: BLE001
+        _log("   nao consegui ler a regra %s (%s) — valendo o padrao"
+             % (chave, str(e)[:60]))
+    return CAPTURAR_SEM_LIGACAO_PADRAO
+
+
 def alvos(con, poligono, limite, pois=None):
     """A fila. Com `--poi` a lista é EXATAMENTE a pedida, sem filtro nenhum.
 
@@ -327,7 +386,11 @@ def alvos(con, poligono, limite, pois=None):
     if pois:
         cur.execute(SQL_POR_ID, (list(pois),))
     else:
-        cur.execute(SQL_ALVO)
+        sem = regra_ativa(con, "capturar_sem_ligacao")
+        if sem:
+            _log("   regra `capturar_sem_ligacao` DESTRAVADA: entram também "
+                 "os POIs sem ligação vinculada")
+        cur.execute(SQL_ALVO, {"sem_ligacao": 1 if sem else 0})
     fora = 0
     saida = []
     for pid, la, lo, nome, fonte, cat in cur.fetchall():

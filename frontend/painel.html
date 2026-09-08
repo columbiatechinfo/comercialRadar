@@ -207,6 +207,17 @@
         <span>Workflow de aprovação</span>
       </a>
 
+      <!-- AS REGRAS FICAM VISIVEIS PARA QUEM OPERA, e nao so para quem
+           pode muda-las. A tabela `radar_comercial.regra` existe justamente
+           para que ninguem seja surpreendido por um comportamento que so o
+           codigo conhecia; esconder a tela de quem nao e admin recriaria a
+           surpresa. O botao de destravar e que exige nivel 4. -->
+      <button type="button" id="btn-regras" class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="size-5 shrink-0"><rect x="4" y="10" width="16" height="11" rx="2"></rect><path d="M8 10V7a4 4 0 0 1 8 0"></path><circle cx="12" cy="15.5" r="1.2" fill="currentColor" stroke="none"></circle></svg>
+        <span>Regras do sistema</span>
+        <span id="sel-regras-marca" class="ml-auto text-[10px] font-semibold uppercase tracking-wide text-amber-600"></span>
+      </button>
+
       <button type="button" id="btn-filtros" class="nav-item">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="size-5 shrink-0"><path d="M3 5h18"></path><path d="M6 12h12"></path><path d="M10 19h4"></path></svg>
         <span>Filtrar POI's exibidos</span>
@@ -326,6 +337,20 @@
       <button type="button" id="btn-limpar-filtros" class="flex-1 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">Limpar</button>
       <button type="button" data-fechar class="flex-1 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700">Aplicar</button>
     </div>
+  </section>
+
+  <section id="p-regras" class="hidden w-[380px] shrink-0 flex-col border-r border-gray-200 bg-white">
+    <div class="flex items-center justify-between border-b border-gray-100 px-5 py-4">
+      <h2 class="text-[15px] font-semibold text-gray-900">Regras do sistema</h2>
+      <button type="button" data-fechar class="rounded-md p-1 text-gray-400 hover:bg-gray-50 hover:text-gray-600">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" class="size-4"><path d="M18 6L6 18M6 6l12 12"></path></svg>
+      </button>
+    </div>
+    <p class="border-b border-gray-100 px-5 py-3 text-[11.5px]/[16px] text-gray-500">
+      Decisões que mudam o que o sistema faz com o seu dado. Cada uma diz o que
+      muda e o que custa — trocar exige nível administrador.
+    </p>
+    <div id="lista-regras" class="flex flex-1 flex-col gap-y-4 overflow-y-auto px-5 py-5"></div>
   </section>
 
   <!-- ───────────────────────── principal ───────────────────────────── -->

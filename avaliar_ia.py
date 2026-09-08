@@ -286,6 +286,7 @@ mal_conservado_habitado|mal_conservado_desabitado|indefinido",
  "achou_estabelecimento": true|false,
  "veredito": "<um dos quatro>",
  "especie_cnefe": <1-8|null>, "secao_cnae": "<letra|null>",
+ "sinal_no_imovel": "instalacao_fixa|so_oficio|nenhum",
  "justificativa": "<um parágrafo, até 60 palavras, dizendo o que na SUA \
 descrição sustenta o veredito. Cite o que foi visto, não o que se supõe.>"
 }"""
@@ -426,6 +427,17 @@ mercadoria empilhada no pátio; dois ou mais medidores numa casa aparentemente \
 comum; imagem antiga demais para o que o cadastro afirma. Se você não consegue \
 escrever qual é o sinal ambíguo, não é revisão — é reprovado.
 
+FOTO DE OFICIO NAO PROVA ENDERECO, e esta distinção é sua para fazer. A foto publicada no Google mostra o negócio, mas ela não vem com endereço: quem a tirou pode ter fotografado em casa, na casa do cliente ou num salão alugado. Separe as duas coisas:
+- INSTALAÇÃO FIXA: a foto mostra algo PRESO AO IMÓVEL — toldo, letreiro montado, fachada pintada, balcão, vitrine, prateleira, freezer de produção, box de oficina, sala de espera. Isso é o negócio ancorado num lugar.
+- SÓ O OFÍCIO: a foto mostra o produto na mão, o serviço em execução, uma bancada de trabalho, um prato, uma peça de divulgação feita em aplicativo. Isso prova que a pessoa exerce a atividade, e não onde.
+
+Responda em "sinal_no_imovel" qual dos três é o caso, olhando O CONJUNTO — as fotos de rua e a publicada:
+- "instalacao_fixa": há sinal comercial preso ao imóvel da mira, na rua ou na foto publicada.
+- "so_oficio": não há nada preso ao imóvel, e a única prova é foto de produto, de serviço ou de divulgação.
+- "nenhum": não há sinal comercial de espécie alguma.
+
+Responda isso SEMPRE, e responda pelo que viu — o veredito é outra pergunta.
+
 CLASSIFIQUE TAMBÉM, e são duas perguntas independentes:
 - ESPÉCIE DA EDIFICAÇÃO (código do CNEFE): %(especies)s
 - SEÇÃO DA ATIVIDADE (letra da CNAE): %(secoes)s
@@ -435,6 +447,7 @@ atividade identificável.
 Responda SOMENTE um JSON:
 {"veredito": "<um dos quatro>", "especie_cnefe": <1-8|null>,
  "secao_cnae": "<letra|null>", "medidores": <int|null>,
+ "sinal_no_imovel": "instalacao_fixa|so_oficio|nenhum",
  "justificativa": "<um parágrafo, até 60 palavras, dizendo o que na descrição \
 sustenta o veredito. Cite o que foi visto, não o que se supõe.>"}"""
 
@@ -900,6 +913,51 @@ DA_FACHADA = {"facade": "sv_frente", "g90": "sv_lado_a",
 # corte das mesmas fotos, e a mira nunca chegava a existir.
 
 
+#: AS REGRAS DESTRAVAVEIS, lidas do banco uma vez por processo.
+#:
+#: `radar_comercial.regra` guarda decisao de produto que muda de resposta
+#: conforme a operacao — ver a migracao 0080. Escrever isso em constante no
+#: Python resolveria hoje e cobraria depois: inverter um booleano viraria
+#: commit, build, deploy e reinicio de container, e ninguem que opera o
+#: sistema conseguiria ver qual regra esta valendo sem ler codigo.
+_REGRAS = {}
+_REGRAS_TRAVA = threading.Lock()
+
+
+def regra_ativa(poco, chave: str) -> bool:
+    """A regra `chave` esta destravada?
+
+    CARGA PREGUICOSA, E NAO NO `rodar`. Este modulo e chamado de tres lugares
+    — o CLI, o worker do painel e os scripts de bancada, que importam
+    `um_poi` direto —, e so o primeiro passa pelo `rodar`. Carregando aqui, a
+    regra vale nos tres; carregando la, ela valeria num e sumiria nos outros,
+    que e a pior forma de defeito: o mesmo POI decidido de dois jeitos
+    conforme quem o chamou.
+
+    Falha de leitura devolve o PADRAO DE CODIGO e nao explode. A regra e uma
+    trava de politica, nao uma dependencia: banco fora do ar nao pode parar o
+    julgamento, so faze-lo cair no comportamento declarado abaixo.
+    """
+    with _REGRAS_TRAVA:
+        if not _REGRAS:
+            try:
+                with poco.pegar() as con:
+                    with con.cursor() as k:
+                        k.execute("select chave, ativo "
+                                  "from radar_comercial.regra")
+                        _REGRAS.update({r[0]: bool(r[1])
+                                        for r in k.fetchall()})
+            except Exception as e:                             # noqa: BLE001
+                _log("   nao consegui ler as regras (%s) — valendo o padrao"
+                     % str(e)[:60])
+                _REGRAS.update(REGRAS_PADRAO)
+        return bool(_REGRAS.get(chave, REGRAS_PADRAO.get(chave, False)))
+
+
+#: O QUE VALE SE O BANCO NAO RESPONDER. Mesmo padrao com que as duas nasceram.
+REGRAS_PADRAO = {"teto_prova_so_foto": True, "capturar_sem_ligacao": False}
+
+
 def _regras_de_julgar(secoes):
     """O miolo de `PROMPT_JULGAR`, sem cabecalho e sem o fecho do JSON.
 
@@ -1179,6 +1237,13 @@ def _sinal_do_maps(con, alvo) -> list:
     coments = []
     for autor, quando, nota, texto in cur.fetchall():
         coments.append((_dias_atras(quando), autor, quando, nota, texto))
+
+    # A IDADE DA MAIS NOVA FICA GUARDADA NO ALVO, para o teto da prova
+    # so-foto poder consulta-la sem uma segunda ida ao banco. Ela ja foi
+    # calculada aqui, comentario a comentario; refaze-la depois seria pagar
+    # duas vezes pela mesma conta.
+    idades = [c[0] for c in coments if c[0] is not None]
+    alvo["_dias_ultima_avaliacao"] = min(idades) if idades else None
     if not coments:
         return linhas
 
@@ -1568,6 +1633,47 @@ def _fechar(poco, alvo, percepcao, veredito, imgs, modelo, secoes,
                 "decisão não é estável o bastante para descartar o imóvel. "
                 "Primeira leitura: %s"
                 % (v2, (veredito.get("justificativa") or "")[:200]))
+            v = "revisao_humana"
+            veredito["veredito"] = v
+
+    # TETO DA PROVA SO-FOTO — regra `teto_prova_so_foto`, migracao 0080.
+    #
+    # O MODELO RELATA, O CODIGO DECIDE. Instrucao no prompt nao segura o que a
+    # estrutura permite: pedir "nao aprove com foto de oficio" e esperar
+    # obediencia ja falhou antes. Aqui ele responde uma pergunta de PERCEPCAO
+    # — o que a foto mostra — e o teto e aritmetica nossa sobre a resposta.
+    #
+    # MEDIDO em 07/09/2026, auditando os 139 que sairam de reprovado para
+    # aprovacao: 98 deles (setenta e um por cento) foram aprovados com a
+    # fachada sem sinal comercial nenhum, e 39 desses tem no maximo tres
+    # avaliacoes — dez sem nenhuma. Olhando seis com os proprios olhos, dois
+    # eram exagero: uma mao com unhas feitas e um notebook aberto na bancada
+    # com uma xicara de cafe. As duas fotos provam o oficio; nenhuma prova
+    # estabelecimento naquele endereco, e a justificativa dizia "no local".
+    #
+    # AVALIACAO RECENTE DISPENSA O TETO, e por isso os dois anos: quem
+    # escreveu esteve la, e um cliente descrevendo o servico prestado prova o
+    # endereco melhor que qualquer fachada. O teto e para quem nao tem nem
+    # isso.
+    if (v in ("aprovado_exato", "aprovado_comercial")
+            and (veredito.get("sinal_no_imovel") or "").strip().lower()
+                == "so_oficio"
+            and regra_ativa(poco, "teto_prova_so_foto")):
+        dias = alvo.get("_dias_ultima_avaliacao")
+        if dias is None or dias > 730:
+            with trava:
+                placar["teto_prova_so_foto"] = placar.get(
+                    "teto_prova_so_foto", 0) + 1
+            percepcao["_teto_prova_so_foto"] = {
+                "veredito_do_modelo": v,
+                "dias_da_avaliacao_mais_nova": dias}
+            veredito["justificativa"] = (
+                "TETO: o modelo escolheu '%s', mas relatou que nao ha sinal "
+                "comercial preso ao imovel — a unica prova e foto de oficio, "
+                "que mostra a atividade e nao o endereco. Sem avaliacao de "
+                "cliente dos ultimos dois anos, isso e revisao humana. "
+                "Leitura do modelo: %s"
+                % (v, (veredito.get("justificativa") or "")[:200]))
             v = "revisao_humana"
             veredito["veredito"] = v
 

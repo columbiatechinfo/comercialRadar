@@ -1404,11 +1404,86 @@
     $("btn-desenhar").className = classeNav(estado.modo === "desenho");
     $("btn-municipio").className = classeNav(estado.modo === "municipio");
     $("btn-filtros").className = classeNav(estado.painel === "filtros");
+    $("btn-regras").className = classeNav(estado.painel === "regras");
+  }
+
+  // ── regras destraváveis ─────────────────────────────────────────────────
+  //
+  // A TELA MOSTRA O TEXTO DA REGRA, e não só o interruptor. Um botão
+  // "capturar sem ligação" sozinho não diz que destravá-lo são 11 h de proxy e
+  // 19 mil pontos; sem isso a tela vira uma armadilha educada. O texto vem do
+  // banco junto com o estado, para descrição e comportamento nunca separarem.
+
+  async function carregarRegras() {
+    const alvo = $("lista-regras");
+    alvo.innerHTML = '<p class="text-[12px] text-gray-400">carregando…</p>';
+    let regras = [];
+    try {
+      const r = await fetch("/api/regras");
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      regras = (await r.json()).regras || [];
+    } catch (e) {
+      alvo.innerHTML = '<p class="text-[12px] text-red-600">' +
+        escapar("não consegui ler as regras: " + (e.message || e)) + "</p>";
+      return;
+    }
+    alvo.innerHTML = "";
+    for (const r of regras) alvo.appendChild(cartaoDaRegra(r));
+    const n = regras.filter((r) => r.ativo).length;
+    $("sel-regras-marca").textContent = n ? n + " ativa" + (n > 1 ? "s" : "") : "";
+  }
+
+  function cartaoDaRegra(r) {
+    const cx = document.createElement("div");
+    cx.className = "rounded-lg border border-gray-200 p-4";
+    const quando = r.atualizado_em
+      ? new Date(r.atualizado_em).toLocaleDateString("pt-BR")
+      : null;
+    cx.innerHTML =
+      '<div class="flex items-start justify-between gap-x-3">' +
+        '<span class="text-[13.5px] font-semibold text-gray-900">' +
+          escapar(r.rotulo) + "</span>" +
+        '<button type="button" class="shrink-0 rounded-full px-2.5 py-1 text-[10.5px] font-semibold uppercase tracking-wide ' +
+          (r.ativo ? "bg-emerald-600 text-white" : "bg-gray-200 text-gray-600") +
+          '">' + (r.ativo ? "ativa" : "travada") + "</button>" +
+      "</div>" +
+      '<p class="mt-2 text-[11.5px]/[17px] text-gray-600">' + escapar(r.descricao) + "</p>" +
+      '<p class="mt-2 border-t border-gray-100 pt-2 text-[11px]/[16px] text-amber-700">' +
+        escapar(r.custo) + "</p>" +
+      (quando
+        ? '<p class="mt-1.5 text-[10.5px] text-gray-400">mudada em ' + escapar(quando) +
+          (r.atualizado_por ? " por " + escapar(r.atualizado_por) : "") + "</p>"
+        : "");
+    cx.querySelector("button").addEventListener("click", () => virarRegra(r));
+    return cx;
+  }
+
+  async function virarRegra(r) {
+    // A CONFIRMAÇÃO DIZ O CUSTO, e não "tem certeza?". Quem clica precisa ver
+    // o número antes, não depois.
+    const acao = r.ativo ? "TRAVAR" : "DESTRAVAR";
+    if (!window.confirm(acao + " a regra “" + r.rotulo + "”?\n\n" + r.custo)) return;
+    try {
+      const resp = await fetch("/api/regras/" + encodeURIComponent(r.chave), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ativo: !r.ativo }),
+      });
+      if (!resp.ok) {
+        const j = await resp.json().catch(() => ({}));
+        throw new Error(j.detail || ("HTTP " + resp.status));
+      }
+    } catch (e) {
+      window.alert("não deu para mudar: " + (e.message || e));
+    }
+    carregarRegras();
   }
 
   function abrirPainel(qual) {
     estado.painel = estado.painel === qual ? null : qual;
-    for (const [id, nome] of [["p-municipios", "municipios"], ["p-filtros", "filtros"]]) {
+    for (const [id, nome] of [["p-municipios", "municipios"],
+                              ["p-filtros", "filtros"],
+                              ["p-regras", "regras"]]) {
       const el = $(id);
       const on = estado.painel === nome;
       el.classList.toggle("hidden", !on);
@@ -2166,6 +2241,10 @@
     });
 
     $("btn-filtros").addEventListener("click", () => abrirPainel("filtros"));
+    $("btn-regras").addEventListener("click", () => {
+      abrirPainel("regras");
+      if (estado.painel === "regras") carregarRegras();
+    });
     document.querySelectorAll("[data-fechar]").forEach((b) =>
       b.addEventListener("click", () => abrirPainel(null)));
 
