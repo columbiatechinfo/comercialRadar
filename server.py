@@ -4436,6 +4436,184 @@ async def portao(request: Request, call_next):
         _auth.USUARIO_DA_REQUISICAO.reset(ficha)
 
 
+# ── As ligações do mapa ──────────────────────────────────────────────────────
+#
+# O MAPA PASSA A MOSTRAR HIDROMETROS, e nao pontos de interesse. Decisao do
+# dono do produto em 08/09/2026: "no mapa os pontos exibidos devem ser as
+# instalacoes da cidade em questao". Faz sentido porque e a instalacao que
+# fatura errado; o POI e testemunha sobre ela.
+#
+# SAO 102.131 EM CANOAS, e por isso a resposta e COMPACTA: listas posicionais
+# em vez de objetos com nome de campo repetido cem mil vezes. Um objeto por
+# linha com sete chaves gastaria cerca de 12 MB de JSON; assim fica perto de
+# 4 MB, e o navegador monta os buffers da GPU direto do array.
+#
+# CODIGOS EM VEZ DE TEXTO pelo mesmo motivo: "RESIDENCIAL" repetido 88.767
+# vezes sao 900 KB de nada. O de-para vai no cabecalho da resposta.
+
+CAT_LIG = {"RESIDENCIAL": 0, "COMERCIAL": 1, "INDUSTRIAL": 2, "PUBLICA": 3}
+# AS SEIS SITUACOES QUE A BASE DE CANOAS USA, e nao quatro. As duas ultimas
+# apareceram na primeira medicao como codigo 9 — 146 provisorias e 30
+# desativadas que teriam ido para o balde de "desconhecido" e sumido da
+# legenda sem ninguem notar.
+SIT_LIG = {"ATIVA": 0, "INATIVA": 1, "CORTADA": 2, "CORTE PEDIDO": 3,
+           "PROVISÓRIA": 4, "DESATIVADA": 5}
+VER_LIG = {"aprovado_exato": 1, "aprovado_comercial": 2,
+           "revisao_humana": 3, "reprovado": 4}
+
+# SO NUMERO NESTA RESPOSTA. A primeira versao mandava logradouro, numero e
+# bairro de todas as 102.131 linhas — 8,6 MB, sendo que esse texto so importa
+# quando alguem CLICA num ponto. O mapa desenha por coordenada e cor; o
+# endereco vem em `/api/ligacoes/<num>`, uma linha por vez.
+#
+# E O VINCULO VEM DE UM CONJUNTO, e nao de um `lateral` por linha. Medido em
+# 08/09/2026: 102,5 s na primeira escrita, porque o lateral roda uma busca
+# para CADA uma das 102 mil ligacoes. Montar antes o conjunto distinto das
+# ligacoes que tem vinculo — sao dezenas de milhares — e casar com hash troca
+# cem mil buscas por duas varreduras.
+SQL_LIGACOES_MAPA = """
+with vinculadas as (
+    select distinct lp.ligacao
+      from radar_comercial.ligacao_poi lp
+     where lp.descartado_em is null
+)
+select l.num_ligacao,
+       l.cod_latitude::float8, l.cod_longitude::float8,
+       upper(coalesce(l.categoria, '')),
+       upper(coalesce(l.sit_ligacao, '')),
+       (vi.ligacao is not null) as tem_vinculo,
+       lv.veredito
+  from resources_root.cadastro_corsan l
+  left join vinculadas vi on vi.ligacao = l.num_ligacao::text
+  left join radar_comercial.ligacao_veredito lv
+         on lv.ligacao = l.num_ligacao::text
+ where l.cod_latitude is not null and l.cod_longitude is not null
+   and (%(cidade)s::text is null
+        or upper(coalesce(l.cidade, '')) like upper(%(cidade)s))
+   and (%(wkt)s::text is null
+        or st_covers(st_geogfromtext(%(wkt)s),
+                     st_setsrid(st_makepoint(l.cod_longitude::float8,
+                                             l.cod_latitude::float8), 4326)::geography))
+"""
+
+
+@app.get("/api/ligacoes")
+def listar_ligacoes(cidade: str | None = None, area: str | None = None):
+    """As ligações para o mapa desenhar. Uma linha por hidrômetro.
+
+    O QUE CADA POSIÇÃO SIGNIFICA vai em `campos`, e o de-para dos códigos em
+    `categorias`, `situacoes` e `vereditos`. O front nao precisa saber de cor
+    nem de simbolo aqui: isso e decisao de desenho, e muda sem mexer na rota.
+    """
+    wkt = None
+    if area:
+        poly = area_utils.carregar_area(area)
+        if not poly:
+            raise HTTPException(404, "área '%s' não encontrada" % area)
+        anel = list(poly)
+        if anel and anel[0] != anel[-1]:
+            anel.append(anel[0])
+        wkt = "POLYGON((%s))" % ", ".join("%f %f" % (lo, la) for la, lo in anel)
+    conn = realtime_ingest.conectar()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(SQL_LIGACOES_MAPA,
+                        {"cidade": ("%%%s%%" % cidade) if cidade else None,
+                         "wkt": wkt})
+            linhas = []
+            for (num, la, lo, cat, sit, vinc, ver) in cur:
+                linhas.append([
+                    int(num), round(la, 6), round(lo, 6),
+                    CAT_LIG.get(cat, 9), SIT_LIG.get(sit, 9),
+                    1 if vinc else 0, VER_LIG.get(ver, 0)])
+    finally:
+        conn.close()
+    return {
+        "campos": ["ligacao", "lat", "lng", "categoria", "situacao",
+                   "tem_vinculo", "veredito"],
+        "categorias": {v: k for k, v in CAT_LIG.items()},
+        "situacoes": {v: k for k, v in SIT_LIG.items()},
+        "vereditos": {v: k for k, v in VER_LIG.items()},
+        "total": len(linhas),
+        "linhas": linhas,
+    }
+
+
+@app.get("/api/ligacoes/{num}")
+def detalhe_ligacao(num: int):
+    """A ficha de UM hidrômetro: o cadastro do cliente e as abas das fontes.
+
+    E ISTO QUE O CLIQUE ABRE. O mapa carrega cem mil pontos com sete numeros
+    cada; tudo o que e texto — endereco, nome do cliente, os POIs vinculados, o
+    veredito e a justificativa — vem aqui, uma ligacao por vez.
+
+    SEM VÍNCULO A FICHA NÃO FICA VAZIA: devolve o cadastro do cliente do mesmo
+    jeito. Uma ligação sem POI e informacao — e a residencial comum, ou a
+    comercial que a extracao ainda nao alcancou — e o operador precisa ver isso
+    ao clicar, e nao um painel em branco que parece defeito.
+    """
+    conn = realtime_ingest.conectar()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                select l.num_ligacao, coalesce(l.categoria,''),
+                       coalesce(l.sit_ligacao,''), coalesce(l.nom_logradouro,''),
+                       coalesce(l.nro,''), coalesce(l.nom_bairro,''),
+                       coalesce(l.cod_cep,''), coalesce(l.nom_cliente,''),
+                       coalesce(l.qtd_eco_res,0), coalesce(l.qtd_eco_com,0),
+                       coalesce(l.qtd_eco_ind,0), coalesce(l.qtd_eco_pub,0),
+                       l.cod_latitude::float8, l.cod_longitude::float8,
+                       coalesce(l.num_medidor,''), coalesce(l.classificacao,'')
+                  from resources_root.cadastro_corsan l
+                 where l.num_ligacao = %s limit 1""", (num,))
+            r = cur.fetchone()
+            if not r:
+                raise HTTPException(404, "ligação %s não encontrada" % num)
+            cad = dict(zip(
+                ["ligacao", "categoria", "situacao", "logradouro", "numero",
+                 "bairro", "cep", "cliente", "eco_res", "eco_com", "eco_ind",
+                 "eco_pub", "lat", "lng", "medidor", "classificacao"], r))
+
+            # AS ABAS: uma por POI vinculado, na ordem da confianca do vinculo.
+            cur.execute("""
+                select p.id, coalesce(p.fonte,''), coalesce(p.nome,''),
+                       coalesce(p.categoria,''), coalesce(p.endereco,''),
+                       coalesce(p.telefone,''), coalesce(p.website,''),
+                       coalesce(p.cnpj,''), lp.metros, lp.confianca,
+                       v.veredito, v.justificativa,
+                       m.avaliacao, m.total_avaliacoes,
+                       lp.descartado_em is not null as descartado,
+                       lp.descartado_motivo
+                  from radar_comercial.ligacao_poi lp
+                  join radar_comercial.pois p on p.id = lp.poi_id
+                  left join radar_comercial.poi_veredito v on v.poi_id = p.id
+                  left join radar_comercial.maps_data m on m.poi_id = p.id
+                 where lp.ligacao = %s and p.fundido_em is null
+                 order by lp.descartado_em nulls first,
+                          lp.confianca desc nulls last, p.id""", (str(num),))
+            cols = ["poi", "fonte", "nome", "categoria", "endereco", "telefone",
+                    "site", "cnpj", "metros", "confianca", "veredito",
+                    "motivo", "nota", "avaliacoes", "descartado",
+                    "descartado_motivo"]
+            abas = [dict(zip(cols, x)) for x in cur.fetchall()]
+
+            cur.execute("""
+                select veredito, justificativa, confianca, pois, fontes,
+                       modelo, avaliado_em
+                  from radar_comercial.ligacao_veredito
+                 where ligacao = %s limit 1""", (str(num),))
+            vr = cur.fetchone()
+    finally:
+        conn.close()
+    veredito = None
+    if vr:
+        veredito = {"veredito": vr[0], "justificativa": vr[1],
+                    "confianca": float(vr[2]) if vr[2] is not None else None,
+                    "pois": vr[3], "fontes": vr[4], "modelo": vr[5],
+                    "avaliado_em": vr[6].isoformat() if vr[6] else None}
+    return {"cadastro": cad, "abas": abas, "veredito": veredito}
+
+
 # ── Regras destraváveis ──────────────────────────────────────────────────────
 #
 # Decisão de produto que muda de resposta conforme a operação mora em

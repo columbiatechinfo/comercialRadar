@@ -947,6 +947,12 @@ Clique numa rodada para ver no mapa só os pontos que ela trouxe.
 </div>
 
 <script src="/static/sessao.js"></script>
+<!-- deck.gl desenha os 102.131 hidrometros numa chamada de GPU.
+     Marcador DOM morre nessa ordem de grandeza e canvas 2D tambem:
+     sao 102 mil `drawImage` por quadro. Versao fixa de proposito —
+     `@latest` num mapa em producao e mudar de motor sem avisar. -->
+<script src="https://unpkg.com/deck.gl@9.0.35/dist.min.js"></script>
+<script src="/static/mapa_ligacoes.js"></script>
 <script src="/static/painel.js"></script>
 </body>
 </html>

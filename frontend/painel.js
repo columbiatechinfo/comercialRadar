@@ -756,6 +756,9 @@
   // ── filtros ─────────────────────────────────────────────────────────────
 
   function poisFiltrados() {
+    // A CAMADA DE HIDROMETROS SEGUE JUNTO. Ela desenha na GPU e nao participa
+    // do laco de marcadores abaixo, entao precisa ser avisada aqui.
+    try { aplicarFiltroLigacoes(); } catch (e) { /* camada ainda nao montou */ }
     const f = estado.filtros;
     const q = ($("busca").value || "").trim().toLowerCase();
     return estado.pois.filter((p) => {
@@ -1694,7 +1697,7 @@
         else if (m.tipo === "progresso" && m.dados) pintarProgresso(m.dados);
         else if (m.tipo === "log" && m.linha) linhaLog(m.linha);
         else if (m.tipo === "poi" && m.poi) chegouPoi(m.poi);
-        else if (m.tipo === "reload") { carregarPois(); carregarStats(); }
+        else if (m.tipo === "reload") { carregarPois(); carregarLigacoes(); carregarStats(); }
       };
       // 3. CAIU SEM TOKEN, ESPERA O LOGIN. Reagendar não devolve sessão
       //    nenhuma; quem devolve o WebSocket é o próximo login.
@@ -1816,6 +1819,100 @@
     pintarEstado();
   }
 
+  // ── o mapa dos hidrômetros ──────────────────────────────────────────────
+  //
+  // SUBSTITUI O MAPA DE POIs desde 08/09/2026. O sujeito do produto é a
+  // instalação — é ela que fatura errado —, e o POI é testemunha sobre ela.
+  // Com o POI como marcador, o mesmo lugar aparecia várias vezes e com cores
+  // que se contradiziam: 18.249 ligações tinham vereditos opostos entre seus
+  // próprios pontos. Agora é um marcador por hidrômetro, e os POIs viram abas
+  // dentro da ficha dele.
+  let mapaLig = null;
+  const ILIG = (window.MapaLigacoes || {}).INDICES || {};
+
+  async function carregarLigacoes() {
+    if (!window.deck || !window.MapaLigacoes) {
+      console.warn("deck.gl não carregou — o mapa de ligações fica de fora");
+      return;
+    }
+    const q = estado.cidade ? "?cidade=" + encodeURIComponent(estado.cidade) : "";
+    const d = await pegar("/api/ligacoes" + q);
+    if (!d || !d.linhas) return;
+    estado.ligacoes = d.linhas;
+    estado.ligMeta = { categorias: d.categorias, situacoes: d.situacoes,
+                       vereditos: d.vereditos };
+    if (!mapaLig) mapaLig = new MapaLigacoes(mapa, abrirFichaLigacao);
+    mapaLig.definirDados(d.linhas);
+    aplicarFiltroLigacoes();
+    $("job-cap").dataset.pontos = d.linhas.length;
+  }
+
+  // OS FILTROS SÃO A CONTRAPARTIDA DE MOSTRAR TUDO. Cem mil pontos só servem
+  // se der para reduzi-los ao que se procura — foi a condição do dono do
+  // produto ao pedir a cidade inteira.
+  function aplicarFiltroLigacoes() {
+    if (!mapaLig) return;
+    const f = estado.filtros;
+    mapaLig.definirFiltro((l) => {
+      if (f.ligCategoria && f.ligCategoria.length
+          && !f.ligCategoria.includes(l[ILIG.CAT])) return false;
+      if (f.ligSituacao && f.ligSituacao.length
+          && !f.ligSituacao.includes(l[ILIG.SIT])) return false;
+      if (f.ligVinculo === "com" && l[ILIG.VINC] !== 1) return false;
+      if (f.ligVinculo === "sem" && l[ILIG.VINC] !== 0) return false;
+      if (f.ligVeredito && f.ligVeredito.length
+          && !f.ligVeredito.includes(l[ILIG.VER])) return false;
+      return true;
+    });
+  }
+
+  async function abrirFichaLigacao(num) {
+    const d = await pegar("/api/ligacoes/" + num);
+    if (!d) return;
+    const c = d.cadastro || {};
+    const abas = d.abas || [];
+    const v = d.veredito;
+    const eco = [["residencial", c.eco_res], ["comercial", c.eco_com],
+                 ["industrial", c.eco_ind], ["pública", c.eco_pub]]
+      .filter((x) => x[1] > 0).map((x) => x[1] + " " + x[0]).join(" · ");
+    let html =
+      `<b>Ligação ${escapar(c.ligacao)}</b>` +
+      `<br><span style="color:#6b7280">${escapar(c.logradouro)}, ` +
+      `${escapar(c.numero) || "s/n"} — ${escapar(c.bairro)}</span>` +
+      `<br><small>${escapar(c.categoria)} · ${escapar(c.situacao)}` +
+      (eco ? ` · ${escapar(eco)}` : "") + "</small>" +
+      (c.cliente ? `<br><small style="color:#6b7280">${escapar(c.cliente)}</small>` : "");
+    if (v) {
+      html += `<br><br><small style="color:${COR_IA[v.veredito] || "#6b7280"}">` +
+        `<b>IA: ${escapar(v.veredito)}</b>` +
+        (v.fontes > 1 ? ` · ${v.fontes} fontes concordam (${v.pois} registros)`
+                      : ` · ${v.pois} registro`) +
+        (v.modelo === "regra" ? " · por regra" : "") +
+        `</small><br><small style="color:#6b7280">${escapar((v.justificativa || "").slice(0, 260))}</small>`;
+    }
+    // AS ABAS, uma por fonte. Sem vínculo a ficha NÃO fica vazia: mostra o
+    // cadastro do cliente do mesmo jeito. Uma ligação sem POI é informação —
+    // é a residencial comum, ou a comercial que a extração não alcançou.
+    if (abas.length) {
+      html += `<br><br><b style="font-size:11px">${abas.length} fonte(s) neste hidrômetro</b>`;
+      abas.forEach((a) => {
+        html += `<br><small${a.descartado ? ' style="opacity:.55"' : ""}>` +
+          `<b>[${escapar(a.fonte)}]</b> ${escapar(a.nome || "(sem nome)")}` +
+          (a.categoria ? ` · ${escapar(a.categoria)}` : "") +
+          (a.metros != null ? ` · ${Math.round(a.metros)} m` : "") +
+          (a.nota ? ` · nota ${a.nota} (${a.avaliacoes})` : "") +
+          (a.veredito ? ` · <i>${escapar(a.veredito)}</i>` : "") +
+          (a.descartado ? ` · <s>descartado: ${escapar(a.descartado_motivo || "")}</s>` : "") +
+          "</small>";
+      });
+    } else {
+      html += '<br><br><small style="color:#94a3b8">Nenhuma fonte vinculada — ' +
+        'só o cadastro do cliente.</small>';
+    }
+    L.popup({ maxWidth: 420 })
+      .setLatLng([c.lat, c.lng]).setContent(html).openOn(mapa);
+  }
+
   async function carregarPois() {
     // A RODADA SEGUIDA FILTRA O MAPA. Sem ela, o mapa e o de sempre — a base
     // inteira da empresa. Com ela, so os pontos daquela sessao: e o que faz
@@ -1865,6 +1962,7 @@
 
   async function carregarTudo() {
     await carregarPois();
+    await carregarLigacoes();
     await carregarStats();
   }
 
@@ -2485,6 +2583,7 @@
                  "text-indigo-400");
         await irParaAreaDaRun(Number(id));
         await carregarPois();
+        await carregarLigacoes();
         pintarJob(await pegar("/api/jobs/atual?id_job=" + id));
         return;
       }
