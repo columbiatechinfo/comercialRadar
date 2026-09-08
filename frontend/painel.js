@@ -163,7 +163,11 @@
 
   function corDoPoi(p) {
     if (p.revisar_manual) return COR_IA.revisao_humana;
-    return COR_IA[p.veredito] || COR_SEM_IA;
+    // A COR E DA LIGACAO. Ver o comentario da rota: o veredito do POI e o
+    // que uma testemunha disse; o do hidrometro e a resposta. Sem `??` aqui de
+    // proposito — um ponto sem ligacao julgada ainda pode ter veredito
+    // proprio, e e ele que aparece.
+    return COR_IA[p.veredito_ligacao || p.veredito] || COR_SEM_IA;
   }
 
   // OS QUATRO VEREDITOS SÃO OS DA `analise_ia`, e as cores vêm do desenho.
@@ -718,9 +722,21 @@
       "</small>" +
       `<br><small style="color:#6b7280">${n} ` + (n === 1 ? "fonte" : "fontes") +
       ` · ${escapar(e.rotulo)}</small>` +
+      // A DECISAO DA LIGACAO VEM PRIMEIRO E COM O PESO DELA. "4 fontes
+      // concordam" e informacao que o operador nao tinha: ate agora ele via
+      // um veredito e nao sabia quantas testemunhas o sustentavam.
+      (p.veredito_ligacao
+        ? `<br><small style="color:${corDoPoi(p)}"><b>Ligação: ${escapar(p.veredito_ligacao)}</b>` +
+          (p.lig_fontes > 1
+            ? ` · ${p.lig_fontes} fontes concordam (${p.lig_pois} registros)`
+            : ` · ${p.lig_pois} registro`) + "</small>"
+        : "") +
+      // O DO POI CONTINUA VISIVEL, e agora rotulado como o que e: a leitura
+      // desta fonte sozinha. Quando ela discorda da ligacao, ver as duas e o
+      // que permite auditar.
       (p.veredito
-        ? `<br><small style="color:${corDoPoi(p)}">IA: ${escapar(p.veredito)}</small>`
-        : '<br><small style="color:#94a3b8">IA: ainda não julgado</small>') +
+        ? `<br><small style="color:#6b7280">esta fonte sozinha: ${escapar(p.veredito)}</small>`
+        : '<br><small style="color:#94a3b8">esta fonte: ainda não julgada</small>') +
       // O VEREDITO SAIU, A LIGAÇÃO NÃO. Este ponto tem julgamento da IA e
       // nenhum hidrômetro vinculado — o cruzamento automático não achou
       // qual é. Não é erro nem dúvida sobre o comércio: é uma tarefa de
@@ -745,7 +761,11 @@
     return estado.pois.filter((p) => {
       if (estado.cidade && (p.cidade || "").toLowerCase() !== estado.cidade.toLowerCase()) return false;
       if (f.origem.length && !f.origem.includes(p.fonte || "")) return false;
-      if (f.ia.length && !f.ia.includes(p.veredito || "")) return false;
+      // O FILTRO SEGUE A COR. Filtrar pelo veredito do POI enquanto o mapa
+      // pinta pelo da ligacao faria o operador selecionar "aprovado" e ver
+      // pontos de outra cor.
+      if (f.ia.length
+          && !f.ia.includes(p.veredito_ligacao || p.veredito || "")) return false;
       if (f.construcao.length && !f.construcao.includes(p.tipo_construcao || "")) return false;
       for (const a of f.atributos) {
         if (a === "cnpj" && !p.tem_cnpj) return false;
@@ -802,7 +822,8 @@
 
     const alvoIa = $("f-ia");
     alvoIa.innerHTML = "";
-    const vistos = new Set(estado.pois.map((p) => p.veredito).filter(Boolean));
+    const vistos = new Set(estado.pois
+      .map((p) => p.veredito_ligacao || p.veredito).filter(Boolean));
     VEREDITOS.filter((v) => vistos.has(v[0])).forEach(([k, rot, cor]) =>
       linhaCheck(alvoIa, rot, estado.filtros.ia.includes(k),
         () => alternar("ia", k), cor));

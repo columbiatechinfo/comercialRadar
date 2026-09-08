@@ -1745,11 +1745,47 @@ def listar_pois(sessao: str | None = None, area: str | None = None,
                        -- na mao. A bandeira existe para o operador achar
                        -- essa fila em vez de o trabalho da maquina se perder.
                        iv.alocar_instalacao,
+                       -- O VEREDITO DA LIGACAO E A RESPOSTA; o do POI e o que
+                       -- UMA testemunha disse.
+                       --
+                       -- Ate 08/09/2026 o mapa pintava pelo veredito do POI, e
+                       -- isso produzia contradicao visivel na tela: 18.249
+                       -- ligacoes tinham vereditos que se contradiziam entre
+                       -- seus proprios POIs — 11.442 com aprovado e revisao ao
+                       -- mesmo tempo, 1.889 com aprovado e reprovado sobre o
+                       -- MESMO hidrometro. O operador via dois pontos vizinhos
+                       -- de cores opostas sem ter como saber que eram o mesmo
+                       -- medidor.
+                       --
+                       -- Os dois viajam juntos de proposito: o front pinta
+                       -- pelo da ligacao e mostra o do POI dentro da ficha,
+                       -- como o que aquela fonte observou.
+                       lv.veredito AS veredito_ligacao,
+                       lv.justificativa AS motivo_ligacao,
+                       lv.pois AS lig_pois, lv.fontes AS lig_fontes,
                        NULL::boolean AS recomendar_visita,
                        NULL::text AS tipo_construcao,
                        COALESCE(p.revisar_manual, false) AS revisar_manual, p.cidade,
                        p.place_id
                 FROM pois_completo p
+
+                -- O VEREDITO DA LIGACAO MAIS CONFIAVEL DESTE PONTO.
+                --
+                -- Pelo mesmo vinculo que a coluna `lig` abaixo escolhe, para
+                -- as duas nao discordarem: se a ficha mostra a ligacao X, o
+                -- veredito exibido tem de ser o de X.
+                --
+                -- `descartado_em is null` porque o POI que a IA concluiu ser
+                -- de outro endereco (migracao 0083) nao deve herdar a decisao
+                -- de um hidrometro que nao e o dele.
+                LEFT JOIN LATERAL (
+                    SELECT v.veredito, v.justificativa, v.pois, v.fontes
+                      FROM ligacao_poi lpv
+                      JOIN radar_comercial.ligacao_veredito v
+                           ON v.ligacao = lpv.ligacao
+                     WHERE lpv.poi_id = p.id AND lpv.descartado_em IS NULL
+                     ORDER BY lpv.confianca DESC NULLS LAST, lpv.id
+                     LIMIT 1) lv ON TRUE
 
                 -- O VEREDITO MAIS RECENTE, e um so por ponto. Um POI pode ter
                 -- sido julgado mais de uma vez (recalibracao do prompt, segunda
@@ -1884,6 +1920,7 @@ def listar_pois(sessao: str | None = None, area: str | None = None,
                     "multiorigem", "n_fontes", "cruz_flag", "num_ligacao",
                     "e_comercial", "categoria_ligacao",
                     "veredito", "motivo", "alocar_instalacao",
+                    "veredito_ligacao", "motivo_ligacao", "lig_pois", "lig_fontes",
                     "recomendar_visita", "tipo_construcao", "revisar_manual",
                     "cidade", "place_id"]
             pois = [dict(zip(cols, row)) for row in cur.fetchall()]
