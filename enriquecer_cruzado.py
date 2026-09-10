@@ -74,8 +74,11 @@ select nl.logradouro, nl.numero, nl.cidade, nl.cam_lat, nl.cam_lng,
 """
 
 SQL_FACHADAS = """
-select fv.ligacao, fv.texto, fv.ramo, fv.e_o_alvo, fv.cam_lat, fv.cam_lng
+select fv.id, fv.ligacao, fv.texto, fv.ramo, fv.numero, fv.e_o_alvo,
+       fv.cam_lat, fv.cam_lng, c.nom_logradouro, c.cidade
   from radar_comercial.fachada_vista fv
+  left join resources_root.cadastro_corsan c
+         on c.num_ligacao::text = fv.ligacao
  where not fv.e_o_alvo
 """
 
@@ -117,7 +120,8 @@ def main(argv=None):
     _log("")
     _log("%d número(s) lidos na via, com câmera" % len(lidos))
 
-    if lidos:
+    # O ÍNDICE DE ENDEREÇOS É MONTADO SEMPRE — as seções 3 e 5 dependem dele.
+    if True:
         filtro = ""
         par = []
         if a.cidade:
@@ -167,14 +171,64 @@ def main(argv=None):
     fachadas = cur.fetchall()
     _log("")
     _log("%d fachada(s) comerciais lidas que NÃO eram o alvo" % len(fachadas))
-    for (lig, txt, ramo, _, cla, clo) in fachadas[:10]:
-        _log("   [%s] %s%s" % (lig, (txt or "?")[:38],
-                               (" · " + ramo[:24]) if ramo else ""))
+
+    # ── 5 · a fachada com NOME e NÚMERO procura a instalação dela ────────
+    #
+    # Regra do dono do produto em 10/09/2026: "se o número tiver sido
+    # identificado e o nome, busca nas instalações um par pra eles".
+    #
+    # A VIA É A DA CENA, e não do letreiro. A foto olha uma rua conhecida — a
+    # da ligação que estava sendo julgada —, então um letreiro lido ali com o
+    # número 512 é um comércio no 512 DAQUELA via. É a mesma chave de
+    # `casar_por_endereco`: via normalizada mais número limpo, de propósito,
+    # para que um endereço não case num módulo e falhe no outro.
+    #
+    # O PAR É CANDIDATO, E O CÓDIGO DIZ ISSO NO NOME DA COLUNA. Ninguém
+    # confirmou que aquele letreiro pertence àquela ligação: a cena tem várias
+    # portas, e o número pode estar sobre a porta ao lado do toldo. O que se
+    # sabe é que existe comércio com este nome nesta via e neste número, e que
+    # o cadastro tem uma instalação ali.
+    pares, sem_numero, sem_ligacao = [], 0, 0
+    for (fid, lig, txt, ramo, num, _alvo, cla, clo, logr, cid) in fachadas:
+        if not txt or not num or not logr:
+            sem_numero += 1
+            continue
+        v, n = _via(logr), rv.numero_limpo(num)
+        if not v or not n:
+            sem_numero += 1
+            continue
+        # A MESMA CHAVE DA SEÇÃO 3 e de `casar_por_endereco`. Uma segunda
+        # normalização aqui — uma consulta SQL com `translate`, por exemplo —
+        # casaria endereços que o outro módulo recusa e recusaria os que ele
+        # casa, e ninguém saberia por quê.
+        alvos = porta.get((v, n), [])
+        casou = None
+        for (numlig, la, lo) in alvos:
+            if numlig != lig:
+                casou = numlig
+                break
+        if casou:
+            pares.append((fid, casou, txt, ramo, num, logr))
+        else:
+            sem_ligacao += 1
+
+    _log("   com nome E número, e instalação encontrada ... %d" % len(pares))
+    _log("   com nome mas SEM número legível ............. %d" % sem_numero)
+    _log("   com número que não achou instalação ......... %d" % sem_ligacao)
+    for (fid, numlig, txt, ramo, num, logr) in pares[:10]:
+        _log("      \"%s\"%s — %s, %s  ->  ligação %s"
+             % ((txt or "?")[:30], (" (" + ramo[:18] + ")") if ramo else "",
+                (logr or "")[:22], num, numlig))
+    for (fid, lig, txt, ramo, num, _a, cla, clo, logr, cid) in fachadas[:8]:
+        if not num:
+            _log("      sem número: \"%s\"%s [visto julgando %s]"
+                 % ((txt or "?")[:32],
+                    (" · " + ramo[:20]) if ramo else "", lig))
 
     if not a.aplicar:
         _log("")
-        _log("(ensaio: nada gravado. Use --aplicar para marcar as "
-             "contradições nos vínculos)")
+        _log("(ensaio: nada gravado. Use --aplicar para gravar a leitura do "
+             "número e os pares de fachada)")
         con.close()
         return 0
 
@@ -205,12 +259,30 @@ def main(argv=None):
                and lv.id_empresa = (select core.empresa_atual())
         """, tudo, page_size=500)
         con.commit()
+        # O PLACAR DA TABELA NAO E O PLACAR DA CORRIDA. A consulta conta a
+        # tabela inteira, e ela guarda o achado de execucoes anteriores: uma
+        # contradicao lida ontem continua la se o numero nao foi relido hoje.
+        # Imprimir os dois evita a leitura errada de "esta corrida achou 1
+        # contradicao" quando ela achou zero.
         cur.execute("""select count(*) filter (where confere_com_cadastro),
                               count(*) filter (where confere_com_cadastro
                                                      is false)
                          from radar_comercial.leitura_visual""")
         ok, nao = cur.fetchone()
-        _log("gravado: %d confirmação(ões) e %d contradição(ões)" % (ok, nao))
+        _log("nesta corrida: %d confirmação(ões), %d contradição(ões)"
+             % (len(confirma), len(contradiz)))
+        _log("na tabela, somando as corridas: %d e %d" % (ok, nao))
+
+    if pares:
+        execute_values(cur, """
+            update radar_comercial.fachada_vista fv
+               set ligacao_par = v.lig, casado_em = now()
+              from (values %s) as v(id, lig)
+             where fv.id = v.id::bigint
+        """, [(fid, numlig) for (fid, numlig, _t, _r, _n, _l) in pares],
+            page_size=500)
+        con.commit()
+        _log("%d fachada(s) receberam instalação candidata" % len(pares))
     con.close()
     return 0
 

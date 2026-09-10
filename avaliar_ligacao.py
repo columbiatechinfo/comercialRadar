@@ -305,6 +305,12 @@ deste julgamento, e por isso são perguntadas à parte:
    pergunta devolveu "R. Quintão · logradouro" e "Parque Deputado Possebon ·
    parque público" entre seis achados, e nenhum dos dois é um negócio.
 
+   E O NÚMERO DE CADA UMA, quando estiver junto do letreiro. Nome mais número
+   é o que permite procurar, no cadastro da concessionária, qual ligação
+   atende aquele comércio — e é assim que um letreiro lido numa foto vira um
+   alvo com endereço em vez de uma anotação solta. Sem o número, o letreiro
+   ainda vale como sinal de que há comércio na quadra, mas não acha dono.
+
 E a tampa de esgoto na calçada, quando houver: ela diz que a via tem coleta.
 
 Responda SOMENTE um JSON:
@@ -320,7 +326,9 @@ Responda SOMENTE um JSON:
  "medidores": {"agua": <quantos>, "energia": <quantos>},
  "tampa_de_esgoto": true|false,
  "fachadas_vistas": [{"texto": "<o que está escrito>",
-                      "ramo": "<o que aparenta ser>", "e_o_alvo": true|false}],
+                      "ramo": "<o que aparenta ser>",
+                      "numero": "<o número de porta que aparece COM este
+letreiro, ou null>", "e_o_alvo": true|false}],
  "especie_cnefe": <1-8|null>, "secao_cnae": "<letra|null>",
  "sinal_no_imovel": "instalacao_fixa|so_oficio|nenhum",
  "justificativa": "<UM PARÁGRAFO, até 70 palavras, dizendo QUAIS fontes
@@ -625,11 +633,13 @@ def gravar_visual(con, ligacao, resposta, resumo):
                 continue
             cur.execute("""
                 insert into radar_comercial.fachada_vista
-                    (id_empresa, ligacao, poi_id, texto, ramo, e_o_alvo,
-                     onde, cam_lat, cam_lng)
-                values ((select core.empresa_atual()), %s,%s,%s,%s,%s,%s,%s,%s)
-            """, (ligacao, poi, txt, ramo, bool(it.get("e_o_alvo")),
-                  _texto(it.get("onde"), 30), cam_lat, cam_lng))
+                    (id_empresa, ligacao, poi_id, texto, ramo, numero,
+                     e_o_alvo, onde, cam_lat, cam_lng)
+                values ((select core.empresa_atual()),
+                        %s,%s,%s,%s,%s,%s,%s,%s,%s)
+            """, (ligacao, poi, txt, ramo, _texto(it.get("numero"), 12),
+                  bool(it.get("e_o_alvo")), _texto(it.get("onde"), 30),
+                  cam_lat, cam_lng))
     con.commit()
 
 
