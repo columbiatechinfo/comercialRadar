@@ -531,6 +531,24 @@ def gravar(poco, poi_id, tipo, dados, **extra):
     marc = ", ".join(["%s"] * len(campos))
     sets = ", ".join("%s = excluded.%s" % (c, c) for c in campos
                      if c not in ("poi_id", "tipo"))
+    # RECAPTURA APAGA O CAMINHO, e sem isto ela e' INVISIVEL.
+    #
+    # As imagens migraram para o Storage em 07/09/2026 e `imagens._de_linha`
+    # passou a PREFERIR `storage_path`, caindo no `bytea` so quando nao ha
+    # caminho. Este upsert grava `dados` novos e nunca mexia no caminho — que
+    # continuava apontando para o arquivo ANTIGO. Resultado: recapturar
+    # gravava a imagem nova no banco e todo mundo continuava lendo a velha.
+    #
+    # Descoberto em 10/09/2026 ao tirar a mira: recapturei 23 POIs, o `bytea`
+    # veio limpo, e o dossie continuou entregando a foto com a cruz verde
+    # desenhada. Nao e' um defeito da mira — vale para QUALQUER correcao de
+    # foto: panorama novo, enquadramento errado, imagem cortada.
+    #
+    # Apagar o caminho e a correcao certa, e nao "reenviar por cima": a
+    # verdade passa a ser o `bytea` recem-gravado, e a migracao para o Storage
+    # reenvia depois, quando for a vez dela.
+    if dados:
+        sets += ", storage_path = null"
     with poco.pegar() as con:
         with con.cursor() as k:
             k.execute(
@@ -603,18 +621,32 @@ async def um_poi(page, poco, alvo, placar) -> None:
                         continue
                     await page.wait_for_timeout(1200)
                     bruto = await page.screenshot()
-                    # SÓ A FRENTE LEVA MIRA. No fundo o alvo está atrás da
-                    # câmera — pôr mira ali diria à IA que a fachada é aquela.
-                    # CORTA E DEPOIS MARCA. A mira precisa ficar no centro
-                    # do que a IA vai ver, e não no centro do que foi jogado
-                    # fora com as bordas.
                     limpo = _cortar_interface(bruto)
-                    # SÓ A FRENTE LEVA MIRA, e ela vai SEM LEGENDA. A tarja
-                    # "FACHADA AVALIADA" tapava justamente a parte de baixo da
-                    # fachada — porta, vitrine e medidor —, que é onde está a
-                    # prova. A mira aberta já diz onde é o alvo; o texto só
-                    # cobria a imagem, e o modelo ainda o lia como letreiro.
-                    img = _marcar_centro(limpo, "") if tipo == "sv_frente" else limpo
+                    # A MIRA SAIU. Regra do dono do produto em 09/09/2026: "o
+                    # prompt da IA passa a receber as 4 visadas nas 4 direcoes
+                    # SEM O MARCADOR DE ONDE ESTA O LOCAL BUSCADO, para nao
+                    # tendenciar".
+                    #
+                    # E ela tendenciava de um jeito que o texto do prompt nao
+                    # alcancava: a cruz verde estava DESENHADA NOS PIXELS do
+                    # `sv_frente`, apontando um imovel. Tirar a mencao dela do
+                    # prompt — feito no mesmo dia — nao tirou a mira da imagem;
+                    # o modelo continuava vendo para onde apontar, e o que se
+                    # media como "a IA reconheceu a fachada" podia ser "a IA
+                    # leu a seta".
+                    #
+                    # O ALVO CONTINUA NO CENTRO por construcao: o `heading`
+                    # mira nele e o corte preserva o centro. Quem precisa saber
+                    # onde olhar tem o enquadramento; quem precisa julgar, nao
+                    # tem mais a resposta desenhada em cima.
+                    #
+                    # `_marcar_centro` fica no modulo, sem chamador. Nao e
+                    # descuido: `identificar_divergente` faz o mesmo desenho
+                    # por conta propria (via `anotar`), porque LA a mira e o
+                    # produto — o print existe para um humano ver ONDE esta o
+                    # achado. Se um dia esse caminho quiser reaproveitar este
+                    # codigo, ele esta aqui e documentado.
+                    img = limpo
                     # O WEBP E O ULTIMO PASSO, depois do corte e da mira: as
                     # duas etapas usam cv2 e falam PNG entre si.
                     img = _para_webp(img)

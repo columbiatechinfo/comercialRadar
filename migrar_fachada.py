@@ -68,7 +68,11 @@ def uma(linha, aplicar, con, trava, placar):
     # A MIRA SO NA FRENTE, exatamente como na captura nova: os giros de 90 e
     # 270 graus nao apontam para o alvo, e marcar o centro deles seria apontar
     # para a casa do vizinho.
-    img = ce._marcar_centro(limpo, "") if tipo == "sv_frente" else limpo
+    # SEM MIRA: a mira saiu em 10/09/2026 e este modulo reprocessa imagem que
+    # vai para a MESMA fila da IA. Se ele continuasse marcando, metade da base
+    # teria a cruz e metade nao, e a comparacao entre as duas metades mediria a
+    # marca em vez do modelo. Ver `capturar_evidencia`.
+    img = limpo
 
     # WEBP SEM ENCOLHER. O corte ja tirou um terco dos pixels; reduzir mais
     # custaria leitura de letreiro, que foi medido em 07/09/2026 e nao vale.
