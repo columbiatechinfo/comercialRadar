@@ -27,6 +27,7 @@ dia. O que muda e onde mora a RESPOSTA.
 """
 import argparse
 import json
+import os
 import threading
 import time
 
@@ -378,7 +379,18 @@ AS IMAGENS QUE VOCÊ RECEBEU, nesta ordem:
 #: naquele cliente.
 _palavras = setor.VOCABULARIO[setor.PADRAO]
 
-CONEXOES = 6
+#:
+#: O TETO VEM DO AMBIENTE PORQUE O POOLER E COMPARTILHADO.
+#:
+#: A porta 7100 aceita 20 sessoes NO TOTAL — entre todas as maquinas, a API, o
+#: painel, o realtime e as capturas. Com 6 fixos aqui, tres processos de
+#: captura sozinhos ja consomem 18 e o quarto morre com
+#: `(EMAXCONNSESSION) max clients reached`. Foi o que aconteceu em 10/09/2026
+#: ao dividir a fila entre i9 e notebook.
+#:
+#: `RADAR_CONEXOES` deixa cada processo declarar quanto vai pegar, para que a
+#: soma caiba. Nao ha coordenacao automatica: quem dispara e quem faz a conta.
+CONEXOES = int(os.environ.get("RADAR_CONEXOES") or 6)
 
 
 class Poco:

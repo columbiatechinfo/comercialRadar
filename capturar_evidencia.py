@@ -297,11 +297,29 @@ SQL_ALVO = """
        -- `distinct` limpar — e o produto de 300 mil POIs por 65 mil vinculos
        -- ja custou 4 minutos parados na fila da IA, em 04/09/2026. Em
        -- `exists` cada condicao para no primeiro acerto e nada e duplicado.
+       -- SO QUEM TEVE CRUZAMENTO VALIDO, e so onde o cliente disse SIM.
+       --
+       -- Duas condicoes que faltavam, e cada uma tirava trabalho inutil:
+       --
+       --   `lp.descartado_em is null` — o vinculo tem de estar VIVO. Um POI
+       --   cujo unico vinculo caiu na regra de endereco nao pertence a
+       --   ligacao nenhuma; fotografa-lo e gastar proxy para alimentar um
+       --   julgamento que nao vai acontecer.
+       --
+       --   `l.apta_cruzamento` — a coluna gerada de `qualificacao`, que cobre
+       --   SIM e SIM_COM_ANALISE_HUMANA. Decisao do dono do produto: "apenas
+       --   quem tem sim ou sim com verificacao humana devem rodar a coleta".
+       --   Vazio nao enriquece, e enriquecimento comeca na foto.
+       --
+       -- Medido em 10/09/2026: sem elas a fila da captura tinha ~29.700 POIs;
+       -- com elas, 15.884. Metade do proxy ia para POI que ninguem julgaria.
        and (exists (select 1
                       from radar_comercial.ligacao_poi lp
                       join resources_root.cadastro_corsan l
                            on l.num_ligacao::text = lp.ligacao
                      where lp.poi_id = p.id
+                       and lp.descartado_em is null
+                       and l.apta_cruzamento
                        and upper(l.categoria) = 'RESIDENCIAL'
                        and upper(coalesce(l.sit_ligacao,'')) = 'ATIVA')
             or (%(sem_ligacao)s::int = 1
@@ -406,11 +424,25 @@ def alvos(con, poligono, limite, pois=None, sem_catalogo=False,
                                "sem_catalogo": 1 if sem_catalogo else 0})
     fora = 0
     saida = []
-    n_fatia = m_fatia = None
+    # `--fatia 0,1/3` — MAIS DE UMA FATIA POR PROCESSO.
+    #
+    # A divisao precisa acompanhar a CAPACIDADE, e nao o numero de maquinas: o
+    # i9 roda 20 trabalhadores e o notebook 10, entao meio a meio deixaria o i9
+    # ocioso na segunda metade do tempo. Com tercos, o i9 leva dois e o
+    # notebook um.
+    #
+    # E precisa ser UM PROCESSO POR MAQUINA, e nao dois no i9: cada processo
+    # segura ate `CONEXOES` sessoes do pooler, que tem 20 NO TOTAL para a
+    # pilha inteira. Tres processos de captura sozinhos consumiam 18 e o
+    # julgamento nao cabia mais.
+    n_fatia = set()
+    m_fatia = None
     if fatia:
-        n_fatia, m_fatia = [int(x) for x in str(fatia).split("/")]
+        quais, m = str(fatia).split("/")
+        m_fatia = int(m)
+        n_fatia = {int(x) for x in quais.split(",") if x.strip() != ""}
     for pid, la, lo, nome, fonte, cat in cur.fetchall():
-        if m_fatia and (pid % m_fatia) != n_fatia:
+        if m_fatia and (pid % m_fatia) not in n_fatia:
             continue
         if poligono and not area_utils.ponto_no_poligono(la, lo, poligono):
             fora += 1
@@ -536,7 +568,18 @@ PANO_AQUECIMENTO = "msYLglDqsAq9mfemgrpY8g"
 # QUANTAS CONEXÕES, independentemente de quantos trabalhadores. Seis atendem
 # 30 trabalhadores com folga pela conta acima, e deixam as outras 14 do pooler
 # para a API, o painel e o restante do fluxo — que rodam ao mesmo tempo.
-CONEXOES = 6
+#:
+#: O TETO VEM DO AMBIENTE PORQUE O POOLER E COMPARTILHADO.
+#:
+#: A porta 7100 aceita 20 sessoes NO TOTAL — entre todas as maquinas, a API, o
+#: painel, o realtime e as capturas. Com 6 fixos aqui, tres processos de
+#: captura sozinhos ja consomem 18 e o quarto morre com
+#: `(EMAXCONNSESSION) max clients reached`. Foi o que aconteceu em 10/09/2026
+#: ao dividir a fila entre i9 e notebook.
+#:
+#: `RADAR_CONEXOES` deixa cada processo declarar quanto vai pegar, para que a
+#: soma caiba. Nao ha coordenacao automatica: quem dispara e quem faz a conta.
+CONEXOES = int(os.environ.get("RADAR_CONEXOES") or 6)
 
 
 def gravar(poco, poi_id, tipo, dados, **extra):
@@ -815,7 +858,7 @@ def main(argv=None) -> int:
     # de proxy para metade do resultado. `--fatia 0/2` e `--fatia 1/2` cortam
     # por `id % 2`, que e estavel e nao precisa de coordenacao entre elas.
     p.add_argument("--fatia", default="",
-                   help="N/M — processa so os POIs com id %% M == N")
+                   help="N/M ou N,N/M — processa so os POIs com id %% M em N")
     p.add_argument("--sem-catalogo", dest="sem_catalogo",
                    action="store_true",
                    help="fotografa tambem o POI cuja categoria o catalogo "
