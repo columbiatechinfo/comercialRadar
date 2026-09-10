@@ -153,6 +153,34 @@ O terceiro virou migração: `0092` apaga os pendurados e põe
 `on delete cascade`, porque **seis lugares apagam POI** e nenhum limpa o
 vínculo.
 
+### O `SIM_COM_ANALISE_HUMANA` que eu escrevi era impossível
+
+A primeira versão rebaixava a ligação sustentada só por vínculo de nome. Deu
+**zero**, e o motivo é **estrutural, e não um bug**: o critério de nome exige
+uma **âncora**, e a âncora é um vínculo de endereço exato da *mesma* ligação. O
+vínculo por nome é testemunha a mais, nunca a única — a condição não podia
+acontecer.
+
+Regra corrigida pelo dono do produto: rebaixa *"quando for de fonte
+inconclusiva, tipo airbnb, e não tiver no mesmo telhado da instalação"*. As
+duas juntas. São dois jeitos independentes de provar comércio **naquela porta**
+— alguém esteve lá (Maps, iFood) ou os dois pontos caem sobre a mesma
+construção. Cadastro sem telhado não tem nenhum dos dois.
+
+| flag | ligações | score médio |
+|---|---|---|
+| SIM | 3.527 | 25,2 |
+| SIM_COM_ANALISE_HUMANA | 4.894 | 11,7 |
+| NÃO | 3.399 | 10,5 |
+
+### `max_tokens` apertava de novo, agora em prédio com 70 CNPJs
+
+17 das 1.745 rejulgadas falharam com `Unterminated string` por volta do
+caractere 1.000. Todas eram prédio comercial com **69 a 77 POIs** no mesmo
+endereço: a resposta listando os POIs não cabia em 1.100. Subido para 1.600, as
+17 recuperadas. É a segunda vez que o teto aperta pelo mesmo motivo — a conta
+não é do tamanho do texto médio, é do **maior caso da fila**.
+
 ### A regra de endereço exato não tinha teto de distância
 
 Achado medindo a pergunta acima. `mesma_rua and mesmo_numero` compara **texto**,
