@@ -542,7 +542,7 @@ def uma(poco, ligacao, modelo, secoes, placar, trava, aplicar):
         # Falha aqui nao grava veredito, entao a ligacao volta para a fila
         # sozinha na proxima rodada — o estrago foi tempo, nao dado perdido.
         resposta = di._chat_local(modelo, prompt, [ia._b64(b) for b in imgs],
-                                  max_tokens=1100, timeout=TIMEOUT)
+                                  max_tokens=1600, timeout=TIMEOUT)
     except Exception as e:                                     # noqa: BLE001
         with trava:
             placar["falha"] += 1
