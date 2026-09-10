@@ -89,6 +89,20 @@ import unicodedata
 VAZIOS = {
     "LTDA", "ME", "EPP", "EIRELI", "SA", "S", "A", "CIA", "MEI", "O", "AS",
     "DE", "DA", "DO", "DAS", "DOS", "E", "EM", "COM", "POR", "NO", "NA",
+    # TITULO NAO IDENTIFICA NINGUEM — e, pior, ele vira SIGLA.
+    #
+    # "Dra Raquel Machry" x "Consultorio Odontologico Dr. Marcelo Lima" somou
+    # 12,82 SEM UM TOKEN EM COMUM, e por isso quase virou fusao em 10/09/2026.
+    # O caminho: `_expandir_sigla` leu "DR" do segundo nome como as iniciais de
+    # "DRA RAQUEL" no primeiro — D, R, consecutivas — e somou o peso das duas
+    # palavras, inclusive o do sobrenome, que e' raro e vale muito.
+    #
+    # A sigla so podia soletrar isso porque "DRA" e' um token comum a metade
+    # dos consultorios da cidade e ainda assim contava como palavra. Retirado
+    # daqui, o par volta a somar zero, que e' o certo: dois dentistas
+    # diferentes na mesma rua.
+    "DR", "DRA", "DRS", "DRAS", "SR", "SRA", "SRS", "SRAS",
+    "PROF", "PROFA", "ME", "MED",
 }
 
 #: A distância que dispensa o número, no critério 2.
@@ -121,6 +135,65 @@ PESO_MINIMO = 9.0
 #: número; se ele degradar sem avisar, o vazamento volta por ali.
 _PESO = {}
 _PESO_DESCONHECIDO = 0.0
+
+
+#: A ULTIMA PALAVRA DO NOME, e uma lista fechada. Nao e substring.
+#:
+#: O CNEFE do IBGE percorre o endereco inteiro e registra a unidade VAZIA do
+#: mesmo jeito que registra a loja. E' dado bom — e' o recenseador dizendo que
+#: passou ali e nao havia ninguem —, so que entrava no vinculo como se fosse
+#: estabelecimento. Medido em 10/09/2026: 724 vinculos vivos, 629 do IBGE.
+#:
+#: A PRIMEIRA VERSAO DISTO FOI UMA REGEX CHUTADA, com `FECHAD\w*` e `VAGA`
+#: soltos, e reprovou "Comercio de Fechaduras", "Chaveiro e Fechaduras Silva"
+#: e "Mercado Vaga Livre" — comercio de verdade. Foi preciso ler os nomes que
+#: existem na base para descobrir a forma deles, que e' regular:
+#:
+#:     VAGO · LOJA VAGA · ESTABELECIMENTO VAGO · VAZIO · DESOCUPADO
+#:     DEPOSITO VAGO · SALA VAGA · FECHADO · SALA VAZIA · LOJA DESOCUPADA
+#:     SALA COMERCIAL VAGA · TERRENO VAGO · PREDIO DESOCUPADO · PECA VAZIA
+#:     ESTABELECINENTO VAGO   <- o erro de digitacao do proprio IBGE
+#:
+#: A palavra da vacancia e sempre a ULTIMA, e o nome e curto. O que vem antes
+#: varia demais para listar — inclusive com erro de digitacao —, entao o teste
+#: nao olha para isso. E o que salva o comercio: "CONDOMINIO FECHADO SUN
+#: VILLAGE" termina em VILLAGE, "VAGAO MODA MASCULINA" em MASCULINA,
+#: "SECRETARIA MUNICIPAL DE OBRAS" em OBRAS.
+#:
+#: OBRAS E CONSTRUCAO FICARAM DE FORA de proposito: na base sao quase sempre
+#: empresa ("A C CONSTRUCAO LTDA", "EMPREITEIRA DE OBRAS RIEFF"), e nao imovel
+#: em obra.
+_FIM_VAZIO = {
+    "VAGO", "VAGA", "VAGOS", "VAGAS",
+    "VAZIO", "VAZIA", "VAZIOS", "VAZIAS",
+    "DESOCUPADO", "DESOCUPADA", "DESOCUPADOS", "DESOCUPADAS",
+    "FECHADO", "FECHADA", "FECHADOS", "FECHADAS",
+}
+
+#: Quantas palavras o nome pode ter e ainda ser descricao de vacancia. "SALA
+#: COMERCIAL VAGA" tem tres; "SALA 2 SEM USO", quatro. Um nome longo que
+#: termina numa dessas palavras e frase, nao rotulo.
+_MAX_PALAVRAS_VAZIO = 4
+
+
+def declara_vazio(nome):
+    """O proprio nome do POI diz que a unidade esta vazia?
+
+    SO O NOME, e nao a categoria: a categoria de um "VAGO" do CNEFE costuma vir
+    preenchida com o uso ANTERIOR do imovel, e usa-la aqui reintroduziria o
+    comercio que ja nao existe.
+    """
+    if not nome:
+        return False
+    s = unicodedata.normalize("NFKD", str(nome))
+    s = "".join(c for c in s if not unicodedata.combining(c)).upper()
+    ps = re.sub(r"[^A-Z0-9 ]+", " ", s).split()
+    if not ps or len(ps) > _MAX_PALAVRAS_VAZIO:
+        return False
+    if ps[-1] in _FIM_VAZIO:
+        return True
+    # "SALA 2 SEM USO" — a unica forma em que a vacancia sao duas palavras.
+    return len(ps) >= 2 and ps[-2:] == ["SEM", "USO"]
 
 
 def normalizar(s):
@@ -189,11 +262,15 @@ def _expandir_sigla(sigla, tokens):
     return None
 
 
-def peso_do_par(a, b):
+def peso_do_par(a, b, detalhe=False):
     """Quanto os tokens em comum de dois nomes somam.
 
     Conta o que os dois nomes dizem em comum, seja escrito por extenso nos
     dois, seja abreviado num deles.
+
+    Com `detalhe=True` devolve `(total, comuns, la, lb)` — `parecidos` precisa
+    do conjunto para o teste do topo, e recalcula-lo do lado de fora criaria a
+    segunda implementacao da expansao de sigla.
     """
     if not _PESO:
         raise RuntimeError(
@@ -206,6 +283,24 @@ def peso_do_par(a, b):
     # AS SIGLAS DE UM LADO CONTRA AS PALAVRAS DO OUTRO, nos dois sentidos.
     # O peso é o das PALAVRAS soletradas, e não o da sigla: quem identifica é
     # "MAGO", e "SM" é só o modo de escrevê-lo curto.
+    #
+    # SO QUANDO JA HA ALGO EM COMUM: sigla CONFIRMA identidade, nao estabelece.
+    #
+    # Uma sigla de duas letras acha iniciais consecutivas em quase qualquer
+    # nome — num nome de quatro palavras ha tres posicoes candidatas —, e o
+    # peso somado e o das palavras soletradas, que costuma ser alto. Medido em
+    # 10/09/2026, auditando fusoes:
+    #
+    #   "RB CONSULTORIA EM INVESTIMENTOS" x "CONDOMINIO RESIDENCIAL RESERVA DO
+    #   BOSQUE"  = 18,12, sem um token em comum: RB leu "RESERVA BOSQUE".
+    #   "CR Growth Marketing" x "Corretor Ramon Souza" = 16,52: CR leu
+    #   "CORRETOR RAMON".
+    #
+    # Com a exigencia de um token literal em comum, os dois vao a zero e o caso
+    # que motivou a sigla continua de pe: "SM MINIMERCADO" x "MINIMERCADO
+    # SUPER MAGO" divide MINIMERCADO, e a sigla so acrescenta o peso de MAGO.
+    if not comuns:
+        return (total, comuns, la, lb) if detalhe else total
     for curtos, longos in ((la, lb), (lb, la)):
         for s in curtos:
             if s in comuns:
@@ -217,14 +312,53 @@ def peso_do_par(a, b):
                 if t not in comuns:
                     comuns.add(t)
                     total += _PESO.get(t, _PESO_DESCONHECIDO)
+    if detalhe:
+        return total, comuns, la, lb
     return total
+
+
+def _topo_em_comum(comuns, la, lb):
+    """A palavra que mais identifica um dos dois nomes esta no outro?
+
+    POR QUE A SOMA NAO BASTA. O corte de 9,0 separa bem quando o que os dois
+    nomes dividem e' UMA palavra rara. Ele nao separa quando sao DUAS palavras
+    de ramo, cada uma comum, que somadas passam de 9,0. Medido em Canoas:
+
+        ADVOGADOS 5,86 + ASSOCIADOS 6,75 = 12,61
+        COMERCIO  4,37 + EXTERIOR   9,60 = 13,97
+
+    Com isso, "Vellinho - Advogados Associados" quase fundiu com "Infinity
+    Advogados & Associados", e "Claudia Neto Comercio Exterior" com "DPLog
+    Solucoes em Comercio Exterior" — quatro empresas, duas fusoes erradas.
+
+    E NAO ADIANTA EXIGIR UM TOKEN RARO: "EXTERIOR" vale 9,60 porque comercio
+    exterior e' raro em Canoas. O idf mede raridade, e nao sabe distinguir
+    "raro porque e' nome" de "raro porque e' especialidade".
+
+    O que separa e' outra pergunta: cada nome tem uma palavra que o identifica
+    — a de maior peso —, e e' ela que precisa aparecer no outro. "Posto APOLO"
+    tem APOLO (10,99) em comum; "VELLINHO Advogados Associados" tem VELLINHO
+    (o topo dele) fora. Basta que o topo de UM dos dois esteja: "SM
+    MINIMERCADO" x "MINIMERCADO SUPER MAGO" casa porque MINIMERCADO e o topo
+    do primeiro, ainda que MAGO seja o do segundo.
+    """
+    if not comuns:
+        return False
+    for lado in (la, lb):
+        if not lado:
+            continue
+        topo = max(lado, key=lambda x: _PESO.get(x, _PESO_DESCONHECIDO))
+        if topo in comuns:
+            return True
+    return False
 
 
 def parecidos(a, b):
     """Os dois nomes falam do mesmo negócio?"""
     if not a or not b:
         return False
-    return peso_do_par(a, b) >= PESO_MINIMO
+    total, comuns, la, lb = peso_do_par(a, b, detalhe=True)
+    return total >= PESO_MINIMO and _topo_em_comum(comuns, la, lb)
 
 
 def numero_limpo(s):
@@ -301,6 +435,11 @@ def aceitar(candidatos):
     """
     fica = {}
     for c in candidatos:
+        # UNIDADE VAZIA NAO E ESTABELECIMENTO, e o teste vem antes de tudo:
+        # nao adianta o endereco ser exato se o que esta no endereco e uma
+        # sala sem uso. Ver `declara_vazio`.
+        if declara_vazio(c.get("nome")):
+            continue
         fonte = (c.get("fonte") or "").strip().lower()
         if fonte in SEM_ENDERECO_EXATO:
             # O AIRBNB ENTRA POR RUA + TELHADO, e nao pelo nome.
@@ -361,6 +500,8 @@ def aceitar(candidatos):
 
 def motivo_da_recusa(c):
     """Por que este candidato não entrou. Vai gravado em `descartado_motivo`."""
+    if declara_vazio(c.get("nome")):
+        return "o proprio nome diz que a unidade esta vazia"
     if not c.get("mesma_rua"):
         return "rua diferente da ligacao"
     fonte = (c.get("fonte") or "").strip().lower()
