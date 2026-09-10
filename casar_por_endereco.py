@@ -22,6 +22,27 @@ import regra_vinculo as rv
 from cruzar_ligacao import _via
 
 
+#: CIDADE COMPARADA SEM ACENTO, DOS DOIS LADOS.
+#:
+#: Mesmo defeito que `cruzar_ligacao` levou em 03/09/2026 e este modulo nao:
+#: a Corsan grava a cidade SEM acento ("GRAVATAI") e a malha do IBGE devolve
+#: COM ("Gravatai"), entao `upper(cidade) = upper(%s)` nunca casa cidade
+#: acentuada — que e quase toda cidade do RS. So passou despercebido porque
+#: "CANOAS" nao tem acento.
+#:
+#: Medido em 10/09/2026: `pois.cidade` tem 18.274 orfaos em "GRAVATAÍ" e 393
+#: em "GRAVATAI". Sem isto, qualquer chamada acerta um dos dois e perde o
+#: outro, em silencio — o log diria "0 orfaos" e pareceria fila vazia.
+_SEM_ACENTO_DE = "'áàâãäéèêëíìîïóòôõöúùûüçñ'"
+_SEM_ACENTO_PARA = "'aaaaaeeeeiiiiooooouuuucn'"
+
+
+def _sa(expr):
+    """`expr` em minuscula e sem acento, para comparar cidade."""
+    return "translate(lower(%s), %s, %s)" % (expr, _SEM_ACENTO_DE,
+                                             _SEM_ACENTO_PARA)
+
+
 def _log(m):
     print("%s %s" % (time.strftime("%H:%M:%S"), m), flush=True)
 
@@ -72,7 +93,8 @@ def main(argv=None):
                coalesce(nro,''), cod_latitude::float8, cod_longitude::float8,
                coalesce(cod_cep,'')
           from resources_root.cadastro_corsan
-         where upper(coalesce(cidade,'')) = upper(%s)""", (a.cidade,))
+         where """ + _sa("coalesce(cidade,'')") + " = " + _sa("%s"),
+                (a.cidade,))
     porta = defaultdict(list)
     n_lig = 0
     for (lig, logr, nro, la, lo, cep) in cur:
@@ -92,7 +114,7 @@ def main(argv=None):
           from radar_comercial.pois p
           join radar_comercial.logradouro_resolvido lr on lr.poi_id = p.id
          where p.fundido_em is null
-           and upper(coalesce(p.cidade,'')) = upper(%s)
+           and """ + _sa("coalesce(p.cidade,'')") + " = " + _sa("%s") + """
            and lr.forca = 'prova'
            and not exists (select 1 from radar_comercial.ligacao_poi lp
                             where lp.poi_id = p.id
@@ -101,6 +123,7 @@ def main(argv=None):
     _log("   %d órfãos com endereço publicado" % len(orfaos))
 
     placar, distancias, achados = Counter(), [], []
+    fora_do_teto = 0
     quantas_ligacoes = Counter()
     for (pid, logr, nro, pla, plo, fonte, nome, cep_p) in orfaos:
         v, n = _via(logr), rv.numero_limpo(nro)
@@ -128,6 +151,26 @@ def main(argv=None):
             d = _metros(la, lo, pla, plo)
             if d is not None:
                 distancias.append(d)
+            # O TETO VALE AQUI TAMBEM. Decisao do dono do produto em
+            # 10/09/2026, perguntado exatamente se a regra geral alcancava
+            # este modulo: vale.
+            #
+            # O QUE ISSO CUSTA, medido em Canoas: dos 16.868 pares que o
+            # endereco publicado encontra, 2.268 estao a menos de 50 m e
+            # 14.589 nao. A mediana e 228 m — porque a populacao daqui e, por
+            # construcao, a dos POIs cuja coordenada falhou, e nao a dos pares
+            # errados.
+            #
+            # E O QUE ISSO EVITA: o dossie escolhe a foto de rua pela
+            # coordenada do POI. Aceitar um par a 228 m poe a IA para julgar
+            # a fachada de outro imovel — que e o defeito corrigido nesta
+            # mesma manha, entrando de novo por outra porta. Enquanto a
+            # coordenada nao for corrigida, o par so serve se ja estiver
+            # perto.
+            if d is not None and d > rv.TETO_M:
+                placar["fora do teto de %d m" % round(rv.TETO_M)] += 1
+                fora_do_teto += 1
+                continue
             achados.append((lig, pid, d, fonte, nome, len(bons)))
 
     print()
@@ -149,7 +192,23 @@ def main(argv=None):
             print("      %-8s %8.0f m" % (rot, q(f)))
         print("      acima de 1 km: %d de %d vínculos"
               % (sum(1 for d in distancias if d > 1000), len(distancias)))
-    _log("%d vínculos novos a gravar" % len(achados))
+        # QUANTOS SOBREVIVEM AO TETO. Desde 10/09/2026 a regra recusa o par
+        # acima de `rv.TETO_M`, INCLUSIVE com rua e numero batendo — e este
+        # modulo existe justamente para o POI cuja coordenada esta errada e
+        # por isso esta longe. Sem esta linha o casamento parece um sucesso de
+        # 16 mil vinculos, e a revisao seguinte apaga a maior parte deles sem
+        # ninguem entender por que.
+        dentro = sum(1 for d in distancias if d <= rv.TETO_M)
+        print()
+        print("   O TETO DE %d m, aplicado a estes pares:" % round(rv.TETO_M))
+        print("      entram ................... %6d" % dentro)
+        print("      ficam na fila humana ..... %6d"
+              % (len(distancias) - dentro))
+        print("      (o endereço publicado bate nos dois; o que não bate é a "
+              "coordenada do POI, e enquanto ela não for corrigida a foto do")
+        print("       dossiê sairia do imóvel errado — por isso o par espera)")
+    _log("%d vínculos novos a gravar · %d recusados pelo teto de %d m"
+         % (len(achados), fora_do_teto, round(rv.TETO_M)))
 
     if not a.aplicar:
         _log("(ensaio: nada gravado. Use --aplicar)")
@@ -165,21 +224,49 @@ def main(argv=None):
     # na régua. `ate_20m` fica pelo que a medida diz, para não mentir na coluna.
     linhas = [(a.base, lig, pid, True, True,
                bool(d is not None and d <= 20.0), False, False, d, 2, 0.70,
-               1, 0, fonte, "endereco_publicado")
+               1, 0, fonte, "endereco_publicado", "endereco_exato")
               for (lig, pid, d, fonte, nome, quantos) in achados]
     execute_values(cur, """
         insert into radar_comercial.ligacao_poi
             (id_base, ligacao, poi_id, mesmo_endereco, mesmo_numero, ate_20m,
              mesmo_telhado, telhado_comercial, metros, criterios_ok, confianca,
-             fontes_aderentes, fontes_no_momento, fonte_poi, origem)
+             fontes_aderentes, fontes_no_momento, fonte_poi, origem,
+             aceito_por)
         values %s
-        on conflict (id_base, ligacao, poi_id) do nothing
+        on conflict (id_base, ligacao, poi_id) do update set
+            -- O ENDERECO PUBLICADO MANDA NO ENDERECO. Se o par ja existia e
+            -- estava descartado, ele volta — e volta com as colunas de
+            -- endereco corrigidas.
+            --
+            -- POR QUE ISSO E' NECESSARIO, medido em 10/09/2026: o `do nothing`
+            -- gravou 269 dos 2.279 pares que este modulo tinha encontrado. Os
+            -- outros 2.010 ja existiam, inseridos pelo cruzamento geometrico e
+            -- descartados pela revisao — 365 deles por "numero diferente",
+            -- quando os numeros publicados BATEM.
+            --
+            -- A causa e' que `mesmo_numero` foi gravado por uma versao antiga
+            -- de `_num`, que concatenava todos os grupos de digitos: "350 sala
+            -- 2" virava "3502" e nunca casava com a porta 350. A funcao foi
+            -- corrigida, a COLUNA nao — e `revisar_vinculo` le a coluna.
+            --
+            -- Sem esta clausula o POI fica orfao para sempre: o casamento por
+            -- endereco o encontra toda vez e toda vez o `do nothing` o joga
+            -- fora, em silencio.
+            mesmo_endereco = true,
+            mesmo_numero = true,
+            metros = coalesce(excluded.metros, radar_comercial.ligacao_poi.metros),
+            ate_20m = excluded.ate_20m,
+            origem = 'endereco_publicado',
+            aceito_por = 'endereco_exato',
+            descartado_em = null,
+            descartado_motivo = null,
+            descartado_por = null
     """, linhas, page_size=1000)
     con.commit()
     cur.execute("""select count(*) from radar_comercial.ligacao_poi
                     where origem = 'endereco_publicado'""")
-    _log("o banco gravou %d vínculos novos"
-         % (int(cur.fetchone()[0] or 0) - antes))
+    _log("o banco gravou ou reviveu %d vínculos (pedidos: %d)"
+         % (int(cur.fetchone()[0] or 0) - antes, len(linhas)))
 
     cur.execute("""
         update radar_comercial.pois p

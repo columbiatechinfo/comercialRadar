@@ -153,6 +153,51 @@ O terceiro virou migração: `0092` apaga os pendurados e põe
 `on delete cascade`, porque **seis lugares apagam POI** e nenhum limpa o
 vínculo.
 
+### O `do nothing` engolia o resgate, em silêncio
+
+O casamento por endereço achou 2.279 pares para os órfãos de Canoas e o banco
+gravou **269**. O `on conflict (id_base, ligacao, poi_id) do nothing` descartava
+os outros 2.010: o par já existia, inserido pelo cruzamento geométrico e
+descartado pela revisão.
+
+**365 deles tinham sido descartados por "número diferente" quando os números
+publicados batem.** A causa é uma coluna velha: `mesmo_numero` foi gravado por
+uma versão antiga de `_num` que concatenava todos os grupos de dígitos — "350
+sala 2" virava "3502" e nunca casava com a porta 350. A função foi corrigida em
+08/09; **a coluna não**, e `revisar_vinculo` lê a coluna.
+
+Sem a cláusula `do update`, esse POI ficava órfão para sempre: o casamento por
+endereço o encontrava toda vez, e toda vez o `do nothing` o jogava fora sem
+dizer nada.
+
+### `casar_por_endereco` nunca levou o conserto do acento
+
+`upper(cidade) = upper(%s)` nos dois lados — o mesmo defeito que
+`cruzar_ligacao` corrigiu em 03/09/2026. A Corsan grava "GRAVATAI" e a malha do
+IBGE devolve "Gravataí". Só passou despercebido porque **"CANOAS" não tem
+acento**, e Canoas foi a única cidade em que este módulo rodou.
+
+`pois.cidade` tem as duas grafias: 18.274 órfãos em "GRAVATAÍ" e 393 em
+"GRAVATAI". Qualquer chamada acertava um dos dois e perdia o outro — e o log
+diria "0 órfãos", que parece fila vazia e não erro.
+
+### Alocação dos órfãos, 10/09/2026
+
+Decisão do dono do produto: o teto de 50 m **vale também aqui**, mesmo o
+casamento sendo exato por logradouro + número + cidade (a regra 1).
+
+| cidade | pares achados | entraram | ficaram na fila |
+|---|---|---|---|
+| Canoas | 16.868 | 1.940 | 14.347 |
+| Gravataí | 9.125 | 7.152 | 1.973 |
+
+A diferença entre as duas é a **coordenada**, não o endereço: em Canoas a
+mediana do par é 228 m e em Gravataí, 17 m. Os 16.320 que ficaram na fila
+publicam o endereço da ligação e têm o ponto no lugar errado — enquanto a
+coordenada não for corrigida, a foto do dossiê sairia do imóvel errado.
+
+Vínculos vivos depois: **94.646**, e a revisão completa acusa **0 a descartar**.
+
 ### O `SIM_COM_ANALISE_HUMANA` que eu escrevi era impossível
 
 A primeira versão rebaixava a ligação sustentada só por vínculo de nome. Deu
