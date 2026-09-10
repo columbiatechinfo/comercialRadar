@@ -9,6 +9,7 @@ import avaliar_ia as ia
 import avaliar_ligacao as al
 import base_comum as bc
 import dossie_ligacao as dl
+import setor
 import imagens as bi
 
 from PIL import Image
@@ -33,6 +34,7 @@ def main():
     con = bc.conectar()
     cur = con.cursor()
     secoes = ia._secoes_texto(con)
+    pal = setor.palavras(con)
 
     cur.execute("""
         select v.ligacao, v.veredito, v.justificativa, v.percepcao, v.pois,
@@ -51,8 +53,8 @@ def main():
         texto, imgs, tipos, resumo = dl.montar(con, lig, ia, bi)
         # O PROMPT EXATO, montado do mesmo jeito que `avaliar_ligacao.uma`.
         lista = "\n".join("%d. %s" % (i + 1, t) for i, t in enumerate(tipos))
-        prompt = al.PROMPT % {"dossie": texto, "lista": lista,
-                              "julgar": al._regras_da_ligacao(secoes)}
+        prompt = al.PROMPT % dict(pal, dossie=texto, lista=lista,
+                                  julgar=al._regras_da_ligacao(secoes))
         fotos = []
         for b, tp in zip(imgs, tipos):
             p = encolher(b)

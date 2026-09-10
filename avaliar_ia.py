@@ -447,7 +447,7 @@ mercadoria empilhada no pátio; dois ou mais medidores numa casa aparentemente \
 comum; imagem antiga demais para o que o cadastro afirma. Se você não consegue \
 escrever qual é o sinal ambíguo, não é revisão — é reprovado.
 
-FOTO DE OFICIO NAO PROVA ENDERECO, e esta distinção é sua para fazer. A foto publicada no Google mostra o negócio, mas ela não vem com endereço: quem a tirou pode ter fotografado em casa, na casa do cliente ou num salão alugado.
+FOTO DE OFÍCIO NÃO PROVA ENDEREÇO, e esta distinção é sua para fazer. A foto publicada no Google mostra o negócio, mas ela não vem com endereço: quem a tirou pode ter fotografado em casa, na casa do cliente ou num salão alugado.
 
 A PERGUNTA "sinal_no_imovel" TEM DUAS FONTES, E VOCÊ PRECISA OLHAR AS DUAS. Ela NÃO é sobre a fachada, e não repita aqui o que respondeu sobre ela — as regras acima, que mandam aprovar só o que está na fachada, valem para o VEREDITO e não para esta pergunta.
 

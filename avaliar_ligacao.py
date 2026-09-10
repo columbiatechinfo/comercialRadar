@@ -34,6 +34,7 @@ import avaliar_ia as ia
 import base_comum as bc
 import descrever_imagens as di
 import dossie_ligacao as dl
+import setor
 import imagens
 
 MODELO_PADRAO = ia.MODELO_PADRAO
@@ -98,8 +99,17 @@ def _regras_da_ligacao(secoes):
     # igual nos dois julgamentos. O que vem ANTES fala da foto como prova
     # unica, e e justamente o que esta sendo substituido.
     herdado = ia._regras_de_julgar(secoes)
-    corte = herdado.find("FOTO DE OFICIO NAO PROVA ENDERECO")
-    cauda = herdado[corte:] if corte > 0 else ""
+    corte = herdado.find("FOTO DE OFÍCIO NÃO PROVA ENDEREÇO")
+    if corte <= 0:
+        # FALHA QUE NAO AVISA E PIOR QUE ERRO. Este `find` procura um titulo
+        # DENTRO do texto de outro modulo; no dia em que alguem reescrever
+        # aquele titulo — como aconteceu em 10/09/2026, ao acentua-lo — o
+        # corte volta -1, a cauda some e o prompt perde as regras de
+        # `sinal_no_imovel` e de classificacao SEM UMA LINHA NO LOG.
+        raise RuntimeError(
+            "o corte do bloco herdado nao encontrou %r em avaliar_ia."
+            "_regras_de_julgar — o titulo mudou de um lado so" % ("FOTO DE OFÍCIO NÃO PROVA ENDEREÇO",))
+    cauda = herdado[corte:]
     return (_REGRAS_DA_LIGACAO % {"ano": ano, "ano_passado": ano - 1}) + (
         "\n\n" + cauda if cauda else "")
 
@@ -114,169 +124,185 @@ def _regras_da_ligacao(secoes):
 #:
 #: O que sobra aqui e o que o prompt NAO diz: como pesar a foto contra
 #: as fontes, e o que conta como fonte suficiente.
-_REGRAS_DA_LIGACAO = """A IMAGEM E UMA TESTEMUNHA, E NAO O JUIZ — e esta e a regra que manda sobre
+_REGRAS_DA_LIGACAO = """A IMAGEM É UMA TESTEMUNHA, E NÃO O JUIZ — e esta é a regra que manda sobre
 todas as outras deste bloco.
 
-Voce recebe de tres a seis provas de naturezas diferentes: bases de registro,
-plataformas com data, avaliacoes de clientes assinadas, e fotos. A foto de rua
-e UMA delas. Ela responde bem uma pergunta — "o que estava pendurado na
+Você recebe de três a seis provas de naturezas diferentes: bases de registro,
+plataformas com data, avaliações de clientes assinadas, e fotos. A foto de rua
+é UMA delas. Ela responde bem uma pergunta — "o que estava pendurado na
 fachada no dia em que o carro passou" — e responde mal todas as outras.
 
-O QUE A FACHADA NAO SABE:
-- nao sabe o que funciona nos fundos, no sobrado ou dentro de casa;
-- nao sabe o que abriu depois que a foto foi tirada;
-- nao sabe de negocio que opera sem placa, que e o mais comum do bairro:
+O QUE A FACHADA NÃO SABE:
+- não sabe o que funciona nos fundos, no sobrado ou dentro de casa;
+- não sabe o que abriu depois que a foto foi tirada;
+- não sabe de negócio que opera sem placa, que é o mais comum do bairro:
   costureira, doceira, manicure, marmita, oficina, aluguel de temporada.
 
-ENTAO: fachada muda NAO E CONTRAPROVA. Ela nao contradiz fonte nenhuma — ela
-simplesmente nao viu.
+ENTÃO: fachada muda NÃO É CONTRAPROVA. Ela não contradiz fonte nenhuma — ela
+simplesmente não viu.
 
-E FOTO QUE NAO EXISTE E MENOS AINDA. Quando o dossie diz que nenhuma imagem o
-acompanha, isso NAO e motivo para revisao humana: e so a captura que ainda nao
-passou por este endereco. "Nao ha foto para confirmar" e a frase que voce esta
-proibido de usar como justificativa — ela descreve o estado do nosso trabalho,
-e nao o estado do imovel. Decida pelas fontes, que e o que voce recebeu. Uma casa comum na foto e o estado esperado da maioria
-dos comercios que este projeto procura, e nao um sinal contra eles.
+E FOTO QUE NÃO EXISTE É MENOS AINDA. Quando o dossiê diz que nenhuma imagem o
+acompanha, isso NÃO é motivo para devolver a dúvida: é só a captura que ainda
+não passou por este endereço. "Não há foto para confirmar" é a frase que você
+está proibido de usar como justificativa — ela descreve o estado do nosso
+trabalho, e não o estado do imóvel. Decida pelas fontes, que é o que você
+recebeu. Uma casa comum na foto é o estado esperado da maioria dos comércios
+que este projeto procura, e não um sinal contra eles.
 
-A FOTO TEM DATA, E A DATA ESTA NO DOSSIE. Use-a assim, e esta e a regra que
+A FOTO TEM DATA, E A DATA ESTÁ NO DOSSIÊ. Use-a assim, e esta é a regra que
 mais muda o seu trabalho:
 
 - FOTO DE ANTES DE %(ano)d + FONTES COM DADOS SUFICIENTES = APROVE.
-  Nao mande para revisao humana e nao reprove. A foto e velha demais para
-  desmentir seja o que for, e a pessoa que abrisse essa revisao veria
-  exatamente o que voce esta vendo e nao teria como decidir melhor. Voce tem
-  autonomia para aprovar, e deve usa-la. Diga na justificativa que a foto e
-  de %(ano_passado)d ou antes.
-- FOTO DE %(ano)d mostrando o imovel sem qualquer sinal, CONTRA fontes que
-  afirmam comercio: aqui ha conflito com data, e o peso da foto sobe. Diga o
-  conflito na justificativa e decida — a foto e do ano corrente, entao ela
+  Não devolva a dúvida e não reprove. A foto é velha demais para desmentir
+  seja o que for, e uma pessoa que revisasse veria exatamente o que você está
+  vendo e não teria como decidir melhor. Você tem autonomia para aprovar, e
+  deve usá-la. Diga na justificativa que a foto é de %(ano_passado)d ou antes.
+- FOTO DE %(ano)d mostrando o imóvel sem qualquer sinal, CONTRA fontes que
+  afirmam comércio: aqui há conflito com data, e o peso da foto sobe. Diga o
+  conflito na justificativa e decida — a foto é do ano corrente, então ela
   descreve o presente.
-- SEM DATA no dossie: trate como antiga.
+- SEM DATA no dossiê: trate como antiga.
 
-O QUE E "FONTES COM DADOS SUFICIENTES". Basta UMA destas linhas:
-0. TRES OU MAIS REGISTROS NA MESMA PORTA, mesmo que venham todos do MESMO
-   sistema. Trinta e dois CNPJs ativos num endereco nao sao trinta e duas
-   duvidas: sao um predio comercial, uma galeria ou um centro de escritorios.
-   Nenhuma casa tem trinta e dois CNPJs. Aprove, e diga quantos sao.
+O QUE É "FONTES COM DADOS SUFICIENTES". Basta UMA destas linhas:
+0. TRÊS OU MAIS REGISTROS NA MESMA PORTA, mesmo que venham todos do MESMO
+   sistema. Trinta e dois CNPJs ativos num endereço não são trinta e duas
+   dúvidas: são um prédio comercial, uma galeria ou um centro de escritórios.
+   Nenhuma casa tem trinta e dois CNPJs. Aprove, e diga quantos são.
 
-   ISTO CORRIGE UM ERRO REAL, medido em 08/09/2026: a ligacao 2221694 tinha
+   ISTO CORRIGE UM ERRO REAL, medido em 08/09/2026: a ligação 2221694 tinha
    32 registros da Receita apontando atividade comercial e administrativa, e
-   foi para revisao humana com a justificativa "nao ha fotos da fachada para
-   confirmar". Outras 102 ligacoes com tres ou mais registros de um sistema so
-   cairam do mesmo jeito. A pessoa que abrisse essa revisao leria os mesmos 32
-   CNPJs e nao teria como decidir melhor do que voce.
+   foi devolvida com a justificativa "não há fotos da fachada para confirmar".
+   Outras 102 ligações com três ou mais registros de um sistema só caíram do
+   mesmo jeito. Quem revisasse leria os mesmos 32 CNPJs e não teria como
+   decidir melhor do que você.
 
-1. DUAS OU MAIS fontes independentes apontando atividade economica no mesmo
-   endereco — ainda que descrevam ramos diferentes. Elas nao se anulam: um
-   hidrometro abastece uma loja E uma casa, um sobrado tem salao embaixo.
-2. UMA fonte com prova DATADA de operacao: avaliacao de cliente no Google,
-   loja no ar em plataforma, anuncio de hospedagem com hospede recente.
-3. UMA fonte com ficha completa do negocio naquele endereco: ramo nomeado
-   mais ao menos dois entre CNPJ, telefone, site, rede social, horario
-   declarado, nota com avaliacoes.
+1. DUAS OU MAIS fontes independentes apontando atividade econômica no mesmo
+   endereço — ainda que descrevam ramos diferentes. Elas não se anulam: uma
+   única ligação atende uma loja E uma casa, um sobrado tem salão embaixo.
+2. UMA fonte com prova DATADA de operação: avaliação de cliente no Google,
+   loja no ar em plataforma, anúncio de hospedagem com hóspede recente.
+3. UMA fonte com ficha completa do negócio naquele endereço: ramo nomeado
+   mais ao menos dois entre CNPJ, telefone, site, rede social, horário
+   declarado, nota com avaliações.
 
-Se nenhuma dessas linhas fecha, a foto volta a pesar mais — e "reprovado" e
-a resposta honesta, porque o que existe nao sustenta a aprovacao.
+Se nenhuma dessas linhas fecha, a foto volta a pesar mais — e "reprovado" é
+a resposta honesta, porque o que existe não sustenta a aprovação.
 
-E NAO INVERTA A REGRA. Isto nao e licenca para aprovar tudo:
-- CNPJ sozinho, sem mais nada, NAO e ficha completa. Endereco de contador e
-  MEI registrado em casa que nunca operou existem as centenas.
-- ECONOMIA COMERCIAL OU INDUSTRIAL ja declarada na propria ligacao significa
-  que o cliente JA cobra parte dela como comercio: nao ha o que reclassificar,
-  e o veredito e "reprovado" salvo se houver outra atividade alem daquela.
-- Foto de %(ano)d mostrando TERRENO VAGO, IMOVEL DEMOLIDO ou OBRA reprova
-  mesmo contra fonte, porque ai a foto viu o que a fonte nao podia saber: nao
-  ha imovel. Esta e a unica reprovacao que a foto ganha sozinha.
+E NÃO INVERTA A REGRA. Isto não é licença para aprovar tudo:
+- CNPJ sozinho, sem mais nada, NÃO é ficha completa. Endereço de contador e
+  MEI registrado em casa que nunca operou existem às centenas.
+- ECONOMIA COMERCIAL OU INDUSTRIAL já declarada na própria ligação significa
+  que o cliente JÁ cobra parte dela como comércio: não há o que reclassificar,
+  e o veredito é "reprovado" salvo se houver outra atividade além daquela.
+- Foto de %(ano)d mostrando TERRENO VAGO, IMÓVEL DEMOLIDO ou OBRA reprova
+  mesmo contra fonte, porque aí a foto viu o que a fonte não podia saber: não
+  há imóvel. Esta é a única reprovação que a foto ganha sozinha.
 
 DIGA SEMPRE, na justificativa, QUANTAS FONTES sustentam o veredito e QUAL A
-DATA da foto que voce usou. Quem for a porta precisa saber o que esperar.
+DATA da foto que você usou. Quem for à porta precisa saber o que esperar.
 """
 
 
+#: O PROMPT. Duas coisas nele foram consertadas em 10/09/2026, e as duas por
+#: apontamento do dono do produto.
+#:
+#: A ACENTUACAO E SEMANTICA, nao estetica. O texto vinha quase todo sem acento,
+#: e em portugues isso troca palavra por palavra: "E O IMOVEL QUE JA PAGA
+#: COMERCIO E REPROVADO" tem duas letras E com papeis opostos — a primeira e
+#: conjuncao, a segunda deveria ser "e" com acento, o verbo. Como ele escreveu:
+#: "casa 1 E ligacao 20 e completamente diferente em sentido de casa 1 E
+#: ligacao 20". Um modelo de linguagem le exatamente essa ambiguidade, e
+#: "nao e motivo", "e prova DATADA", "e reprovado" apareciam assim no texto que
+#: decidia 12 mil vereditos.
+#:
+#: O SETOR SAI DO TEXTO E VIRA PARAMETRO. O prompt falava de hidrometro, de
+#: agua e de "o imovel que ele abastece" — vocabulario de saneamento. O mesmo
+#: produto serve energia eletrica e gas, onde nao ha hidrometro nenhum. As
+#: palavras agora vem de `setor.palavras()`; ver o modulo e a migracao 0095.
 PROMPT = """Você decide se os registros encontrados pertencem MESMO a esta
-ligacao de agua, e se o que ha neles prova comercio no imovel.
+%(ligacao)s, e se o que há neles prova comércio no imóvel.
 
-O contexto: a companhia cobra este hidrometro como RESIDENCIAL. Se houver
-comercio no imovel que ele abastece, a tarifa esta errada — e e isso que se
-procura.
+O contexto: %(concessionaria)s cobra este %(medidor)s como RESIDENCIAL. Se
+houver comércio no imóvel que ele %(verbo)s, a tarifa está errada — e é isso
+que se procura.
 
-AS QUATRO FOTOS DE RUA SAO DO MESMO PONTO, girando a camera nas quatro
-direcoes. Nenhum imovel vem assinalado nelas: apontar o alvo antes de voce
-olhar seria dar a resposta junto com a pergunta. Olhe o que esta la e diga o
-que ve.
+AS QUATRO FOTOS DE RUA SÃO DO MESMO PONTO, girando a câmera nas quatro
+direções. Nenhum imóvel vem assinalado nelas: apontar o alvo antes de você
+olhar seria dar a resposta junto com a pergunta. Olhe o que está lá e diga o
+que vê.
 
 %(julgar)s
 
-O QUE VOCE RECEBE, e o peso de cada coisa:
+O QUE VOCÊ RECEBE, e o peso de cada coisa:
 
-- AS FONTES sao bases independentes — Receita, IBGE, base estadual, Google
-  Maps, iFood, Airbnb. Cada uma registrou o lugar por conta propria, em epocas
+- AS FONTES são bases independentes — Receita, IBGE, base estadual, Google
+  Maps, iFood, Airbnb. Cada uma registrou o lugar por conta própria, em épocas
   diferentes. Quando convergem valem mais do que qualquer uma sozinha.
-- AS DATAS estao no dossie e nos rotulos das imagens. Use-as: foto de dois
-  anos atras descreve o que havia HA DOIS ANOS. Foto do Google publicada por
-  visitante NAO tem data no nosso cadastro, e sem data ela nao sustenta
-  afirmacao sobre o presente — diga o que ela mostra, nao quando.
-- A LOJA NO AR e prova DATADA de operacao. iFood aceitando pedido e anuncio de
-  hospedagem com avaliacao recente dizem que o negocio funcionava quando foi
+- AS DATAS estão no dossiê e nos rótulos das imagens. Use-as: foto de dois
+  anos atrás descreve o que havia HÁ DOIS ANOS. Foto do Google publicada por
+  visitante NÃO tem data no nosso cadastro, e sem data ela não sustenta
+  afirmação sobre o presente — diga o que ela mostra, não quando.
+- A LOJA NO AR é prova DATADA de operação. iFood aceitando pedido e anúncio de
+  hospedagem com avaliação recente dizem que o negócio funcionava quando foi
   visto, o que a fachada nunca diz.
 
-SEPARE QUEM NAO E DESTE ENDERECO. O vinculo nasce de rua e numero batendo, mas
-uma base pode ter escrito o numero errado. Olhe o numero da porta, o logradouro
-e o ramo de cada registro e diga quais claramente NAO pertencem aqui.
+SEPARE QUEM NÃO É DESTE ENDEREÇO. O vínculo nasce de rua e número batendo, mas
+uma base pode ter escrito o número errado. Olhe o número da porta, o logradouro
+e o ramo de cada registro e diga quais claramente NÃO pertencem aqui.
 
-E "CLARAMENTE" MESMO. Nome diferente sozinho nao e motivo: uma loja e o CNPJ
-dela costumam ter nomes distintos, e um sobrado tem a casa e o salao.
+E "CLARAMENTE" MESMO. Nome diferente sozinho não é motivo: uma loja e o CNPJ
+dela costumam ter nomes distintos, e um sobrado tem a casa e o salão.
 
-TROCA DE NOME NAO E OUTRO ENDERECO. Dois registros do MESMO RAMO no MESMO
-endereco com nomes diferentes quase sempre sao o mesmo ponto em epocas
+TROCA DE NOME NÃO É OUTRO ENDEREÇO. Dois registros do MESMO RAMO no MESMO
+endereço com nomes diferentes quase sempre são o mesmo ponto em épocas
 diferentes: no Brasil estabelecimento troca de nome o tempo todo, e o dono
-seguinte herda a porta e o hidrometro. Cada fonte olhou numa epoca e anotou o
+seguinte herda a porta e o %(medidor)s. Cada fonte olhou numa época e anotou o
 nome que estava na fachada NAQUELE dia.
 
-DOIS STATUS, E SO DOIS:
+DOIS STATUS, E SÓ DOIS:
 
-- "aprovado": os dados sustentam que ha atividade comercial neste imovel.
-- "reprovado": nao sustentam.
+- "aprovado": os dados sustentam que há atividade comercial neste imóvel.
+- "reprovado": não sustentam.
 
-NAO EXISTE "revisao humana" NESTE JULGAMENTO. Voce recebe o que existe sobre o
-endereco; se isso nao basta para aprovar, e reprovado. Devolver a duvida para
-uma pessoa que veria exatamente o mesmo material nao acrescenta nada — e foi o
-que fez 82,6%% dos casos pararem numa fila que ninguem tinha como resolver.
+NÃO EXISTE "revisão humana" NESTE JULGAMENTO. Você recebe o que existe sobre o
+endereço; se isso não basta para aprovar, é reprovado. Devolver a dúvida para
+uma pessoa que veria exatamente o mesmo material não acrescenta nada — e foi o
+que fez 82,6%% dos casos pararem numa fila que ninguém tinha como resolver.
 
-E O IMOVEL QUE JA PAGA COMERCIO E REPROVADO. Economia comercial ou industrial
-declarada na propria ligacao significa que o cliente ja cobra parte dela como
-comercio: nao ha o que reclassificar.
+E O IMÓVEL QUE JÁ PAGA COMÉRCIO É REPROVADO. Economia comercial ou industrial
+declarada na própria ligação significa que o cliente já cobra parte dela como
+comércio: não há o que reclassificar.
 
 Responda SOMENTE um JSON:
 {"status": "aprovado|reprovado",
- "pois_coerentes": [<numeros dos POIs que pertencem a esta ligacao>],
- "pois_de_outro_endereco": [{"poi": <numero>, "porque": "<ate 15 palavras>"}],
- "estabelecimento": "<o nome do negocio que sustenta a aprovacao, ou null>",
+ "pois_coerentes": [<números dos POIs que pertencem a esta ligação>],
+ "pois_de_outro_endereco": [{"poi": <número>, "porque": "<até 15 palavras>"}],
+ "estabelecimento": "<o nome do negócio que sustenta a aprovação, ou null>",
  "presenca_na_foto": "exata|comercial|nenhuma",
  "fotos_do_google_validam": true|false,
  "especie_cnefe": <1-8|null>, "secao_cnae": "<letra|null>",
  "sinal_no_imovel": "instalacao_fixa|so_oficio|nenhum",
- "justificativa": "<UM PARAGRAFO, ate 70 palavras, dizendo QUAIS fontes
+ "justificativa": "<UM PARÁGRAFO, até 70 palavras, dizendo QUAIS fontes
 sustentam o status e o que nas imagens confirma ou contradiz. Cite a data do
-que usou. Escreva o que foi visto, nao o que se supoe.>"}
+que usou. Escreva o que foi visto, não o que se supõe.>"}
 
-O QUE SIGNIFICA "presenca_na_foto", e ela alimenta a pontuacao do vinculo:
+O QUE SIGNIFICA "presenca_na_foto", e ela alimenta a pontuação do vínculo:
 - "exata": as fotos mostram o estabelecimento nomeado — letreiro com o nome,
   ou ramo inequivocamente o mesmo.
-- "comercial": as fotos mostram atividade comercial no imovel, mas nao da para
-  dizer que e AQUELE negocio.
-- "nenhuma": as fotos nao mostram sinal comercial, ou nao ha foto.
+- "comercial": as fotos mostram atividade comercial no imóvel, mas não dá para
+  dizer que é AQUELE negócio.
+- "nenhuma": as fotos não mostram sinal comercial, ou não há foto.
 
-"fotos_do_google_validam" e verdadeiro quando as fotos publicadas mostram o
-negocio funcionando — balcao, mercadoria, sala de atendimento, produto sendo
-servido. Falso quando nao ha foto, ou quando o que ha nao diz nada sobre o
+"fotos_do_google_validam" é verdadeiro quando as fotos publicadas mostram o
+negócio funcionando — balcão, mercadoria, sala de atendimento, produto sendo
+servido. Falso quando não há foto, ou quando o que há não diz nada sobre o
 lugar.
 
 ────────────────────────────────────────────────────────────────────────
 
 %(dossie)s
 
-AS IMAGENS QUE VOCE RECEBEU, nesta ordem:
+AS IMAGENS QUE VOCÊ RECEBEU, nesta ordem:
 
 %(lista)s"""
 
@@ -297,6 +323,12 @@ AS IMAGENS QUE VOCE RECEBEU, nesta ordem:
 #:
 #: SEIS BASTAM porque o dossie usa o banco em rajadas curtas e a chamada ao
 #: modelo, que e o grosso do tempo, nao usa banco NENHUM. Ver `Poco.pegar`.
+#: O VOCABULARIO DO SETOR, preenchido por `rodar`. Comeca no generico para que
+#: quem chame `uma()` direto — um teste, um script — receba um prompt correto
+#: em vez de um `KeyError` ou, pior, o nome de um medidor que nao existe
+#: naquele cliente.
+_palavras = setor.VOCABULARIO[setor.PADRAO]
+
 CONEXOES = 6
 
 
@@ -525,8 +557,10 @@ def uma(poco, ligacao, modelo, secoes, placar, trava, aplicar):
             placar["sem_poi"] += 1
         return
     lista = "\n".join("%d. %s" % (i + 1, t) for i, t in enumerate(tipos))
-    prompt = PROMPT % {"dossie": texto, "lista": lista,
-                       "julgar": _regras_da_ligacao(secoes)}
+    # AS PALAVRAS DO SETOR entram aqui, e nao no texto: o mesmo prompt serve
+    # agua, energia e gas. Ver `setor.py` e a migracao 0095.
+    prompt = PROMPT % dict(_palavras, dossie=texto, lista=lista,
+                           julgar=_regras_da_ligacao(secoes))
     try:
         # 1100 E NAO 700, e o motivo veio medido em 10/09/2026: 36 das 2.473
         # primeiras ligacoes falharam com "Unterminated string" — JSON cortado
@@ -584,6 +618,11 @@ def rodar(limite, aplicar, trabalhadores, modelo, ligacoes, refazer):
     if not alvos:
         return {"alvos": 0}
     secoes = ia._secoes_texto(con)
+    # UMA CONSULTA POR EXECUCAO, como as secoes: o setor nao muda no meio de
+    # uma corrida, e le-lo por ligacao seria 12 mil consultas iguais.
+    global _palavras
+    _palavras = setor.palavras(con)
+    _log("setor: %s" % setor.qual(con))
     # A CONEXAO DE PREPARO FECHA AQUI, e isto nao e higiene: e correcao.
     #
     # IDLE IN TRANSACTION SEGURA LOCK. Ela era aberta, usada para montar a fila

@@ -15,6 +15,8 @@ testemunhas. Este modulo as poe na mesma sala.
 """
 import math
 
+import setor
+
 #: Quantas visadas de rua entram. Sao as do POI mais PROXIMO do hidrometro.
 VISADAS = 4
 
@@ -159,6 +161,9 @@ def montar(con, ligacao, ia, imagens_mod):
     que ja sabem converter "ha 2 meses" em mes e ano ancorados na data em que o
     POI foi detalhado. Reaproveitar em vez de reescrever: sao as mesmas contas.
     """
+    # AS PALAVRAS DO SETOR, e nao "hidrometro" escrito no texto. O mesmo
+    # dossie serve agua, energia e gas; ver `setor.py` e a migracao 0095.
+    pal = setor.palavras(con)
     cur = con.cursor()
     lig = _linha_da_ligacao(cur, ligacao)
     cur.execute(SQL_POIS, (ligacao,))
@@ -170,30 +175,39 @@ def montar(con, ligacao, ia, imagens_mod):
     # ── 1 · a ligacao, que e o sujeito ───────────────────────────────────
     if lig:
         (num, cat, sit, logr, nro, bairro, la, lo, eres, ecom, eind) = lig
-        linhas.append("A LIGACAO DE AGUA — e ELA que esta sendo julgada:")
-        linhas.append("- numero: %s" % num)
-        linhas.append("- endereco do hidrometro: %s, %s — bairro %s"
-                      % (logr or "(sem rua)", nro or "s/n", bairro or "?"))
+        # ACENTO E SEMANTICA, e este titulo era a prova.
+        #
+        # "A LIGACAO DE AGUA — e ELA que esta sendo julgada" tem um "e" que
+        # deveria ser "é": sem o acento a frase vira uma conjuncao solta e
+        # perde o verbo. Apontado pelo dono do produto em 10/09/2026 com o
+        # exemplo exato: "casa 1 E ligacao 20" e "casa 1 É ligacao 20" dizem
+        # coisas diferentes, e quem le isto e um modelo de linguagem.
+        linhas.append("A %s — é ELA que está sendo julgada:"
+                      % pal["ligacao_mai"])
+        linhas.append("- número: %s" % num)
+        linhas.append("- endereço do %s: %s, %s — bairro %s"
+                      % (pal["medidor"], logr or "(sem rua)", nro or "s/n",
+                         bairro or "?"))
         linhas.append("- categoria cobrada hoje: %s (%s)" % (cat or "?",
                                                              sit or "?"))
-        # OS MEDIDORES SAO INDICIO FORTE, e para companhia de agua sao dos
-        # melhores que existem: uma casa com seis economias nao e uma casa.
+        # AS ECONOMIAS SAO INDICIO FORTE em qualquer utility: uma casa com
+        # seis economias nao e uma casa.
         linhas.append("- economias: %d residencial(is), %d comercial(is), "
                       "%d industrial(is)" % (eres, ecom, eind))
         if ecom or eind:
-            linhas.append("  ATENCAO: esta ligacao JA tem economia comercial "
+            linhas.append("  ATENÇÃO: esta ligação JÁ tem economia comercial "
                           "ou industrial declarada.")
         if eres > 1:
-            linhas.append("  ATENCAO: %d economias residenciais num mesmo "
-                          "ponto — varias moradias ou uso misto." % eres)
+            linhas.append("  ATENÇÃO: %d economias residenciais num mesmo "
+                          "ponto — várias moradias ou uso misto." % eres)
     else:
         la = lo = None
-        linhas.append("A LIGACAO DE AGUA %s — a base do cliente nao devolveu "
-                      "a ficha dela." % ligacao)
+        linhas.append("A %s %s — a base do cliente não devolveu a ficha "
+                      "dela." % (pal["ligacao_mai"], ligacao))
 
     # ── 2 · quem aponta para ela ─────────────────────────────────────────
     linhas.append("")
-    linhas.append("O QUE AS FONTES DIZEM SOBRE ESTE ENDERECO — sao %d "
+    linhas.append("O QUE AS FONTES DIZEM SOBRE ESTE ENDEREÇO — são %d "
                   "registro(s) independentes:" % len(pois))
     fontes = set()
     melhor_sv = None       # POI mais proximo do hidrometro
@@ -217,20 +231,20 @@ def montar(con, ligacao, ia, imagens_mod):
                       % (pid, fonte, nome or "(sem nome)"))
         linhas.append("    atividade declarada: %s" % (categoria or "?"))
         if endereco:
-            linhas.append("    endereco que esta fonte traz: %s" % endereco)
+            linhas.append("    endereço que esta fonte traz: %s" % endereco)
         if d < 9e8:
-            linhas.append("    fica a %.0f m do hidrometro" % d)
+            linhas.append("    fica a %.0f m do %s" % (d, pal["medidor"]))
         for rot, val in (("telefone", tel), ("site", site),
                          ("Instagram", insta), ("Facebook", face),
                          ("CNPJ", cnpj)):
             if val and str(val).strip():
                 linhas.append("    %s: %s" % (rot, str(val).strip()[:120]))
         if nota is not None or n_aval:
-            linhas.append("    Google: nota %s de 5, com %s avaliacao(oes)"
+            linhas.append("    Google: nota %s de 5, com %s avaliação(ões)"
                           % (nota if nota is not None else "?",
                              n_aval if n_aval else "?"))
         if horario:
-            linhas.append("    horario declarado: %s" % str(horario)[:110])
+            linhas.append("    horário declarado: %s" % str(horario)[:110])
         if resumo:
             linhas.append("    o que o Google resume: %s" % str(resumo)[:300])
         # O VEREDITO ANTERIOR ENTRA COMO EVIDENCIA, e nao como resposta.
@@ -255,10 +269,10 @@ def montar(con, ligacao, ia, imagens_mod):
             if categ:
                 linhas.append("    cozinha: %s" % categ)
             if nota is not None or aval:
-                linhas.append("    nota %s com %s avaliacao(oes)"
+                linhas.append("    nota %s com %s avaliação(ões)"
                               % (nota if nota is not None else "?", aval or 0))
             if rua or nro:
-                linhas.append("    endereco que o iFood publica: %s, %s%s"
+                linhas.append("    endereço que o iFood publica: %s, %s%s"
                               % (rua or "?", nro or "s/n",
                                  (" — " + bairro) if bairro else ""))
             if cnpj:
@@ -272,8 +286,8 @@ def montar(con, ligacao, ia, imagens_mod):
         airbnb = []
     if airbnb:
         linhas.append("")
-        linhas.append("NO AIRBNB — hospedagem remunerada, que e consumo "
-                      "comercial numa ligacao residencial:")
+        linhas.append("NO AIRBNB — hospedagem remunerada, que é %s "
+                      "comercial numa ligação residencial:" % pal["consumo"])
         for (pid, titulo, tipo, hosp, qua, camas, banh, nota, aval,
              bairro, anfitriao) in airbnb:
             linhas.append("  POI #%s · %s" % (pid, titulo or "(sem titulo)"))
@@ -290,7 +304,7 @@ def montar(con, ligacao, ia, imagens_mod):
                 linhas.append("    nota %s com %s avaliacao(oes)"
                               % (nota if nota is not None else "?", aval or 0))
             if anfitriao:
-                linhas.append("    anfitriao: %s" % anfitriao)
+                linhas.append("    anfitrião: %s" % anfitriao)
             # O ENDERECO NAO VEM, e dize-lo evita que o modelo o procure.
             linhas.append("    o Airbnb NAO publica o endereco exato — a "
                           "plataforma mostra so um circulo aproximado.")
@@ -307,7 +321,7 @@ def montar(con, ligacao, ia, imagens_mod):
                    or "avaliações de clientes" in s]
         if coments:
             linhas.append("")
-            linhas.append("  avaliacoes de clientes ligadas a [%s] %s:"
+            linhas.append("  avaliações de clientes ligadas a [%s] %s:"
                           % (fonte, nome[:40]))
             linhas.extend("  " + c for c in coments)
 
@@ -317,10 +331,10 @@ def montar(con, ligacao, ia, imagens_mod):
     # O MAIS PROXIMO SO SERVE SE ESTIVER PERTO. Ver `RAIO_DA_FOTO_M`.
     if melhor_sv and melhor_sv[1] > RAIO_DA_FOTO_M:
         linhas.append("")
-        linhas.append("SEM FOTO DA FACHADA DESTA LIGACAO. O registro mais "
-                      "proximo esta a %.0f m do hidrometro — longe demais para "
-                      "que a foto dele seja deste imovel. Julgue pelas fontes."
-                      % melhor_sv[1])
+        linhas.append("SEM FOTO DA FACHADA DESTA LIGAÇÃO. O registro mais "
+                      "próximo está a %.0f m do %s — longe demais para que a "
+                      "foto dele seja deste imóvel. Julgue pelas fontes."
+                      % (melhor_sv[1], pal["medidor"]))
         melhor_sv = None
     if melhor_sv:
         forma, bb, tt = ia.evidencia(con, melhor_sv[0])
@@ -369,11 +383,11 @@ def montar(con, ligacao, ia, imagens_mod):
                           "%s (%s)." % (anos[0], anos[-1],
                                         _mes_ano_das(datas)))
         linhas.append("Pese a idade delas: o que a fachada mostra vale para "
-                      "AQUELA data, e nao para hoje.")
+                      "AQUELA data, e não para hoje.")
     elif imgs:
         linhas.append("")
-        linhas.append("A DATA DAS FOTOS DE RUA NAO ESTA NO CADASTRO — trate-as "
-                      "como possivelmente antigas.")
+        linhas.append("A DATA DAS FOTOS DE RUA NÃO ESTÁ NO CADASTRO — "
+                      "trate-as como possivelmente antigas.")
     else:
         # O SILENCIO NAO AVISA. Auditadas as 200 primeiras julgadas pelo modelo
         # novo em 08/09/2026: 20 dossies nao falavam de foto nenhuma, e 17
@@ -382,10 +396,10 @@ def montar(con, ligacao, ia, imagens_mod):
         # FOTOS DE RUA" com zero imagem anexada convida a inventar o que elas
         # mostrariam.
         linhas.append("")
-        linhas.append("NENHUMA IMAGEM ACOMPANHA ESTE DOSSIE. Nao ha foto de rua "
-                      "nem foto publicada para este endereco: nada foi "
-                      "capturado ainda. Julgue SO pelas fontes, e nao comente "
-                      "fachada — voce nao viu nenhuma.")
+        linhas.append("NENHUMA IMAGEM ACOMPANHA ESTE DOSSIÊ. Não há foto de "
+                      "rua nem foto publicada para este endereço: nada foi "
+                      "capturado ainda. Julgue SÓ pelas fontes, e não comente "
+                      "fachada — você não viu nenhuma.")
 
     resumo = {"pois": len(pois), "fontes": len(fontes),
               "ifood": len(ifood), "airbnb": len(airbnb),
