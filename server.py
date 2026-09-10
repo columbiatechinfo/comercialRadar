@@ -36,6 +36,7 @@ import shlex
 import threading
 import subprocess
 import urllib.error      # explícito: `urllib.request` só o expõe por efeito colateral
+import urllib.parse      # idem: nao depender do efeito colateral acima
 import urllib.request
 from pathlib import Path
 from datetime import datetime
@@ -2870,6 +2871,192 @@ def modelo_cadastro():
                              'attachment; filename="modelo_cadastro_cliente.csv"'})
 
 
+def _ponte_bases(caminho: str, autorizacao: str, metodo: str = "GET",
+                 corpo: bytes = None, tipo_conteudo: str = None):
+    """Repassa uma chamada ao `api-bases` COM O TOKEN DE QUEM PERGUNTOU.
+
+    POR QUE UMA PONTE, e não o navegador falando direto com o `api-bases`. É a
+    mesma razão de `/api/login` existir: o endereço do serviço e a topologia da
+    LAN ficariam no código da página. Para o cliente, a origem do que ele vê
+    somos nós.
+
+    E POR QUE O TOKEN É O DELE, e não um nosso. O `api-bases` aplica RLS por
+    empresa — 404 ali pode significar "não existe" ou "não é seu", de
+    propósito. Se este serviço usasse uma credencial própria, essa separação
+    morreria aqui e o radar viraria o buraco por onde uma empresa enxerga a
+    pasta de outra. Repassando o token, a decisão continua sendo de lá.
+    """
+    import urllib.error
+    import urllib.request
+    url = endpoints.BASES.rstrip("/") + caminho
+    cab = {"Authorization": autorizacao}
+    if tipo_conteudo:
+        cab["Content-Type"] = tipo_conteudo
+    req = urllib.request.Request(url, data=corpo, method=metodo, headers=cab)
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return json.loads(r.read() or b"null"), r.status
+    except urllib.error.HTTPError as e:
+        try:
+            return json.loads(e.read() or b"null"), e.code
+        except Exception:                                      # noqa: BLE001
+            return {"erro": "api-bases respondeu %s" % e.code}, e.code
+    except Exception as e:                                     # noqa: BLE001
+        return {"erro": "api-bases indisponível: %s" % e}, 503
+
+
+@app.get("/api/drive/tipos")
+def drive_tipos(request: Request):
+    """Os tipos de base da empresa — cada um é uma subpasta no Drive."""
+    aut = request.headers.get("authorization") or ""
+    if not aut:
+        return JSONResponse({"erro": "sem token"}, status_code=401)
+    corpo, codigo = _ponte_bases("/tipos", aut)
+    return JSONResponse(corpo, status_code=codigo)
+
+
+@app.get("/api/drive/bases")
+def drive_bases(request: Request):
+    """Os arquivos que já estão na pasta da empresa, com status e link.
+
+    O QUE ESTA ROTA NÃO FAZ, e é a pendência que importa: ela LISTA, não BAIXA.
+    O `api-bases` não publica rota de conteúdo — `link_arquivo` abre no Drive
+    com conta autorizada, e o contrato proíbe contornar isso com credencial
+    própria do Drive. Enquanto essa rota não existir, o arquivo chega ao radar
+    pelo upload do painel; daqui sai a conferência de que é o mesmo arquivo,
+    pelo `hash_sha256`.
+    """
+    aut = request.headers.get("authorization") or ""
+    if not aut:
+        return JSONResponse({"erro": "sem token"}, status_code=401)
+    corpo, codigo = _ponte_bases("/bases", aut)
+    return JSONResponse(corpo, status_code=codigo)
+
+
+def _registrar_no_drive(caminho, nome, tipo, autorizacao):
+    """Manda o arquivo ao `api-bases`, que o põe na pasta da empresa.
+
+    LÊ EM PEDAÇOS TAMBÉM. O arquivo pode ter centenas de MB e este contêiner
+    tem `mem_limit: 1g`; carregá-lo inteiro para reenviar seria trocar o OOM
+    do upload pelo OOM do repasse.
+
+    O TOKEN É O DE QUEM SUBIU. O `api-bases` decide a empresa pela RLS dele —
+    se este serviço usasse credencial própria, o arquivo poderia aterrissar na
+    pasta errada e ninguém veria.
+    """
+    if not autorizacao:
+        return {"ok": False, "erro": "sem token para falar com o api-bases"}
+    import urllib.error
+    import urllib.request
+    tam = os.path.getsize(caminho)
+    url = ("%s/bases?tipo=%s&type_update=substitui"
+           % (endpoints.BASES.rstrip("/"), urllib.parse.quote(str(tipo))))
+    with open(caminho, "rb") as f:
+        req = urllib.request.Request(
+            url, data=f, method="POST",
+            headers={"Authorization": autorizacao,
+                     "X-Nome-Arquivo": nome,
+                     "Content-Type": "text/csv",
+                     "Content-Length": str(tam)})
+        try:
+            with urllib.request.urlopen(req, timeout=1800) as r:
+                d = json.loads(r.read() or b"null") or {}
+            return {"ok": True, "id": d.get("id"),
+                    "link": d.get("link_arquivo"),
+                    "hash": d.get("hash_sha256")}
+        except urllib.error.HTTPError as e:
+            corpo = ""
+            try:
+                corpo = (e.read() or b"").decode("utf-8", "replace")[:200]
+            except Exception:                                  # noqa: BLE001
+                pass
+            return {"ok": False, "erro": "api-bases %s: %s" % (e.code, corpo)}
+        except Exception as e:                                 # noqa: BLE001
+            return {"ok": False, "erro": str(e)[:160]}
+
+
+@app.post("/api/bases/upload")
+async def base_upload(request: Request, file: UploadFile = File(...),
+                      tipo_drive: str = ""):
+    """Recebe a base do cliente EM PEDAÇOS, direto para o disco.
+
+    POR QUE NÃO `await file.read()`, que é o que a rota vizinha faz. A base da
+    Corsan tem 2.516.709 linhas e uns 700 MB em CSV, e este contêiner roda com
+    `mem_limit: 1g`. Ler o arquivo inteiro na memória é o OOM que mata a API no
+    meio do envio — e o operador vê a conexão cair sem uma linha de explicação,
+    que é a pior forma de falhar.
+
+    Em pedaços de 4 MB o pico de memória é o pedaço, e não o arquivo. Vale para
+    a base de 700 MB e para a de 700 KB.
+
+    O ARQUIVO FICA EM VOLUME, não em tmpfs: upload de 700 MB que some no
+    restart é upload que se faz duas vezes.
+    """
+    nome = Path(file.filename or "base.csv").name
+    if not nome.lower().endswith((".csv", ".txt", ".tsv")):
+        return JSONResponse(
+            {"erro": "Envie um .csv (ou .txt/.tsv). Planilha do Excel não "
+                     "serve para uma base deste tamanho: o formato para em "
+                     "1.048.576 linhas e a Corsan tem 2.516.709."},
+            status_code=400)
+    destino = UPLOADS / nome
+    total = 0
+    try:
+        with open(destino, "wb") as saida:
+            while True:
+                pedaco = await file.read(4 * 1024 * 1024)
+                if not pedaco:
+                    break
+                saida.write(pedaco)
+                total += len(pedaco)
+    except OSError as e:
+        return JSONResponse({"erro": "não consegui gravar em disco: %s" % e},
+                            status_code=500)
+    if not total:
+        destino.unlink(missing_ok=True)
+        return JSONResponse({"erro": "arquivo vazio"}, status_code=400)
+
+    # O ARQUIVO TAMBÉM VAI PARA A PASTA DA EMPRESA, quando a tela pede.
+    #
+    # UM ENVIO, DOIS DESTINOS: a cópia local é o que o `COPY` vai ler — o
+    # `api-bases` não publica rota de conteúdo, então não dá para buscar de
+    # volta —, e a cópia no Drive é o que dá dono, hash e auditoria ao arquivo
+    # que gerou o resultado. Sem ela, a base usada em produção viveria só num
+    # volume deste contêiner, e ninguém conseguiria dizer depois qual arquivo
+    # produziu qual número.
+    #
+    # FALHA AQUI NÃO DERRUBA O UPLOAD. O arquivo já está em disco e é dele que
+    # o carregamento depende; perder o registro no Drive é perder rastro, não
+    # perder o trabalho. O aviso volta para a tela dizer o que faltou.
+    aviso_drive = None
+    if tipo_drive:
+        aviso_drive = _registrar_no_drive(destino, nome, tipo_drive,
+                                          request.headers.get("authorization"))
+
+    # OS TÍTULOS E UMA AMOSTRA, sem ler o resto. É o que a tela precisa para
+    # a pessoa declarar as colunas, e o que vai para a IA sugerir.
+    cab, sep, amostra = _espiar_csv(destino)
+    if not cab:
+        return JSONResponse(
+            {"erro": "não achei cabeçalho — a primeira linha precisa ter os "
+                     "nomes das colunas"}, status_code=400)
+    return {"arquivo": nome, "bytes": total, "separador": sep,
+            "colunas": cab, "amostra": amostra, "drive": aviso_drive}
+
+
+def _espiar_csv(caminho, quantas=12):
+    """Delega para `carregar_base.espiar`.
+
+    UMA IMPLEMENTAÇÃO SÓ. Esta função nasceu como cópia — mesma detecção de
+    separador, mesma leitura dos primeiros 64 KB — e as duas já divergiram no
+    primeiro teste: a daqui colapsava título repetido e mostrava o valor da
+    coluna errada na tela. Duas cópias da mesma regra divergem no primeiro
+    ajuste, e é a tela que herda a versão velha.
+    """
+    import carregar_base
+    return carregar_base.espiar(caminho, quantas)
+
+
 @app.post("/api/cadastro/previa")
 async def cadastro_previa(file: UploadFile = File(...)):
     """Lê o arquivo, NÃO grava, e devolve o que veio para conferência no modal.
@@ -3762,6 +3949,79 @@ def iniciar_job(body: dict):
             out_json = json_alvo
             _novo_job("minerar_web", out_json, {"arquivo": json_alvo.name})
 
+        elif modo == "carregar_base":
+            # O `COPY` DA BASE CRUA, como job e não como requisição: são
+            # 2.516.709 linhas na base da Corsan, e nenhum navegador segura a
+            # espera de um `COPY` desse tamanho sem estourar o tempo limite.
+            #
+            # Roda no minerador, e não aqui: a API é `read_only` e tem
+            # `mem_limit: 1g`. Ela recebe o arquivo em pedaços e o deposita no
+            # volume; quem empurra para o Postgres é o outro contêiner.
+            out_json = MINERACAO / "_carregar_base_noop.json"
+            cmd = [PYTHON, "carregar_base.py", "--aplicar",
+                   "--arquivo", str(op.get("arquivo") or "")]
+            if op.get("base"):
+                cmd += ["--base", str(int(op["base"]))]
+            if op.get("nome"):
+                cmd += ["--nome", str(op["nome"])[:60]]
+            _novo_job("carregar_base", out_json, {})
+
+        elif modo == "materializar_base":
+            # DA TABELA CRUA DECLARADA PARA A CANONICA, e a troca no lugar.
+            #
+            # Roda com `A2L_MIGRATOR_URL` porque cria tabela, indice e
+            # politica — o papel do pipeline nao faz isso, e a fronteira e
+            # deliberada.
+            #
+            # `--trocar` e SEPARADO de `--aplicar` de proposito: materializar
+            # e reversivel (a tabela nova fica ao lado), trocar mexe no que 16
+            # arquivos do produto consultam pelo nome. Quem materializa pode
+            # conferir antes de substituir.
+            out_json = MINERACAO / "_materializar_noop.json"
+            cmd = [PYTHON, "materializar_base.py", "--aplicar",
+                   "--base", str(int(op.get("base") or 0))]
+            if op.get("trocar"):
+                cmd.append("--trocar")
+            _novo_job("materializar_base", out_json, {})
+
+        elif modo == "revisar_vinculo":
+            # A REGRA DE VÍNCULO, aplicada ao que já está gravado.
+            #
+            # É a fase que responde ao defeito medido em 08/09/2026: dentro de
+            # 20 m o cruzamento antigo não testava endereço nenhum, e 73% dos
+            # vínculos juntavam um POI que publica outro número de porta. Em
+            # 81,6% das ligações julgadas, as fotos que a IA olhou eram de
+            # outro imóvel.
+            #
+            # O descarte é MARCA, não `delete`: `descartado_por` = 'regra_
+            # vinculo'. Dá para auditar e dá para desfazer.
+            out_json = MINERACAO / "_revisar_vinculo_noop.json"
+            cmd = [PYTHON, "revisar_vinculo.py", "--aplicar"]
+            if op.get("cidade"):
+                cmd += ["--cidade", str(op["cidade"])]
+            _novo_job("revisar_vinculo", out_json, {})
+
+        elif modo == "casar_endereco":
+            # O POI ÓRFÃO QUE PUBLICA O ENDEREÇO DA LIGAÇÃO.
+            #
+            # O cruzamento só olha 60 m ao redor do hidrômetro, e por isso
+            # perde o caso oposto ao que ele resolve: a fonte publicou "Rua
+            # Tal, 350" e o geocodificador jogou o ponto no eixo da via. Esse
+            # POI é bom e está longe — a mediana medida foi 316 m.
+            #
+            # Roda DEPOIS de `revisar_vinculo`, e só sobre quem ficou sem
+            # ligação nenhuma. E corrige a coordenada de quem casou com uma
+            # ligação só: a ligação sabe onde fica a porta.
+            out_json = MINERACAO / "_casar_endereco_noop.json"
+            cmd = [PYTHON, "casar_por_endereco.py", "--aplicar",
+                   "--cidade", str(op.get("cidade") or "")]
+            # O BOTAO NAO MOVE COORDENADA. Ver `casar_por_endereco`: a
+            # coordenada publicada pela fonte e observacao dela, e o padrao de
+            # um botao nao deve ser alterar dado de origem.
+            if op.get("mover"):
+                cmd.append("--mover")
+            _novo_job("casar_endereco", out_json, {})
+
         elif modo == "enriquecer_maps":
             # descobertos/recuperados_ia rasos → abre cada um no Maps (painel completo)
             out_json = MINERACAO / f"enrich_maps_{datetime.now().strftime('%Y%m%d_%H%M')}_db.json"
@@ -4306,7 +4566,7 @@ def index():
     depender de hard reload. Sem isso, a troca da tela principal chegaria para
     metade da equipe com o JavaScript antigo.
     """
-    return _pagina("painel.html", ("painel.js",))
+    return _pagina("painel.html", ("painel.js", "camada_gpu.js",))
 
 
 @app.get("/antigo")
@@ -4539,6 +4799,99 @@ def listar_ligacoes(cidade: str | None = None, area: str | None = None):
     }
 
 
+@app.get("/api/score/resumo")
+def score_resumo(cidade: str = ""):
+    """A distribuição do score e quantas ligações cada flag alcança.
+
+    É O QUE A ABA INICIAL PRECISA para você escolher o corte — e a escolha é
+    sua, não do sistema. Regra do dono do produto: "o sistema só mostra os
+    dados e dá uma flag em cada um; aí ele filtra a combinação que para ele
+    passa a ser adequada".
+
+    Por isso vêm as duas coisas: a distribuição por faixa, que responde
+    "quantos alvos eu teria se cortasse em 40?", e a contagem por flag, que
+    responde "quantos têm Street View conclusivo?". Um corte sozinho não
+    responde a segunda.
+    """
+    conn = realtime_ingest.conectar()
+    try:
+        with conn.cursor() as cur:
+            wc = ""
+            pc = ()
+            if cidade:
+                wc = ("join resources_root.cadastro_corsan c "
+                      "on c.num_ligacao::text = s.ligacao "
+                      "and upper(coalesce(c.cidade,'')) = upper(%s)")
+                pc = (cidade,)
+            cur.execute("""
+                select (s.total / 10) * 10 as faixa, count(*)
+                  from radar_comercial.ligacao_score s %s
+                 group by 1 order by 1 desc""" % wc, pc)
+            faixas = [[int(f), int(n)] for f, n in cur.fetchall()]
+
+            cur.execute("""
+                select count(*) as total,
+                       count(*) filter (where s.perto_10m),
+                       count(*) filter (where s.mesmo_telhado),
+                       count(*) filter (where s.telhado_comercial),
+                       count(*) filter (where s.sv_exata),
+                       count(*) filter (where s.sv_comercial),
+                       count(*) filter (where s.sv_recente),
+                       count(*) filter (where s.aval_recente),
+                       count(*) filter (where s.fotos_validadas),
+                       count(*) filter (where s.rede_recente),
+                       coalesce(round(avg(s.total), 1), 0),
+                       coalesce(max(s.total), 0)
+                  from radar_comercial.ligacao_score s %s""" % wc, pc)
+            r = cur.fetchone()
+    finally:
+        conn.close()
+    nomes = ["perto_10m", "mesmo_telhado", "telhado_comercial", "sv_exata",
+             "sv_comercial", "sv_recente", "aval_recente", "fotos_validadas",
+             "rede_recente"]
+    return {"total": int(r[0] or 0),
+            "flags": {n: int(v or 0) for n, v in zip(nomes, r[1:10])},
+            "media": float(r[10] or 0), "maior": int(r[11] or 0),
+            "faixas": faixas,
+            # O TETO VAI JUNTO para a tela nao ter de saber a formula. Se um
+            # peso mudar, o painel acompanha sem ser tocado.
+            "teto": 80}
+
+
+@app.get("/api/vinculo/orfaos")
+def vinculo_orfaos(cidade: str = ""):
+    """Quantos POIs não têm ligação nenhuma — e quantos ainda dá para casar.
+
+    É o contador do botão "Casar por endereço". Os dois números dizem coisas
+    diferentes e por isso vão os dois: `orfaos` é o tamanho do problema,
+    `com_endereco` é quanto dele a fase seguinte pode resolver sozinha — o
+    resto é fila humana, porque a fonte não publicou onde fica.
+    """
+    conn = realtime_ingest.conectar()
+    try:
+        with conn.cursor() as cur:
+            wc = "and upper(coalesce(p.cidade,'')) = upper(%s)" if cidade else ""
+            pc = (cidade,) if cidade else ()
+            cur.execute("""
+                select count(*) as orfaos,
+                       count(*) filter (
+                           where lr.forca = 'prova'
+                             and coalesce(lr.logradouro,'') <> ''
+                             and coalesce(lr.numero,'') <> '') as com_endereco
+                  from radar_comercial.pois p
+                  left join radar_comercial.logradouro_resolvido lr
+                         on lr.poi_id = p.id
+                 where p.fundido_em is null %s
+                   and not exists (select 1 from radar_comercial.ligacao_poi lp
+                                    where lp.poi_id = p.id
+                                      and lp.descartado_em is null)
+            """ % wc, pc)
+            orfaos, com_end = cur.fetchone()
+    finally:
+        conn.close()
+    return {"orfaos": int(orfaos or 0), "com_endereco": int(com_end or 0)}
+
+
 @app.get("/api/ligacoes/{num}")
 def detalhe_ligacao(num: int):
     """A ficha de UM hidrômetro: o cadastro do cliente e as abas das fontes.
@@ -4603,6 +4956,18 @@ def detalhe_ligacao(num: int):
                   from radar_comercial.ligacao_veredito
                  where ligacao = %s limit 1""", (str(num),))
             vr = cur.fetchone()
+
+            # O SCORE NA FICHA, com as parcelas abertas. O total sozinho diz
+            # "quanto"; as parcelas dizem DE ONDE — e é a segunda pergunta que
+            # quem vai à porta faz.
+            cur.execute("""
+                select total, p_distancia, p_telhado, p_streetview,
+                       p_avaliacoes, p_fotos, p_rede, perto_10m, mesmo_telhado,
+                       telhado_comercial, sv_exata, sv_comercial, sv_recente,
+                       aval_recente, fotos_validadas, rede_recente, detalhe
+                  from radar_comercial.ligacao_score
+                 where ligacao = %s limit 1""", (str(num),))
+            sc = cur.fetchone()
     finally:
         conn.close()
     veredito = None
@@ -4611,7 +4976,16 @@ def detalhe_ligacao(num: int):
                     "confianca": float(vr[2]) if vr[2] is not None else None,
                     "pois": vr[3], "fontes": vr[4], "modelo": vr[5],
                     "avaliado_em": vr[6].isoformat() if vr[6] else None}
-    return {"cadastro": cad, "abas": abas, "veredito": veredito}
+    score = None
+    if sc:
+        campos = ["total", "p_distancia", "p_telhado", "p_streetview",
+                  "p_avaliacoes", "p_fotos", "p_rede", "perto_10m",
+                  "mesmo_telhado", "telhado_comercial", "sv_exata",
+                  "sv_comercial", "sv_recente", "aval_recente",
+                  "fotos_validadas", "rede_recente", "detalhe"]
+        score = dict(zip(campos, sc))
+    return {"cadastro": cad, "abas": abas, "veredito": veredito,
+            "score": score}
 
 
 # ── Regras destraváveis ──────────────────────────────────────────────────────

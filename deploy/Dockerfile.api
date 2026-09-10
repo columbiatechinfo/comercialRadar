@@ -43,6 +43,18 @@ COPY . .
 # arquivos, mas um processo root dentro do contêiner ainda tem privilégio demais
 # para o que uma API precisa: ela só fala TCP e Postgres.
 RUN useradd --uid 10001 --no-create-home --shell /usr/sbin/nologin radar
+
+# A PASTA DE UPLOADS NASCE DO USUARIO DA API, e nao do root — e o chown tem de
+# estar AQUI, na imagem, nao no volume.
+#
+# O motivo e como o Docker semeia volume nomeado: quando ele esta VAZIO, o
+# conteudo E O DONO da pasta da imagem sao copiados para dentro dele a cada
+# start do contentor. Corrigir o dono por fora (`docker run ... chown`) funciona
+# ate o proximo `up`, e ai a API volta a levar "permission denied" ao gravar a
+# base do cliente — foi o que aconteceu duas vezes em 09/09/2026 antes de eu
+# entender o mecanismo.
+RUN mkdir -p /app/uploads && chown 10001:10001 /app/uploads
+
 USER 10001
 
 EXPOSE 7720

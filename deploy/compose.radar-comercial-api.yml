@@ -83,6 +83,18 @@ services:
       # para tmpfs de propósito — anexo que some no restart é pior que anexo
       # que não sobe.
       - radar-anexos:/app/anexos
+      # A BASE DO CLIENTE ATERRISSA AQUI, e precisa de volume de verdade.
+      #
+      # O contêiner é `read_only: true`, então `/app/uploads` da imagem não
+      # aceita escrita — o `POST /api/cadastro/previa` gravava ali e falharia.
+      # E tmpfs não serve: a base da Corsan tem 2.516.709 linhas e uns 700 MB
+      # em CSV; pôr isso na RAM de um contêiner com `mem_limit: 1g` é o OOM
+      # que derruba a API no meio do envio, e o operador vê a conexão cair sem
+      # explicação nenhuma.
+      #
+      # Fica em disco de propósito também pelo reenvio: upload de 700 MB que
+      # some no restart é upload que se faz duas vezes.
+      - radar-uploads:/app/uploads
 
     mem_limit: 1g
 
@@ -160,6 +172,12 @@ services:
         max-file: "2"
 
 volumes:
+  # EXTERNO, como crops e capturas — e pelo mesmo motivo. Sem `external`, o
+  # compose cria `radar-comercial-api_radar-uploads`, prefixado pelo projeto,
+  # enquanto o minerador monta `radar-uploads`: dois volumes distintos com
+  # nome parecido, e a API gravaria num que o carregador nunca leria.
+  radar-uploads:
+    external: true
   radar-anexos:
   radar-crops:
     external: true

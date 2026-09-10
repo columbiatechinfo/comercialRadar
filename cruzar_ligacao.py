@@ -213,6 +213,8 @@ SQL_CANDIDATOS = """
     # devolve o cruzamento a segundos: o trabalho pesado ja estava no Python.
 
 
+import regra_vinculo as rv
+
 def _log(m: str) -> None:
     print(m, flush=True)
 
@@ -242,9 +244,17 @@ except Exception:                                          # noqa: BLE001
 
 
 def _num(s) -> str:
-    """Só os dígitos do número da porta. `1509-A` e `1509` são a mesma porta."""
-    d = re.sub(r"\D", "", str(s or ""))
-    return d.lstrip("0") or ""
+    r"""Só os dígitos do número da porta. `1509-A` e `1509` são a mesma porta.
+
+    DELEGA PARA `regra_vinculo`, e a diferenca nao e cosmetica. Esta funcao
+    fazia `re.sub(r"\D", "", s)`, que CONCATENA todos os grupos de digitos:
+    "350 sala 2" virava "3502" e nunca casava com a porta 350, e o lixo
+    "136092310200" era aceito como numero de porta.
+
+    Descoberto em 08/09/2026 pela diferenca: `casar_por_endereco` casou 391
+    pares que este cruzamento tinha descartado por "numero diferente".
+    """
+    return rv.numero_limpo(s) or ""
 
 
 class Telhado:
@@ -637,6 +647,11 @@ def cruzar(base_id: int, cidade: str, aplicar: bool, raio: float,
     telhado = Telhado()
     _log("   %d tile(s) georreferenciado(s) no disco" % len(telhado.tiles))
 
+    # A RARIDADE DOS NOMES DA CIDADE, uma vez. `regra_vinculo.parecidos` se
+    # recusa a trabalhar sem ela — sem os pesos, "Pizzaria" casaria com
+    # "Pizzaria" e o criterio do nome viraria o vazamento novo.
+    _log("   %d tokens de nome pesados" % rv.carregar_pesos(con, cidade))
+
     # AS FONTES QUE EXISTEM AGORA — o denominador da adesão. Ele vai gravado
     # junto para o número não mentir quando uma fonte nova entrar depois.
     cur.execute("""select count(distinct coalesce(fonte,'')) from radar_comercial.pois
@@ -649,6 +664,10 @@ def cruzar(base_id: int, cidade: str, aplicar: bool, raio: float,
     for (lig, via_l, num_l, _tipo, poi_id, fonte, _nome_poi, end_poi,
          via_poi, num_poi, metros, llat, llon, plat, plon,
          end_prova) in linhas:
+        # O NUMERO QUE A FONTE PUBLICOU, cru — `_num` normaliza para comparar
+        # e `rv.numero_limpo` tem regra propria (zero a esquerda, lixo de sete
+        # digitos), entao o veto recebe o original.
+        num_p = num_poi or end_poi
         # A VIA DO POI VEM DA PENEIRA DE ENDEREÇO quando ela resolveu; o campo
         # `endereco` do POI é texto solto, do jeito que a fonte escreveu.
         via_p = _via(via_poi or end_poi)
@@ -658,29 +677,28 @@ def cruzar(base_id: int, cidade: str, aplicar: bool, raio: float,
         mesmo_num = bool(num_l and num_p and _num(num_l) == num_p)
         perto = bool(metros is not None and metros <= PERTO_M)
 
-        # SEM TELHADO AINDA. Ele e o teste caro — contorna predio em foto
-        # aerea — e so vale a pena nos finalistas de cada ligacao, logo abaixo.
-        if not perto and LONGE_SO_COM_ENDERECO:
-            # LONGE, SO A PORTA IDENTIFICADA PASSA. Entre 20 e 60 m, rua e
-            # numero juntos sao o unico sinal que sobrevive a coordenada torta;
-            # qualquer coisa menos que isso, a essa distancia, e o vizinho.
-            # E A PORTA PRECISA SER PROVA, nao indicio. Entre 20 e 60 m,
-            # aceitar rua+numero DEDUZIDOS DA COORDENADA e circular: o
-            # endereco veio do ponto, entao ele nao pode testemunhar a favor
-            # do ponto. So o endereco que a fonte publicou vale aqui.
-            if not (mesmo_end and mesmo_num and end_prova):
-                placar["descartado_longe_sem_porta"] += 1
-                continue
-        elif not (mesmo_end or mesmo_num or perto):
-            placar["descartado_sem_criterio"] += 1
+        # A RUA E A UNICA EXIGENCIA BARATA. O resto — numero, 10 m, telhado,
+        # nome — e decidido por `regra_vinculo.aceitar`, depois, com a ligacao
+        # inteira na mao: o criterio do nome precisa saber quem JA entrou.
+        #
+        # O QUE ISTO SUBSTITUI, e por que: a condicao anterior era
+        # `mesmo_end or mesmo_num or perto`, um OU com `perto` valendo ate
+        # 20 m. Dentro de 20 m, portanto, o endereco nunca era testado —
+        # qualquer POI do quarteirao entrava. Medido em Canoas: dos 350.494
+        # vinculos gravados, so 21,8% batiam rua E numero, e 256.548 (73%)
+        # juntavam um POI que PUBLICA outro numero de porta. Em 81,6% das
+        # ligacoes julgadas, as fotos que a IA olhou eram de outro imovel.
+        if not mesmo_end:
+            placar["descartado_rua_diferente"] += 1
             continue
-        # A ORDEM E A DA REGUA, e nao a da contagem crua: com `ok` na frente,
-        # "numero sem rua + 20 m" (2 acertos) passava na frente de "rua so"
-        # (1 acerto) na hora de escolher os 5 candidatos por ligacao.
-        por_ligacao[lig].append(
-            (confianca_de(mesmo_end, mesmo_num, perto, False, False, end_prova),
-             -(metros or 9e9), poi_id, fonte, mesmo_end, mesmo_num, perto,
-             metros, llat, llon, plat, plon, end_prova))
+        por_ligacao[lig].append({
+            "poi": poi_id, "fonte": fonte, "nome": _nome_poi,
+            "mesma_rua": mesmo_end, "mesmo_numero": mesmo_num,
+            "perto20": perto, "metros": metros,
+            "llat": llat, "llon": llon, "plat": plat, "plon": plon,
+            "end_prova": end_prova, "mesmo_telhado": False,
+            "telhado_comercial": False,
+            "contradiz": rv.contradiz_numero(num_p, num_l, end_prova)})
 
     # OS FINALISTAS DE CADA LIGACAO, E SO ELES, VAO AO TELHADO.
     #
@@ -707,38 +725,55 @@ def cruzar(base_id: int, cidade: str, aplicar: bool, raio: float,
     _g = telhado.CELULA_GRAUS
 
     def _celula_da_ligacao(item):
-        # `c[8]` e `llat`, `c[9]` e `llon` — todos os candidatos de uma ligacao
-        # trazem a coordenada dela, entao o primeiro basta.
+        # Todos os candidatos de uma ligacao trazem a coordenada dela, entao o
+        # primeiro basta.
         c = item[1][0]
-        return (int(c[8] // _g), int(c[9] // _g))
+        return (int(c["llat"] // _g), int(c["llon"] // _g))
 
     for lig, cands in sorted(por_ligacao.items(), key=_celula_da_ligacao):
-        cands.sort(reverse=True)
-        # A PORTA IDENTIFICADA ENTRA INTEIRA; o resto disputa as cinco vagas.
-        # `c[4]` e `mesmo_end`, `c[5]` e `mesmo_num` — ver a tupla montada na
-        # passada barata.
-        # A PORTA SO E PORTA SE FOR PROVA. `c[12]` e `end_prova`. O
-        # privilegio de entrar sem teto existe porque um predio comercial tem
-        # varias lojas no MESMO endereco publicado; endereco deduzido da
-        # coordenada nao sustenta esse privilegio, e sem esta guarda vinte
-        # POIs vizinhos entrariam todos por um endereco que ninguem publicou.
-        porta_identificada = [c for c in cands if c[4] and c[5] and c[12]]
-        fracos = [c for c in cands if not (c[4] and c[5] and c[12])]
-        escolhidos = porta_identificada + fracos[:MAX_FRACOS_POR_LIGACAO]
-        if len(porta_identificada) > MAX_FRACOS_POR_LIGACAO:
-            placar["ligacao_com_muitos_no_mesmo_endereco"] += 1
-        aderentes = len({c[3] for c in escolhidos if c[3]})
-        for (_conf, _neg, poi_id, fonte, me, mn, pe, metros,
-             llat, llon, plat, plon, ep) in escolhidos:
-            mt, tc = telhado.julgar(llat, llon, plat, plon)
-            finalistas += 1
+        # O TELHADO SO ONDE ELE DECIDE. E o teste caro — contorna predio em
+        # foto aerea —, e a regra so precisa dele para o candidato que ja
+        # falhou no numero e nos 10 m e nao esta vetado. Quem entrou pelo
+        # numero recebe o telhado depois, so para a confianca.
+        for c in cands:
+            precisa = (not c["mesmo_numero"]
+                       and not (c["metros"] is not None
+                                and c["metros"] < rv.PERTO_M)
+                       and not c["contradiz"])
+            if precisa:
+                mt, tc = telhado.julgar(c["llat"], c["llon"],
+                                        c["plat"], c["plon"])
+                c["mesmo_telhado"], c["telhado_comercial"] = mt, tc
+                finalistas += 1
+
+        aceitos = rv.aceitar(cands)
+        if not aceitos:
+            placar["ligacao_sem_candidato_valido"] += 1
+            continue
+
+        # O TELHADO DOS ACEITOS QUE AINDA NAO O TEM. Vai gravado na coluna e
+        # entra na regua de confianca — mas nao decidiu nada acima.
+        escolhidos = [c for c in cands if c["poi"] in aceitos]
+        for c in escolhidos:
+            if not c["mesmo_telhado"] and not c["telhado_comercial"]:
+                mt, tc = telhado.julgar(c["llat"], c["llon"],
+                                        c["plat"], c["plon"])
+                c["mesmo_telhado"], c["telhado_comercial"] = mt, tc
+                finalistas += 1
+
+        aderentes = len({c["fonte"] for c in escolhidos if c["fonte"]})
+        for c in escolhidos:
+            me, mn = c["mesma_rua"], c["mesmo_numero"]
+            pe, mt, tc = c["perto20"], c["mesmo_telhado"], c["telhado_comercial"]
             ok = sum((me, mn, pe, mt, tc))
-            if not ep and (me or mn):
+            if not c["end_prova"] and (me or mn):
                 placar["endereco_so_indicio"] += 1
-            registros.append((base_id, str(lig), poi_id, me, mn, pe, mt, tc,
-                              metros, ok, confianca_de(me, mn, pe, mt, tc, ep),
-                              aderentes, fontes_no_momento, fonte or None))
+            registros.append((base_id, str(lig), c["poi"], me, mn, pe, mt, tc,
+                              c["metros"], ok,
+                              confianca_de(me, mn, pe, mt, tc, c["end_prova"]),
+                              aderentes, fontes_no_momento, c["fonte"] or None))
             placar["criterios_%d" % ok] += 1
+            placar["aceito_por_" + aceitos[c["poi"]]] += 1
             for chave, valor in (("mesmo_endereco", me), ("mesmo_numero", mn),
                                  ("ate_20m", pe), ("mesmo_telhado", mt),
                                  ("telhado_comercial", tc)):
@@ -771,18 +806,39 @@ def cruzar(base_id: int, cidade: str, aplicar: bool, raio: float,
     cur.execute("select count(*) from radar_comercial.ligacao_poi where id_base = %s",
                 (base_id,))
     antes = int(cur.fetchone()[0] or 0)
-    execute_values(cur, """
+
+    # SEM TILE, O TELHADO NAO E ATUALIZADO — ele e PRESERVADO.
+    #
+    # O DEFEITO QUE ISTO EVITA, visto em 08/09/2026: as 38 pastas de captura
+    # de Canoas estavam com `tiles_z20` vazio, e `Telhado` carregou zero tiles.
+    # Nesse estado `julgar()` devolve (False, False) para todo par — nao porque
+    # os telhados sejam diferentes, mas porque nao ha imagem para olhar.
+    #
+    # O upsert grava por cima. Uma corrida do cruzamento com o disco sem tiles
+    # zeraria os 46.395 `mesmo_telhado` verdadeiros que ja estavam na tabela,
+    # calculados quando as imagens existiam — e ninguem veria: a coluna nao
+    # ficaria nula, ficaria FALSA, que e uma afirmacao, e nao uma lacuna.
+    #
+    # Entao: com tile, grava o que mediu; sem tile, mantem o que estava la.
+    _tel = ("excluded.mesmo_telhado" if telhado.tiles
+            else "radar_comercial.ligacao_poi.mesmo_telhado")
+    _telc = ("excluded.telhado_comercial" if telhado.tiles
+             else "radar_comercial.ligacao_poi.telhado_comercial")
+    if not telhado.tiles:
+        _log("   ⚠️  nenhum tile no disco: mesmo_telhado/telhado_comercial")
+        _log("      ficam COMO ESTAVAM nos vinculos que ja existiam.")
+    execute_values(cur, ("""
         insert into radar_comercial.ligacao_poi
             (id_base, ligacao, poi_id, mesmo_endereco, mesmo_numero, ate_20m,
              mesmo_telhado, telhado_comercial, metros, criterios_ok, confianca,
              fontes_aderentes, fontes_no_momento, fonte_poi)
-        values %s
+        values %%s
         on conflict (id_base, ligacao, poi_id) do update set
             mesmo_endereco = excluded.mesmo_endereco,
             mesmo_numero = excluded.mesmo_numero,
             ate_20m = excluded.ate_20m,
-            mesmo_telhado = excluded.mesmo_telhado,
-            telhado_comercial = excluded.telhado_comercial,
+            mesmo_telhado = %(tel)s,
+            telhado_comercial = %(telc)s,
             metros = excluded.metros,
             criterios_ok = excluded.criterios_ok,
             confianca = excluded.confianca,
@@ -790,7 +846,7 @@ def cruzar(base_id: int, cidade: str, aplicar: bool, raio: float,
             fontes_no_momento = excluded.fontes_no_momento,
             fonte_poi = excluded.fonte_poi,
             gerado_em = now()
-    """, registros, page_size=1000)
+    """ % {"tel": _tel, "telc": _telc}), registros, page_size=1000)
     con.commit()
 
     # O VÍNCULO DE MAIOR CONFIANÇA VOLTA PARA O POI. É o que faz o mapa mostrar

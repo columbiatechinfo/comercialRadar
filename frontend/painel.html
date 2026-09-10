@@ -178,6 +178,35 @@
         <span id="runs-n" class="ml-auto inline-flex min-w-5 items-center justify-center rounded-full bg-indigo-50 px-2 text-[11px] font-semibold text-indigo-600">0</span>
       </button>
 
+      <!-- OS DOIS PASSOS DO VINCULO, e nesta ordem.
+           A revisao aplica a regra ao que ja esta gravado e descarta o que nao
+           passa; o casamento pega quem ficou sem ligacao nenhuma e procura
+           pelo endereco publicado, corrigindo a coordenada de quem casar com
+           uma ligacao so. Rodar o casamento antes nao faz sentido: ele so olha
+           orfaos, e antes da revisao quase ninguem e orfao. -->
+      <!-- O PAINEL DO SCORE. Ele nao decide nada: mostra quanta evidencia
+           sustenta cada vinculo e deixa VOCE escolher a combinacao. Um
+           operador que so confia em prova fisica filtra "Street View
+           conclusivo + menos de 10 m"; outro que caca delivery filtra
+           "avaliacao recente" e nao liga para a fachada. Por isso as parcelas
+           aparecem separadas, e nao so o total. -->
+      <button type="button" id="btn-score" class="nav-item mt-1">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="size-5 shrink-0"><path d="M4 19V9"></path><path d="M10 19V5"></path><path d="M16 19v-7"></path><path d="M22 19H2"></path></svg>
+        <span>Score dos vínculos</span>
+        <span id="score-n" class="ml-auto inline-flex min-w-5 items-center justify-center rounded-full bg-indigo-50 px-2 text-[11px] font-semibold text-indigo-600">0</span>
+      </button>
+
+      <button type="button" id="btn-revisar-vinculo" class="nav-item mt-1">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="size-5 shrink-0"><path d="M4 7h16"></path><path d="M4 12h10"></path><path d="M4 17h7"></path><path d="m16 15 5 5"></path><path d="m21 15-5 5"></path></svg>
+        <span>Revisar vínculos</span>
+      </button>
+
+      <button type="button" id="btn-casar-endereco" class="nav-item mt-1">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="size-5 shrink-0"><path d="M3 21h18"></path><path d="M5 21V8l7-5 7 5v13"></path><path d="M10 21v-6h4v6"></path></svg>
+        <span>Casar por endereço</span>
+        <span id="orfaos-n" class="ml-auto inline-flex min-w-5 items-center justify-center rounded-full bg-indigo-50 px-2 text-[11px] font-semibold text-indigo-600">0</span>
+      </button>
+
       <button type="button" id="btn-avaliar-ia" class="nav-item mt-1">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="size-5 shrink-0"><path d="M12 3a4 4 0 0 1 4 4v1a4 4 0 0 1-1 2.6V13a3 3 0 0 1-6 0v-2.4A4 4 0 0 1 8 8V7a4 4 0 0 1 4-4z"></path><path d="M9 20h6"></path><path d="M12 16v4"></path></svg>
         <span>Avaliar com IA</span>
@@ -451,6 +480,27 @@
        QUASE TELA CHEIA, e em forma de planilha. A pessoa precisa ver os
        títulos reais e linhas reais para confirmar o que a IA sugeriu — sem
        isso, confirmar é assinar em branco. -->
+  <div id="m-score" data-modal class="fixed inset-0 z-[900] hidden items-center justify-center bg-gray-900/30 p-6 backdrop-blur-md">
+    <div class="flex max-h-full w-full max-w-3xl flex-col overflow-hidden rounded-xl bg-white shadow-xl ring-1 ring-gray-900/5">
+      <div class="flex items-start justify-between gap-x-4 border-b border-gray-100 px-8 py-5">
+        <div>
+          <h2 class="text-base font-semibold text-gray-900">Score dos vínculos</h2>
+          <p class="mt-0.5 text-[13px] text-gray-500">O sistema mede a evidência; o corte é seu. Cada parcela filtra sozinha.</p>
+        </div>
+        <button type="button" data-fechar-modal class="rounded-md p-1 text-gray-400 hover:bg-gray-50 hover:text-gray-600">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" class="size-5"><path d="M18 6L6 18M6 6l12 12"></path></svg>
+        </button>
+      </div>
+      <div class="min-h-0 flex-1 overflow-y-auto px-8 py-6">
+        <div id="score-cabecalho" class="mb-5 flex flex-wrap items-baseline gap-x-6 gap-y-1 text-[13px] text-gray-600"></div>
+        <div class="text-[10.5px] font-semibold uppercase tracking-[0.07em] text-gray-400">Distribuição</div>
+        <div id="score-faixas" class="mt-2 flex flex-col gap-y-1"></div>
+        <div class="mt-6 text-[10.5px] font-semibold uppercase tracking-[0.07em] text-gray-400">Quantas ligações têm cada evidência</div>
+        <div id="score-flags" class="mt-2 grid grid-cols-2 gap-x-6 gap-y-1.5"></div>
+      </div>
+    </div>
+  </div>
+
   <div id="m-bases" data-modal class="fixed inset-0 z-[900] hidden items-center justify-center bg-gray-900/30 p-6 backdrop-blur-md">
     <div class="flex h-full w-full flex-col overflow-hidden rounded-xl bg-white shadow-xl ring-1 ring-gray-900/5">
       <div class="flex items-start justify-between gap-x-4 border-b border-gray-100 px-8 py-5">
@@ -469,6 +519,18 @@
           <div class="flex items-center gap-x-3 px-6 py-3 text-[11px] text-gray-500">
             <select id="bases-lista" class="rounded-md border-gray-300 py-1 text-[13px]"></select>
             <span id="bases-info" class="tabular-nums"></span>
+
+            <!-- SUBIR A BASE ENTRA AQUI, no modal que ja declara as colunas.
+                 Ate 09/09/2026 o painel mandava o operador rodar
+                 `base_cliente_mapear.py --tabela ...` no terminal — o que
+                 exclui quem so tem o navegador, que e justamente para quem a
+                 tela existe. -->
+            <label class="ml-auto inline-flex cursor-pointer items-center gap-x-2 rounded-md border border-gray-300 bg-white px-2.5 py-1 text-[12px] font-semibold text-gray-700 hover:bg-gray-50">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="size-4"><path d="M12 16V4"></path><path d="m7 9 5-5 5 5"></path><path d="M4 20h16"></path></svg>
+              <span id="bases-arquivo-rot">Subir base…</span>
+              <input type="file" id="bases-arquivo" accept=".csv,.txt,.tsv" class="hidden">
+            </label>
+            <span id="bases-envio" class="tabular-nums text-[11.5px] text-gray-500"></span>
           </div>
           <div class="min-h-0 flex-1 overflow-auto px-6 pb-6">
             <table class="w-max min-w-full border-separate border-spacing-0 text-[12px]">
@@ -952,7 +1014,16 @@ Clique numa rodada para ver no mapa só os pontos que ela trouxe.
      sao 102 mil `drawImage` por quadro. Versao fixa de proposito —
      `@latest` num mapa em producao e mudar de motor sem avisar. -->
 <script src="https://unpkg.com/deck.gl@9.0.35/dist.min.js"></script>
-<script src="/static/mapa_ligacoes.js"></script>
+<!-- O NOME NAO E DECORATIVO. `mapa_ligacoes.js` era recusado com
+     `ERR_BLOCKED_BY_CLIENT` por bloqueador de anuncio — conferido no
+     navegador, com o arquivo servindo 200 pelo servidor. O mapa
+     quebrava em silencio: nenhum erro no console alem do bloqueio, e
+     `window.MapaLigacoes` simplesmente nao existia.
+
+     Nao da para saber qual regra da lista casou, e nao importa: o que
+     importa e que a tela de um operador com bloqueador ligado ficaria
+     sem mapa e ninguem saberia por que. -->
+<script src="/static/camada_gpu.js"></script>
 <script src="/static/painel.js"></script>
 </body>
 </html>

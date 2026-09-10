@@ -58,66 +58,219 @@ VEREDITOS = ia.VEREDITOS
 #: Agora todo o texto invariavel vem primeiro — a explicacao, as regras de
 #: pesar testemunhas, as regras de julgar e o esquema do JSON — e so entao o
 #: dossie e a lista de imagens, que mudam a cada hidrometro.
-PROMPT = """Você decide se UMA LIGACAO DE AGUA esta com a tarifa errada.
+#: O ANO DE HOJE, para a regra da foto vencida. Vem do relogio e nao de uma
+#: constante escrita a mao: uma constante congelada faria a regra apodrecer em
+#: silencio na virada do ano, tratando foto de 2026 como "do ano atual" em 2027.
+def _ano_de_hoje():
+    import datetime
+    return datetime.date.today().year
+
+
+#: AS REGRAS DE JULGAR DA LIGACAO, que NAO sao as do julgamento por POI.
+#:
+#: O DEFEITO QUE ISTO CORRIGE, medido em 08/09/2026 sobre as 3.966 primeiras
+#: ligacoes julgadas: 3.277 delas — 82,6%% — sairam como "revisao_humana", e a
+#: justificativa que mais se repetia era sempre a mesma forma, "as imagens
+#: mostram uma residencia comum... a unica fonte (Receita) aponta". A IA nao
+#: estava em duvida: ela estava obedecendo uma regra que mandava a foto decidir.
+#:
+#: E a regra estava certa NO LUGAR ONDE NASCEU. `avaliar_ia` julga UM POI com
+#: quatro fotos e nada mais; ali a foto e toda a prova que existe, e "so aprova
+#: o que estiver na fachada" e a unica salvaguarda possivel. Aqui o julgamento e
+#: outro: chegam cinco bases independentes sobre o mesmo hidrometro, com CNPJ,
+#: telefone, horario, nota e avaliacao datada. Herdar a regra da foto soberana
+#: era deixar a testemunha mais fraca calar as outras cinco.
+#:
+#: Decisao do dono do produto em 08/09/2026, textual: "as imagens nao podem
+#: determinar o veredito final, sao uma parte do veredito; se tiver fontes com
+#: dados suficientes e a imagem nao for do ano atual nao pode reprovar ou mandar
+#: pra avaliacao, ela tem que ter autonomia pra aprovar o que tem dados pra
+#: isso".
+#:
+#: O QUE FICA DE PE: a classificacao (CNEFE, CNAE) e a pergunta
+#: `sinal_no_imovel` continuam vindo de `avaliar_ia`, recortadas em tempo de
+#: execucao. Sao as mesmas perguntas, e duplicar o texto delas aqui criaria as
+#: duas versoes que aquele modulo existe para evitar.
+def _regras_da_ligacao(secoes):
+    ano = _ano_de_hoje()
+    # O RECORTE COMECA EM "FOTO DE OFICIO": dali para a frente o texto de
+    # `avaliar_ia` fala de `sinal_no_imovel` e de classificacao, que valem
+    # igual nos dois julgamentos. O que vem ANTES fala da foto como prova
+    # unica, e e justamente o que esta sendo substituido.
+    herdado = ia._regras_de_julgar(secoes)
+    corte = herdado.find("FOTO DE OFICIO NAO PROVA ENDERECO")
+    cauda = herdado[corte:] if corte > 0 else ""
+    return (_REGRAS_DA_LIGACAO % {"ano": ano, "ano_passado": ano - 1}) + (
+        "\n\n" + cauda if cauda else "")
+
+
+#: O PROMPT DEFINE OS STATUS, e este bloco NAO os redefine.
+#:
+#: Ate 09/09/2026 ele abria com "ESCOLHA UM VEREDITO" e listava os
+#: quatro, incluindo `revisao_humana`. O prompt novo tem dois status e
+#: proibe a duvida — e o bloco continuava oferecendo a terceira porta,
+#: tres vezes, no meio do mesmo texto. Instrucao que se contradiz nao e
+#: instrucao: o modelo escolhe a metade que quiser.
+#:
+#: O que sobra aqui e o que o prompt NAO diz: como pesar a foto contra
+#: as fontes, e o que conta como fonte suficiente.
+_REGRAS_DA_LIGACAO = """A IMAGEM E UMA TESTEMUNHA, E NAO O JUIZ — e esta e a regra que manda sobre
+todas as outras deste bloco.
+
+Voce recebe de tres a seis provas de naturezas diferentes: bases de registro,
+plataformas com data, avaliacoes de clientes assinadas, e fotos. A foto de rua
+e UMA delas. Ela responde bem uma pergunta — "o que estava pendurado na
+fachada no dia em que o carro passou" — e responde mal todas as outras.
+
+O QUE A FACHADA NAO SABE:
+- nao sabe o que funciona nos fundos, no sobrado ou dentro de casa;
+- nao sabe o que abriu depois que a foto foi tirada;
+- nao sabe de negocio que opera sem placa, que e o mais comum do bairro:
+  costureira, doceira, manicure, marmita, oficina, aluguel de temporada.
+
+ENTAO: fachada muda NAO E CONTRAPROVA. Ela nao contradiz fonte nenhuma — ela
+simplesmente nao viu.
+
+E FOTO QUE NAO EXISTE E MENOS AINDA. Quando o dossie diz que nenhuma imagem o
+acompanha, isso NAO e motivo para revisao humana: e so a captura que ainda nao
+passou por este endereco. "Nao ha foto para confirmar" e a frase que voce esta
+proibido de usar como justificativa — ela descreve o estado do nosso trabalho,
+e nao o estado do imovel. Decida pelas fontes, que e o que voce recebeu. Uma casa comum na foto e o estado esperado da maioria
+dos comercios que este projeto procura, e nao um sinal contra eles.
+
+A FOTO TEM DATA, E A DATA ESTA NO DOSSIE. Use-a assim, e esta e a regra que
+mais muda o seu trabalho:
+
+- FOTO DE ANTES DE %(ano)d + FONTES COM DADOS SUFICIENTES = APROVE.
+  Nao mande para revisao humana e nao reprove. A foto e velha demais para
+  desmentir seja o que for, e a pessoa que abrisse essa revisao veria
+  exatamente o que voce esta vendo e nao teria como decidir melhor. Voce tem
+  autonomia para aprovar, e deve usa-la. Diga na justificativa que a foto e
+  de %(ano_passado)d ou antes.
+- FOTO DE %(ano)d mostrando o imovel sem qualquer sinal, CONTRA fontes que
+  afirmam comercio: aqui ha conflito com data, e o peso da foto sobe. Diga o
+  conflito na justificativa e decida — a foto e do ano corrente, entao ela
+  descreve o presente.
+- SEM DATA no dossie: trate como antiga.
+
+O QUE E "FONTES COM DADOS SUFICIENTES". Basta UMA destas linhas:
+0. TRES OU MAIS REGISTROS NA MESMA PORTA, mesmo que venham todos do MESMO
+   sistema. Trinta e dois CNPJs ativos num endereco nao sao trinta e duas
+   duvidas: sao um predio comercial, uma galeria ou um centro de escritorios.
+   Nenhuma casa tem trinta e dois CNPJs. Aprove, e diga quantos sao.
+
+   ISTO CORRIGE UM ERRO REAL, medido em 08/09/2026: a ligacao 2221694 tinha
+   32 registros da Receita apontando atividade comercial e administrativa, e
+   foi para revisao humana com a justificativa "nao ha fotos da fachada para
+   confirmar". Outras 102 ligacoes com tres ou mais registros de um sistema so
+   cairam do mesmo jeito. A pessoa que abrisse essa revisao leria os mesmos 32
+   CNPJs e nao teria como decidir melhor do que voce.
+
+1. DUAS OU MAIS fontes independentes apontando atividade economica no mesmo
+   endereco — ainda que descrevam ramos diferentes. Elas nao se anulam: um
+   hidrometro abastece uma loja E uma casa, um sobrado tem salao embaixo.
+2. UMA fonte com prova DATADA de operacao: avaliacao de cliente no Google,
+   loja no ar em plataforma, anuncio de hospedagem com hospede recente.
+3. UMA fonte com ficha completa do negocio naquele endereco: ramo nomeado
+   mais ao menos dois entre CNPJ, telefone, site, rede social, horario
+   declarado, nota com avaliacoes.
+
+Se nenhuma dessas linhas fecha, a foto volta a pesar mais — e "reprovado" e
+a resposta honesta, porque o que existe nao sustenta a aprovacao.
+
+E NAO INVERTA A REGRA. Isto nao e licenca para aprovar tudo:
+- CNPJ sozinho, sem mais nada, NAO e ficha completa. Endereco de contador e
+  MEI registrado em casa que nunca operou existem as centenas.
+- ECONOMIA COMERCIAL OU INDUSTRIAL ja declarada na propria ligacao significa
+  que o cliente JA cobra parte dela como comercio: nao ha o que reclassificar,
+  e o veredito e "reprovado" salvo se houver outra atividade alem daquela.
+- Foto de %(ano)d mostrando TERRENO VAGO, IMOVEL DEMOLIDO ou OBRA reprova
+  mesmo contra fonte, porque ai a foto viu o que a fonte nao podia saber: nao
+  ha imovel. Esta e a unica reprovacao que a foto ganha sozinha.
+
+DIGA SEMPRE, na justificativa, QUANTAS FONTES sustentam o veredito e QUAL A
+DATA da foto que voce usou. Quem for a porta precisa saber o que esperar.
+"""
+
+
+PROMPT = """Você decide se os registros encontrados pertencem MESMO a esta
+ligacao de agua, e se o que ha neles prova comercio no imovel.
 
 O contexto: a companhia cobra este hidrometro como RESIDENCIAL. Se houver
 comercio no imovel que ele abastece, a tarifa esta errada — e e isso que se
 procura.
 
-VOCE RECEBE VARIAS TESTEMUNHAS SOBRE O MESMO ENDERECO, e isso e a novidade
-deste julgamento. Cada fonte — a base estadual, o IBGE, a Receita, o Google
-Maps, o iFood — registrou o lugar por conta propria, em epocas diferentes e
-sem falar com as outras. Elas NAO sao copias a descartar: sao observacoes
-independentes, e quando convergem valem mais do que qualquer uma sozinha.
-
-AS PRIMEIRAS IMAGENS SAO FOTOS DE RUA do imovel MAIS PROXIMO DO HIDROMETRO, tiradas do
-mesmo ponto girando a camera; a primeira tem uma mira no centro marcando o
-alvo. Quando houver FOTO PUBLICADA NO GOOGLE, ela e de outra natureza: alguem
-que esteve no lugar fotografou o que ele faz.
-
-COMO PESAR AS TESTEMUNHAS
-
-- FONTES QUE CONVERGEM SOMAM. Tres bases dizendo "material de construcao" no
-  mesmo numero e mais forte que uma dizendo, e muito mais forte que uma
-  fachada muda. Diga na justificativa quantas concordaram.
-- FONTES QUE DIVERGEM NAO SE ANULAM — elas descrevem coisas diferentes no
-  mesmo lugar. Um hidrometro pode abastecer uma loja E uma casa; nesse caso ha
-  comercio, e o veredito e de aprovacao.
-- ESTABELECIMENTOS DIFERENTES no mesmo hidrometro sao comuns e nao sao
-  contradicao: galeria, sobrado com loja embaixo, casa com salao nos fundos.
-- CNPJ ATIVO no endereco e prova de registro, nao de operacao. Vale como
-  indicio; quem prova operacao e avaliacao recente, loja no ar em plataforma,
-  ou sinal comercial na imagem.
-- ECONOMIA COMERCIAL OU INDUSTRIAL ja declarada na propria ligacao significa
-  que o cliente JA cobra parte dela como comercio: nao ha o que reclassificar,
-  e o veredito e "reprovado" salvo se houver outra atividade alem daquela.
-- VARIAS ECONOMIAS RESIDENCIAIS num ponto so indicam uso misto ou varias
-  moradias — indicio a favor de investigar, nunca prova sozinho.
+AS QUATRO FOTOS DE RUA SAO DO MESMO PONTO, girando a camera nas quatro
+direcoes. Nenhum imovel vem assinalado nelas: apontar o alvo antes de voce
+olhar seria dar a resposta junto com a pergunta. Olhe o que esta la e diga o
+que ve.
 
 %(julgar)s
 
-SEPARE QUEM NAO E DESTE ENDERECO. O vinculo entre POI e hidrometro nasce
-tambem por PROXIMIDADE, e proximidade erra: um vizinho a vinte metros entra na
-lista sem ser o mesmo lugar. Olhe o numero da porta, o logradouro e o ramo de
-cada registro e diga quais claramente NAO pertencem a este endereco.
+O QUE VOCE RECEBE, e o peso de cada coisa:
 
-E "CLARAMENTE" MESMO, e nao "na duvida tire". Numero de porta diferente E ramo
-sem relacao e claro; nome diferente sozinho nao e — uma loja e o CNPJ dela
-costumam ter nomes distintos, e um sobrado tem a casa e o salao. Na duvida,
-mantenha: um registro a mais so dilui, enquanto um registro a menos pode ser a
-unica testemunha do comercio.
+- AS FONTES sao bases independentes — Receita, IBGE, base estadual, Google
+  Maps, iFood, Airbnb. Cada uma registrou o lugar por conta propria, em epocas
+  diferentes. Quando convergem valem mais do que qualquer uma sozinha.
+- AS DATAS estao no dossie e nos rotulos das imagens. Use-as: foto de dois
+  anos atras descreve o que havia HA DOIS ANOS. Foto do Google publicada por
+  visitante NAO tem data no nosso cadastro, e sem data ela nao sustenta
+  afirmacao sobre o presente — diga o que ela mostra, nao quando.
+- A LOJA NO AR e prova DATADA de operacao. iFood aceitando pedido e anuncio de
+  hospedagem com avaliacao recente dizem que o negocio funcionava quando foi
+  visto, o que a fachada nunca diz.
+
+SEPARE QUEM NAO E DESTE ENDERECO. O vinculo nasce de rua e numero batendo, mas
+uma base pode ter escrito o numero errado. Olhe o numero da porta, o logradouro
+e o ramo de cada registro e diga quais claramente NAO pertencem aqui.
+
+E "CLARAMENTE" MESMO. Nome diferente sozinho nao e motivo: uma loja e o CNPJ
+dela costumam ter nomes distintos, e um sobrado tem a casa e o salao.
+
+TROCA DE NOME NAO E OUTRO ENDERECO. Dois registros do MESMO RAMO no MESMO
+endereco com nomes diferentes quase sempre sao o mesmo ponto em epocas
+diferentes: no Brasil estabelecimento troca de nome o tempo todo, e o dono
+seguinte herda a porta e o hidrometro. Cada fonte olhou numa epoca e anotou o
+nome que estava na fachada NAQUELE dia.
+
+DOIS STATUS, E SO DOIS:
+
+- "aprovado": os dados sustentam que ha atividade comercial neste imovel.
+- "reprovado": nao sustentam.
+
+NAO EXISTE "revisao humana" NESTE JULGAMENTO. Voce recebe o que existe sobre o
+endereco; se isso nao basta para aprovar, e reprovado. Devolver a duvida para
+uma pessoa que veria exatamente o mesmo material nao acrescenta nada — e foi o
+que fez 82,6%% dos casos pararem numa fila que ninguem tinha como resolver.
+
+E O IMOVEL QUE JA PAGA COMERCIO E REPROVADO. Economia comercial ou industrial
+declarada na propria ligacao significa que o cliente ja cobra parte dela como
+comercio: nao ha o que reclassificar.
 
 Responda SOMENTE um JSON:
-{"veredito": "<um dos quatro>",
- "pois_de_outro_endereco": [{"poi": <numero do POI>,
-                             "porque": "<ate 15 palavras>"}],
- "fontes_que_sustentam": <quantas das fontes listadas sustentam o veredito>,
- "estabelecimento": "<o nome do negocio que justifica a aprovacao, ou null>",
+{"status": "aprovado|reprovado",
+ "pois_coerentes": [<numeros dos POIs que pertencem a esta ligacao>],
+ "pois_de_outro_endereco": [{"poi": <numero>, "porque": "<ate 15 palavras>"}],
+ "estabelecimento": "<o nome do negocio que sustenta a aprovacao, ou null>",
+ "presenca_na_foto": "exata|comercial|nenhuma",
+ "fotos_do_google_validam": true|false,
  "especie_cnefe": <1-8|null>, "secao_cnae": "<letra|null>",
  "sinal_no_imovel": "instalacao_fixa|so_oficio|nenhum",
- "justificativa": "<um paragrafo, ate 70 palavras, dizendo QUAIS fontes
-sustentam o veredito e o que nas imagens confirma ou contradiz. Cite o que foi
-visto, nao o que se supoe.>"}
+ "justificativa": "<UM PARAGRAFO, ate 70 palavras, dizendo QUAIS fontes
+sustentam o status e o que nas imagens confirma ou contradiz. Cite a data do
+que usou. Escreva o que foi visto, nao o que se supoe.>"}
+
+O QUE SIGNIFICA "presenca_na_foto", e ela alimenta a pontuacao do vinculo:
+- "exata": as fotos mostram o estabelecimento nomeado — letreiro com o nome,
+  ou ramo inequivocamente o mesmo.
+- "comercial": as fotos mostram atividade comercial no imovel, mas nao da para
+  dizer que e AQUELE negocio.
+- "nenhuma": as fotos nao mostram sinal comercial, ou nao ha foto.
+
+"fotos_do_google_validam" e verdadeiro quando as fotos publicadas mostram o
+negocio funcionando — balcao, mercadoria, sala de atendimento, produto sendo
+servido. Falso quando nao ha foto, ou quando o que ha nao diz nada sobre o
+lugar.
 
 ────────────────────────────────────────────────────────────────────────
 
@@ -205,6 +358,31 @@ select distinct lp.ligacao
  where upper(l.categoria) = 'RESIDENCIAL'
    and upper(coalesce(l.sit_ligacao,'')) = 'ATIVA'
    and p.fundido_em is null
+   -- SO A LIGACAO MARCADA COMO APTA, e esta e a regra que separa o que
+   -- custa do que nao custa.
+   --
+   -- Decisao do dono do produto em 09/09/2026: toda a base cruza com os POIs,
+   -- mas so as marcadas passam pelo enriquecimento caro — Maps, Street View,
+   -- rede social e IA. As demais ficam vinculadas pelo endereco estrito e
+   -- param ai.
+   --
+   -- `apta_cruzamento` e coluna GERADA de `qualificacao`, entao ela cobre os
+   -- dois status que aprovam: SIM e SIM_COM_ANALISE_HUMANA. O segundo se
+   -- comporta como o primeiro aqui; a diferenca dele existe na TELA, para o
+   -- cliente filtrar o que leva a campo.
+   --
+   -- NULO NAO ENRIQUECE. Base sem a coluna declarada nao entra na fila cara:
+   -- erro de preenchimento custa uma ligacao de fora, e um "sim" suposto custa
+   -- extracao paga.
+   and l.apta_cruzamento
+   -- O VINCULO DESCARTADO NAO CONTA COMO VINCULO.
+   --
+   -- Medido em 08/09/2026, logo depois de `revisar_vinculo` marcar 261.425
+   -- descartes: 13 das 20 primeiras ligacoes da fila voltaram `sem_poi` —
+   -- `dossie_ligacao` respeita `descartado_em` e nao achava nenhuma fonte,
+   -- enquanto esta consulta ainda as enfileirava. Cada uma dessas custava uma
+   -- volta ao banco para descobrir que nao havia o que julgar.
+   and lp.descartado_em is null
    and exists (select 1 from radar_comercial.categoria_catalogo cc
                 where cc.fonte = p.fonte and cc.valor = btrim(p.categoria)
                   and cc.avaliar)
@@ -292,6 +470,50 @@ def marcar_intrusos(con, ligacao, resposta, ids_validos, modelo):
     return len(alvos)
 
 
+def _para_veredito(resposta):
+    """O `aprovado|reprovado` do modelo vira o veredito que o sistema guarda.
+
+    POR QUE TRADUZIR EM VEZ DE TROCAR O VOCABULARIO. O dono do produto pediu
+    que a ANALISE fosse binaria — "simplificando e deixando mais fiel" —, e ela
+    e: o modelo responde duas coisas e nao precisa mais escolher entre quatro
+    caixas parecidas. Mas `aprovado_exato` e `aprovado_comercial` nao sao duas
+    caixas parecidas: sao "sei QUAL negocio e" e "sei que ha comercio". O
+    painel pinta por elas, a planilha ordena por elas e a regra de "uma
+    aprovacao basta" le a primeira como mais forte.
+
+    A distincao volta de graca: ela e o campo `estabelecimento`, que o modelo
+    ja preenche quando sabe o nome. Perguntar duas vezes a mesma coisa seria o
+    que a simplificacao veio tirar.
+
+    E `revisao_humana` NAO SAI DAQUI. O prompt novo proibiu a duvida: se o que
+    existe nao basta para aprovar, e reprovado. Devolver para uma pessoa que
+    veria o mesmo material foi o que fez 82,6% dos casos pararem numa fila que
+    ninguem tinha como resolver.
+    """
+    r = resposta or {}
+    s = str(r.get("status") or r.get("veredito") or "").strip().lower()
+    if s.startswith("aprov"):
+        # A FOTO E QUEM DIZ SE E EXATO, e nao o nome que o modelo escreveu.
+        #
+        # A primeira versao promovia a `aprovado_exato` sempre que o campo
+        # `estabelecimento` viesse preenchido. Medido nas 20 primeiras do
+        # prompt novo: 16 de 20 sairam `aprovado_exato`, porque o CNPJ da
+        # Receita SEMPRE publica uma razao social — o modelo nunca fica sem
+        # nome para escrever.
+        #
+        # So que `aprovado_exato` nunca quis dizer "sabemos o nome": quer dizer
+        # que a FACHADA mostra aquele negocio. E o `aprovado_comercial` quer
+        # dizer "ha comercio ali, nao sei qual". Confundir os dois esvazia a
+        # coluna que o painel pinta e a planilha ordena.
+        #
+        # A pergunta certa ja esta sendo respondida em `presenca_na_foto`.
+        pres = str(r.get("presenca_na_foto") or "").strip().lower()
+        return "aprovado_exato" if pres == "exata" else "aprovado_comercial"
+    if s.startswith("reprov"):
+        return "reprovado"
+    return None
+
+
 def uma(poco, ligacao, modelo, secoes, placar, trava, aplicar):
     t0 = time.time()
     # O BANCO SO ENQUANTO SE MONTA O DOSSIE. Depois a conexao volta ao poco e
@@ -304,7 +526,7 @@ def uma(poco, ligacao, modelo, secoes, placar, trava, aplicar):
         return
     lista = "\n".join("%d. %s" % (i + 1, t) for i, t in enumerate(tipos))
     prompt = PROMPT % {"dossie": texto, "lista": lista,
-                       "julgar": ia._regras_de_julgar(secoes)}
+                       "julgar": _regras_da_ligacao(secoes)}
     try:
         resposta = di._chat_local(modelo, prompt, [ia._b64(b) for b in imgs],
                                   max_tokens=700, timeout=TIMEOUT)
@@ -313,12 +535,15 @@ def uma(poco, ligacao, modelo, secoes, placar, trava, aplicar):
             placar["falha"] += 1
             _log("   %-10s FALHOU: %s" % (ligacao, str(e)[:70]))
         return
-    v = (resposta or {}).get("veredito", "").strip()
-    if v not in VEREDITOS:
+    v = _para_veredito(resposta)
+    if v is None:
+        # FORA DA ESCALA CONTINUA SENDO REPROVADO, e nao duvida. O prompt pede
+        # duas palavras; o que vier fora disso e resposta malformada, e
+        # resposta malformada nao e evidencia de comercio.
         with trava:
             placar["fora_da_escala"] += 1
         resumo["_veredito_cru"] = resposta
-        v = "revisao_humana"
+        v = "reprovado"
     percepcao = {"dossie": texto, "resposta": resposta, **resumo}
     dt = time.time() - t0
     fora = 0
@@ -346,6 +571,26 @@ def rodar(limite, aplicar, trabalhadores, modelo, ligacoes, refazer):
     if not alvos:
         return {"alvos": 0}
     secoes = ia._secoes_texto(con)
+    # A CONEXAO DE PREPARO FECHA AQUI, e isto nao e higiene: e correcao.
+    #
+    # IDLE IN TRANSACTION SEGURA LOCK. Ela era aberta, usada para montar a fila
+    # e ler as secoes da CNAE, e nunca fechada — ficava `idle in transaction`
+    # pelas HORAS da corrida, segurando AccessShareLock em toda tabela que
+    # tocou.
+    #
+    # Medido em 10/09/2026: um `alter policy` em `cadastro_corsan` entrou na
+    # fila atras dela e, como a fila de lock do Postgres e FIFO, TODOS os
+    # trabalhadores pararam atras do alter. A fila de julgamento congelou em
+    # 494 e so voltou quando o processo inteiro foi derrubado.
+    #
+    # O segundo estrago e silencioso: transacao aberta ha horas impede o
+    # autovacuum de limpar as tabelas que ela leu, e isso nao aparece em log
+    # nenhum — aparece como lentidao semanas depois.
+    #
+    # O trabalho de verdade nao usa esta conexao: cada tarefa pega a sua do
+    # `Poco` e a devolve antes de chamar o modelo.
+    con.close()
+
     placar = {k: 0 for k in VEREDITOS}
     placar.update({"sem_poi": 0, "falha": 0, "fora_da_escala": 0,
                    "poi_de_outro_endereco": 0})

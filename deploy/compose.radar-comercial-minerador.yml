@@ -104,6 +104,10 @@ services:
       - radar-crops:/app/crops
       - radar-capturas:/app/capturas
       - radar-logs:/app/logs
+      # A BASE DO CLIENTE, so leitura: quem escreve e a API, quem carrega
+      # no Postgres e este. O `COPY` de 700 MB nao cabe num contentor
+      # read-only de 1 GB.
+      - radar-uploads:/app/uploads:ro
 
     # /dev/shm PADRÃO É 64 MB, e dez Chromium não cabem nisso.
     #
@@ -171,6 +175,8 @@ services:
 #   docker volume create radar-capturas
 #   docker volume create radar-logs
 volumes:
+  radar-uploads:
+    external: true
   radar-crops:
     external: true
   radar-capturas:

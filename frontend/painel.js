@@ -2657,6 +2657,196 @@
                + d.alvos + " na area", "text-lime-400");
     });
 
+    // ── o score dos vínculos ──────────────────────────────────────────
+    //
+    // MOSTRA, NÃO DECIDE. A tela não tem "aprovar acima de X": tem a
+    // distribuição, para você ver onde estão os alvos, e a contagem por
+    // evidência, para você escolher em qual confia. Um corte gravado no
+    // sistema responderia por você a pergunta que é sua.
+    const ROTULO_FLAG = {
+      perto_10m: "a menos de 10 m do hidrômetro",
+      mesmo_telhado: "mesmo telhado",
+      telhado_comercial: "telhado de aspecto comercial",
+      sv_exata: "Street View mostra ESTE negócio",
+      sv_comercial: "Street View mostra comércio (não sei qual)",
+      sv_recente: "foto de rua do último ano",
+      aval_recente: "avaliação de cliente no último ano",
+      fotos_validadas: "fotos do Google mostram o negócio",
+      rede_recente: "post em rede social nos últimos 6 meses",
+    };
+
+    async function carregarScore() {
+      const q = estado.cidade ? "?cidade=" + encodeURIComponent(estado.cidade) : "";
+      const d = await pegar("/api/score/resumo" + q);
+      if (!d) return;
+      if ($("score-n")) $("score-n").textContent = d.total ?? 0;
+      const cab = $("score-cabecalho");
+      if (cab) {
+        cab.innerHTML =
+          `<span><b class="text-gray-900 text-[15px]">${d.total}</b> ligações pontuadas</span>` +
+          `<span>média <b class="text-gray-900">${d.media}</b> de ${d.teto}</span>` +
+          `<span>maior <b class="text-gray-900">${d.maior}</b></span>`;
+      }
+      const alvo = $("score-faixas");
+      if (alvo) {
+        const maior = Math.max(1, ...(d.faixas || []).map((f) => f[1]));
+        alvo.innerHTML = (d.faixas || []).map(([faixa, n]) => {
+          const pct = Math.round(100 * n / maior);
+          return `<div class="flex items-center gap-x-3 text-[12px]">
+            <span class="w-14 shrink-0 tabular-nums text-gray-500">${faixa}–${faixa + 9}</span>
+            <span class="h-3 rounded-sm bg-indigo-500" style="width:${Math.max(2, pct * 0.6)}%"></span>
+            <span class="tabular-nums text-gray-700">${n}</span>
+          </div>`;
+        }).join("") || '<p class="text-[12px] text-gray-400">Nenhuma ligação pontuada ainda.</p>';
+      }
+      const fl = $("score-flags");
+      if (fl) {
+        fl.innerHTML = Object.entries(d.flags || {}).map(([k, n]) => {
+          const pct = d.total ? Math.round(100 * n / d.total) : 0;
+          return `<div class="flex items-baseline justify-between gap-x-2 text-[12px]">
+            <span class="text-gray-600">${ROTULO_FLAG[k] || k}</span>
+            <span class="tabular-nums text-gray-900"><b>${n}</b> <span class="text-gray-400">${pct}%</span></span>
+          </div>`;
+        }).join("");
+      }
+    }
+
+    $("btn-score")?.addEventListener("click", async () => {
+      await carregarScore();
+      abrirModal("m-score");
+    });
+    carregarScore();
+
+    // ── subir a base do cliente ───────────────────────────────────────
+    //
+    // XHR E NÃO FETCH, e é por um motivo só: `fetch` não reporta progresso de
+    // envio. A base da Corsan tem uns 700 MB em CSV e sobe por Tailscale; sem
+    // barra, o operador olha uma tela parada por minutos e conclui que travou
+    // — e cancela justamente o que estava funcionando.
+    async function subirBase(arquivo) {
+      // O TOKEN VEM DO `sessionStorage`, como no WebSocket — e pelo mesmo
+      // motivo: `sessao.js` embrulha o `window.fetch` para pendurar o
+      // cabeçalho, e XHR não passa por lá. A primeira versão disto leu
+      // `window.SESSAO`, que NÃO EXISTE: o upload subiria sem autenticação e
+      // levaria 401 depois de o operador esperar o envio inteiro.
+      //
+      // E RENOVA ANTES DE COMEÇAR. 700 MB por Tailscale levam minutos; um
+      // token a ponto de vencer passa no início e o envio morre no meio, que
+      // é o pior lugar para descobrir.
+      if (window.crVencendo && window.crVencendo() && window.crRenovar) {
+        try { await window.crRenovar(); } catch (e) { /* segue e tenta */ }
+      }
+      return new Promise((ok, falhou) => {
+        const fd = new FormData();
+        fd.append("file", arquivo);
+        const x = new XMLHttpRequest();
+        x.open("POST", "/api/bases/upload");
+        let tok = "";
+        try { tok = sessionStorage.getItem("cr_token") || ""; } catch (e) { tok = ""; }
+        if (tok) x.setRequestHeader("Authorization", "Bearer " + tok);
+        x.upload.onprogress = (e) => {
+          if (!e.lengthComputable) return;
+          const pct = Math.round(100 * e.loaded / e.total);
+          $("bases-envio").textContent =
+            pct + "% · " + (e.loaded / 1e6).toFixed(0) + " de "
+            + (e.total / 1e6).toFixed(0) + " MB";
+        };
+        x.onload = () => {
+          let j = {};
+          try { j = JSON.parse(x.responseText); } catch (e) { /* vazio */ }
+          if (x.status >= 200 && x.status < 300) ok(j);
+          else falhou(new Error(j.erro || ("erro " + x.status)));
+        };
+        x.onerror = () => falhou(new Error("a conexão caiu durante o envio"));
+        x.send(fd);
+      });
+    }
+
+    $("bases-arquivo")?.addEventListener("change", async (e) => {
+      const arq = e.target.files && e.target.files[0];
+      if (!arq) return;
+      e.target.value = "";
+      $("bases-arquivo-rot").textContent = "enviando…";
+      $("bases-envio").textContent = "0%";
+      let d;
+      try {
+        d = await subirBase(arq);
+      } catch (err) {
+        $("bases-envio").textContent = "";
+        $("bases-arquivo-rot").textContent = "Subir base…";
+        linhaLog("upload falhou: " + err.message, "text-amber-400");
+        return;
+      }
+      $("bases-envio").textContent =
+        d.colunas.length + " coluna(s) · " + (d.bytes / 1e6).toFixed(0) + " MB";
+      $("bases-arquivo-rot").textContent = "Subir base…";
+
+      // O ARQUIVO CHEGOU; A CARGA É OUTRO PASSO e roda como job, porque um
+      // COPY de 2,5 milhões de linhas não cabe no tempo de uma requisição.
+      const alvo = parseInt($("bases-lista")?.value) || 0;
+      const r = await fetch("/api/jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ modo: "carregar_base", opcoes: {
+          arquivo: d.arquivo, base: alvo, nome: arq.name } }),
+      }).catch(() => null);
+      const j = r ? await r.json().catch(() => ({})) : {};
+      if (!r || !r.ok) {
+        linhaLog(j.erro || "não consegui iniciar a carga", "text-amber-400");
+        return;
+      }
+      linhaLog("carga iniciada — " + d.colunas.length + " coluna(s) do "
+               + "arquivo. Quando terminar, a IA sugere o mapeamento e esta "
+               + "tela mostra para você confirmar.", "text-lime-400");
+    });
+
+    // ── os dois passos do vínculo ─────────────────────────────────────
+    //
+    // POR QUE ELES EXISTEM NA TELA, medido em Canoas em 08/09/2026: o
+    // cruzamento aceitava qualquer POI a até 20 m sem testar endereço, e 73%
+    // dos vínculos juntavam um ponto que publica outro número de porta. Em
+    // 81,6% das ligações julgadas, as fotos que a IA olhou eram de outro
+    // imóvel. Isso não é um conserto de uma vez: cada carga nova de fonte
+    // precisa da mesma revisão, e por isso vira botão e não script.
+    async function dispararVinculo(modo, botao, texto) {
+      botao.disabled = true;
+      try {
+        const r = await fetch("/api/jobs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ modo: modo,
+                                 opcoes: { cidade: estado.cidade || "" } }),
+        }).catch(() => null);
+        const j = r ? await r.json().catch(() => ({})) : {};
+        if (!r || !r.ok) {
+          linhaLog(j.erro || "não foi possível iniciar", "text-amber-400");
+          return;
+        }
+        linhaLog(texto, "text-lime-400");
+      } finally {
+        botao.disabled = false;
+      }
+    }
+
+    $("btn-revisar-vinculo")?.addEventListener("click", (e) =>
+      dispararVinculo("revisar_vinculo", e.currentTarget,
+        "revisão de vínculos iniciada — o descarte é marca, dá para desfazer"));
+
+    $("btn-casar-endereco")?.addEventListener("click", (e) =>
+      dispararVinculo("casar_endereco", e.currentTarget,
+        "casamento por endereço iniciado — corrige a coordenada de quem "
+        + "casar com uma ligação só"));
+
+    // QUANTOS POIs ESTÃO SEM LIGAÇÃO NENHUMA. É o tamanho do trabalho que o
+    // botão ao lado tem pela frente, e o número que diz se ele já rodou.
+    async function contar_orfaos() {
+      const d = await pegar("/api/vinculo/orfaos"
+        + (estado.cidade ? "?cidade=" + encodeURIComponent(estado.cidade) : ""));
+      if (d && $("orfaos-n")) $("orfaos-n").textContent = d.orfaos ?? 0;
+    }
+    contar_orfaos();
+    setInterval(contar_orfaos, 30000);
+
     // O CONTADOR ENCHE NA ABERTURA E A CADA MEIO MINUTO. A chamada fica AQUI,
     // no mesmo escopo em que `fila_ia` foi declarada — pendura-la no laco de
     // atualizacao geral, que vive noutra funcao, daria `ReferenceError` numa

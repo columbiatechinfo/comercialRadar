@@ -45,6 +45,88 @@ _HORA = re.compile(r"\d{1,2}[h:]\d{0,2}\s*(?:às|as|a|-|até)\s*\d{1,2}[h:]\d{0,
                    re.I)
 
 
+#: O QUE A PAGINA RENDERIZADA NAO DA, e o score precisa.
+#:
+#: `consultar_instagram` le o texto e o DOM do perfil — e ali estao seguidores,
+#: bio, horario e links, que era o que a ferramenta precisava. A DATA DA
+#: PUBLICACAO nao esta: a grade de fotos nao escreve quando cada uma foi
+#: postada.
+#:
+#: E e a data que importa para o produto. "Tem Instagram" diz que alguem ja
+#: manteve uma vitrine daquele negocio; "publicou ha tres semanas" diz que ele
+#: esta aberto HOJE. O score de vinculo pontua o segundo, nao o primeiro.
+#:
+#: A LEITURA E DE DENTRO DA PAGINA, e isso resolve tres coisas de uma vez:
+#:
+#:   1. `requests` e `httpx` sao identificados pela IMPRESSAO DIGITAL DO TLS,
+#:      antes de o servidor olhar o conteudo. Aqui quem faz o pedido e o
+#:      Chromium, entao nao ha impressao digital a corrigir.
+#:   2. Cookie, origem e cabecalhos sao anexados pelo navegador.
+#:   3. O `x-ig-app-id` e LIDO DA PAGINA. Fixa-lo no codigo criaria a mesma
+#:      divida do `doc_id` do GraphQL, que rotaciona a cada 2-4 semanas de
+#:      proposito — e a quebra viria calada, como 403, que parece bloqueio de
+#:      IP e manda o diagnostico para o lado errado.
+JS_ULTIMO_POST = """
+async (arroba) => {
+  let app = null;
+  for (const s of document.scripts) {
+    const m = (s.textContent || '').match(/"X-IG-App-ID"\\s*:\\s*"(\\d+)"/)
+           || (s.textContent || '').match(/appId["':\\s]+(\\d{6,})/);
+    if (m) { app = m[1]; break; }
+  }
+  if (!app) {
+    const m = document.documentElement.innerHTML.match(/"APP_ID":"(\\d+)"/);
+    app = m ? m[1] : null;
+  }
+  if (!app) return { erro: 'nao achei o x-ig-app-id na pagina' };
+
+  const r = await fetch(
+    '/api/v1/users/web_profile_info/?username=' + encodeURIComponent(arroba),
+    { headers: { 'x-ig-app-id': app }, credentials: 'include' });
+  if (!r.ok) return { erro: 'http ' + r.status, status: r.status };
+  const j = await r.json();
+  const u = (j && j.data && j.data.user) || null;
+  if (!u) return { erro: 'perfil sem dados (privado, removido ou renomeado)' };
+
+  const bordas = (u.edge_owner_to_timeline_media &&
+                  u.edge_owner_to_timeline_media.edges) || [];
+  // A MAIS RECENTE, e nao a primeira da grade: o Instagram fixa post no topo,
+  // e um post fixado de 2019 faria um perfil ativo parecer abandonado.
+  let recente = null;
+  for (const b of bordas) {
+    const ts = b && b.node && b.node.taken_at_timestamp;
+    if (ts && (!recente || ts > recente)) recente = ts;
+  }
+  return {
+    ultimo_post: recente,
+    posts: (u.edge_owner_to_timeline_media || {}).count || null,
+    seguidores: (u.edge_followed_by || {}).count || null,
+    e_comercial: !!(u.is_business_account || u.is_professional_account),
+    categoria: u.business_category_name || u.category_name || null,
+    nome: u.full_name || null,
+    bio: (u.biography || '').slice(0, 400) || null,
+    site: u.external_url || null,
+    privado: !!u.is_private,
+  };
+}
+"""
+
+
+async def ler_perfil(page, arroba: str) -> dict:
+    """O perfil publico com a data do ultimo post. Recebe uma pagina JA ABERTA.
+
+    RECEBE A PAGINA, e nao abre uma. Quem chama uma vez — a ferramenta do chat
+    — abre a sessao, usa e fecha. Quem chama 15.627 vezes reaproveita a mesma
+    sessao por dezenas de perfis e recicla o IP em lote; abrir navegador por
+    perfil transformaria minutos em horas.
+    """
+    try:
+        d = await page.evaluate(JS_ULTIMO_POST, arroba)
+    except Exception as e:                                     # noqa: BLE001
+        return {"erro": str(e)[:140]}
+    return d or {"erro": "sem resposta"}
+
+
 def _numero(txt: str, sufixo: str | None) -> int | None:
     """"1.565" -> 1565 · "12,3 mil" -> 12300 — o Instagram abrevia acima de mil."""
     if not txt:

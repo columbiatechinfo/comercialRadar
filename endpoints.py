@@ -83,6 +83,14 @@ IDENTIDADE = _env("A2L_IDENTIDADE_URL", f"http://{LAN}:7710")
 #: API de recursos: emite o token dos serviços abaixo.
 RECURSOS = _env("A2L_RECURSOS_URL", f"http://{LAN}:7700")
 
+#: API de bases: a pasta da empresa no Google Drive.
+#:
+#: O RADAR NÃO FALA COM O GOOGLE, e é o contrato: a credencial OAuth pertence
+#: só ao `api-bases`. Daqui saem apenas chamadas HTTP com o token DO USUÁRIO —
+#: o mesmo GoTrue de `SUPABASE`, o que dispensa credencial nova e faz a RLS de
+#: lá valer sem que este serviço precise saber de qual empresa alguém é.
+BASES = _env("A2L_BASES_URL", f"http://{LAN}:7720")
+
 #: Serviços que EXIGEM token. O nome `.stack` é proposital — ver o topo.
 NOMINATIM = _env("NOMINATIM_URL", "https://nominatim.stack")
 PHOTON = _env("PHOTON_URL", "https://photon.stack")
