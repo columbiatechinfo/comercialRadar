@@ -273,6 +273,40 @@ E O IMÓVEL QUE JÁ PAGA COMÉRCIO É REPROVADO. Economia comercial ou industria
 declarada na própria ligação significa que o cliente já cobra parte dela como
 comércio: não há o que reclassificar.
 
+OLHE A RUA, E NÃO SÓ O ALVO. Quatro coisas nas fotos valem para muito além
+deste julgamento, e por isso são perguntadas à parte:
+
+1. O NÚMERO PREGADO NA CASA. Leia todos os números de porta que conseguir nas
+   quatro visadas — no muro, no portão, na placa, na faixa da calçada. A rua
+   você já sabe qual é: está no dossiê. Um número lido aqui diz onde aquele
+   número FICA nesta via, e há milhares de endereços neste cadastro cuja
+   coordenada está errada e que um número lido reposiciona. Não invente:
+   quando não tiver certeza do algarismo, marque a certeza como "media"; se
+   não der para ler, não liste.
+
+2. SE VOCÊ LER O NÚMERO DA CASA JULGADA, JULGUE AQUELA CASA. O dossiê diz qual
+   é o número. Se ele aparece pregado num imóvel da foto, é ESSE o imóvel que
+   está sendo cobrado — descreva o que há NELE, e não no vizinho de fachada
+   mais chamativa. É a única vez em que a foto identifica o alvo sozinha.
+
+3. OS MEDIDORES. Conte os %(medidores)s e os medidores de energia visíveis na
+   fachada ou no muro. Vários medidores num imóvel só significam várias
+   unidades no mesmo endereço — sobrado com salão, vila de fundos, quitinetes.
+   Conte o que vê; zero é uma resposta.
+
+4. AS FACHADAS COMERCIAIS DA CENA, INCLUSIVE AS QUE NÃO SÃO O ALVO. Letreiro,
+   toldo com nome, vitrine, placa de serviço: liste o que estiver legível,
+   marcando se é ou não o estabelecimento buscado. As que não são continuam
+   valendo — são comércio que existe naquela quadra e que nenhuma base
+   registrou.
+
+   SÓ COMÉRCIO. Placa de rua, nome de praça, sinalização de trânsito e prédio
+   público não são fachada comercial — não os liste. A primeira medição desta
+   pergunta devolveu "R. Quintão · logradouro" e "Parque Deputado Possebon ·
+   parque público" entre seis achados, e nenhum dos dois é um negócio.
+
+E a tampa de esgoto na calçada, quando houver: ela diz que a via tem coleta.
+
 Responda SOMENTE um JSON:
 {"status": "aprovado|reprovado",
  "pois_coerentes": [<números dos POIs que pertencem a esta ligação>],
@@ -280,6 +314,13 @@ Responda SOMENTE um JSON:
  "estabelecimento": "<o nome do negócio que sustenta a aprovação, ou null>",
  "presenca_na_foto": "exata|comercial|nenhuma",
  "fotos_do_google_validam": true|false,
+ "numero_na_fachada": "<o número que você LEU no imóvel julgado, ou null>",
+ "numeros_vistos": [{"numero": "<lido>", "onde": "<qual visada>",
+                     "certeza": "alta|media"}],
+ "medidores": {"agua": <quantos>, "energia": <quantos>},
+ "tampa_de_esgoto": true|false,
+ "fachadas_vistas": [{"texto": "<o que está escrito>",
+                      "ramo": "<o que aparenta ser>", "e_o_alvo": true|false}],
  "especie_cnefe": <1-8|null>, "secao_cnae": "<letra|null>",
  "sinal_no_imovel": "instalacao_fixa|so_oficio|nenhum",
  "justificativa": "<UM PARÁGRAFO, até 70 palavras, dizendo QUAIS fontes
@@ -459,6 +500,139 @@ def gravar(con, ligacao, v, resposta, percepcao, resumo, modelo, n_img, dt):
     con.commit()
 
 
+def _inteiro(v, teto=99):
+    """Um inteiro pequeno, ou None. O modelo devolve "2", 2, "dois" e null."""
+    try:
+        n = int(str(v).strip())
+    except (TypeError, ValueError):
+        return None
+    return n if 0 <= n <= teto else None
+
+
+def _texto(v, n=120):
+    if v is None:
+        return None
+    s = str(v).strip()
+    return s[:n] or None
+
+
+def gravar_visual(con, ligacao, resposta, resumo):
+    """O que a IA leu na rua vira linha, e não parágrafo.
+
+    POR QUE ISTO EXISTE, e por que num lugar separado do veredito. O número
+    pregado no muro, os medidores contados na fachada e o letreiro do vizinho
+    não dizem respeito só a ESTA ligação: eles descrevem a VIA. A foto foi
+    tirada de um ponto com coordenada conhecida, olhando uma rua que já
+    sabemos qual é — então "952" lido ali é a informação de onde o 952 daquela
+    via fica, e serve a qualquer outro ponto que precise se localizar nela.
+
+    Ver a migração 0096 e `enriquecer_cruzado.py`, que é quem consome.
+
+    A CÂMERA VEM DO POI DAS VISADAS. `resumo["fonte_das_visadas"]` é o POI de
+    quem o dossiê tirou as fotos de rua; a posição do panorama está em
+    `poi_evidencia`. Sem ela o número lido continua valendo como confirmação
+    do próprio endereço, mas não localiza mais ninguém — por isso a coordenada
+    é gravada quando existe e o resto entra do mesmo jeito quando não existe.
+    """
+    poi = resumo.get("fonte_das_visadas")
+    cur = con.cursor()
+
+    cam_lat = cam_lng = None
+    if poi:
+        cur.execute("""select cam_lat, cam_lng
+                         from radar_comercial.poi_evidencia
+                        where poi_id = %s and tipo like 'sv_%%'
+                          and cam_lat is not null
+                        limit 1""", (poi,))
+        r = cur.fetchone()
+        if r:
+            cam_lat, cam_lng = float(r[0]), float(r[1])
+
+    # A VIA VEM DO CADASTRO, E NUNCA DA IA. Ela lê o número; qual é a rua já
+    # se sabe. Deixar o modelo nomear o logradouro seria abrir a porta para
+    # ele "corrigir" a rua a partir de uma placa mal lida, e o número passaria
+    # a apontar para a via errada — o oposto do que esta tabela serve.
+    cur.execute("""select nom_logradouro, cidade
+                     from resources_root.cadastro_corsan
+                    where num_ligacao::text = %s limit 1""", (ligacao,))
+    r = cur.fetchone()
+    logradouro, cidade = (r[0], r[1]) if r else (None, None)
+
+    med = resposta.get("medidores") or {}
+    if not isinstance(med, dict):
+        med = {}
+    cur.execute("""
+        insert into radar_comercial.leitura_visual
+            (id_empresa, ligacao, poi_id, numero_na_fachada,
+             medidores_agua, medidores_energia, tampa_esgoto)
+        values ((select core.empresa_atual()), %s, %s, %s, %s, %s, %s)
+        on conflict (id_empresa, ligacao) do update set
+            poi_id = excluded.poi_id,
+            numero_na_fachada = excluded.numero_na_fachada,
+            medidores_agua = excluded.medidores_agua,
+            medidores_energia = excluded.medidores_energia,
+            tampa_esgoto = excluded.tampa_esgoto,
+            lido_em = now()
+    """, (ligacao, poi, _texto(resposta.get("numero_na_fachada"), 12),
+          _inteiro(med.get("agua")), _inteiro(med.get("energia")),
+          bool(resposta.get("tampa_de_esgoto"))
+          if resposta.get("tampa_de_esgoto") is not None else None))
+
+    # SEM LOGRADOURO NÃO HÁ NÚMERO ÚTIL. Um número sem a via a que pertence
+    # não localiza nada e ainda ocuparia o índice.
+    nums = resposta.get("numeros_vistos") or []
+    if logradouro and isinstance(nums, list):
+        vistos = set()
+        for it in nums[:20]:
+            if not isinstance(it, dict):
+                continue
+            num = _texto(it.get("numero"), 12)
+            onde = _texto(it.get("onde"), 30) or "?"
+            if not num or not num.strip("0"):
+                continue
+            if (num, onde) in vistos:
+                continue
+            vistos.add((num, onde))
+            cert = str(it.get("certeza") or "media").lower()
+            cur.execute("""
+                insert into radar_comercial.numero_lido
+                    (id_empresa, ligacao, poi_id, logradouro, cidade, numero,
+                     onde, certeza, cam_lat, cam_lng)
+                values ((select core.empresa_atual()), %s,%s,%s,%s,%s,%s,%s,
+                        %s,%s)
+                on conflict (id_empresa, ligacao, numero, onde) do update set
+                    certeza = excluded.certeza,
+                    cam_lat = excluded.cam_lat, cam_lng = excluded.cam_lng,
+                    lido_em = now()
+            """, (ligacao, poi, logradouro, cidade, num, onde,
+                  cert if cert in ("alta", "media") else "media",
+                  cam_lat, cam_lng))
+
+    # AS FACHADAS SÃO REESCRITAS a cada julgamento: elas descrevem a cena
+    # daquela leitura, e uma releitura com fotos novas substitui a anterior em
+    # vez de somar a ela.
+    cur.execute("""delete from radar_comercial.fachada_vista
+                    where ligacao = %s
+                      and id_empresa = (select core.empresa_atual())""",
+                (ligacao,))
+    fach = resposta.get("fachadas_vistas") or []
+    if isinstance(fach, list):
+        for it in fach[:20]:
+            if not isinstance(it, dict):
+                continue
+            txt, ramo = _texto(it.get("texto")), _texto(it.get("ramo"), 60)
+            if not txt and not ramo:
+                continue
+            cur.execute("""
+                insert into radar_comercial.fachada_vista
+                    (id_empresa, ligacao, poi_id, texto, ramo, e_o_alvo,
+                     onde, cam_lat, cam_lng)
+                values ((select core.empresa_atual()), %s,%s,%s,%s,%s,%s,%s,%s)
+            """, (ligacao, poi, txt, ramo, bool(it.get("e_o_alvo")),
+                  _texto(it.get("onde"), 30), cam_lat, cam_lng))
+    con.commit()
+
+
 def marcar_intrusos(con, ligacao, resposta, ids_validos, modelo):
     """Grava quem a IA disse nao pertencer a este hidrometro. Devolve quantos.
 
@@ -562,6 +736,13 @@ def uma(poco, ligacao, modelo, secoes, placar, trava, aplicar):
     prompt = PROMPT % dict(_palavras, dossie=texto, lista=lista,
                            julgar=_regras_da_ligacao(secoes))
     try:
+        # 2400 AGORA, E O MOTIVO E O MESMO DAS DUAS VEZES ANTERIORES: o
+        # esquema cresceu. O v3 pede quatro listas novas — numeros lidos,
+        # medidores, fachadas da cena — e um predio de galeria pode devolver
+        # dez fachadas. O teto foi 700, virou 1100 quando o v2 truncou 36 de
+        # 2.473, virou 1600 quando um predio com 70 CNPJs truncou 17 de 1.745,
+        # e a conta continua sendo a do MAIOR caso da fila, nao a do medio.
+        #
         # 1100 E NAO 700, e o motivo veio medido em 10/09/2026: 36 das 2.473
         # primeiras ligacoes falharam com "Unterminated string" — JSON cortado
         # no meio, sempre por volta da linha 74.
@@ -576,7 +757,7 @@ def uma(poco, ligacao, modelo, secoes, placar, trava, aplicar):
         # Falha aqui nao grava veredito, entao a ligacao volta para a fila
         # sozinha na proxima rodada — o estrago foi tempo, nao dado perdido.
         resposta = di._chat_local(modelo, prompt, [ia._b64(b) for b in imgs],
-                                  max_tokens=1600, timeout=TIMEOUT)
+                                  max_tokens=2400, timeout=TIMEOUT)
     except Exception as e:                                     # noqa: BLE001
         with trava:
             placar["falha"] += 1
@@ -598,6 +779,20 @@ def uma(poco, ligacao, modelo, secoes, placar, trava, aplicar):
         with poco.pegar() as con:
             gravar(con, ligacao, v, resposta or {}, percepcao, resumo, modelo,
                    len(imgs), dt)
+            # O QUE SE VIU NA RUA, GRAVADO SEPARADO. Falha aqui NAO derruba o
+            # veredito: o julgamento e o produto, e a leitura visual e o
+            # subproduto que alimenta os outros pontos. Perder um numero lido
+            # custa um ponto a menos na fila de alocacao; perder o veredito
+            # custa a ligacao inteira.
+            try:
+                gravar_visual(con, ligacao, resposta or {}, resumo)
+            except Exception as e:                             # noqa: BLE001
+                _log("   leitura visual de %s falhou: %s: %s"
+                     % (ligacao, type(e).__name__, str(e)[:90]))
+                try:
+                    con.rollback()
+                except Exception:                              # noqa: BLE001
+                    pass
             fora = marcar_intrusos(con, ligacao, resposta,
                                    set(resumo.get("ids") or []), modelo)
         if fora:
