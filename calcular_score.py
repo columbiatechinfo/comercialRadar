@@ -93,7 +93,17 @@ SIM_HUMANO = "SIM_COM_ANALISE_HUMANA"
 NAO = "NAO"
 
 
-def status_oficial(veredito, tem_porta):
+#: A fonte que so existe se ALGUEM ESTEVE LA.
+#:
+#: Maps e iFood dependem de gente: avaliacao escrita, foto tirada, pedido
+#: entregue. Receita, Estadual, IBGE, Cadastur e Airbnb sao CADASTRO — dizem
+#: que alguem se registrou naquele endereco, nao que ha comercio na porta. A
+#: distincao ja e' velha neste projeto: um CNPJ no endereco residencial e' o
+#: falso positivo classico, e por isso a Receita nem entra no mapa por padrao.
+FONTES_CONCLUSIVAS = ("maps", "ifood")
+
+
+def status_oficial(veredito, tem_telhado, tem_conclusiva):
     """`(status, motivo)` — a flag que o cliente filtra na aba inicial.
 
     O SISTEMA NAO DECIDE, ele sinaliza. Regra do dono do produto em 09/09/2026:
@@ -102,20 +112,30 @@ def status_oficial(veredito, tem_porta):
     SIM_COM_ANALISE_HUMANA "e igual ao sim, mas o usuario consegue filtrar o
     que deseja ver e aplicar em campo".
 
-    O QUE REBAIXA UM SIM, hoje: a ligacao ter sido aprovada sem que nenhum
-    vinculo dela identificasse a porta. Sao as que se sustentam so em
-    `nome_de_ancora` — semelhanca de nome com outro POI da mesma rua e do mesmo
-    telhado. A evidencia e boa o bastante para ir a campo e fraca demais para
-    ser cobrada sem alguem olhar: e' exatamente o caso que o segundo status
-    existe para separar.
+    O QUE REBAIXA UM SIM. Regra do dono do produto em 10/09/2026: "quando for
+    de fonte inconclusiva, tipo airbnb, e nao tiver no mesmo telhado da
+    instalacao". As duas coisas juntas — uma so nao rebaixa.
+
+    A LOGICA DAS DUAS. Sao dois jeitos independentes de provar que ha comercio
+    NAQUELA porta, e a ligacao precisa de um deles: ou alguem esteve la (Maps,
+    iFood) ou os dois pontos caem sobre a mesma construcao (telhado). Cadastro
+    sem telhado nao tem nenhum dos dois: e' um registro num endereco de texto,
+    que e' exatamente como o CNPJ de fundo de quintal aparece.
+
+    A PRIMEIRA VERSAO DESTA FUNCAO REBAIXAVA PELO VINCULO DE NOME, e dava zero
+    sempre. O motivo e' estrutural: o criterio de nome exige uma ANCORA, e a
+    ancora e' um vinculo de endereco exato da MESMA ligacao. O vinculo por nome
+    e' testemunha a mais, nunca a unica — logo nao existe ligacao sustentada so
+    por ele, e a condicao nao podia acontecer.
     """
     if (veredito or "").startswith("reprovado"):
         return (NAO, "a IA nao viu comercio nas fontes nem na fachada")
-    if not tem_porta:
+    if not tem_conclusiva and not tem_telhado:
         return (SIM_HUMANO,
-                "nenhum vinculo identificou a porta: a ligacao se sustenta so "
-                "em semelhanca de nome com um POI vizinho do mesmo telhado")
-    return (SIM, "endereco exato e a IA confirmou comercio")
+                "so cadastro (Receita, Estadual, IBGE) e nenhum vinculo no "
+                "mesmo telhado da ligacao: ninguem esteve la nem a geometria "
+                "confirma a porta")
+    return (SIM, "endereco exato, e a evidencia tem presenca fisica ou telhado")
 
 
 def pontuar(linha):
@@ -200,13 +220,15 @@ def main(argv=None):
                min(lp.metros), bool_or(lp.mesmo_telhado),
                bool_or(lp.telhado_comercial), count(distinct lp.poi_id),
                v.veredito,
-               -- ALGUM VINCULO IDENTIFICOU A PORTA? E o que separa o SIM do
+               -- ALGUMA FONTE PROVA QUE ALGUEM ESTEVE LA? Isso, com
+               -- `bool_or(lp.mesmo_telhado)` acima, separa o SIM do
                -- SIM_COM_ANALISE_HUMANA. Ver `status_oficial`.
-               bool_or(lp.aceito_por = 'endereco_exato')
+               bool_or(lower(coalesce(p.fonte,'')) in %(conclusivas)s)
           from radar_comercial.ligacao_veredito v
           join radar_comercial.ligacao_poi lp
             on lp.ligacao = v.ligacao and lp.descartado_em is null
-         group by 1,2,3,4,9""")
+          join radar_comercial.pois p on p.id = lp.poi_id
+         group by 1,2,3,4,9""", {"conclusivas": FONTES_CONCLUSIVAS})
     base = cur.fetchall()
     _log("   %d ligação(ões)" % len(base))
     if not base:
@@ -254,19 +276,29 @@ def main(argv=None):
             post_por_lig[lig] = dias
     _log("   %d ligação(ões) com post datado" % len(post_por_lig))
 
-    linhas, faixas = [], {}
-    for (lig, pres, fotos, ano, metros, tel, telc, pois, ver, porta) in base:
+    linhas, faixas, por_status = [], {}, {}
+    for (lig, pres, fotos, ano, metros, tel, telc, pois, ver, viva) in base:
         p, f, d, n = pontuar((lig, pres, fotos, ano, metros, tel, telc, pois,
                               dias_por_lig.get(lig), post_por_lig.get(lig)))
         total = sum(p.values())
         faixa = (total // 10) * 10
         faixas[faixa] = faixas.get(faixa, 0) + 1
+        st = status_oficial(ver, tel, viva)
+        por_status[st[0]] = por_status.get(st[0], 0) + 1
         linhas.append((empresa, lig, p["p_distancia"], p["p_telhado"],
                        p["p_streetview"], p["p_avaliacoes"], p["p_fotos"],
                        p["p_rede"], f["perto_10m"], f["mesmo_telhado"],
                        f["telhado_comercial"], f["sv_exata"], f["sv_comercial"],
                        f["sv_recente"], f["aval_recente"], f["fotos_validadas"],
-                       f["rede_recente"], json.dumps(d), n) + status_oficial(ver, porta))
+                       f["rede_recente"], json.dumps(d), n) + st)
+
+    # O PLACAR DOS STATUS VAI NO ENSAIO, e nao so depois de gravar. Ele e' o
+    # unico numero que diz se a regra do SIM_COM_ANALISE_HUMANA mudou alguma
+    # coisa — a distribuicao do score nao se mexe quando ela muda.
+    _log("")
+    _log("POR FLAG OFICIAL:")
+    for k in ("SIM", "SIM_COM_ANALISE_HUMANA", "NAO"):
+        _log("   %-24s %6d" % (k, por_status.get(k, 0)))
 
     _log("")
     _log("DISTRIBUIÇÃO DO SCORE (teto 80):")

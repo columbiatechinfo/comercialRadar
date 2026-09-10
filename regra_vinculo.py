@@ -303,9 +303,22 @@ def aceitar(candidatos):
     for c in candidatos:
         fonte = (c.get("fonte") or "").strip().lower()
         if fonte in SEM_ENDERECO_EXATO:
-            # O AIRBNB PASSOU A ENTRAR PELA PORTA DO NOME, la embaixo, e nao
-            # mais por distancia sozinha. Ver a nota em TETO_M e a exigencia
-            # de telhado no laco das ancoras.
+            # O AIRBNB ENTRA POR RUA + TELHADO, e nao pelo nome.
+            #
+            # A primeira versao desta regra exigiu dele o mesmo que do nome de
+            # ancora — rua, telhado E idf >= 9,0 — e a fonte inteira foi a
+            # ZERO: titulo de anuncio ("Apartamento aconchegante perto do
+            # centro") nunca soma 9,0 contra nome de comercio, porque nao e
+            # nome de negocio nenhum. Exigir idf do Airbnb e exigir uma coisa
+            # que a fonte nao tem.
+            #
+            # O que sobra e geometria, e aqui ela basta: rua + mesmo telhado
+            # sao duas condicoes independentes, e o telhado e o teste mais
+            # forte que existe sem numero de porta — os dois pontos caem sobre
+            # a MESMA construcao. Decisao do dono do produto em 10/09/2026.
+            if (c.get("mesma_rua") and c.get("mesmo_telhado")
+                    and _dentro_do_teto(c)):
+                fica[c["poi"]] = "airbnb_rua_telhado"
             continue
         # TODO O RESTO: rua E numero, sem excecao e sem consolo — E DENTRO
         # DO TETO. Rua e numero sao texto; o teto e o unico teste que pergunta
@@ -354,7 +367,7 @@ def motivo_da_recusa(c):
     if fonte in SEM_ENDERECO_EXATO:
         if not c.get("mesmo_telhado"):
             return "airbnb sem o telhado da ligacao"
-        return "airbnb no telhado, mas o nome nao bate com nenhuma ancora"
+        return "airbnb no telhado, mas fora do teto de distancia"
     if c.get("mesmo_numero") and not _dentro_do_teto(c):
         # O MOTIVO CARREGA O NUMERO porque este e o descarte que mais parece
         # erro: rua e numero batem, e mesmo assim cai.
