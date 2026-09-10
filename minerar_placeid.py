@@ -463,17 +463,48 @@ VISAO_GERAL = r"""() => {
     .filter(s => !/\/a-?\//.test(s) && !/=w\d{1,2}-h\d{1,2}/.test(s)))]
     .map(s => /streetviewpixels/.test(s) ? s : grande(s));
 
-  // A DATA DA FOTO, SE ELA ESTIVER A VISTA.
+  // A DATA DA FOTO, AMARRADA A FOTO — e nao varrida da pagina.
   //
-  // No visualizador o Maps escreve "Foto - out. de 2025", mas na ficha essa
-  // legenda nem sempre esta no DOM. Aqui e melhor esforco: varre os rotulos
-  // procurando "mes de ano" em pt-BR e devolve o que achar, sem abrir nada.
-  // Nao achar nao e erro — a data da foto e a terceira melhor que temos,
-  // depois da avaliacao do Google e do panorama do Street View.
+  // A PRIMEIRA VERSAO VARRIA TODO `[aria-label]` da ficha procurando "mes de
+  // ano" e devolvia uma lista solta de ate oito datas. Dois defeitos nisso, e
+  // o segundo e pior que o primeiro:
+  //
+  //   · a lista nao dizia de QUAL foto era cada data, entao nem gravando
+  //     daria para preencher `images_urls.data_imagem`;
+  //   · "out. de 2025" aparece tambem na AVALIACAO do cliente, e o rotulo do
+  //     autor tem esse formato. A lista misturava data de foto com data de
+  //     comentario e ninguem saberia dizer qual era qual.
+  //
+  // Agora sobe pelo DOM a partir de CADA IMG ate achar um ancestral cujo
+  // rotulo traga a data, e so aceita rotulo que fale de FOTO. O que sobra e
+  // atribuivel: `{url, data}`.
+  //
+  // NAO ACHAR CONTINUA NAO SENDO ERRO. O Maps so escreve a data no
+  // visualizador em boa parte das fichas, e abrir cada foto custaria um clique
+  // por imagem. A data da foto e a terceira melhor que temos, depois da
+  // avaliacao do Google e do panorama do Street View.
   const MES_ANO = /(jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)\w*\.?\s+de\s+(\d{4})/i;
-  const datasFoto = [...new Set([...document.querySelectorAll('[aria-label]')]
-    .map(e => (e.getAttribute('aria-label') || '').trim())
-    .filter(s => MES_ANO.test(s) && s.length < 60))].slice(0, 8);
+  const dataDaImg = (img) => {
+    let no = img;
+    for (let i = 0; i < 6 && no; i++) {
+      const r = (no.getAttribute && no.getAttribute('aria-label')) || '';
+      // SO ROTULO QUE FALA DE FOTO. Sem esta condicao o laco sobe ate um
+      // ancestral que embrulha a lista de avaliacoes e adota a data do
+      // comentario mais recente como se fosse da imagem.
+      if (r && /foto|imagem/i.test(r) && MES_ANO.test(r)) {
+        const m = r.match(MES_ANO);
+        return m ? (m[1] + '/' + m[2]) : null;
+      }
+      no = no.parentElement;
+    }
+    return null;
+  };
+  const fotosComData = [...document.querySelectorAll('img')]
+    .filter(i => /googleusercontent|streetviewpixels/.test(i.src))
+    .filter(i => !/\/a-?\//.test(i.src) && !/=w\d{1,2}-h\d{1,2}/.test(i.src))
+    .map(i => ({ src: i.src, data: dataDaImg(i) }))
+    .filter(o => o.data);
+  const datasFoto = [...new Set(fotosComData.map(o => o.data))].slice(0, 8);
 
   const h1 = q('h1');
   const cab = h1 && h1.parentElement && h1.parentElement.parentElement
@@ -512,6 +543,11 @@ VISAO_GERAL = r"""() => {
     horariosDePico: pico,
     fotos    : fotos.slice(0, 60),
     datasFoto: datasFoto,
+    // A FOTO COM A DATA DELA, quando o rotulo a trouxe. A url aqui e a
+    // MINIATURA, do jeito que estava no DOM; o pareamento com a lista `fotos`
+    // — que ja veio com o sufixo grande — e feito do lado do Python, pelo
+    // trecho estavel da url.
+    fotosComData: fotosComData.slice(0, 60),
     resumoIA : (() => {
       const e = q('[data-about-this-summary-url]');
       if (!e) return null;
@@ -1133,6 +1169,29 @@ def devolver(con, poi_id):
 _UM_POI_NAO_DERRUBA = True
 
 
+#: "out/2025" -> date(2025, 10, 1). O Maps nao publica o dia da foto, so o mes.
+_MESES = {"jan": 1, "fev": 2, "mar": 3, "abr": 4, "mai": 5, "jun": 6,
+          "jul": 7, "ago": 8, "set": 9, "out": 10, "nov": 11, "dez": 12}
+
+
+def _mes_ano(s):
+    """A data que o Maps escreve, virando `date`. Sem dia, o primeiro do mes.
+
+    NAO INVENTAR PRECISAO: o Maps diz "out. de 2025", e o dia 1 e uma
+    convencao para caber na coluna `date` — quem usa a data compara ANO e MES,
+    nunca o dia. Isso esta dito aqui porque a coluna nao consegue dize-lo.
+    """
+    if not s:
+        return None
+    try:
+        import datetime
+        m, a = str(s).split("/")
+        mes = _MESES.get(m.strip().lower()[:3])
+        return datetime.date(int(a), mes, 1) if mes else None
+    except Exception:                                          # noqa: BLE001
+        return None
+
+
 def gravar_um(con, poi_id, d):
     """Grava UM POI. Falha de UMA linha nao derruba os outros navegadores.
 
@@ -1329,11 +1388,23 @@ def _gravar_um_cru(con, poi_id, d):
 
         k.execute("delete from radar_comercial.images_urls where poi_id=%s",
                   (poi_id,))
+        # A DATA CASA COM A FOTO PELO ID DA URL, e nao pela posicao.
+        #
+        # `fotos` sai do JS ja com o sufixo de tamanho trocado para
+        # `=w1280-h920-p-k-no`; `fotosComData` traz a url como estava no DOM,
+        # com o sufixo da miniatura. Comparar as duas inteiras nunca casaria.
+        # O que nao muda e o trecho antes do `=`: e o identificador da imagem
+        # no googleusercontent.
+        por_id = {}
+        for o in (d.get("fotosComData") or []):
+            src = (o or {}).get("src") or ""
+            if src and o.get("data"):
+                por_id[src.split("=")[0]] = o["data"]
         for i, u in enumerate(d.get("fotos") or []):
             k.execute("""insert into radar_comercial.images_urls
-                           (poi_id, fonte, url, ordem)
-                         values (%s,'maps',%s,%s)""",
-                      (poi_id, u, i))
+                           (poi_id, fonte, url, ordem, data_imagem)
+                         values (%s,'maps',%s,%s,%s)""",
+                      (poi_id, u, i, _mes_ano(por_id.get(u.split("=")[0]))))
     con.commit()
     return n_com
 
