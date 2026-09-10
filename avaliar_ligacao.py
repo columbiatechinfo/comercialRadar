@@ -528,8 +528,21 @@ def uma(poco, ligacao, modelo, secoes, placar, trava, aplicar):
     prompt = PROMPT % {"dossie": texto, "lista": lista,
                        "julgar": _regras_da_ligacao(secoes)}
     try:
+        # 1100 E NAO 700, e o motivo veio medido em 10/09/2026: 36 das 2.473
+        # primeiras ligacoes falharam com "Unterminated string" — JSON cortado
+        # no meio, sempre por volta da linha 74.
+        #
+        # O teto de 700 servia ao esquema antigo. O v2 pede mais: duas listas
+        # de POIs (uma ligacao tinha dez), `presenca_na_foto`,
+        # `fotos_do_google_validam`, especie, secao, sinal e o paragrafo. Numa
+        # ligacao com muitos registros a resposta estoura, e o corte nao chega
+        # como erro do modelo: chega como texto que nao fecha, e o parse morre
+        # longe da causa.
+        #
+        # Falha aqui nao grava veredito, entao a ligacao volta para a fila
+        # sozinha na proxima rodada — o estrago foi tempo, nao dado perdido.
         resposta = di._chat_local(modelo, prompt, [ia._b64(b) for b in imgs],
-                                  max_tokens=700, timeout=TIMEOUT)
+                                  max_tokens=1100, timeout=TIMEOUT)
     except Exception as e:                                     # noqa: BLE001
         with trava:
             placar["falha"] += 1

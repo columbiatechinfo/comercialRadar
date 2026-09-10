@@ -77,7 +77,7 @@ Duas parecem úteis para o julgamento: **quantas unidades há no endereço** e *
 há outra ligação ativa no mesmo lugar** — as duas respondem "é prédio ou casa",
 que hoje o modelo deduz das economias.
 
-### 5. Os 22.821 POIs órfãos
+### 5. Os 35.335 POIs órfãos
 Perderam o vínculo com a regra estrita e não acharam outra ligação. O caminho
 já existe (`casar_por_endereco.py`), mas eles ficaram fora porque a regra nova
 entrou depois. Rodar a alocação de novo sobre eles.
@@ -125,6 +125,80 @@ Só ligações `apta_cruzamento` (SIM ou SIM_COM_ANALISE_HUMANA), com vínculo p
 endereço exato. Ao terminar, rodar `calcular_score.py --aplicar`.
 
 ---
+
+## Corrigido em 10/09/2026, de manhã
+
+### O vínculo escapava por três `join` diferentes
+
+Pergunta do dono do produto: *"todos os vínculos atuais têm o mesmo endereço
+com número?"*. A resposta era **não — 92,1%**, e eu tinha escrito 100% no
+relatório. Medindo o porquê, apareceram **três fugas com a mesma forma**: a
+consulta que aplica a regra só examina o que o `join` deixa passar, e **o que
+ela não vê continua vivo por omissão**, porque "vivo" é só `descartado_em is
+null`.
+
+| a fuga | como escapava | quantos |
+|---|---|---|
+| POI fundido | `join pois … p.fundido_em is null` | 8 vínculos |
+| outra cidade | `--cidade Canoas` na chamada | 586 vínculos de Gravataí |
+| POI apagado | `join pois` sem chave estrangeira | 11 vínculos |
+
+Os oito do POI fundido eram todos a **Madeireira Maravilha** (POI 78458),
+apontando para ligações da Índio Sepé enquanto o POI publica "Rua das
+Costureiras, 191". Nenhum dos três grupos chegou à IA — o dossiê e a fila
+filtram do mesmo jeito —, então o estrago era de **contagem**, não de veredito.
+Mas número que ninguém consegue explicar é número que não serve.
+
+O terceiro virou migração: `0092` apaga os pendurados e põe
+`on delete cascade`, porque **seis lugares apagam POI** e nenhum limpa o
+vínculo.
+
+### A regra de endereço exato não tinha teto de distância
+
+Achado medindo a pergunta acima. `mesma_rua and mesmo_numero` compara **texto**,
+e texto não sabe onde fica: 685 vínculos vivos estavam a **mais de 5 km**, o
+pior a **6.436 km**. Duas causas, nenhuma delas vínculo — o mesmo nome de rua
+repetido em bairro diferente, e POI com coordenada errada.
+
+Decisão do dono do produto: **teto de 50 m, mesmo com rua e número batendo**.
+
+### Semelhança de nome juntava a filial
+
+Dos 8.385 vínculos aceitos por nome, só **282 (3,4%)** estavam no mesmo
+telhado, com distância média de 23,1 m — ou seja, o critério estava juntando o
+**mesmo negócio em portas diferentes**, que é justamente o que não serve numa
+ligação de água: cada porta tem o seu hidrômetro.
+
+Decisão: nome e Airbnb passam a exigir **mesma rua + idf ≥ 9,0 + mesmo
+telhado**. Restaram **274**.
+
+**Consequência que o dono precisa saber: o Airbnb foi a zero.** Os 42 vínculos
+da fonte caíram, porque título de anúncio ("Apartamento aconchegante perto
+do centro") nunca soma 9,0 de idf contra nome de comércio. A fonte continua
+coletada e os POIs continuam na base; o que sumiu foi o vínculo dela com
+ligação. Reverter é mudar uma linha em `regra_vinculo.aceitar`.
+
+### O motivo do aceite não era gravado em lugar nenhum
+
+`descartado_motivo` explicava a queda; nada explicava a permanência. Para
+responder a pergunta do dono eu tive de **deduzir** a classe de cada vínculo a
+partir de `mesmo_endereco`, `mesmo_numero` e `fonte` — e dedução reconstrói o
+critério de hoje sobre um vínculo gravado ontem. Migração `0091`:
+`ligacao_poi.aceito_por`.
+
+### Placar com uma linha por distância
+
+O motivo do teto carrega a distância — "endereço exato, mas a 954 m" — porque
+na linha do banco ela é a explicação inteira. No `Counter` isso virou **mais de
+mil chaves com contagem 1**, escondendo os quatro totais que interessavam.
+Agrupado por família em `_familia()`.
+
+### Guarda que casou com o próprio texto — a quinta vez
+
+`if "
+import re" not in t` casou com `import regra_vinculo as rv`, e o
+`import re` nunca entrou. O arquivo só não quebrou porque `re` já vinha por
+outro caminho no teste.
 
 ## Corrigido na madrugada de 10/09/2026
 

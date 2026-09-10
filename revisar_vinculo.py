@@ -17,6 +17,7 @@ que o modelo escreveu; sobrescrever isso apagaria a única explicação que
 existe para eles.
 """
 import argparse
+import re
 import time
 from collections import Counter, defaultdict
 
@@ -40,6 +41,46 @@ select lp.ligacao, lp.poi_id, lp.mesmo_endereco, lp.mesmo_numero,
    and p.fundido_em is null
    {cidade}
 """
+
+
+#: O VINCULO DE POI FUNDIDO NAO E VINCULO, e escapava de todo mundo.
+#:
+#: `SQL` filtra `p.fundido_em is null` — de proposito, porque a regra fala de
+#: POIs que existem. So que o filtro tinha um efeito que eu nao previ: o
+#: vinculo de um POI FUNDIDO nunca era examinado, e continuava com
+#: `descartado_em is null`, ou seja, VIVO para toda consulta que so olha essa
+#: coluna. Inclusive as minhas contagens.
+#:
+#: Achado em 10/09/2026 auditando os dois unicos vinculos de Canoas sem rua: os
+#: dois eram da Madeireira Maravilha, POI 78458, fundido em 08/09, apontando
+#: para ligacoes da Indio Sepe enquanto o POI publica "Rua das Costureiras".
+#:
+#: O julgamento nunca os viu — o dossie e a fila tambem filtram fundido —,
+#: entao o estrago era de contagem, nao de veredito. Mas numero que ninguem
+#: consegue explicar e numero que nao serve.
+SQL_FUNDIDOS = """
+update radar_comercial.ligacao_poi lp
+   set descartado_em = now(),
+       descartado_motivo = 'o POI foi fundido em outro; quem vale e o '
+                           'sobrevivente, nao a copia',
+       descartado_por = 'regra_vinculo'
+  from radar_comercial.pois p
+ where p.id = lp.poi_id
+   and p.fundido_em is not null
+   and lp.descartado_em is null
+"""
+
+
+def _familia(motivo):
+    """O motivo sem os numeros, para o placar.
+
+    O MOTIVO DO TETO CARREGA A DISTANCIA — "endereco exato, mas a 954 m" —
+    porque na linha do banco ela e a explicacao inteira: sem ela o operador nao
+    sabe se caiu por 51 m ou por 6 km. No PLACAR isso vira uma chave por
+    distancia: a primeira corrida imprimiu mais de mil linhas com contagem 1 e
+    escondeu os quatro totais que interessavam.
+    """
+    return re.sub(r"\d+", "N", motivo)
 
 
 def _log(m):
@@ -76,16 +117,17 @@ def main(argv=None):
     _log("%d ligações · %d vínculos"
          % (len(por_lig), sum(len(v) for v in por_lig.values())))
 
-    fora, placar = [], Counter()
+    fora, dentro, placar = [], [], Counter()
     ligs_que_zeram = 0
     for lig, cands in por_lig.items():
         fica = rv.aceitar(cands)
         for c in cands:
             if c["poi"] in fica:
+                dentro.append((lig, c["poi"], fica[c["poi"]]))
                 placar["fica: " + fica[c["poi"]]] += 1
             else:
                 motivo = rv.motivo_da_recusa(c)
-                placar["cai: " + motivo[:44]] += 1
+                placar["cai: " + _familia(motivo)[:52]] += 1
                 fora.append((lig, c["poi"], motivo))
         if not fica:
             ligs_que_zeram += 1
@@ -116,6 +158,26 @@ def main(argv=None):
     #
     # Guarda que grita a toa e pior do que guarda nenhuma: ensina a ignorar o
     # alarme. Entao a medida agora e a pergunta direta ao banco.
+    # ── O VINCULO DE POI FUNDIDO, que a consulta principal nao enxerga ──
+    _log("descartando vínculos de POI fundido...")
+    cur.execute(SQL_FUNDIDOS)
+    _log("   %d vínculo(s) de POI que virou copia" % cur.rowcount)
+    con.commit()
+
+    # ── POR QUE CADA UM QUE FICOU, FICOU ──────────────────────────────────
+    # Ate 10/09/2026 so o descarte deixava rastro. Ver a migracao 0091.
+    for i in range(0, len(dentro), 5000):
+        execute_values(cur, """
+            update radar_comercial.ligacao_poi lp
+               set aceito_por = v.motivo
+              from (values %s) as v(ligacao, poi_id, motivo)
+             where lp.ligacao = v.ligacao
+               and lp.poi_id = v.poi_id::bigint
+               and lp.descartado_em is null
+        """, dentro[i:i + 5000], page_size=1000)
+        con.commit()
+    _log("%d vínculos ficaram, com o motivo do aceite gravado" % len(dentro))
+
     cur.execute("""select count(*) from radar_comercial.ligacao_poi
                     where descartado_por = 'regra_vinculo'""")
     marcados_antes = int(cur.fetchone()[0] or 0)

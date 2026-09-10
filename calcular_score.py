@@ -86,6 +86,38 @@ def _sv_recente(ano_visadas):
         return False
 
 
+#: Os tres status oficiais do sistema, escritos como a base cadastral os
+#: escreve. Ver a migracao 0093.
+SIM = "SIM"
+SIM_HUMANO = "SIM_COM_ANALISE_HUMANA"
+NAO = "NAO"
+
+
+def status_oficial(veredito, tem_porta):
+    """`(status, motivo)` — a flag que o cliente filtra na aba inicial.
+
+    O SISTEMA NAO DECIDE, ele sinaliza. Regra do dono do produto em 09/09/2026:
+    "quem decide e o cliente, o sistema so mostra os dados e da uma flag em
+    cada um na aba inicial". Por isso a flag e' um recorte, nao um veto: o
+    SIM_COM_ANALISE_HUMANA "e igual ao sim, mas o usuario consegue filtrar o
+    que deseja ver e aplicar em campo".
+
+    O QUE REBAIXA UM SIM, hoje: a ligacao ter sido aprovada sem que nenhum
+    vinculo dela identificasse a porta. Sao as que se sustentam so em
+    `nome_de_ancora` — semelhanca de nome com outro POI da mesma rua e do mesmo
+    telhado. A evidencia e boa o bastante para ir a campo e fraca demais para
+    ser cobrada sem alguem olhar: e' exatamente o caso que o segundo status
+    existe para separar.
+    """
+    if (veredito or "").startswith("reprovado"):
+        return (NAO, "a IA nao viu comercio nas fontes nem na fachada")
+    if not tem_porta:
+        return (SIM_HUMANO,
+                "nenhum vinculo identificou a porta: a ligacao se sustenta so "
+                "em semelhanca de nome com um POI vizinho do mesmo telhado")
+    return (SIM, "endereco exato e a IA confirmou comercio")
+
+
 def pontuar(linha):
     """Devolve (parcelas, flags, detalhe) de UMA ligacao."""
     (lig, presenca, fotos_ok, ano_visadas, metros, telhado, telhado_com,
@@ -166,11 +198,15 @@ def main(argv=None):
                v.percepcao->'resposta'->>'fotos_do_google_validam',
                v.percepcao->>'ano_das_visadas',
                min(lp.metros), bool_or(lp.mesmo_telhado),
-               bool_or(lp.telhado_comercial), count(distinct lp.poi_id)
+               bool_or(lp.telhado_comercial), count(distinct lp.poi_id),
+               v.veredito,
+               -- ALGUM VINCULO IDENTIFICOU A PORTA? E o que separa o SIM do
+               -- SIM_COM_ANALISE_HUMANA. Ver `status_oficial`.
+               bool_or(lp.aceito_por = 'endereco_exato')
           from radar_comercial.ligacao_veredito v
           join radar_comercial.ligacao_poi lp
             on lp.ligacao = v.ligacao and lp.descartado_em is null
-         group by 1,2,3,4""")
+         group by 1,2,3,4,9""")
     base = cur.fetchall()
     _log("   %d ligação(ões)" % len(base))
     if not base:
@@ -219,7 +255,7 @@ def main(argv=None):
     _log("   %d ligação(ões) com post datado" % len(post_por_lig))
 
     linhas, faixas = [], {}
-    for (lig, pres, fotos, ano, metros, tel, telc, pois) in base:
+    for (lig, pres, fotos, ano, metros, tel, telc, pois, ver, porta) in base:
         p, f, d, n = pontuar((lig, pres, fotos, ano, metros, tel, telc, pois,
                               dias_por_lig.get(lig), post_por_lig.get(lig)))
         total = sum(p.values())
@@ -230,7 +266,7 @@ def main(argv=None):
                        p["p_rede"], f["perto_10m"], f["mesmo_telhado"],
                        f["telhado_comercial"], f["sv_exata"], f["sv_comercial"],
                        f["sv_recente"], f["aval_recente"], f["fotos_validadas"],
-                       f["rede_recente"], json.dumps(d), n))
+                       f["rede_recente"], json.dumps(d), n) + status_oficial(ver, porta))
 
     _log("")
     _log("DISTRIBUIÇÃO DO SCORE (teto 80):")
@@ -250,7 +286,8 @@ def main(argv=None):
             (id_empresa, ligacao, p_distancia, p_telhado, p_streetview,
              p_avaliacoes, p_fotos, p_rede, perto_10m, mesmo_telhado,
              telhado_comercial, sv_exata, sv_comercial, sv_recente,
-             aval_recente, fotos_validadas, rede_recente, detalhe, pois)
+             aval_recente, fotos_validadas, rede_recente, detalhe, pois,
+             status, status_motivo)
         values %s
     """, linhas, page_size=1000)
     con.commit()

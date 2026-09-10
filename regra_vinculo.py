@@ -94,6 +94,22 @@ VAZIOS = {
 #: A distância que dispensa o número, no critério 2.
 PERTO_M = 10.0
 
+#: O TETO DE DISTANCIA, QUE VALE ATE PARA O ENDERECO EXATO. Decisao do dono
+#: do produto em 10/09/2026: "no maximo 50 metros mesmo sendo o mesmo
+#: endereco e numero".
+#:
+#: A regra estrita nao tinha teto nenhum, e isso escapou na primeira medicao
+#: porque eu contei quantos batiam rua e numero, nunca a que distancia. Medido
+#: depois, nos 101.637 vinculos exatos vivos: 84.561 ate 50 m, 8.446 entre 50
+#: e 200 m, 5.799 ate 1 km, 2.146 ate 5 km e **685 acima de 5 km** — o pior
+#: par a 6.436 km, rua e numero identicos em outro estado.
+#:
+#: Sao duas causas, e nenhuma das duas e vinculo: o mesmo nome de rua se
+#: repete em bairros diferentes (Canoas tem varias "Rua Sao Jose"), e ha POI
+#: com coordenada errada que casa por texto. Em ambos os casos o par so
+#: existe porque a comparacao e de STRING, e string nao sabe onde fica.
+TETO_M = 50.0
+
 #: Quanto os tokens em comum precisam somar para dois nomes serem o mesmo
 #: negócio. Ver a calibração no cabeçalho: o pior par certo deu 10,06 e o
 #: melhor par errado, 6,28.
@@ -246,6 +262,18 @@ def contradiz_numero(num_poi_publicado, num_ligacao, e_prova):
 SEM_ENDERECO_EXATO = ("airbnb",)
 
 
+def _dentro_do_teto(c):
+    """O par existe no mesmo lugar do mundo?
+
+    DISTANCIA DESCONHECIDA PASSA. `metros` vem do cruzamento e so falta quando
+    um dos dois lados nao tem coordenada; recusar por ausencia de medida
+    puniria o vinculo pelo que nao foi medido. Sao poucos, e o score os separa
+    depois — la a distancia vale ponto, e sem numero ela vale zero.
+    """
+    m = c.get("metros")
+    return m is None or m <= TETO_M
+
+
 def aceitar(candidatos):
     """`{poi_id: motivo}` — quais candidatos pertencem a ESTA ligação.
 
@@ -275,23 +303,14 @@ def aceitar(candidatos):
     for c in candidatos:
         fonte = (c.get("fonte") or "").strip().lower()
         if fonte in SEM_ENDERECO_EXATO:
-            # A FONTE SEM ENDERECO ENTRA PELOS NIVEIS ANTIGOS, e o veredito
-            # dela depende da foto — decisao do dono do produto: "os outros
-            # niveis so sao aceitaveis pra airbnb e sempre a aprovacao depende
-            # da foto do streetview ser avaliada pela IA como conclusivo".
-            # Aqui so se decide o VINCULO; a exigencia da foto vive no
-            # julgamento, que e quem ve a imagem.
-            if not c.get("mesma_rua"):
-                continue
-            m = c.get("metros")
-            if m is not None and m < PERTO_M:
-                fica[c["poi"]] = "airbnb_ate_10m"
-            elif c.get("mesmo_telhado"):
-                fica[c["poi"]] = "airbnb_telhado"
+            # O AIRBNB PASSOU A ENTRAR PELA PORTA DO NOME, la embaixo, e nao
+            # mais por distancia sozinha. Ver a nota em TETO_M e a exigencia
+            # de telhado no laco das ancoras.
             continue
-
-        # TODO O RESTO: rua E numero, sem excecao e sem consolo.
-        if c.get("mesma_rua") and c.get("mesmo_numero"):
+        # TODO O RESTO: rua E numero, sem excecao e sem consolo — E DENTRO
+        # DO TETO. Rua e numero sao texto; o teto e o unico teste que pergunta
+        # se o par existe no mesmo lugar do mundo.
+        if c.get("mesma_rua") and c.get("mesmo_numero") and _dentro_do_teto(c):
             fica[c["poi"]] = "endereco_exato"
 
     # O NOME DE ANCORA CONTINUA, e so ele — porque nao fala de onde, fala de
@@ -305,8 +324,25 @@ def aceitar(candidatos):
     for c in candidatos:
         if c["poi"] in fica or not c.get("mesma_rua"):
             continue
+        # O TELHADO PASSOU A SER OBRIGATORIO AQUI. Decisao do dono do produto
+        # em 10/09/2026: "nos casos de nome e airbnb tem que estar pelo menos
+        # na mesma rua e >= 9,0 de idf e como mesmo telhado".
+        #
+        # O que isso corrige: dos 8.385 vinculos de nome vivos, so 282 (3,4%)
+        # estavam no mesmo telhado, e a distancia media era 23,1 m — ou seja,
+        # a semelhanca de nome estava juntando o mesmo negocio em ENDERECOS
+        # diferentes (uma rede com duas lojas na mesma rua, uma filial), que e
+        # justamente o que nao se quer numa ligacao de agua: cada porta tem o
+        # seu hidrometro.
+        if not c.get("mesmo_telhado"):
+            continue
+        if not _dentro_do_teto(c):
+            continue
         if any(parecidos(c.get("nome"), a.get("nome")) for a in ancoras):
-            fica[c["poi"]] = "nome_de_ancora"
+            fonte = (c.get("fonte") or "").strip().lower()
+            fica[c["poi"]] = ("airbnb_telhado_nome"
+                              if fonte in SEM_ENDERECO_EXATO
+                              else "nome_de_ancora")
     return fica
 
 
@@ -316,7 +352,16 @@ def motivo_da_recusa(c):
         return "rua diferente da ligacao"
     fonte = (c.get("fonte") or "").strip().lower()
     if fonte in SEM_ENDERECO_EXATO:
-        return "airbnb longe: nem 10 m nem mesmo telhado"
+        if not c.get("mesmo_telhado"):
+            return "airbnb sem o telhado da ligacao"
+        return "airbnb no telhado, mas o nome nao bate com nenhuma ancora"
+    if c.get("mesmo_numero") and not _dentro_do_teto(c):
+        # O MOTIVO CARREGA O NUMERO porque este e o descarte que mais parece
+        # erro: rua e numero batem, e mesmo assim cai.
+        return ("endereco exato, mas a %d m (teto de %d m)"
+                % (round(c.get("metros") or 0), round(TETO_M)))
     if not c.get("mesmo_numero"):
-        return "numero de porta diferente (so endereco exato vincula)"
+        if not c.get("mesmo_telhado"):
+            return "numero diferente e nem o mesmo telhado"
+        return "numero diferente; telhado bate, mas o nome nao acha ancora"
     return "mesma rua e numero, mas recusado"

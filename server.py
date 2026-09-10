@@ -4844,6 +4844,17 @@ def score_resumo(cidade: str = ""):
                        coalesce(max(s.total), 0)
                   from radar_comercial.ligacao_score s %s""" % wc, pc)
             r = cur.fetchone()
+
+            # OS TRES STATUS OFICIAIS, contados. Sao o primeiro recorte da aba
+            # inicial: o cliente escolhe se leva a campo so o SIM, ou o SIM
+            # mais o que precisa de um par de olhos antes.
+            cur.execute("""
+                select coalesce(s.status, 'SEM_STATUS'), count(*),
+                       coalesce(round(avg(s.total), 1), 0)
+                  from radar_comercial.ligacao_score s %s
+                 group by 1""" % wc, pc)
+            status = {k: {"ligacoes": int(n), "media": float(m)}
+                      for k, n, m in cur.fetchall()}
     finally:
         conn.close()
     nomes = ["perto_10m", "mesmo_telhado", "telhado_comercial", "sv_exata",
@@ -4851,6 +4862,12 @@ def score_resumo(cidade: str = ""):
              "rede_recente"]
     return {"total": int(r[0] or 0),
             "flags": {n: int(v or 0) for n, v in zip(nomes, r[1:10])},
+            # A ORDEM VAI DO SERVIDOR para a tela nao reinventa-la, e os tres
+            # aparecem mesmo zerados: uma flag que some da tela vira "nao
+            # existe" na cabeca de quem olha.
+            "status": {k: status.get(k, {"ligacoes": 0, "media": 0.0})
+                       for k in ("SIM", "SIM_COM_ANALISE_HUMANA", "NAO",
+                                 "SEM_STATUS")},
             "media": float(r[10] or 0), "maior": int(r[11] or 0),
             "faixas": faixas,
             # O TETO VAI JUNTO para a tela nao ter de saber a formula. Se um

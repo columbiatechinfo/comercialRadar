@@ -2663,6 +2663,26 @@
     // distribuição, para você ver onde estão os alvos, e a contagem por
     // evidência, para você escolher em qual confia. Um corte gravado no
     // sistema responderia por você a pergunta que é sua.
+    // OS TRES STATUS OFICIAIS DO SISTEMA, escritos como a base cadastral os
+    // escreve. O segundo NAO e' um "talvez": e' um sim que o cliente pode
+    // querer olhar antes de mandar alguem a campo — a diferenca dele existe
+    // aqui, na tela, e nao no que o sistema deixa passar.
+    // CLASSES INTEIRAS, e não `border-${cor}-200`. O Tailwind desta tela é o
+    // CDN, que varre o texto para saber o que gerar: um nome montado em tempo
+    // de execução nunca aparece inteiro em lugar nenhum, e a caixa sai sem
+    // borda e sem cor — sem erro no console, que é o pior jeito de quebrar.
+    const ROTULO_STATUS = {
+      SIM: ["Sim", "endereço exato e comércio confirmado",
+        "border-emerald-200 bg-emerald-50/60", "text-emerald-900", "text-emerald-700"],
+      SIM_COM_ANALISE_HUMANA: ["Sim, com análise humana",
+        "o vínculo se apoia só em semelhança de nome",
+        "border-amber-200 bg-amber-50/60", "text-amber-900", "text-amber-700"],
+      NAO: ["Não", "sem sinal de comércio nas fontes nem na fachada",
+        "border-gray-200 bg-gray-50", "text-gray-900", "text-gray-600"],
+      SEM_STATUS: ["Sem flag", "ainda não julgada",
+        "border-gray-200 bg-gray-50", "text-gray-900", "text-gray-600"],
+    };
+
     const ROTULO_FLAG = {
       perto_10m: "a menos de 10 m do hidrômetro",
       mesmo_telhado: "mesmo telhado",
@@ -2698,6 +2718,29 @@
             <span class="tabular-nums text-gray-700">${n}</span>
           </div>`;
         }).join("") || '<p class="text-[12px] text-gray-400">Nenhuma ligação pontuada ainda.</p>';
+      }
+      const st = $("score-status");
+      if (st) {
+        // O SEM_STATUS SO APARECE SE EXISTIR. Os tres oficiais aparecem
+        // sempre, mesmo zerados; uma flag que some da tela vira "não existe"
+        // na cabeça de quem olha.
+        const ordem = ["SIM", "SIM_COM_ANALISE_HUMANA", "NAO"];
+        const extra = (d.status?.SEM_STATUS?.ligacoes || 0) > 0 ? ["SEM_STATUS"] : [];
+        st.className = "mt-2 mb-6 grid gap-3 grid-cols-" + (ordem.length + extra.length);
+        st.innerHTML = ordem.concat(extra).map((k) => {
+          const [nome, ajuda, caixa, tit, num] = ROTULO_STATUS[k];
+          const v = (d.status || {})[k] || { ligacoes: 0, media: 0 };
+          const pct = d.total ? Math.round(100 * v.ligacoes / d.total) : 0;
+          return `<div class="rounded-lg border px-3 py-2.5 ${caixa}">
+            <div class="flex items-baseline justify-between gap-x-2">
+              <span class="text-[12px] font-semibold ${tit}">${nome}</span>
+              <span class="text-[11px] tabular-nums ${num}">${pct}%</span>
+            </div>
+            <div class="mt-0.5 text-[19px] font-semibold tabular-nums text-gray-900">${v.ligacoes}</div>
+            <div class="text-[11px] text-gray-500">média ${v.media} de ${d.teto}</div>
+            <div class="mt-1 text-[11px] leading-snug text-gray-500">${ajuda}</div>
+          </div>`;
+        }).join("");
       }
       const fl = $("score-flags");
       if (fl) {
