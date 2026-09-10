@@ -38,7 +38,9 @@ import regra_vinculo as rv
 
 SQL = """
 select lp.ligacao, lower(coalesce(p.fonte,'')), p.id, coalesce(p.nome,''),
-       coalesce(p.detalhado_em is not null, false)
+       coalesce(p.detalhado_em is not null, false),
+       (select count(*) from radar_comercial.ligacao_poi v
+         where v.poi_id = p.id and v.descartado_em is null)
   from radar_comercial.ligacao_poi lp
   join radar_comercial.pois p on p.id = lp.poi_id
  where lp.descartado_em is null
@@ -128,6 +130,20 @@ def main(argv=None):
     p = argparse.ArgumentParser()
     p.add_argument("--cidade", default="")
     p.add_argument("--aplicar", action="store_true")
+    # O CORTE SEGURO, e o padrao quando se vai gravar.
+    #
+    # Auditando 70 fusoes sorteadas em 10/09/2026, a taxa de erro nao e' a
+    # mesma nas duas metades: onde o conjunto de tokens e' IDENTICO nos dois
+    # nomes ("Clinilife"/"Clinilife") nao ha erro possivel; onde ele so se
+    # parece, 13% dos pares eram negocios diferentes — "Gabinete Vereador
+    # Duarte" x "Gabinete Vereador Leandrinho", "TIMM Assessoria Imobiliaria"
+    # x "TIMM Sociedade Individual de Advocacia".
+    #
+    # Decisao do dono do produto: aplicar so a metade sem erro, e deixar a
+    # outra listada para revisao.
+    p.add_argument("--so-identicos", dest="so_identicos",
+                   action="store_true",
+                   help="funde apenas onde os nomes normalizados sao iguais")
     # A LISTA INTEIRA, para auditoria. A fusao e' destrutiva (reversivel, mas
     # destrutiva) e o teste de nome nao tem taxa de erro conhecida: nenhum
     # sinal isolado — peso, topo, distancia — separou os casos duvidosos nos
@@ -162,11 +178,12 @@ def main(argv=None):
     _log("lendo os vínculos vivos...")
     cur.execute(SQL, (a.cidade,))
     grupos = defaultdict(list)
-    nome_de, rico_de = {}, {}
-    for (lig, fonte, poi, nome, rico) in cur:
+    nome_de, rico_de, vivos_de = {}, {}, {}
+    for (lig, fonte, poi, nome, rico, vivos) in cur:
         grupos[(lig, fonte)].append(poi)
         nome_de[poi] = nome
         rico_de[poi] = rico
+        vivos_de[poi] = vivos
     _log("   %d combinações de ligação × fonte" % len(grupos))
 
     # OS PARES SAO ACHADOS POR LIGACAO, MAS A UNIAO E GLOBAL. Se A e B sao a
@@ -217,7 +234,20 @@ def main(argv=None):
     # sobra na componente sem casar com ele simplesmente nao funde.
     fusoes, sem_aresta = [], 0
     for g in gs:
-        vive = sorted(g, key=lambda x: (not rico_de.get(x),
+        # QUEM SOBREVIVE E QUEM TEM MAIS VINCULO VIVO, antes de qualquer
+        # outra coisa.
+        #
+        # A primeira versao escolhia por "mais detalhado / nome mais longo", e
+        # em 5 casos de 1.062 isso elegeu justamente o POI cuja linha para
+        # aquela ligacao esta DESCARTADA — enquanto a do absorvido estava viva.
+        # Fundir ali troca o POI que passa na regra pelo que nao passa, e a
+        # ligacao fica sem prova: tres ficariam sem nenhuma.
+        #
+        # E nao adianta reviver a linha do sobrevivente: ela caiu porque a
+        # coordenada DELE nao passa no teto, e e' a coordenada dele que o
+        # dossie usaria para escolher a foto. Seria fabricar prova.
+        vive = sorted(g, key=lambda x: (-vivos_de.get(x, 0),
+                                        not rico_de.get(x),
                                         -len(nome_de.get(x) or ""), x))[0]
         for morre in g:
             if morre == vive:
@@ -228,6 +258,15 @@ def main(argv=None):
                 sem_aresta += 1
     _log("%d POI(s) a fundir · %d recusados por não casar direto com o "
          "sobrevivente" % (len(fusoes), sem_aresta))
+
+    if a.so_identicos:
+        antes_i = len(fusoes)
+        fusoes = [(m, v) for (m, v) in fusoes
+                  if set(rv.normalizar(nome_de[m]))
+                  and set(rv.normalizar(nome_de[m]))
+                  == set(rv.normalizar(nome_de[v]))]
+        _log("--so-identicos: %d de %d (os outros %d ficam para revisão)"
+             % (len(fusoes), antes_i, antes_i - len(fusoes)))
     for morre, vive in fusoes[:8]:
         _log("   %d '%s'  ->  %d '%s'"
              % (morre, nome_de[morre][:34], vive, nome_de[vive][:34]))
@@ -263,20 +302,45 @@ def main(argv=None):
     # PRIMEIRO MUDA O VINCULO DE DONO, e so depois marca a fusao. Na ordem
     # inversa, `revisar_vinculo` descartaria o vinculo do absorvido antes de
     # ele ser mudado, e a ligacao que so ele conhecia ficaria sem POI.
+    # UM SO POR (base, ligacao, sobrevivente) — a guarda `not exists` NAO
+    # basta.
+    #
+    # Ela le o estado ANTERIOR ao comando, entao dois absorvidos do mesmo
+    # sobrevivente ligados a mesma ligacao passam os dois pelo teste e viram a
+    # mesma linha: `ligacao_poi_par_unico` estoura no meio do UPDATE. Aconteceu
+    # na primeira execucao, em 10/09/2026.
+    #
+    # `distinct on` escolhe um deles ANTES de atualizar. O que sobra continua
+    # apontando para o POI absorvido e `revisar_vinculo` o descarta com o
+    # motivo de POI fundido, que e' exatamente o que ele e'.
     execute_values(cur, """
+        with alvo as (
+            select distinct on (lp.id_base, lp.ligacao, f.vive)
+                   lp.id, f.vive
+              from radar_comercial.ligacao_poi lp
+              join (values %s) as f(morre, vive)
+                on lp.poi_id = f.morre::bigint
+             where lp.descartado_em is null
+               and not exists (select 1 from radar_comercial.ligacao_poi o
+                                where o.id_base = lp.id_base
+                                  and o.ligacao = lp.ligacao
+                                  and o.poi_id = f.vive::bigint)
+             order by lp.id_base, lp.ligacao, f.vive, lp.id
+        )
         update radar_comercial.ligacao_poi lp
-           set poi_id = f.vive
-          from (values %s) as f(morre, vive)
-         where lp.poi_id = f.morre::bigint
-           and not exists (select 1 from radar_comercial.ligacao_poi o
-                            where o.id_base = lp.id_base
-                              and o.ligacao = lp.ligacao
-                              and o.poi_id = f.vive::bigint)
+           set poi_id = alvo.vive::bigint
+          from alvo where lp.id = alvo.id
     """, fusoes, page_size=500)
-    movidos = cur.rowcount
     con.commit()
-    _log("vínculos que mudaram de dono: ver contagem abaixo (rowcount: %s)"
-         % movidos)
+    # O ROWCOUNT DE `execute_values` COM PAGINA MENTE — ele guarda so o da
+    # ultima pagina. A primeira versao imprimiu "rowcount: 0" com vinculos
+    # movidos de verdade. A medida vem do banco.
+    cur.execute("""select count(*) from radar_comercial.ligacao_poi lp
+                    join radar_comercial.pois p on p.id = lp.poi_id
+                   where lp.descartado_em is null
+                     and p.fundido_por = 'mesma_fonte'""")
+    _log("%d vínculo(s) vivos ainda apontam para POI absorvido "
+         "(a revisão os descarta)" % int(cur.fetchone()[0] or 0))
 
     execute_values(cur, """
         update radar_comercial.pois p

@@ -91,6 +91,29 @@ pendente.
 
 ---
 
+### 10. As 1.092 fusões de nome parecido, não aplicadas
+
+`fundir_mesma_fonte.py --cidade Canoas` propõe 2.154 fusões. Foram aplicadas
+as **1.062 de nome idêntico**, onde não há erro possível; as outras 1.092 —
+nome só parecido — ficaram de fora por decisão do dono do produto, com **13% de
+erro medido** numa amostra de 30: "Gabinete Vereador Duarte" × "Gabinete
+Vereador Leandrinho", "TIMM Assessoria Imobiliária" × "TIMM Sociedade
+Individual de Advocacia".
+
+Para revisar: `--listar saida.csv` grava nome, peso e distância de cada par.
+
+### 11. `cruzar_fontes.py` quebraria se rodasse
+
+Ele grava `fundido_para` e `fundido_por` desde 27/08, e a migração `0052`
+removeu as duas colunas em 03/09 com a justificativa de que "as únicas citações
+estão em scripts de uma vez só que não fazem parte do pipeline". A justificativa
+estava errada quanto a ele.
+
+O defeito nunca apareceu porque `cruzar_fontes` **não está no pipeline
+automático** — nem `minerar_tudo` nem `server` o chamam. A migração `0094`
+recriou as colunas, então ele voltou a funcionar; mas ninguém testou, e ele foi
+editado em 08/09 sem que essa incompatibilidade fosse notada.
+
 ## Riscos conhecidos, não resolvidos
 
 ### 7. A política de escrita da `cadastro_corsan` ainda é lenta
