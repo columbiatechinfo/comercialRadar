@@ -43,6 +43,11 @@ def _sa(expr):
                                              _SEM_ACENTO_PARA)
 
 
+#: As 16 colunas que a recusa traz, mais `descartado_em` e `descartado_por`,
+#: que sao sempre os mesmos e por isso vao fixos no molde.
+_MOLDE_RECUSA = ("(" + ",".join(["%s"] * 16) + ",now(),'teto_distancia')")
+
+
 def _log(m):
     print("%s %s" % (time.strftime("%H:%M:%S"), m), flush=True)
 
@@ -124,6 +129,9 @@ def main(argv=None):
 
     placar, distancias, achados = Counter(), [], []
     fora_do_teto = 0
+    pois_fora = set()
+    pois_dentro = set()
+    recusados = []
     quantas_ligacoes = Counter()
     for (pid, logr, nro, pla, plo, fonte, nome, cep_p) in orfaos:
         v, n = _via(logr), rv.numero_limpo(nro)
@@ -170,7 +178,10 @@ def main(argv=None):
             if d is not None and d > rv.TETO_M:
                 placar["fora do teto de %d m" % round(rv.TETO_M)] += 1
                 fora_do_teto += 1
+                pois_fora.add(pid)
+                recusados.append((lig, pid, d, fonte))
                 continue
+            pois_dentro.add(pid)
             achados.append((lig, pid, d, fonte, nome, len(bons)))
 
     print()
@@ -207,8 +218,14 @@ def main(argv=None):
         print("      (o endereço publicado bate nos dois; o que não bate é a "
               "coordenada do POI, e enquanto ela não for corrigida a foto do")
         print("       dossiê sairia do imóvel errado — por isso o par espera)")
+    # O NUMERO QUE INTERESSA E O DE POIs, e nao o de vinculos: o vinculo
+    # recusado de um POI que entrou por outra ligacao nao deixa ninguem de
+    # fora. So conta como fila quem ficou sem NENHUMA.
+    so_fora = pois_fora - pois_dentro
     _log("%d vínculos novos a gravar · %d recusados pelo teto de %d m"
          % (len(achados), fora_do_teto, round(rv.TETO_M)))
+    _log("%d POIs entraram · %d ficaram sem nenhuma ligação por causa do teto"
+         % (len(pois_dentro), len(so_fora)))
 
     if not a.aplicar:
         _log("(ensaio: nada gravado. Use --aplicar)")
@@ -267,6 +284,55 @@ def main(argv=None):
                     where origem = 'endereco_publicado'""")
     _log("o banco gravou ou reviveu %d vínculos (pedidos: %d)"
          % (int(cur.fetchone()[0] or 0) - antes, len(linhas)))
+
+    # ── A RECUSA TAMBEM VIRA LINHA ───────────────────────────────────────
+    #
+    # Ate 10/09/2026 a recusa era impressa e esquecida. O dono do produto
+    # perguntou onde tinham ido parar os POIs barrados pelo teto e a resposta
+    # honesta era "lugar nenhum": nao havia linha, tela nem status — so um
+    # numero no log de uma execucao que ja tinha terminado.
+    #
+    # Estes nao sao pares errados. Sao os pares em que rua, numero e cidade
+    # batem (e o CEP nao contradiz) e a COORDENADA do POI e' que esta fora do
+    # lugar. Gravar a recusa transforma o numero em consulta: da para listar
+    # quem sao, a que distancia estao e de que ligacao — que e o que a fila de
+    # alocacao precisa mostrar.
+    #
+    # ENTRA JA DESCARTADA, de proposito. `revisar_vinculo`, o dossie e a fila
+    # de julgamento so leem `descartado_em is null`, entao nenhuma destas
+    # linhas altera veredito, score ou foto. Ela existe para ser LIDA.
+    if recusados:
+        linhas_r = [(a.base, lig, pid, True, True, False, False, False, d,
+                     2, 0.0, 1, 0, fonte, "endereco_publicado",
+                     "o endereço publicado bate, mas o ponto do POI está a "
+                     "%d m da ligação (teto de %d m)"
+                     % (round(d or 0), round(rv.TETO_M)))
+                    for (lig, pid, d, fonte) in recusados]
+        # O `now()` E O `'teto_distancia'` VAO NO MOLDE, e nao numa camada de
+        # `select` por cima do `values`. A primeira versao fazia
+        # `select v.*, now(), 'teto_distancia' from (values %s) as v`, que
+        # entrega 18 valores para 16 colunas — e o `values` sem cast ainda
+        # deixaria `metros` nulo chegar como `unknown`. O molto do
+        # `execute_values` resolve os dois de uma vez.
+        execute_values(cur, """
+            insert into radar_comercial.ligacao_poi
+                (id_base, ligacao, poi_id, mesmo_endereco, mesmo_numero,
+                 ate_20m, mesmo_telhado, telhado_comercial, metros,
+                 criterios_ok, confianca, fontes_aderentes, fontes_no_momento,
+                 fonte_poi, origem, descartado_motivo,
+                 descartado_em, descartado_por)
+            values %s
+            on conflict (id_base, ligacao, poi_id) do update set
+                metros = excluded.metros,
+                descartado_motivo = excluded.descartado_motivo,
+                descartado_por = 'teto_distancia'
+              where radar_comercial.ligacao_poi.descartado_em is not null
+        """, linhas_r, template=_MOLDE_RECUSA, page_size=1000)
+        con.commit()
+        cur.execute("""select count(*) from radar_comercial.ligacao_poi
+                        where descartado_por = 'teto_distancia'""")
+        _log("%d pares na fila de alocação (o endereço bate, a coordenada não)"
+             % int(cur.fetchone()[0] or 0))
 
     cur.execute("""
         update radar_comercial.pois p

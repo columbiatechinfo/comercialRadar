@@ -181,8 +181,9 @@
       <!-- OS DOIS PASSOS DO VINCULO, e nesta ordem.
            A revisao aplica a regra ao que ja esta gravado e descarta o que nao
            passa; o casamento pega quem ficou sem ligacao nenhuma e procura
-           pelo endereco publicado, corrigindo a coordenada de quem casar com
-           uma ligacao so. Rodar o casamento antes nao faz sentido: ele so olha
+           pelo endereco publicado. Desde 10/09/2026 ele NAO move coordenada, e
+           quem casa por endereco mas esta a mais de 50 m da ligacao vai para a
+           FILA DE ALOCACAO, no botao logo abaixo. Rodar o casamento antes nao faz sentido: ele so olha
            orfaos, e antes da revisao quase ninguem e orfao. -->
       <!-- O PAINEL DO SCORE. Ele nao decide nada: mostra quanta evidencia
            sustenta cada vinculo e deixa VOCE escolher a combinacao. Um
@@ -205,6 +206,17 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="size-5 shrink-0"><path d="M3 21h18"></path><path d="M5 21V8l7-5 7 5v13"></path><path d="M10 21v-6h4v6"></path></svg>
         <span>Casar por endereço</span>
         <span id="orfaos-n" class="ml-auto inline-flex min-w-5 items-center justify-center rounded-full bg-indigo-50 px-2 text-[11px] font-semibold text-indigo-600">0</span>
+      </button>
+
+      <!-- A FILA DE ALOCACAO. Nao e a mesma coisa que POI orfao: aqui ja se
+           sabe DE QUEM o POI e — rua, numero e cidade batem e o CEP nao
+           contradiz. O que nao bate e a coordenada, e por isso o vinculo nao
+           entrou: o dossie escolhe a foto de rua pelo ponto do POI, e um
+           ponto fora poria a IA para julgar a fachada de outro imovel. -->
+      <button type="button" id="btn-a-alocar" class="nav-item mt-1">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="size-5 shrink-0"><path d="M12 21s-7-5.3-7-11a7 7 0 1 1 14 0c0 5.7-7 11-7 11z"></path><circle cx="12" cy="10" r="2.5"></circle></svg>
+        <span>Fila de alocação</span>
+        <span id="alocar-n" class="ml-auto inline-flex min-w-5 items-center justify-center rounded-full bg-amber-50 px-2 text-[11px] font-semibold text-amber-700">0</span>
       </button>
 
       <button type="button" id="btn-avaliar-ia" class="nav-item mt-1">
@@ -480,6 +492,28 @@
        QUASE TELA CHEIA, e em forma de planilha. A pessoa precisa ver os
        títulos reais e linhas reais para confirmar o que a IA sugeriu — sem
        isso, confirmar é assinar em branco. -->
+  <!-- ──────────────────── modal: fila de alocacao ──────────────────────
+       ORDENADA PELO MAIS PERTO. Quem esta a 60 m e quase certamente a mesma
+       porta com o ponto no meio-fio errado; quem esta a 6 km precisa de outra
+       conversa. A fila util comeca no topo. -->
+  <div id="m-alocar" data-modal class="fixed inset-0 z-[900] hidden items-center justify-center bg-gray-900/30 p-6 backdrop-blur-md">
+    <div class="flex max-h-full w-full max-w-5xl flex-col overflow-hidden rounded-xl bg-white shadow-xl ring-1 ring-gray-900/5">
+      <div class="flex items-start justify-between gap-x-4 border-b border-gray-100 px-8 py-5">
+        <div>
+          <h2 class="text-base font-semibold text-gray-900">Fila de alocação</h2>
+          <p class="mt-0.5 text-[13px] text-gray-500">O endereço publicado bate com o da ligação. O que não bate é a coordenada do POI.</p>
+        </div>
+        <button type="button" data-fechar-modal class="rounded-md p-1 text-gray-400 hover:bg-gray-50 hover:text-gray-600">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" class="size-5"><path d="M18 6L6 18M6 6l12 12"></path></svg>
+        </button>
+      </div>
+      <div class="min-h-0 flex-1 overflow-y-auto px-8 py-6">
+        <div id="alocar-cabecalho" class="mb-4 flex flex-wrap items-baseline gap-x-6 gap-y-1 text-[13px] text-gray-600"></div>
+        <div id="alocar-lista" class="overflow-x-auto"></div>
+      </div>
+    </div>
+  </div>
+
   <div id="m-score" data-modal class="fixed inset-0 z-[900] hidden items-center justify-center bg-gray-900/30 p-6 backdrop-blur-md">
     <div class="flex max-h-full w-full max-w-3xl flex-col overflow-hidden rounded-xl bg-white shadow-xl ring-1 ring-gray-900/5">
       <div class="flex items-start justify-between gap-x-4 border-b border-gray-100 px-8 py-5">

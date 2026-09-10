@@ -4875,6 +4875,80 @@ def score_resumo(cidade: str = ""):
             "teto": 80}
 
 
+#: `expr` em minuscula e sem acento. A Corsan grava "GRAVATAI" e a malha do
+#: IBGE devolve "Gravataí"; comparar cidade sem isto perde uma das duas.
+_SEM_ACENTO = ("translate(lower(%s), 'áàâãäéèêëíìîïóòôõöúùûüçñ', "
+               "'aaaaaeeeeiiiiooooouuuucn')")
+
+
+@app.get("/api/vinculo/a_alocar")
+def vinculo_a_alocar(cidade: str = "", limite: int = 200, desde: int = 0):
+    """O POI que publica o endereço de uma ligação e está longe dela.
+
+    A FILA DE ALOCAÇÃO. Não é o mesmo que POI órfão: aqui já se sabe DE QUEM
+    ele é — rua, número e cidade batem, e o CEP não contradiz. O que não bate
+    é a coordenada, e é por isso que o vínculo não entrou: o dossiê escolhe a
+    foto de rua pelo ponto do POI, e um ponto 228 m fora poria a IA para
+    julgar a fachada de outro imóvel.
+
+    Estas linhas existem em `ligacao_poi` já descartadas, com
+    `descartado_por = 'teto_distancia'`. Nenhuma rota de julgamento, dossiê ou
+    score as enxerga — todas filtram `descartado_em is null`. Elas existem
+    para serem lidas por aqui.
+    """
+    conn = realtime_ingest.conectar()
+    try:
+        with conn.cursor() as cur:
+            wc, pc = "", []
+            if cidade:
+                wc = ("and " + _SEM_ACENTO % "coalesce(p.cidade,'')"
+                      + " = " + _SEM_ACENTO % "%s")
+                pc = [cidade]
+            cur.execute("""
+                select count(*), count(distinct lp.poi_id)
+                  from radar_comercial.ligacao_poi lp
+                  join radar_comercial.pois p on p.id = lp.poi_id
+                 where lp.descartado_por = 'teto_distancia'
+                   and p.fundido_em is null %s
+            """ % wc, tuple(pc))
+            pares, pois = cur.fetchone()
+
+            # ORDENADO PELO MAIS PERTO. Quem está a 60 m é quase certamente a
+            # mesma porta com o ponto no meio-fio errado; quem está a 6 km
+            # precisa de outra conversa. A fila útil começa no topo.
+            cur.execute("""
+                select lp.poi_id, coalesce(p.nome,''), coalesce(p.fonte,''),
+                       coalesce(lr.logradouro,''), coalesce(lr.numero,''),
+                       lp.ligacao, coalesce(c.nom_logradouro,''),
+                       coalesce(c.nro,''), round(lp.metros::numeric, 1),
+                       st_y(p.pt_geo::geometry), st_x(p.pt_geo::geometry),
+                       c.cod_latitude::float8, c.cod_longitude::float8
+                  from radar_comercial.ligacao_poi lp
+                  join radar_comercial.pois p on p.id = lp.poi_id
+                  left join radar_comercial.logradouro_resolvido lr
+                         on lr.poi_id = p.id
+                  left join resources_root.cadastro_corsan c
+                         on c.num_ligacao::text = lp.ligacao
+                 where lp.descartado_por = 'teto_distancia'
+                   and p.fundido_em is null %s
+                 order by lp.metros nulls last, lp.poi_id
+                 limit %%s offset %%s
+            """ % wc, tuple(pc) + (max(1, min(limite, 500)), max(0, desde)))
+            linhas = [
+                {"poi": r[0], "nome": r[1], "fonte": r[2],
+                 "endereco_do_poi": (r[3] + ", " + r[4]).strip(", "),
+                 "ligacao": r[5],
+                 "endereco_da_ligacao": (r[6] + ", " + r[7]).strip(", "),
+                 "metros": float(r[8]) if r[8] is not None else None,
+                 "poi_lat": r[9], "poi_lng": r[10],
+                 "lig_lat": r[11], "lig_lng": r[12]}
+                for r in cur.fetchall()]
+    finally:
+        conn.close()
+    return {"pares": int(pares or 0), "pois": int(pois or 0),
+            "linhas": linhas, "desde": max(0, desde)}
+
+
 @app.get("/api/vinculo/orfaos")
 def vinculo_orfaos(cidade: str = ""):
     """Quantos POIs não têm ligação nenhuma — e quantos ainda dá para casar.
@@ -4887,7 +4961,12 @@ def vinculo_orfaos(cidade: str = ""):
     conn = realtime_ingest.conectar()
     try:
         with conn.cursor() as cur:
-            wc = "and upper(coalesce(p.cidade,'')) = upper(%s)" if cidade else ""
+            # CIDADE SEM ACENTO NOS DOIS LADOS — o mesmo conserto que
+            # `cruzar_ligacao` levou em 03/09/2026 e que esta rota nao tinha.
+            # "GRAVATAI" da Corsan nunca casava com "Gravataí" da malha do
+            # IBGE, e `pois.cidade` tem as duas grafias.
+            wc = ("and " + _SEM_ACENTO % "coalesce(p.cidade,'')"
+                  + " = " + _SEM_ACENTO % "%s") if cidade else ""
             pc = (cidade,) if cidade else ()
             cur.execute("""
                 select count(*) as orfaos,

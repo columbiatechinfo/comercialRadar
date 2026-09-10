@@ -2882,6 +2882,64 @@
 
     // QUANTOS POIs ESTÃO SEM LIGAÇÃO NENHUMA. É o tamanho do trabalho que o
     // botão ao lado tem pela frente, e o número que diz se ele já rodou.
+    // ── a fila de alocação ────────────────────────────────────────────
+    //
+    // NÃO É A LISTA DE ÓRFÃOS. Órfão é o POI que não achou ligação nenhuma;
+    // aqui ele ACHOU — rua, número e cidade batem — e foi barrado só pela
+    // distância. Por isso a fila mostra os dois endereços lado a lado: quem
+    // olha precisa ver que eles são o mesmo, e que o problema é o ponto.
+    async function carregarAlocar() {
+      const q = estado.cidade ? "?cidade=" + encodeURIComponent(estado.cidade) : "";
+      const d = await pegar("/api/vinculo/a_alocar" + q);
+      if (!d) return;
+      const cab = $("alocar-cabecalho");
+      if (cab) {
+        cab.innerHTML =
+          `<span><b class="text-gray-900 text-[15px]">${d.pois}</b> POIs esperando</span>` +
+          `<span><b class="text-gray-900">${d.pares}</b> pares de endereço</span>` +
+          `<span class="text-gray-400">mostrando os ${(d.linhas || []).length} mais próximos</span>`;
+      }
+      const alvo = $("alocar-lista");
+      if (!alvo) return;
+      if (!(d.linhas || []).length) {
+        alvo.innerHTML = '<p class="text-[12px] text-gray-400">Nada na fila.</p>';
+        return;
+      }
+      const linhas = d.linhas.map((r) => {
+        const m = r.metros === null ? "—" : Math.round(r.metros) + " m";
+        return `<tr class="border-t border-gray-100">
+          <td class="py-1.5 pr-4 text-[12px] text-gray-900">${(r.nome || "(sem nome)").slice(0, 34)}</td>
+          <td class="py-1.5 pr-4 text-[11px] uppercase tracking-wide text-gray-400">${r.fonte}</td>
+          <td class="py-1.5 pr-4 text-[12px] text-gray-600">${r.endereco_do_poi || "—"}</td>
+          <td class="py-1.5 pr-4 text-[12px] text-gray-600">${r.endereco_da_ligacao || "—"}</td>
+          <td class="py-1.5 pr-4 text-[12px] tabular-nums text-gray-500">${r.ligacao}</td>
+          <td class="py-1.5 text-right text-[12px] font-semibold tabular-nums text-amber-700">${m}</td>
+        </tr>`;
+      }).join("");
+      alvo.innerHTML = `<table class="w-full min-w-[52rem] border-collapse">
+        <thead><tr class="text-left text-[10.5px] font-semibold uppercase tracking-[0.07em] text-gray-400">
+          <th class="pb-1.5 pr-4">POI</th><th class="pb-1.5 pr-4">fonte</th>
+          <th class="pb-1.5 pr-4">endereço publicado</th>
+          <th class="pb-1.5 pr-4">endereço da ligação</th>
+          <th class="pb-1.5 pr-4">ligação</th>
+          <th class="pb-1.5 text-right">distância</th>
+        </tr></thead><tbody>${linhas}</tbody></table>`;
+      if ($("alocar-n")) $("alocar-n").textContent = d.pois ?? 0;
+    }
+
+    $("btn-a-alocar")?.addEventListener("click", async () => {
+      await carregarAlocar();
+      abrirModal("m-alocar");
+    });
+
+    async function contar_alocar() {
+      const d = await pegar("/api/vinculo/a_alocar"
+        + (estado.cidade ? "?cidade=" + encodeURIComponent(estado.cidade) : "")
+        + (estado.cidade ? "&" : "?") + "limite=1");
+      if (d && $("alocar-n")) $("alocar-n").textContent = d.pois ?? 0;
+    }
+    contar_alocar();
+
     async function contar_orfaos() {
       const d = await pegar("/api/vinculo/orfaos"
         + (estado.cidade ? "?cidade=" + encodeURIComponent(estado.cidade) : ""));
