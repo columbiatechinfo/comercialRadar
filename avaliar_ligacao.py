@@ -427,6 +427,41 @@ class Poco:
                 pass
 
 
+#: O CATALOGO DE CATEGORIAS, QUE EXCLUI MAIS DO QUE PARECE.
+#:
+#: `categoria_catalogo` tem 2.259 linhas e 1.642 marcadas `avaliar`. O que ele
+#: deixa de fora e, na maior parte, CNAE de quem trabalha de casa ou na rua:
+#: 7319002 publicidade, 4930201 transporte de carga, 9700500 servicos
+#: domesticos, 4399103 alvenaria, 4923002 taxi. A exclusao e pensada — um CNPJ
+#: desses num endereco residencial quase sempre e alguem registrado em casa.
+#:
+#: SO QUE ELA E INVISIVEL. Medido em Canoas em 10/09/2026: das 9.925 ligacoes
+#: aguardando julgamento, 461 entravam na fila e ~8.900 sumiam por aqui, sem
+#: uma linha de log. Quem olhasse o painel veria "541 na fila" e concluiria que
+#: nao havia mais o que julgar.
+#:
+#: `--sem-catalogo` desliga o corte e deixa a IA decidir caso a caso. Decisao
+#: do dono do produto em 10/09/2026, ao pedir "TODOS os candidatos".
+SQL_CATALOGO = """and exists (select 1 from radar_comercial.categoria_catalogo cc
+                where cc.fonte = p.fonte and cc.valor = btrim(p.categoria)
+                  and cc.avaliar)"""
+
+#: A LIGACAO CUJO VEREDITO ENVELHECEU. Ela ja foi julgada, mas depois disso
+#: algum POI dela ganhou foto nova — captura, recaptura sem mira, foto do
+#: Google. O veredito antigo olhou um material que nao existe mais.
+#:
+#: Isto e o que permite capturar e julgar AO MESMO TEMPO: a captura vai
+#: gravando `poi_evidencia.capturado_em`, e cada passada do julgamento pega o
+#: que ficou pronto desde a anterior, sem esperar a captura inteira terminar.
+SQL_DESATUALIZADO = """and (
+       not exists (select 1 from radar_comercial.ligacao_veredito v
+                    where v.ligacao = lp.ligacao)
+    or exists (select 1 from radar_comercial.ligacao_veredito v
+                join radar_comercial.poi_evidencia e on e.poi_id = lp.poi_id
+               where v.ligacao = lp.ligacao
+                 and e.capturado_em > v.avaliado_em))"""
+
+
 def _log(m):
     print(m, flush=True)
 
@@ -464,9 +499,7 @@ select distinct lp.ligacao
    -- enquanto esta consulta ainda as enfileirava. Cada uma dessas custava uma
    -- volta ao banco para descobrir que nao havia o que julgar.
    and lp.descartado_em is null
-   and exists (select 1 from radar_comercial.categoria_catalogo cc
-                where cc.fonte = p.fonte and cc.valor = btrim(p.categoria)
-                  and cc.avaliar)
+   %(catalogo)s
    %(filtro)s
  order by 1
 """
@@ -477,11 +510,18 @@ SEM_VEREDITO = """
 """
 
 
-def fila(con, limite, refazer, ligacoes=None):
+def fila(con, limite, refazer, ligacoes=None, sem_catalogo=False, desatualizados=False):
     if ligacoes:
         return [str(x) for x in ligacoes]
     cur = con.cursor()
-    cur.execute(SQL_FILA % {"filtro": "" if refazer else SEM_VEREDITO})
+    if desatualizados:
+        filtro = SQL_DESATUALIZADO
+    elif refazer:
+        filtro = ""
+    else:
+        filtro = SEM_VEREDITO
+    cur.execute(SQL_FILA % {"filtro": filtro,
+                            "catalogo": "" if sem_catalogo else SQL_CATALOGO})
     saida = [r[0] for r in cur.fetchall()]
     return saida[:limite] if limite else saida
 
@@ -815,9 +855,12 @@ def uma(poco, ligacao, modelo, secoes, placar, trava, aplicar):
                 (resposta or {}).get("justificativa", "")[:66]))
 
 
-def rodar(limite, aplicar, trabalhadores, modelo, ligacoes, refazer):
+def rodar(limite, aplicar, trabalhadores, modelo, ligacoes, refazer,
+          sem_catalogo=False, desatualizados=False):
     con = bc.conectar()
-    alvos = fila(con, limite, refazer, ligacoes)
+    alvos = fila(con, limite, refazer, ligacoes,
+                 sem_catalogo=sem_catalogo,
+                 desatualizados=desatualizados)
     _log("▶ veredito por LIGACAO — o dossiê de todas as fontes numa chamada")
     _log("   %d ligação(ões) na fila" % len(alvos))
     if not alvos:
@@ -901,10 +944,17 @@ def main(argv=None):
     p.add_argument("--ligacao", action="append",
                    help="repetível; avalia estas ligações ignorando a fila")
     p.add_argument("--refazer", action="store_true")
+    p.add_argument("--sem-catalogo", dest="sem_catalogo", action="store_true",
+                   help="ignora `categoria_catalogo.avaliar` e julga todo "
+                        "candidato — a IA decide no lugar do catalogo")
+    p.add_argument("--desatualizados", action="store_true",
+                   help="so as ligacoes sem veredito OU cujo veredito e mais "
+                        "velho que a foto mais nova dos POIs dela")
     p.add_argument("--aplicar", action="store_true")
     a = p.parse_args(argv)
     r = rodar(a.limite, a.aplicar, a.trabalhadores, a.modelo, a.ligacao,
-              a.refazer)
+              a.refazer, sem_catalogo=a.sem_catalogo,
+              desatualizados=a.desatualizados)
     return 1 if r.get("erro") else 0
 
 

@@ -263,10 +263,21 @@ SQL_ALVO = """
     select distinct p.id, st_y(p.pt_geo::geometry), st_x(p.pt_geo::geometry),
            coalesce(p.nome,''), coalesce(p.fonte,''), coalesce(p.categoria,'')
       from radar_comercial.pois p
-      join radar_comercial.categoria_catalogo cc
+      left join radar_comercial.categoria_catalogo cc
             on cc.fonte = p.fonte and cc.valor = btrim(p.categoria)
      where p.pt_geo is not null
-       and cc.avaliar
+       -- O CATALOGO PODE SER DESLIGADO, e a decisao e a mesma do julgamento.
+       --
+       -- Ele exclui CNAE de quem trabalha de casa ou na rua — transporte de
+       -- carga, servicos domesticos, alvenaria — e a exclusao e pensada. Mas
+       -- ela some sem log: o POI fora do catalogo nunca e fotografado e nunca
+       -- e julgado, e ninguem ve por que.
+       --
+       -- Decisao do dono do produto em 10/09/2026: julgar TODOS os
+       -- candidatos. Se o julgamento passa a ver esses POIs, a captura tem de
+       -- ver tambem — senao a IA os recebe sem foto nenhuma, que e o pior dos
+       -- dois mundos.
+       and (%(sem_catalogo)s::int = 1 or coalesce(cc.avaliar, false))
        -- TER LIGACAO RESIDENCIAL ATIVA, OU — se a regra estiver destravada —
        -- NAO TER LIGACAO NENHUMA.
        --
@@ -375,7 +386,8 @@ def regra_ativa(con, chave: str) -> bool:
     return CAPTURAR_SEM_LIGACAO_PADRAO
 
 
-def alvos(con, poligono, limite, pois=None):
+def alvos(con, poligono, limite, pois=None, sem_catalogo=False,
+          fatia=""):
     """A fila. Com `--poi` a lista é EXATAMENTE a pedida, sem filtro nenhum.
 
     Recapturar uma amostra escolhida a dedo é o caso de todo teste de método:
@@ -390,10 +402,16 @@ def alvos(con, poligono, limite, pois=None):
         if sem:
             _log("   regra `capturar_sem_ligacao` DESTRAVADA: entram também "
                  "os POIs sem ligação vinculada")
-        cur.execute(SQL_ALVO, {"sem_ligacao": 1 if sem else 0})
+        cur.execute(SQL_ALVO, {"sem_ligacao": 1 if sem else 0,
+                               "sem_catalogo": 1 if sem_catalogo else 0})
     fora = 0
     saida = []
+    n_fatia = m_fatia = None
+    if fatia:
+        n_fatia, m_fatia = [int(x) for x in str(fatia).split("/")]
     for pid, la, lo, nome, fonte, cat in cur.fetchall():
+        if m_fatia and (pid % m_fatia) != n_fatia:
+            continue
         if poligono and not area_utils.ponto_no_poligono(la, lo, poligono):
             fora += 1
             continue
@@ -674,13 +692,15 @@ async def um_poi(page, poco, alvo, placar) -> None:
             pass
 
 
-async def rodar(area, limite, aplicar, trabalhadores, pois=None):
+async def rodar(area, limite, aplicar, trabalhadores, pois=None,
+                sem_catalogo=False, fatia=""):
     # ÁREA PEDIDA E INEXISTENTE É ERRO, e não 'sem filtro'. Com
     # `--poi` não há área a exigir: o id já é o recorte.
     poligono = None if pois else (area_utils.exigir_area(area)
                                   if area else None)
     con = bc.conectar()
-    lista, fora = alvos(con, poligono, limite, pois)
+    lista, fora = alvos(con, poligono, limite, pois, sem_catalogo,
+                        fatia)
     _log("   %d POI(s) na fila da evidência" % len(lista))
     if fora:
         _log("   %d fora do desenho" % fora)
@@ -788,11 +808,23 @@ def main(argv=None) -> int:
     p.add_argument("--trabalhadores", type=int, default=3)
     p.add_argument("--poi", action="append", type=int,
                    help="repetível; recaptura estes POIs, ignorando a fila")
+    # DUAS MAQUINAS NA MESMA FILA, SEM PISAR UMA NA OUTRA.
+    #
+    # A fila e uma consulta, nao uma tabela com reserva: duas instancias
+    # leriam a MESMA lista e fotografariam os mesmos POIs, gastando o dobro
+    # de proxy para metade do resultado. `--fatia 0/2` e `--fatia 1/2` cortam
+    # por `id % 2`, que e estavel e nao precisa de coordenacao entre elas.
+    p.add_argument("--fatia", default="",
+                   help="N/M — processa so os POIs com id %% M == N")
+    p.add_argument("--sem-catalogo", dest="sem_catalogo",
+                   action="store_true",
+                   help="fotografa tambem o POI cuja categoria o catalogo "
+                        "marca como nao avaliavel")
     p.add_argument("--aplicar", action="store_true")
     a = p.parse_args(argv)
     _log("▶ evidência para a IA — 4 visadas de rua por POI")
     r = asyncio.run(rodar(a.area, a.limite, a.aplicar, a.trabalhadores,
-                            a.poi))
+                            a.poi, a.sem_catalogo, a.fatia))
     return 1 if r.get("erro") else 0
 
 
