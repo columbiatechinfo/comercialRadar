@@ -83,6 +83,149 @@ select fv.id, fv.ligacao, fv.texto, fv.ramo, fv.numero, fv.e_o_alvo,
 """
 
 
+def _por_via_os_pois(cur, cidade):
+    """`{via: [(poi_id, nome, numero)]}` dos POIs que publicam endereço.
+
+    O NOME VEM DA BASE, e é contra ele que o letreiro é comparado. Um "SOL
+    FERRAGEM" lido na foto tem boa chance de já existir na Receita ou na base
+    estadual com o endereço completo — e aí o número vem de graça, sem
+    adivinhação nenhuma. É o caminho mais barato dos três e por isso é o
+    primeiro.
+    """
+    filtro, par = "", []
+    if cidade:
+        filtro = ("and translate(lower(coalesce(p.cidade,'')),"
+                  "'áàâãäéèêëíìîïóòôõöúùûüçñ','aaaaaeeeeiiiiooooouuuucn')"
+                  " = translate(lower(%s),"
+                  "'áàâãäéèêëíìîïóòôõöúùûüçñ','aaaaaeeeeiiiiooooouuuucn')")
+        par = [cidade]
+    cur.execute("""
+        select p.id, coalesce(p.nome,''), coalesce(lr.logradouro,''),
+               coalesce(lr.numero,'')
+          from radar_comercial.pois p
+          join radar_comercial.logradouro_resolvido lr on lr.poi_id = p.id
+         where p.fundido_em is null and coalesce(p.nome,'') <> ''
+           and coalesce(lr.logradouro,'') <> ''
+           and coalesce(lr.numero,'') <> '' %s""" % filtro, tuple(par))
+    idx = {}
+    for (pid, nome, logr, nro) in cur:
+        v = _via(logr)
+        if v:
+            idx.setdefault(v, []).append((pid, nome, nro))
+    return idx
+
+
+def _faixa_da_cena(numeros):
+    """O menor e o maior número lido na mesma cena, como inteiros.
+
+    O LETREIRO ESTÁ ENTRE ELES. As quatro fotos são do mesmo ponto, girando a
+    câmera; tudo o que aparece nelas está a poucas dezenas de metros. Se a cena
+    mostra 990 e 996, o letreiro sem número está naquele trecho — e os
+    candidatos deixam de ser a rua inteira para virar três ou quatro portas.
+    """
+    ns = []
+    for x in numeros:
+        n = rv.numero_limpo(x)
+        if n and n.isdigit():
+            ns.append(int(n))
+    if not ns:
+        return None
+    # A MARGEM É DE UM NÚMERO DE CADA LADO, e em número de porta isso vale
+    # mais que metros: a numeração brasileira salta de dois em dois pela
+    # paridade, e a casa vizinha à do 990 é o 992, não o 991.
+    return (min(ns) - 4, max(ns) + 4)
+
+
+def _cercar(cur, fachadas, porta, cidade):
+    """Para cada letreiro sem número, quem pode ser.
+
+    Os três caminhos rodam em ordem de custo, e o primeiro que fecha ganha.
+    Nenhum deles atribui por PROXIMIDADE pura: foi assim que 73% dos vínculos
+    acabaram apontando para o vizinho, e é o defeito que este projeto passou
+    dois dias corrigindo.
+    """
+    por_via = _por_via_os_pois(cur, cidade)
+
+    # Os números lidos em cada julgamento — é a cena de onde o letreiro veio.
+    cur.execute("""select ligacao, numero from radar_comercial.numero_lido""")
+    cena = {}
+    for (lig, num) in cur:
+        cena.setdefault(lig, []).append(num)
+
+    # E as ligações de cada via, para transformar faixa em candidatos.
+    via_ligs = {}
+    for (v, n), alvos in porta.items():
+        if n.isdigit():
+            via_ligs.setdefault(v, []).append((int(n), [x[0] for x in alvos]))
+
+    achados, de_onde = [], {}
+    for (fid, lig, txt, ramo, num, _alvo, cla, clo, logr, cid) in fachadas:
+        de_onde[fid] = lig
+        if num or not txt or not logr:
+            continue
+        v = _via(logr)
+        if not v:
+            continue
+
+        # ── 1 · o nome já existe numa base nossa, nesta via ──────────────
+        iguais = [(pid, nome, nro) for (pid, nome, nro) in por_via.get(v, [])
+                  if rv.parecidos(txt, nome)]
+        if iguais:
+            cands = []
+            for (_pid, _nome, nro) in iguais:
+                n = rv.numero_limpo(nro)
+                for numlig in [x[0] for x in porta.get((v, n or ""), [])]:
+                    if numlig not in cands:
+                        cands.append(numlig)
+            if cands:
+                achados.append((fid, txt, v, cands, "nome_na_base"))
+                continue
+
+        # ── 2 · a faixa de números lidos na mesma cena ───────────────────
+        faixa = _faixa_da_cena(cena.get(lig) or [])
+        if faixa:
+            lo, hi = faixa
+            cands = []
+            for (n, ligs) in via_ligs.get(v, []):
+                if lo <= n <= hi:
+                    for numlig in ligs:
+                        if numlig != lig and numlig not in cands:
+                            cands.append(numlig)
+            if cands:
+                achados.append((fid, txt, v, cands, "faixa_de_numeros"))
+                continue
+
+        achados.append((fid, txt, v, [], None))
+
+    # ── 3 · o mesmo letreiro visto de câmeras diferentes ────────────────
+    #
+    # A INTERSEÇÃO É MENOR QUE QUALQUER UMA DAS LEITURAS. Duas cenas da mesma
+    # via que mostram "SOL FERRAGEM" cercam-no por dois trechos, e ele está no
+    # pedaço comum. Isto não custa coleta nenhuma: acontece sozinho conforme
+    # outras ligações da mesma rua vão sendo julgadas.
+    porNome = {}
+    for (fid, txt, v, cands, como) in achados:
+        if cands:
+            porNome.setdefault((v, " ".join(rv.normalizar(txt))), []).append(
+                (fid, set(cands)))
+    triangulados = {}
+    for chave, itens in porNome.items():
+        if len(itens) < 2:
+            continue
+        comum = set.intersection(*[s for (_f, s) in itens])
+        if comum and len(comum) < min(len(s) for (_f, s) in itens):
+            for (fid, _s) in itens:
+                triangulados[fid] = sorted(comum)
+    saida = []
+    for (fid, txt, v, cands, como) in achados:
+        if fid in triangulados:
+            saida.append((fid, txt, v, triangulados[fid], "triangulacao",
+                          de_onde.get(fid)))
+        else:
+            saida.append((fid, txt, v, cands, como, de_onde.get(fid)))
+    return saida
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--cidade", default="")
@@ -92,6 +235,26 @@ def main(argv=None):
 
     con = bc.conectar()
     cur = con.cursor()
+
+    # A TABELA DE RARIDADE, ANTES DE QUALQUER COMPARAÇÃO DE NOME.
+    #
+    # `regra_vinculo.parecidos` recusa trabalhar sem ela, e a recusa é
+    # deliberada: sem os pesos o teste cairia num "os nomes têm palavras em
+    # comum", que casa "Pizzaria do João" com "Pizzaria da Maria". A guarda
+    # pegou esta chamada na primeira execução.
+    #
+    # E ELA É POR CIDADE. O corte de 9,0 foi calibrado sobre os nomes de
+    # Canoas; pesar a base inteira aumenta o `n` do idf, infla todo peso e o
+    # corte deixa de cair no vão entre os pares certos e os errados — foi assim
+    # que "SANDRO ROGERIO DOS SANTOS BICCA" quase fundiu com "CARLA MARIA
+    # CAMPOS BICCA".
+    if not a.cidade:
+        raise SystemExit(
+            "--cidade e obrigatorio: o teste de nome usa a tabela de raridade "
+            "da cidade, e o corte de 9,0 nao significa a mesma coisa sobre a "
+            "base inteira")
+    _log("pesando os nomes de POI de %s..." % a.cidade)
+    _log("   %d tokens" % rv.carregar_pesos(con, a.cidade))
 
     # ── 1 e 2 · o número do próprio alvo ─────────────────────────────────
     cur.execute(SQL_LEITURA)
@@ -225,6 +388,36 @@ def main(argv=None):
                  % ((txt or "?")[:32],
                     (" · " + ramo[:20]) if ramo else "", lig))
 
+    # ── 6 · cercar o letreiro que não trouxe número ─────────────────────
+    cercados = _cercar(cur, fachadas, porta, a.cidade)
+    com_cand = [x for x in cercados if x[3]]
+    unicos = [x for x in cercados if len(x[3]) == 1]
+    _log("")
+    _log("letreiros SEM número, cercados: %d de %d"
+         % (len(com_cand), len(cercados)))
+    if cercados:
+        for como in ("nome_na_base", "faixa_de_numeros", "triangulacao"):
+            n = len([x for x in cercados if x[4] == como])
+            if n:
+                _log("   por %-18s %d" % (como, n))
+        _log("   candidato ÚNICO ........... %d" % len(unicos))
+        _log("   sem candidato nenhum ...... %d"
+             % len([x for x in cercados if not x[3]]))
+    for (fid, txt, v, cands, como, dali) in cercados[:10]:
+        if not cands:
+            _log("      \"%s\" (%s) -> nenhuma candidata"
+                 % (txt[:26], v[:20]))
+            continue
+        # QUANDO A CANDIDATA E A PROPRIA LIGACAO JULGADA, isso precisa estar
+        # dito. Sem a marca, a linha parece defeito — "visto julgando 322177,
+        # candidata 322177" — quando na verdade e um achado: aquela ligacao
+        # tem OUTRO negocio alem do que se buscava, e e' exatamente o tipo de
+        # coisa que faz uma tarifa residencial estar errada duas vezes.
+        mesma = " (a propria que estava sendo julgada)" if cands == [dali] else ""
+        _log("      \"%s\" (%s) -> %d candidata(s): %s [%s]%s"
+             % (txt[:26], v[:20], len(cands), ", ".join(cands[:4]), como,
+                mesma))
+
     if not a.aplicar:
         _log("")
         _log("(ensaio: nada gravado. Use --aplicar para gravar a leitura do "
@@ -283,6 +476,23 @@ def main(argv=None):
             page_size=500)
         con.commit()
         _log("%d fachada(s) receberam instalação candidata" % len(pares))
+
+    if com_cand:
+        execute_values(cur, """
+            update radar_comercial.fachada_vista fv
+               set candidatos = v.cands::text[], resolvido_por = v.como,
+                   casado_em = now(),
+                   ligacao_par = case when array_length(v.cands::text[], 1) = 1
+                                      then (v.cands::text[])[1]
+                                      else fv.ligacao_par end
+              from (values %s) as v(id, cands, como)
+             where fv.id = v.id::bigint
+        """, [(fid, cands, como)
+              for (fid, _t, _v, cands, como, _d) in com_cand],
+            page_size=500)
+        con.commit()
+        _log("%d letreiro(s) cercados, %d com candidata única"
+             % (len(com_cand), len(unicos)))
     con.close()
     return 0
 
