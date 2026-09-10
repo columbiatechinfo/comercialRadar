@@ -1414,6 +1414,35 @@ def main(argv=None) -> int:
             _tolerante_i9(["cruzar_ligacao.py", "--base", str(_idbase),
                            "--cidade", cidade, "--area", a.area, "--aplicar"],
                           "vínculo por ligação")
+
+            # ── A REGRA FECHA A ETAPA, e não fica esperando um botão ──────
+            #
+            # O cruzamento acima já chama `regra_vinculo.aceitar`, então o
+            # vínculo NOVO nasce dentro da regra. Estes dois passos existem
+            # pelo que o cruzamento não alcança:
+            #
+            #   1. `revisar_vinculo` varre o que JÁ ESTAVA GRAVADO. Um upsert
+            #      não reexamina a linha antiga, e a regra mudou três vezes
+            #      esta semana. Roda sem `--cidade` de propósito: em
+            #      10/09/2026 rodei `--cidade Canoas` e os 586 vínculos de
+            #      Gravataí ficaram vivos por omissão — a consulta nem os leu.
+            #
+            #   2. `casar_por_endereco` pega o POI que ficou órfão e procura
+            #      ligação pelo endereço PUBLICADO, que é o caso oposto ao do
+            #      cruzamento: ele olha 60 m ao redor do hidrômetro e perde
+            #      quem publicou a rua certa com a coordenada errada. O que
+            #      não cabe no teto de 50 m vira FILA DE ALOCAÇÃO, visível no
+            #      painel — não vira silêncio.
+            #
+            # POR QUE AQUI E NÃO EM TRÊS BOTÕES: rodar a cidade e depois ter
+            # de lembrar de dois botões, na ordem certa, é um processo que
+            # funciona enquanto alguém lembra. A etapa termina com o vínculo
+            # em dia, ou não terminou.
+            _tolerante_i9(["revisar_vinculo.py", "--aplicar"],
+                          "regra do vínculo sobre o que já estava gravado")
+            _tolerante_i9(["casar_por_endereco.py", "--cidade", cidade,
+                           "--aplicar"],
+                          "órfãos pelo endereço publicado (alimenta a fila)")
         else:
             _log("  vínculo por ligação pulado — nenhuma base do cliente confirmada")
     else:

@@ -3995,10 +3995,18 @@ def iniciar_job(body: dict):
             #
             # O descarte é MARCA, não `delete`: `descartado_por` = 'regra_
             # vinculo'. Dá para auditar e dá para desfazer.
+            #
+            # O BOTAO NAO PASSA `--cidade`, DE PROPOSITO. Em 10/09/2026 eu
+            # rodei `--cidade Canoas` e os 586 vinculos de Gravatai nunca
+            # passaram pela regra — ficaram vivos por omissao, porque "vivo" e'
+            # so `descartado_em is null` e a consulta nem os leu. O corte por
+            # cidade nao economiza nada que valha isso: sao 94 mil vinculos e a
+            # revisao inteira leva 10 segundos.
+            #
+            # A opcao continua existindo na linha de comando, para quem estiver
+            # investigando uma cidade. O botao roda tudo.
             out_json = MINERACAO / "_revisar_vinculo_noop.json"
             cmd = [PYTHON, "revisar_vinculo.py", "--aplicar"]
-            if op.get("cidade"):
-                cmd += ["--cidade", str(op["cidade"])]
             _novo_job("revisar_vinculo", out_json, {})
 
         elif modo == "casar_endereco":
@@ -4010,11 +4018,27 @@ def iniciar_job(body: dict):
             # POI é bom e está longe — a mediana medida foi 316 m.
             #
             # Roda DEPOIS de `revisar_vinculo`, e só sobre quem ficou sem
-            # ligação nenhuma. E corrige a coordenada de quem casou com uma
-            # ligação só: a ligação sabe onde fica a porta.
+            # ligação nenhuma.
+            #
+            # O QUE NÃO CASA VIRA FILA, e não silêncio: desde 10/09/2026 o par
+            # cujo endereço bate mas cuja distância passa do teto entra em
+            # `ligacao_poi` já descartado, com `descartado_por =
+            # 'teto_distancia'`. É o que alimenta a "Fila de alocação" do
+            # painel — e é automático: roda a cidade, a fila dela aparece.
+            #
+            # CIDADE VAZIA ERA UM NO-OP SILENCIOSO. `--cidade ""` faz o SQL
+            # comparar a cidade com string vazia, o que casa com ninguém: o job
+            # terminava "com sucesso" tendo lido zero POIs. Agora recusa.
+            _cid = str(op.get("cidade") or "").strip()
+            if not _cid:
+                raise HTTPException(
+                    status_code=400,
+                    detail="sem cidade o casamento por endereço não lê POI "
+                           "nenhum e termina como se tivesse funcionado; "
+                           "escolha a cidade antes")
             out_json = MINERACAO / "_casar_endereco_noop.json"
             cmd = [PYTHON, "casar_por_endereco.py", "--aplicar",
-                   "--cidade", str(op.get("cidade") or "")]
+                   "--cidade", _cid]
             # O BOTAO NAO MOVE COORDENADA. Ver `casar_por_endereco`: a
             # coordenada publicada pela fonte e observacao dela, e o padrao de
             # um botao nao deve ser alterar dado de origem.
@@ -4909,7 +4933,16 @@ def vinculo_a_alocar(cidade: str = "", limite: int = 200, desde: int = 0):
                   from radar_comercial.ligacao_poi lp
                   join radar_comercial.pois p on p.id = lp.poi_id
                  where lp.descartado_por = 'teto_distancia'
-                   and p.fundido_em is null %s
+                   and p.fundido_em is null
+                   -- A FILA TEM DE ENCOLHER. Sem isto ela so cresce: o POI
+                   -- que depois recebe uma ligacao — por coordenada
+                   -- corrigida, por cruzamento novo ou por outra fonte —
+                   -- continuaria contado aqui para sempre, e o numero no
+                   -- botao deixaria de significar "esperando".
+                   and not exists (
+                         select 1 from radar_comercial.ligacao_poi v
+                          where v.poi_id = lp.poi_id
+                            and v.descartado_em is null) %s
             """ % wc, tuple(pc))
             pares, pois = cur.fetchone()
 
@@ -4930,7 +4963,11 @@ def vinculo_a_alocar(cidade: str = "", limite: int = 200, desde: int = 0):
                   left join resources_root.cadastro_corsan c
                          on c.num_ligacao::text = lp.ligacao
                  where lp.descartado_por = 'teto_distancia'
-                   and p.fundido_em is null %s
+                   and p.fundido_em is null
+                   and not exists (
+                         select 1 from radar_comercial.ligacao_poi v
+                          where v.poi_id = lp.poi_id
+                            and v.descartado_em is null) %s
                  order by lp.metros nulls last, lp.poi_id
                  limit %%s offset %%s
             """ % wc, tuple(pc) + (max(1, min(limite, 500)), max(0, desde)))
