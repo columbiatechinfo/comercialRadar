@@ -41,6 +41,7 @@ from PIL import Image
 import avaliar_ia as ia
 import avaliar_ligacao as al
 import base_comum as bc
+import checagem_veredito as cv
 import descrever_imagens as di
 import dossie_ligacao as dl
 import imagens
@@ -195,8 +196,21 @@ def uma(poco, ligacao, modelo, placar, trava, aplicar):
     r["pois_de_outro_endereco"] = [{"poi": x.get("poi"), "porque": x.get("por")}
                                    for x in (r.get("nao_combinam") or []) if isinstance(x, dict)]
     r["justificativa"] = r.get("motivo")
+    # A CHECAGEM DO CODIGO (dono do produto, 12/09/2026): registro que nao vale
+    # nao aprova, e a aprovada so por MEI vai para revisao humana. A regra de
+    # um POI por instalacao roda no fim da rodada, sobre todas as aprovadas.
+    checagem = None
+    if v == "aprovado":
+        with poco.pegar() as con:
+            v, checagem = cv.checar_uma(con, ligacao, v, r, ids)
+        if checagem:
+            checagem["justificativa_ia"] = r.get("justificativa")
+            if v != "aprovado":
+                r["justificativa"] = "[checagem: %s] %s" % (checagem.get("porque"), r.get("motivo") or "")
     percepcao = {"processo": "enxuto de 12/09/2026", "dados": dados, "fotos": rot, "resposta": r,
                  "ids": ids}
+    if checagem:
+        percepcao["checagem"] = checagem
     resumo = {"pois": len(ids), "fontes": n_fontes, "ids": ids}
     fora = 0
     if SAIDA:
@@ -216,6 +230,10 @@ def uma(poco, ligacao, modelo, placar, trava, aplicar):
         placar["poi_de_outro_endereco"] += fora
         al._log("   %-10s %-15s %d POIs · %d fotos · %.0fs · %s"
                 % (ligacao, v, len(ids), len(fotos), time.time() - t0, str(r.get("motivo") or "")[:70]))
+
+
+def feitas_na_rodada(placar):
+    return sum(placar[v] for v in VEREDITOS) > 0
 
 
 def rodar(limite, aplicar, trabalhadores, modelo, ligacoes, cidade, exigir_busca, vinculo_novo):
@@ -274,6 +292,13 @@ def rodar(limite, aplicar, trabalhadores, modelo, ligacoes, cidade, exigir_busca
     for t in ts:
         t.join()
     dt = time.time() - t0
+    if aplicar and feitas_na_rodada(placar):
+        # UM POI, UMA INSTALACAO: precisa de todas as aprovadas, entao roda aqui.
+        con = bc.conectar()
+        try:
+            cv.revisar(con, aplicar=True, log=al._log)
+        finally:
+            con.close()
     al._log("")
     for k, n in sorted(placar.items()):
         al._log("   %-26s %d" % (k, n))
