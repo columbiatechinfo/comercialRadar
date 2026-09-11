@@ -108,53 +108,112 @@ VAZIOS = {
 #: A distância que dispensa o número, no critério 2.
 PERTO_M = 10.0
 
-#: O TETO DE DISTANCIA, QUE VALE ATE PARA O ENDERECO EXATO. Decisao do dono
-#: do produto em 10/09/2026: "no maximo 50 metros mesmo sendo o mesmo
-#: endereco e numero".
+#: O TETO DE DISTANCIA SAIU em 11/09/2026. Decisao do dono do produto: "o
+#: limite de distancia passa a nao decidir". Rua, numero, BAIRRO e cidade
+#: batendo, com a ligacao marcada SIM ou SIM_COM_ANALISE_HUMANA, e vinculo
+#: valido; quem confirma que e o mesmo lugar e a IA, depois.
 #:
-#: A regra estrita nao tinha teto nenhum, e isso escapou na primeira medicao
-#: porque eu contei quantos batiam rua e numero, nunca a que distancia. Medido
-#: depois, nos 101.637 vinculos exatos vivos: 84.561 ate 50 m, 8.446 entre 50
-#: e 200 m, 5.799 ate 1 km, 2.146 ate 5 km e **685 acima de 5 km** — o pior
-#: par a 6.436 km, rua e numero identicos em outro estado.
+#: O QUE O TETO FAZIA, E POR QUE ELE PODE SAIR AGORA. Ele existia contra duas
+#: coisas: a "Rua Sao Jose, 150" repetida em bairros diferentes, e o POI de
+#: coordenada errada casando por texto. A primeira quem separa e o bairro — e
+#: o bairro so passou a ser confiavel em 11/09/2026, quando o resolvedor parou
+#: de joga-lo fora (migracao 0098). A segunda nao e defeito do par: medido no
+#: mesmo dia, ha clinicas e empresas com rua, numero e bairro identicos a 2 km
+#: da ligacao, porque o geocodificador da fonte jogou o ponto no centroide do
+#: CEP. O teto recusava exatamente esses.
 #:
-#: Sao duas causas, e nenhuma das duas e vinculo: o mesmo nome de rua se
-#: repete em bairros diferentes (Canoas tem varias "Rua Sao Jose"), e ha POI
-#: com coordenada errada que casa por texto. Em ambos os casos o par so
-#: existe porque a comparacao e de STRING, e string nao sabe onde fica.
-TETO_M = 200.0
+#: Era 50 m ate 10/09, depois 200 m com bairro acima de 50 m. O nome fica, em
+#: None, para quem ainda o importa saber que nao ha teto.
+TETO_M = None
 
-#: O TETO SUBIU DE 50 PARA 200 M EM 10/09/2026, e o bairro entrou junto.
-#:
-#: O QUE MOSTROU QUE 50 ERA APERTADO: os 102 POIs do iFood que publicam o
-#: endereco EXATO de uma ligacao de Canoas — rua e numero iguais, letra por
-#: letra — e ficavam de fora. 48 deles entre 51 e 100 m, 23 entre 100 e 200.
-#: O caso classico e o Canoas Shopping: onze lojas da praca de alimentacao na
-#: Guilherme Schell 6750, todas a 82-100 m do hidrometro, porque o pino do
-#: iFood marca a ENTRADA do shopping e nao a loja.
-#:
-#: Nao e so do iFood: a mesma coisa acontece com o pino do Maps num predio
-#: grande, com o centroide do lote na Receita e com o ponto do CNEFE na
-#: fachada errada de um terreno de esquina. Por isso a regra vale para TODAS
-#: as fontes — decisao do dono do produto no mesmo dia.
-#:
-#: O BAIRRO E O QUE PERMITE AFROUXAR SEM ABRIR A PORTA. A 200 m cabe a quadra
-#: inteira e as vizinhas, e "Rua Sao Jose, 150" existe em varios bairros da
-#: mesma cidade. Com rua + numero + cidade + BAIRRO batendo, o par so
-#: sobrevive se as quatro coisas concordarem — e o bairro esta preenchido em
-#: 100% das ligacoes de Canoas.
-#:
-#: QUANDO NAO HA BAIRRO dos dois lados, o teto continua valendo sozinho: e o
-#: caso da fonte que nao publica bairro, e exigir o que ela nao tem seria
-#: exclui-la inteira.
+
+#: O que aparece no campo bairro e nao e bairro. Visto na base bruta da Receita
+#: e no cadastro da Corsan em 11/09/2026 — "?", "_", "-" e "BAIRRO NAO
+#: INFORMADO", este em 1.244 ligacoes de Canoas.
+_LIXO_BAIRRO = {"", "?", "-", "_", ".", "0", "SN", "S N", "SEM BAIRRO",
+                "NAO INFORMADO", "BAIRRO NAO INFORMADO", "NAO CONSTA",
+                "NULL", "NONE", "NAN", "N A", "ND"}
+
+#: Palavras que aparecem em nome de bairro e nao distinguem um do outro.
+#: Sem esta lista, "SAO JOSE" e "SAO LUIS" dividiam "SAO" e passavam por
+#: iguais — que era o que o teste antigo, por qualquer palavra em comum, fazia.
+_GENERICAS_BAIRRO = {"SAO", "SANTA", "SANTO", "STA", "STO", "VILA", "VL",
+                     "JARDIM", "JD", "PARQUE", "PQ", "NOSSA", "SENHORA", "SRA",
+                     "N", "S", "NOVA", "NOVO", "BAIRRO", "RESIDENCIAL",
+                     "LOTEAMENTO", "CONJUNTO", "DE", "DA", "DO", "DAS", "DOS",
+                     "E"}
+
+
+def _tokens_bairro(s):
+    t = unicodedata.normalize("NFKD", str(s or ""))
+    t = "".join(ch for ch in t if not unicodedata.combining(ch)).upper()
+    return re.sub(r"[^A-Z0-9 ]+", " ", t).split()
+
+
+def bairro_util(b) -> bool:
+    """O campo traz um bairro, ou lixo e vazio?"""
+    k = " ".join(_tokens_bairro(b))
+    return bool(k) and k not in _LIXO_BAIRRO and bool(re.search(r"[A-Z]{3}", k))
+
+
+def bairros_iguais(a, b) -> bool:
+    """Os dois textos nomeiam o mesmo bairro?
+
+    "NOSSA SENHORA DAS GRACAS" e "N S DAS GRACAS" sao o mesmo; "SAO JOSE" e
+    "SAO LUIS" nao. A comparacao e pela palavra que DISTINGUE o bairro, e nao
+    por qualquer palavra em comum.
+    """
+    ta, tb = _tokens_bairro(a), _tokens_bairro(b)
+    if not ta or not tb:
+        return False
+    if ta == tb:
+        return True
+    fa = {x for x in ta if x not in _GENERICAS_BAIRRO and len(x) >= 3}
+    fb = {x for x in tb if x not in _GENERICAS_BAIRRO and len(x) >= 3}
+    if not fa or not fb:
+        return False
+    return bool(fa & fb)
+
+
+#: A UNIDADE DENTRO DO MESMO NUMERO. Um condominio de casas tem uma ligacao
+#: por casa, todas com a mesma rua e o mesmo numero; a Corsan escreve a casa no
+#: endereco da ligacao ("RUA IRMA MARIA HILTGARDIS,376-CASA 02-OLARIA-...") e a
+#: Receita escreve a do CNPJ no complemento ("CASA 2"). Quando os dois dizem a
+#: mesma unidade, e aquela a ligacao do POI — e nao a mais proxima, que num
+#: condominio e sorteio: o ponto da Receita e o centroide do CEP.
+_UNIDADE = re.compile(
+    r"\b(CASA|CS|APARTAMENTO|APTO|APT|AP|SALA|SL|LOJA|LJ|BOX|CONJUNTO|CJ)"
+    r"\.?\s*0*(\d{1,5})\b")
+_TIPO_UNIDADE = {"CS": "CASA", "APARTAMENTO": "AP", "APTO": "AP", "APT": "AP",
+                 "SL": "SALA", "LJ": "LOJA", "CJ": "CONJUNTO"}
+
+
+def unidades(texto) -> set:
+    """`{("CASA", "2"), ...}` — as unidades escritas num texto de endereco."""
+    t = unicodedata.normalize("NFKD", str(texto or ""))
+    t = "".join(ch for ch in t if not unicodedata.combining(ch)).upper()
+    return {(_TIPO_UNIDADE.get(tp, tp), n.lstrip("0") or "0")
+            for tp, n in _UNIDADE.findall(t)}
+
+
+def complemento_bate(complemento_poi, endereco_ligacao) -> bool:
+    """O complemento do POI nomeia a mesma unidade que o endereco da ligacao?"""
+    a = unidades(complemento_poi)
+    return bool(a) and bool(a & unidades(endereco_ligacao))
 
 
 def _bairro_bate(c):
-    """Bairro da ligacao e do POI concordam — ou um dos dois nao existe?"""
+    """Bairro da ligacao e do POI concordam — ou um dos dois nao existe?
+
+    SEM BAIRRO DE UM LADO, O BAIRRO NAO VETA. Desde 11/09/2026 o resolvedor
+    tira o bairro da coordenada quando a fonte nao o publica, entao "nao
+    existe" ficou raro; recusar por ausencia seria punir o par pelo que nao
+    foi medido. Lixo ("?", "BAIRRO NAO INFORMADO") conta como ausencia.
+    """
     a, b = c.get("bairro_lig"), c.get("bairro_poi")
-    if not a or not b:
+    if not bairro_util(a) or not bairro_util(b):
         return True
-    return set(normalizar(a)) & set(normalizar(b)) != set()
+    return bairros_iguais(a, b)
 
 #: Quanto os tokens em comum precisam somar para dois nomes serem o mesmo
 #: negócio. Ver a calibração no cabeçalho: o pior par certo deu 10,06 e o
@@ -428,25 +487,6 @@ def contradiz_numero(num_poi_publicado, num_ligacao, e_prova):
 SEM_ENDERECO_EXATO = ("airbnb",)
 
 
-def _dentro_do_teto(c):
-    """O par existe no mesmo lugar do mundo?
-
-    DISTANCIA DESCONHECIDA PASSA. `metros` vem do cruzamento e so falta quando
-    um dos dois lados nao tem coordenada; recusar por ausencia de medida
-    puniria o vinculo pelo que nao foi medido. Sao poucos, e o score os separa
-    depois — la a distancia vale ponto, e sem numero ela vale zero.
-    """
-    m = c.get("metros")
-    if m is not None and m > TETO_M:
-        return False
-    # ACIMA DE 50 M O BAIRRO PASSA A SER EXIGIDO. Ate 50 m o par esta na
-    # mesma quadra e o bairro nao acrescenta; entre 50 e 200 ele e o que
-    # separa a "Rua Sao Jose, 150" de um bairro da do outro.
-    if m is not None and m > 50.0:
-        return _bairro_bate(c)
-    return True
-
-
 def aceitar(candidatos):
     """`{poi_id: motivo}` — quais candidatos pertencem a ESTA ligação.
 
@@ -474,6 +514,15 @@ def aceitar(candidatos):
     """
     fica = {}
     for c in candidatos:
+        # A LIGACAO PRECISA ESTAR MARCADA SIM OU SIM_COM_ANALISE_HUMANA. Regra
+        # do dono do produto em 11/09/2026. `None` quer dizer que quem chamou
+        # nao informou — e ai a regra nao inventa uma recusa.
+        if c.get("lig_apta") is False:
+            continue
+        # DA RECEITA, SO O ESTABELECIMENTO ATIVO. Mesma decisao: CNPJ baixado,
+        # inapto ou suspenso nao prova atividade em endereco nenhum.
+        if c.get("receita_inativa"):
+            continue
         # UNIDADE VAZIA NAO E ESTABELECIMENTO, e o teste vem antes de tudo:
         # nao adianta o endereco ser exato se o que esta no endereco e uma
         # sala sem uso. Ver `declara_vazio`.
@@ -495,13 +544,13 @@ def aceitar(candidatos):
             # forte que existe sem numero de porta — os dois pontos caem sobre
             # a MESMA construcao. Decisao do dono do produto em 10/09/2026.
             if (c.get("mesma_rua") and c.get("mesmo_telhado")
-                    and _dentro_do_teto(c)):
+                    and _bairro_bate(c)):
                 fica[c["poi"]] = "airbnb_rua_telhado"
             continue
-        # TODO O RESTO: rua E numero, sem excecao e sem consolo — E DENTRO
-        # DO TETO. Rua e numero sao texto; o teto e o unico teste que pergunta
-        # se o par existe no mesmo lugar do mundo.
-        if c.get("mesma_rua") and c.get("mesmo_numero") and _dentro_do_teto(c):
+        # TODO O RESTO: rua, numero E BAIRRO, sem excecao e sem consolo — e
+        # sem teto de distancia desde 11/09/2026. Quem pergunta se o par existe
+        # no mesmo lugar do mundo e o bairro; quem confirma e a IA.
+        if c.get("mesma_rua") and c.get("mesmo_numero") and _bairro_bate(c):
             fica[c["poi"]] = "endereco_exato"
 
     # O NOME DE ANCORA CONTINUA, e so ele — porque nao fala de onde, fala de
@@ -515,6 +564,8 @@ def aceitar(candidatos):
     for c in candidatos:
         if c["poi"] in fica or not c.get("mesma_rua"):
             continue
+        if c.get("lig_apta") is False or c.get("receita_inativa"):
+            continue
         # O TELHADO PASSOU A SER OBRIGATORIO AQUI. Decisao do dono do produto
         # em 10/09/2026: "nos casos de nome e airbnb tem que estar pelo menos
         # na mesma rua e >= 9,0 de idf e como mesmo telhado".
@@ -527,7 +578,7 @@ def aceitar(candidatos):
         # seu hidrometro.
         if not c.get("mesmo_telhado"):
             continue
-        if not _dentro_do_teto(c):
+        if not _bairro_bate(c):
             continue
         if any(parecidos(c.get("nome"), a.get("nome")) for a in ancoras):
             fonte = (c.get("fonte") or "").strip().lower()
@@ -539,6 +590,10 @@ def aceitar(candidatos):
 
 def motivo_da_recusa(c):
     """Por que este candidato não entrou. Vai gravado em `descartado_motivo`."""
+    if c.get("lig_apta") is False:
+        return "a ligacao nao esta marcada SIM nem SIM com analise humana"
+    if c.get("receita_inativa"):
+        return "o estabelecimento da Receita nao esta ativo"
     if declara_vazio(c.get("nome")):
         return "o proprio nome diz que a unidade esta vazia"
     if not c.get("mesma_rua"):
@@ -547,12 +602,13 @@ def motivo_da_recusa(c):
     if fonte in SEM_ENDERECO_EXATO:
         if not c.get("mesmo_telhado"):
             return "airbnb sem o telhado da ligacao"
-        return "airbnb no telhado, mas fora do teto de distancia"
-    if c.get("mesmo_numero") and not _dentro_do_teto(c):
-        # O MOTIVO CARREGA O NUMERO porque este e o descarte que mais parece
-        # erro: rua e numero batem, e mesmo assim cai.
-        return ("endereco exato, mas a %d m (teto de %d m)"
-                % (round(c.get("metros") or 0), round(TETO_M)))
+        return ("airbnb no telhado, mas o bairro diverge: POI %s, ligacao %s"
+                % (c.get("bairro_poi"), c.get("bairro_lig")))
+    if c.get("mesmo_numero") and not _bairro_bate(c):
+        # O MOTIVO CARREGA OS DOIS BAIRROS porque este e o descarte que mais
+        # parece erro: rua e numero batem, e mesmo assim cai.
+        return ("endereco exato, mas o bairro diverge: POI %s, ligacao %s"
+                % (c.get("bairro_poi"), c.get("bairro_lig")))
     if not c.get("mesmo_numero"):
         if not c.get("mesmo_telhado"):
             return "numero diferente e nem o mesmo telhado"

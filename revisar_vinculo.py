@@ -15,6 +15,26 @@ saiu, e o POI fica livre para achar outra ligação.
 NÃO TOCA NO QUE A IA DESCARTOU. Aqueles têm `descartado_por = 'ia'` e o motivo
 que o modelo escreveu; sobrescrever isso apagaria a única explicação que
 existe para eles.
+
+UM POI, UMA LIGAÇÃO; UMA LIGAÇÃO, VÁRIOS POIs — o último passo, desde
+11/09/2026. Vários POIs podem compor a mesma ligação (galeria, sobrado,
+shopping); o mesmo POI nunca fica em duas. Regra do dono do produto, dita três
+vezes: "uma ligação é uma casa física/prédio". A "Doces da Rafa" estava em 19
+ligações do mesmo prédio, e a IA aprovaria as 19 por causa de uma padaria.
+
+QUEM DECIDE É A IA, na avaliação. Decisão do dono do produto em 11/09/2026:
+"você envia todos os candidatos; somente caso a IA não decida qual é o correto
+pra ligação é que você usa esses critérios". Por isso este passo vem DESLIGADO
+e só roda com `--um-poi-por-ligacao`, depois da avaliação. Até lá, cada
+ligação leva todos os POIs que passam na regra, e o mesmo POI pode estar em
+várias — como candidato, não como vínculo decidido.
+
+Quando ligado, entre as ligações que aceitam o POI, ele fica, nesta ordem:
+  1. na de critério mais forte (endereço exato antes de nome de âncora);
+  2. na que tem a MESMA UNIDADE — "CASA 12" no complemento da Receita e no
+     endereço da ligação na Corsan. Num condomínio de casas é o único
+     desempate que não é sorteio;
+  3. na mais próxima. A distância não recusa ninguém: só desempata.
 """
 import argparse
 import re
@@ -23,6 +43,11 @@ from collections import Counter, defaultdict
 
 import base_comum as bc
 import regra_vinculo as rv
+import bairro as bz
+
+#: A ordem dos criterios quando o mesmo POI e aceito por varias ligacoes.
+FORCA_DO_ACEITE = {"endereco_exato": 0, "nome_de_ancora": 1,
+                   "airbnb_rua_telhado": 2, "airbnb_telhado_nome": 3}
 
 SQL = """
 select lp.ligacao, lp.poi_id, lp.mesmo_endereco, lp.mesmo_numero,
@@ -33,11 +58,19 @@ select lp.ligacao, lp.poi_id, lp.mesmo_endereco, lp.mesmo_numero,
        -- A FONTE DECIDE SE A REGRA ESTRITA VALE. O Airbnb nao publica numero
        -- de porta — e do desenho da plataforma —, e exigi-lo dele excluiria a
        -- fonte inteira. Ver `regra_vinculo.SEM_ENDERECO_EXATO`.
-       coalesce(p.fonte,'')
+       coalesce(p.fonte,''),
+       -- 11/09/2026: a ligacao precisa estar marcada SIM, e da Receita so o
+       -- estabelecimento ativo conta.
+       coalesce(c.qualificacao,'') like 'SIM%%',
+       lower(coalesce(p.fonte,'')) = 'receita'
+         and ltrim(coalesce(rd.situacao_cadastral,''),'0') <> '2',
+       c.cod_latitude::float8, c.cod_longitude::float8,
+       coalesce(rd.complemento,''), coalesce(c.end_ligacao,'')
   from radar_comercial.ligacao_poi lp
   join radar_comercial.pois p on p.id = lp.poi_id
   join resources_root.cadastro_corsan c on c.num_ligacao::text = lp.ligacao
   left join radar_comercial.logradouro_resolvido lr on lr.poi_id = lp.poi_id
+  left join radar_comercial.receita_data rd on rd.poi_id = lp.poi_id
  where lp.descartado_em is null
    and p.fundido_em is null
    {cidade}
@@ -93,6 +126,10 @@ def main(argv=None):
         description="Descarta os vínculos que não passam na regra")
     p.add_argument("--cidade", default="")
     p.add_argument("--aplicar", action="store_true")
+    p.add_argument("--um-poi-por-ligacao", dest="um_poi", action="store_true",
+                   help="deixa cada POI numa ligacao so, pelo desempate do "
+                        "cabecalho. E o RESERVA da IA: rodar depois da "
+                        "avaliacao, para o que ela nao decidiu")
     a = p.parse_args(argv)
 
     con = bc.conectar()
@@ -107,32 +144,87 @@ def main(argv=None):
     cur.execute(SQL.format(cidade=filtro),
                 (a.cidade,) if a.cidade else ())
 
+    # O BAIRRO DA LIGACAO, quando a Corsan nao o escreveu ("BAIRRO NAO
+    # INFORMADO" em 1.244 ligacoes de Canoas): o da coordenada do hidrometro,
+    # pela mesma regra que vale para o POI. Uma consulta por ligacao.
+    bairro_rev = {}
+
+    def _bairro_lig(lig, b, la, lo):
+        if rv.bairro_util(b):
+            return b
+        if lig not in bairro_rev:
+            bairro_rev[lig] = bz.bairro_reverso(la, lo, a.cidade) or ""
+        return bairro_rev[lig]
+
     por_lig = defaultdict(list)
+    metros_de, unidade_bate = {}, set()
     for (lig, poi, m_end, m_num, m_tel, metros, nome, n_poi, n_lig,
-         b_lig, b_poi, prova, fonte) in cur:
+         b_lig, b_poi, prova, fonte, apta, inativa, la, lo, compl,
+         end_lig) in cur:
+        metros_de[(lig, poi)] = metros
+        if compl and rv.complemento_bate(compl, end_lig):
+            unidade_bate.add((lig, poi))
         por_lig[lig].append({
             "poi": poi, "fonte": fonte,
             "mesma_rua": bool(m_end), "mesmo_numero": bool(m_num),
             "mesmo_telhado": bool(m_tel), "metros": metros, "nome": nome,
-            "bairro_lig": b_lig, "bairro_poi": b_poi,
+            "bairro_lig": _bairro_lig(lig, b_lig, la, lo), "bairro_poi": b_poi,
+            "lig_apta": bool(apta), "receita_inativa": bool(inativa),
             "contradiz": rv.contradiz_numero(n_poi, n_lig, prova)})
+    _log("%d ligações sem bairro na Corsan consultadas na coordenada"
+         % len(bairro_rev))
     _log("%d ligações · %d vínculos"
          % (len(por_lig), sum(len(v) for v in por_lig.values())))
 
-    fora, dentro, placar = [], [], Counter()
-    ligs_que_zeram = 0
+    fora, aceitos, placar = [], [], Counter()
     for lig, cands in por_lig.items():
         fica = rv.aceitar(cands)
         for c in cands:
             if c["poi"] in fica:
-                dentro.append((lig, c["poi"], fica[c["poi"]]))
-                placar["fica: " + fica[c["poi"]]] += 1
+                aceitos.append((lig, c["poi"], fica[c["poi"]]))
             else:
                 motivo = rv.motivo_da_recusa(c)
                 placar["cai: " + _familia(motivo)[:52]] += 1
-                fora.append((lig, c["poi"], motivo))
-        if not fica:
-            ligs_que_zeram += 1
+                fora.append((lig, c["poi"], motivo, "regra_vinculo"))
+
+    # UM POI, UMA LIGACAO. Ver o cabecalho para a ordem do desempate. Sem
+    # distancia medida, a de numero menor — so para o resultado nao depender
+    # da ordem de leitura.
+    por_poi = defaultdict(list)
+    for (lig, poi, motivo) in aceitos:
+        por_poi[poi].append((lig, motivo))
+    dentro = []
+    desempate = Counter()
+    if not a.um_poi:
+        dentro = list(aceitos)
+        for (_, _, motivo) in aceitos:
+            placar["fica: " + motivo] += 1
+        multi = sum(1 for ops in por_poi.values() if len(ops) > 1)
+        _log("   %d POIs sao candidatos de mais de uma ligacao — a IA decide "
+             "(sem --um-poi-por-ligacao, nenhum sai)" % multi)
+        por_poi = {}
+    for poi, ops in por_poi.items():
+        ops.sort(key=lambda x: (FORCA_DO_ACEITE.get(x[1], 9),
+                                (x[0], poi) not in unidade_bate,
+                                metros_de.get((x[0], poi)) is None,
+                                metros_de.get((x[0], poi)) or 0.0, x[0]))
+        lig0, motivo0 = ops[0]
+        dentro.append((lig0, poi, motivo0))
+        placar["fica: " + motivo0] += 1
+        if len(ops) > 1:
+            desempate["pela unidade (complemento)" if (lig0, poi) in unidade_bate
+                      else "pela distancia"] += 1
+        m0 = metros_de.get((lig0, poi))
+        for (lig, motivo) in ops[1:]:
+            placar["cai: um POI, uma ligacao"] += 1
+            fora.append((lig, poi,
+                         "um POI, uma ligacao: fica na ligacao %s%s"
+                         % (lig0, "" if m0 is None else " (a %d m)" % round(m0)),
+                         "um_poi_uma_ligacao"))
+    for k, n in desempate.most_common():
+        _log("   POI em varias ligacoes, decidido %s: %d" % (k, n))
+    ficam = {lig for (lig, _, _) in dentro}
+    ligs_que_zeram = sum(1 for lig in por_lig if lig not in ficam)
 
     print()
     for k in sorted(placar):
@@ -181,7 +273,7 @@ def main(argv=None):
     _log("%d vínculos ficaram, com o motivo do aceite gravado" % len(dentro))
 
     cur.execute("""select count(*) from radar_comercial.ligacao_poi
-                    where descartado_por = 'regra_vinculo'""")
+                    where descartado_por in ('regra_vinculo', 'um_poi_uma_ligacao')""")
     marcados_antes = int(cur.fetchone()[0] or 0)
     gravados = 0
     for i in range(0, len(fora), 5000):
@@ -190,8 +282,8 @@ def main(argv=None):
             update radar_comercial.ligacao_poi lp
                set descartado_em = now(),
                    descartado_motivo = v.motivo,
-                   descartado_por = 'regra_vinculo'
-              from (values %s) as v(ligacao, poi_id, motivo)
+                   descartado_por = v.por
+              from (values %s) as v(ligacao, poi_id, motivo, por)
              where lp.ligacao = v.ligacao
                and lp.poi_id = v.poi_id::bigint
                and lp.descartado_em is null
@@ -201,7 +293,7 @@ def main(argv=None):
         _log("   %d/%d enviados" % (gravados, len(fora)))
 
     cur.execute("""select count(*) from radar_comercial.ligacao_poi
-                    where descartado_por = 'regra_vinculo'""")
+                    where descartado_por in ('regra_vinculo', 'um_poi_uma_ligacao')""")
     marcados = int(cur.fetchone()[0] or 0) - marcados_antes
     _log("o banco marcou %d descartes" % marcados)
     if marcados != len(fora):

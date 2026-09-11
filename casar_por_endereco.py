@@ -12,6 +12,22 @@ proximidade, e não é disso que se trata — é do que sobrou.
 
 Decisão do dono do produto em 08/09/2026: "primeiro tentar casar pelo endereço
 publicado", antes de mandar 47.275 POIs para uma fila humana.
+
+A REGRA DE 11/09/2026, e o que ela mudou aqui. "O limite de distância passa a
+não decidir": rua, número, BAIRRO e cidade batendo, com a ligação marcada SIM
+ou SIM_COM_ANALISE_HUMANA, é vínculo válido — e da Receita só o ativo conta.
+Três consequências neste módulo:
+
+- ele olha TODOS os POIs, e não só os órfãos. Um POI que o cruzamento
+  geométrico prendeu na ligação vizinha, a 40 m, também tem direito à ligação
+  do endereço que publicou. Quem decide, quando são várias, é
+  a IA, ligação por ligação: a ligação é o foco, e o mesmo POI pode ser
+  testemunha de mais de uma. `--so-orfaos` devolve o comportamento antigo.
+- o teto sai. O que ele barrava eram justamente os POIs de coordenada errada,
+  que é o caso para o qual este módulo existe.
+- o CEP deixa de vetar. Ele servia para derrubar a rua homônima de outro
+  bairro, e agora quem faz isso é o próprio bairro. O CEP divergente continua
+  contado no placar.
 """
 import argparse
 import time
@@ -19,6 +35,7 @@ from collections import Counter, defaultdict
 
 import base_comum as bc
 import regra_vinculo as rv
+import bairro as bz
 from cruzar_ligacao import _via
 
 
@@ -43,9 +60,11 @@ def _sa(expr):
                                              _SEM_ACENTO_PARA)
 
 
-#: As 16 colunas que a recusa traz, mais `descartado_em` e `descartado_por`,
-#: que sao sempre os mesmos e por isso vao fixos no molde.
-_MOLDE_RECUSA = ("(" + ",".join(["%s"] * 16) + ",now(),'teto_distancia')")
+#: Os descartes que a regra pode desfazer. O que a IA descartou (`ia-...`),
+#: o que foi fundido e o que alguem descartou a mao NAO voltam por aqui:
+#: reviver um par que o modelo recusou lendo as fotos apagaria a unica
+#: explicacao que existe para ele.
+DESCARTE_DA_REGRA = ("regra_vinculo", "teto_distancia")
 
 
 def _log(m):
@@ -72,6 +91,9 @@ def main(argv=None):
     p.add_argument("--cidade", required=True)
     p.add_argument("--base", type=int, default=1)
     p.add_argument("--aplicar", action="store_true")
+    p.add_argument("--so-orfaos", dest="so_orfaos", action="store_true",
+                   help="so os POIs sem vinculo vivo (o comportamento de antes "
+                        "de 11/09/2026)")
     # MOVER A COORDENADA NAO E MAIS O PADRAO, e a inversao e deliberada.
     #
     # Decisao do dono do produto em 09/09/2026: "corrige as coordenadas pra
@@ -96,44 +118,61 @@ def main(argv=None):
     cur.execute("""
         select num_ligacao::text, coalesce(nom_logradouro,''),
                coalesce(nro,''), cod_latitude::float8, cod_longitude::float8,
-               coalesce(cod_cep,'')
+               coalesce(cod_cep,''), coalesce(nom_bairro,''),
+               coalesce(qualificacao,'') like 'SIM%%'
           from resources_root.cadastro_corsan
          where """ + _sa("coalesce(cidade,'')") + " = " + _sa("%s"),
                 (a.cidade,))
     porta = defaultdict(list)
     n_lig = 0
-    for (lig, logr, nro, la, lo, cep) in cur:
+    for (lig, logr, nro, la, lo, cep, bai, apta) in cur:
         v, n = _via(logr), rv.numero_limpo(nro)
         if not v or not n:
             continue
         n_lig += 1
-        porta[(v, n)].append((lig, la, lo, _cep(cep)))
+        porta[(v, n)].append((lig, la, lo, _cep(cep), bai, bool(apta)))
     _log("   %d ligações com rua e número · %d endereços distintos"
          % (n_lig, len(porta)))
 
-    _log("lendo os POIs órfãos...")
+    _log("lendo os POIs%s..." % (" órfãos" if a.so_orfaos else ""))
+    orfao = ("""
+           and not exists (select 1 from radar_comercial.ligacao_poi lp
+                            where lp.poi_id = p.id
+                              and lp.descartado_em is null)"""
+             if a.so_orfaos else "")
     cur.execute("""
         select p.id, coalesce(lr.logradouro,''), coalesce(lr.numero,''),
                st_y(p.pt_geo::geometry), st_x(p.pt_geo::geometry),
-               coalesce(p.fonte,''), coalesce(p.nome,''), coalesce(lr.cep,'')
+               coalesce(p.fonte,''), coalesce(p.nome,''), coalesce(lr.cep,''),
+               coalesce(lr.bairro,''),
+               lower(coalesce(p.fonte,'')) = 'receita'
+                 and ltrim(coalesce(rd.situacao_cadastral,''),'0') <> '2'
           from radar_comercial.pois p
           join radar_comercial.logradouro_resolvido lr on lr.poi_id = p.id
+          left join radar_comercial.receita_data rd on rd.poi_id = p.id
          where p.fundido_em is null
            and """ + _sa("coalesce(p.cidade,'')") + " = " + _sa("%s") + """
-           and lr.forca = 'prova'
-           and not exists (select 1 from radar_comercial.ligacao_poi lp
-                            where lp.poi_id = p.id
-                              and lp.descartado_em is null)""", (a.cidade,))
-    orfaos = cur.fetchall()
-    _log("   %d órfãos com endereço publicado" % len(orfaos))
+           and lr.forca = 'prova'""" + orfao, (a.cidade,))
+    pois = cur.fetchall()
+    _log("   %d POIs com endereço publicado" % len(pois))
+
+    # O BAIRRO DA LIGACAO, quando a Corsan nao o escreveu: 1.244 ligacoes de
+    # Canoas vem com "BAIRRO NAO INFORMADO". Vale a mesma regra do POI — na
+    # duvida, a coordenada. Uma consulta por ligacao, so das que casarem.
+    bairro_lig = {}
+
+    def _bairro_da_ligacao(lig, bai, la, lo):
+        if rv.bairro_util(bai):
+            return bai
+        if lig not in bairro_lig:
+            bairro_lig[lig] = bz.bairro_reverso(la, lo, a.cidade) or ""
+        return bairro_lig[lig]
 
     placar, distancias, achados = Counter(), [], []
-    fora_do_teto = 0
-    pois_fora = set()
+    recusa = {}
     pois_dentro = set()
-    recusados = []
     quantas_ligacoes = Counter()
-    for (pid, logr, nro, pla, plo, fonte, nome, cep_p) in orfaos:
+    for (pid, logr, nro, pla, plo, fonte, nome, cep_p, bai_p, inativa) in pois:
         v, n = _via(logr), rv.numero_limpo(nro)
         if not v or not n:
             placar["sem rua ou numero utilizavel"] += 1
@@ -142,45 +181,41 @@ def main(argv=None):
         if not alvos:
             placar["nenhuma ligacao neste endereco"] += 1
             continue
-        # O CEP EXCLUI, e nao confirma. Medido em 08/09/2026: com rua, numero
-        # E CEP batendo, a mediana de distancia continua em 316 m — porque a
-        # populacao aqui e, por construcao, a dos POIs cuja coordenada falhou.
-        # Distancia grande e a assinatura esperada desses, e nao sinal contra o
-        # casamento. O que o CEP faz e derrubar o homonimo: dos pares com CEP
-        # dos dois lados, 3.339 divergiam — rua de mesmo nome em outro bairro.
+        if rv.declara_vazio(nome):
+            placar["o nome diz que a unidade esta vazia"] += 1
+            continue
+        if fonte.strip().lower() in rv.SEM_ENDERECO_EXATO:
+            placar["airbnb: nao casa por endereco"] += 1
+            continue
         cp = _cep(cep_p)
-        bons = [x for x in alvos if not (cp and x[3]) or cp == x[3]]
+        bons = []
+        for (lig, la, lo, cl, bai_l, apta) in alvos:
+            if not apta:
+                recusa[(lig, pid)] = ("a ligacao nao esta marcada SIM nem SIM "
+                                      "com analise humana")
+                placar["par com ligacao que nao e SIM"] += 1
+                continue
+            if inativa:
+                recusa[(lig, pid)] = "o estabelecimento da Receita nao esta ativo"
+                placar["par com Receita inativa"] += 1
+                continue
+            bl = _bairro_da_ligacao(lig, bai_l, la, lo)
+            if not rv._bairro_bate({"bairro_lig": bl, "bairro_poi": bai_p}):
+                recusa[(lig, pid)] = ("endereco exato, mas o bairro diverge: "
+                                      "POI %s, ligacao %s" % (bai_p, bl))
+                placar["par com bairro divergente"] += 1
+                continue
+            if cp and cl and cp != cl:
+                placar["CEP diverge (nao veta mais)"] += 1
+            bons.append((lig, la, lo))
         if not bons:
-            placar["so casou com CEP divergente"] += 1
             continue
         quantas_ligacoes[min(len(bons), 9)] += 1
         placar["CASOU"] += 1
-        for (lig, la, lo, cl) in bons:
+        for (lig, la, lo) in bons:
             d = _metros(la, lo, pla, plo)
             if d is not None:
                 distancias.append(d)
-            # O TETO VALE AQUI TAMBEM. Decisao do dono do produto em
-            # 10/09/2026, perguntado exatamente se a regra geral alcancava
-            # este modulo: vale.
-            #
-            # O QUE ISSO CUSTA, medido em Canoas: dos 16.868 pares que o
-            # endereco publicado encontra, 2.268 estao a menos de 50 m e
-            # 14.589 nao. A mediana e 228 m — porque a populacao daqui e, por
-            # construcao, a dos POIs cuja coordenada falhou, e nao a dos pares
-            # errados.
-            #
-            # E O QUE ISSO EVITA: o dossie escolhe a foto de rua pela
-            # coordenada do POI. Aceitar um par a 228 m poe a IA para julgar
-            # a fachada de outro imovel — que e o defeito corrigido nesta
-            # mesma manha, entrando de novo por outra porta. Enquanto a
-            # coordenada nao for corrigida, o par so serve se ja estiver
-            # perto.
-            if d is not None and d > rv.TETO_M:
-                placar["fora do teto de %d m" % round(rv.TETO_M)] += 1
-                fora_do_teto += 1
-                pois_fora.add(pid)
-                recusados.append((lig, pid, d, fonte))
-                continue
             pois_dentro.add(pid)
             achados.append((lig, pid, d, fonte, nome, len(bons)))
 
@@ -195,37 +230,20 @@ def main(argv=None):
 
     if distancias:
         distancias.sort()
+
         def q(f):
             return distancias[min(int(len(distancias) * f), len(distancias) - 1)]
         print("\n   distância do POI à ligação que casou pelo endereço:")
         for rot, f in (("mediana", .5), ("75%", .75), ("90%", .9),
                        ("99%", .99)):
             print("      %-8s %8.0f m" % (rot, q(f)))
-        print("      acima de 1 km: %d de %d vínculos"
-              % (sum(1 for d in distancias if d > 1000), len(distancias)))
-        # QUANTOS SOBREVIVEM AO TETO. Desde 10/09/2026 a regra recusa o par
-        # acima de `rv.TETO_M`, INCLUSIVE com rua e numero batendo — e este
-        # modulo existe justamente para o POI cuja coordenada esta errada e
-        # por isso esta longe. Sem esta linha o casamento parece um sucesso de
-        # 16 mil vinculos, e a revisao seguinte apaga a maior parte deles sem
-        # ninguem entender por que.
-        dentro = sum(1 for d in distancias if d <= rv.TETO_M)
-        print()
-        print("   O TETO DE %d m, aplicado a estes pares:" % round(rv.TETO_M))
-        print("      entram ................... %6d" % dentro)
-        print("      ficam na fila humana ..... %6d"
-              % (len(distancias) - dentro))
-        print("      (o endereço publicado bate nos dois; o que não bate é a "
-              "coordenada do POI, e enquanto ela não for corrigida a foto do")
-        print("       dossiê sairia do imóvel errado — por isso o par espera)")
-    # O NUMERO QUE INTERESSA E O DE POIs, e nao o de vinculos: o vinculo
-    # recusado de um POI que entrou por outra ligacao nao deixa ninguem de
-    # fora. So conta como fila quem ficou sem NENHUMA.
-    so_fora = pois_fora - pois_dentro
-    _log("%d vínculos novos a gravar · %d recusados pelo teto de %d m"
-         % (len(achados), fora_do_teto, round(rv.TETO_M)))
-    _log("%d POIs entraram · %d ficaram sem nenhuma ligação por causa do teto"
-         % (len(pois_dentro), len(so_fora)))
+        print("      acima de 200 m: %d · acima de 1 km: %d · de %d vínculos"
+              % (sum(1 for d in distancias if d > 200),
+                 sum(1 for d in distancias if d > 1000), len(distancias)))
+    _log("%d vínculos pela regra de 11/09 · %d POIs · %d pares recusados"
+         % (len(achados), len(pois_dentro), len(recusa)))
+    _log("%d ligações sem bairro na Corsan consultadas na coordenada"
+         % len(bairro_lig))
 
     if not a.aplicar:
         _log("(ensaio: nada gravado. Use --aplicar)")
@@ -278,6 +296,10 @@ def main(argv=None):
             descartado_em = null,
             descartado_motivo = null,
             descartado_por = null
+          -- SO O DESCARTE DA REGRA VOLTA. Ver `DESCARTE_DA_REGRA`.
+          where radar_comercial.ligacao_poi.descartado_em is null
+             or radar_comercial.ligacao_poi.descartado_por in
+                ('regra_vinculo', 'teto_distancia')
     """, linhas, page_size=1000)
     con.commit()
     cur.execute("""select count(*) from radar_comercial.ligacao_poi
@@ -285,54 +307,38 @@ def main(argv=None):
     _log("o banco gravou ou reviveu %d vínculos (pedidos: %d)"
          % (int(cur.fetchone()[0] or 0) - antes, len(linhas)))
 
-    # ── A RECUSA TAMBEM VIRA LINHA ───────────────────────────────────────
+    # ── A FILA DO TETO ACABOU ────────────────────────────────────────────
     #
-    # Ate 10/09/2026 a recusa era impressa e esquecida. O dono do produto
-    # perguntou onde tinham ido parar os POIs barrados pelo teto e a resposta
-    # honesta era "lugar nenhum": nao havia linha, tela nem status — so um
-    # numero no log de uma execucao que ja tinha terminado.
-    #
-    # Estes nao sao pares errados. Sao os pares em que rua, numero e cidade
-    # batem (e o CEP nao contradiz) e a COORDENADA do POI e' que esta fora do
-    # lugar. Gravar a recusa transforma o numero em consulta: da para listar
-    # quem sao, a que distancia estao e de que ligacao — que e o que a fila de
-    # alocacao precisa mostrar.
-    #
-    # ENTRA JA DESCARTADA, de proposito. `revisar_vinculo`, o dossie e a fila
-    # de julgamento so leem `descartado_em is null`, entao nenhuma destas
-    # linhas altera veredito, score ou foto. Ela existe para ser LIDA.
-    if recusados:
-        linhas_r = [(a.base, lig, pid, True, True, False, False, False, d,
-                     2, 0.0, 1, 0, fonte, "endereco_publicado",
-                     "o endereço publicado bate, mas o ponto do POI está a "
-                     "%d m da ligação (teto de %d m)"
-                     % (round(d or 0), round(rv.TETO_M)))
-                    for (lig, pid, d, fonte) in recusados]
-        # O `now()` E O `'teto_distancia'` VAO NO MOLDE, e nao numa camada de
-        # `select` por cima do `values`. A primeira versao fazia
-        # `select v.*, now(), 'teto_distancia' from (values %s) as v`, que
-        # entrega 18 valores para 16 colunas — e o `values` sem cast ainda
-        # deixaria `metros` nulo chegar como `unknown`. O molto do
-        # `execute_values` resolve os dois de uma vez.
+    # Ate 11/09/2026 o par com rua e numero batendo e ponto longe entrava
+    # descartado, com `descartado_por = 'teto_distancia'`, e alimentava a Fila
+    # de alocacao do painel. Sem teto, esses pares ou entraram agora, ou caem
+    # por outro motivo — e a linha passa a dizer QUAL, em vez de citar um teto
+    # que nao existe mais. Nada e inserido aqui: so se reescreve a linha que ja
+    # estava descartada.
+    if recusa:
         execute_values(cur, """
-            insert into radar_comercial.ligacao_poi
-                (id_base, ligacao, poi_id, mesmo_endereco, mesmo_numero,
-                 ate_20m, mesmo_telhado, telhado_comercial, metros,
-                 criterios_ok, confianca, fontes_aderentes, fontes_no_momento,
-                 fonte_poi, origem, descartado_motivo,
-                 descartado_em, descartado_por)
-            values %s
-            on conflict (id_base, ligacao, poi_id) do update set
-                metros = excluded.metros,
-                descartado_motivo = excluded.descartado_motivo,
-                descartado_por = 'teto_distancia'
-              where radar_comercial.ligacao_poi.descartado_em is not null
-        """, linhas_r, template=_MOLDE_RECUSA, page_size=1000)
+            update radar_comercial.ligacao_poi lp
+               set descartado_motivo = v.motivo,
+                   descartado_por = 'regra_vinculo'
+              from (values %s) as v(ligacao, poi_id, motivo)
+             where lp.ligacao = v.ligacao and lp.poi_id = v.poi_id::bigint
+               and lp.descartado_por = 'teto_distancia'
+        """, [(l, p, m) for (l, p), m in recusa.items()], page_size=1000)
         con.commit()
-        cur.execute("""select count(*) from radar_comercial.ligacao_poi
-                        where descartado_por = 'teto_distancia'""")
-        _log("%d pares na fila de alocação (o endereço bate, a coordenada não)"
-             % int(cur.fetchone()[0] or 0))
+    cur.execute("""
+        update radar_comercial.ligacao_poi
+           set descartado_motivo = 'o teto de distancia saiu em 11/09/2026, e o '
+                                   'par nao passa na regra nova (rua, numero, '
+                                   'bairro, ligacao SIM, Receita ativa)',
+               descartado_por = 'regra_vinculo'
+         where descartado_por = 'teto_distancia'
+           and ligacao in (select num_ligacao::text
+                             from resources_root.cadastro_corsan
+                            where """ + _sa("coalesce(cidade,'')") + " = "
+                + _sa("%s") + """)""", (a.cidade,))
+    _log("%d pares da antiga fila do teto sem motivo específico, relabelados"
+         % cur.rowcount)
+    con.commit()
 
     cur.execute("""
         update radar_comercial.pois p

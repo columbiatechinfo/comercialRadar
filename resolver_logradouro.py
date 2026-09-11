@@ -87,6 +87,8 @@ from pathlib import Path
 import psycopg2.extras
 
 import base_comum as bc
+import regra_vinculo as rv
+from bairro import FONTES_BAIRRO_FRACO, bairro_reverso, limpar_bairro
 
 BASE = Path(__file__).resolve().parent
 SKILL = BASE / "skills" / "ajuste-logradouro"
@@ -99,6 +101,7 @@ import similaridade as sim              # noqa: E402
 LIBPOSTAL = os.environ.get("LIBPOSTAL_URL", "http://127.0.0.1:7250")
 PHOTON = os.environ.get("PHOTON_URL", "http://127.0.0.1:7210")
 OSRM = os.environ.get("OSRM_URL", "http://127.0.0.1:7300")
+
 
 # 20 metros: cabem o recuo de calçada e um estacionamento pequeno; o outro lado
 # da rua, não. Ver o cabeçalho da migração 0044 para a medição que decidiu.
@@ -216,6 +219,9 @@ class Cadastro:
         self.por_colado: dict = {}
         self.grade: dict = defaultdict(list)
         self.enderecos = 0
+        # OS BAIRROS QUE O IBGE CONHECE NA CIDADE — o vocabulario contra o qual
+        # o bairro publicado e conferido. Sai da mesma leitura, sem custo a mais.
+        self.bairros: set = set()
 
     def carregar(self, cur) -> float:
         t0 = time.time()
@@ -234,6 +240,8 @@ class Cadastro:
         """, (self.cod,))
         for cep, via, bairro, num, quadra, face, lat, lon in cur:
             self.enderecos += 1
+            if bairro and rv.bairro_util(bairro):
+                self.bairros.add(str(bairro).upper())
             if cep:
                 self.por_cep[cep][via] += 1
             k = norm(via)
@@ -400,6 +408,48 @@ def _por_cnefe(cadastro: Cadastro, lat, lng):
             "motivo": "endereco cadastrado a %.1f m" % dist}
 
 
+# ---------------------------------------------------------------- bairro ----
+# O que e bairro, e o bairro da coordenada, moram em `bairro.py` — ver o
+# cabecalho de la para o motivo de nao morarem aqui.
+def escolher_bairro(poi: dict, campos: dict, achado: dict, cadastro,
+                    cidade: str) -> dict:
+    """O bairro final e de onde ele veio. A ordem e o contrato desta funcao.
+
+    1. O que a fonte PUBLICOU — na tabela dela, ou lido pelo libpostal no
+       texto do endereco (`suburb`). Ate 11/09/2026 isto era jogado fora.
+    2. Na duvida, o da COORDENADA, pelo Nominatim. Duvida e: a fonte nao
+       publicou, escreveu lixo ou o nome da cidade, publicou um bairro que o
+       IBGE nao conhece na cidade, ou e fonte de bairro fraco e diverge da
+       coordenada. Regra do dono do produto em 11/09/2026.
+    3. Por ultimo, o da peneira — o bairro do registro do CNEFE que resolveu a
+       rua, que e o que se gravava antes.
+    """
+    lat, lng = poi.get("lat"), poi.get("lng")
+    bruto = (poi.get("bairro_fonte") or campos.get("suburb")
+             or campos.get("city_district"))
+    publicado, duvida = limpar_bairro(bruto, cidade, cadastro.bairros)
+    reverso = None
+    if duvida is None and publicado and poi.get("fonte") in FONTES_BAIRRO_FRACO:
+        reverso = bairro_reverso(lat, lng, cidade)
+        if reverso and not rv.bairros_iguais(publicado, reverso):
+            duvida = ("%s publica %s e a coordenada cai em %s"
+                      % (poi.get("fonte"), publicado, reverso))
+    elif duvida is not None:
+        reverso = bairro_reverso(lat, lng, cidade)
+    if publicado and duvida is None:
+        final, fonte = publicado, "publicado"
+    elif reverso:
+        final, fonte = reverso, "reverso"
+    elif publicado:
+        final, fonte = publicado, "publicado"
+    else:
+        pb, pd = limpar_bairro(achado.get("bairro"), cidade)
+        final, fonte = (pb, "peneira") if (pb and pd is None) else (None, None)
+    return {"bairro": final, "bairro_publicado": publicado,
+            "bairro_reverso": reverso, "bairro_fonte": fonte,
+            "bairro_motivo": duvida}
+
+
 def resolver_um(poi: dict, campos: dict, cadastro: Cadastro,
                 cidade: str, uf: str) -> dict:
     """A cascata inteira para um POI. A ordem é o contrato desta função."""
@@ -421,13 +471,18 @@ def resolver_um(poi: dict, campos: dict, cadastro: Cadastro,
     if numero:
         numero = re.sub(r"^\s*(n[oº°.]?)\s*", "", str(numero), flags=re.I).strip()
 
+    b = escolher_bairro(poi, campos, achado, cadastro, cidade)
     return {
         "poi_id": poi["id"],
         "cod_municipio": cadastro.cod,
         "logradouro": achado.get("logradouro"),
         "numero": numero or None,
         "cep": achado.get("cep") or cep,
-        "bairro": achado.get("bairro"),
+        "bairro": b["bairro"],
+        "bairro_publicado": b["bairro_publicado"],
+        "bairro_reverso": b["bairro_reverso"],
+        "bairro_fonte": b["bairro_fonte"],
+        "bairro_motivo": b["bairro_motivo"],
         "num_quadra": achado.get("num_quadra"),
         "num_face": achado.get("num_face"),
         "peneira": achado["peneira"],
@@ -443,7 +498,8 @@ def resolver_um(poi: dict, campos: dict, cadastro: Cadastro,
 # -------------------------------------------------------------- a etapa -----
 COLUNAS = ("poi_id", "cod_municipio", "logradouro", "numero", "cep", "bairro",
            "num_quadra", "num_face", "peneira", "forca", "metros",
-           "logradouro_original", "cep_original", "revisao_humana", "motivo")
+           "logradouro_original", "cep_original", "revisao_humana", "motivo",
+           "bairro_publicado", "bairro_reverso", "bairro_fonte", "bairro_motivo")
 
 
 def do_municipio(cod: str, cidade: str, uf: str = "RS", area: str = "",
@@ -461,21 +517,58 @@ def do_municipio(cod: str, cidade: str, uf: str = "RS", area: str = "",
         con.close()
         return {"erro": "municipio sem CNEFE"}
 
+    # O BAIRRO QUE CADA FONTE PUBLICOU vem da tabela dela. iFood e Airbnb
+    # sempre tiveram a coluna; as bases estaduais e a Receita ganharam na
+    # migracao 0098. O `distinct on` existe porque iFood e Airbnb podem ter
+    # mais de uma linha por POI, e o upsert abaixo recusa a mesma chave duas
+    # vezes no mesmo lote.
     sql = """
-        select id, endereco, coalesce(maps_lat, lat_origem),
-               coalesce(maps_lng, lng_origem)
-          from radar_comercial.pois
-         where translate(upper(coalesce(cidade,'')),
+        select p.id, p.endereco, coalesce(p.maps_lat, p.lat_origem),
+               coalesce(p.maps_lng, p.lng_origem), lower(coalesce(p.fonte,'')),
+               coalesce(nullif(btrim(im.bairro),''), nullif(btrim(ab.bairro),''),
+                        nullif(btrim(od.bairro),''), nullif(btrim(ov.bairro),''),
+                        nullif(btrim(fq.bairro),''), nullif(btrim(rd.bairro),'')),
+               rd.poi_id is not null, coalesce(rd.situacao_cadastral,'')
+          from radar_comercial.pois p
+          left join (select distinct on (poi_id) poi_id, bairro
+                       from radar_comercial.ifood_merchant
+                      where poi_id is not null
+                      order by poi_id, visto_em desc nulls last) im on im.poi_id = p.id
+          left join (select distinct on (poi_id) poi_id, bairro
+                       from radar_comercial.airbnb_anuncio
+                      where poi_id is not null
+                      order by poi_id, visto_em desc nulls last) ab on ab.poi_id = p.id
+          left join radar_comercial.osm_data od on od.poi_id = p.id
+          left join radar_comercial.overture_data ov on ov.poi_id = p.id
+          left join radar_comercial.foursquare_data fq on fq.poi_id = p.id
+          left join radar_comercial.receita_data rd on rd.poi_id = p.id
+         where p.fundido_em is null
+           and translate(upper(coalesce(p.cidade,'')),
                          'ÁÀÂÃÉÊÍÓÔÕÚÜÇ', 'AAAAEEIOOOUUC') =
                translate(upper(%s), 'ÁÀÂÃÉÊÍÓÔÕÚÜÇ', 'AAAAEEIOOOUUC')
     """
     if limite:
         sql += " limit %d" % int(limite)
     cur.execute(sql, (cidade,))
-    pois = [{"id": r[0], "endereco": r[1] or "",
-             "lat": float(r[2]) if r[2] is not None else None,
-             "lng": float(r[3]) if r[3] is not None else None}
-            for r in cur.fetchall()]
+    pois, fora_receita = [], Counter()
+    for r in cur.fetchall():
+        # DA RECEITA, SO O ATIVO E CONSULTADO. Regra do dono do produto em
+        # 11/09/2026. Situacao 02 e ATIVA na tabela da Receita; sem linha em
+        # `receita_data` nao ha como saber, e o POI fica de fora ate haver.
+        if r[4] == "receita":
+            if not r[6]:
+                fora_receita["sem situacao em receita_data"] += 1
+                continue
+            if (r[7] or "").lstrip("0") != "2":
+                fora_receita["situacao %s" % (r[7] or "?")] += 1
+                continue
+        pois.append({"id": r[0], "endereco": r[1] or "",
+                     "lat": float(r[2]) if r[2] is not None else None,
+                     "lng": float(r[3]) if r[3] is not None else None,
+                     "fonte": r[4], "bairro_fonte": r[5]})
+    if fora_receita:
+        _log("   Receita fora por nao estar ativa: %s"
+             % ", ".join("%s %d" % kv for kv in fora_receita.most_common()))
 
     # A área desenhada é FOCO, não filtro de gravação: quem está fora do
     # polígono continua no banco, só não gasta as peneiras que custam rede.
@@ -521,6 +614,18 @@ def do_municipio(cod: str, cidade: str, uf: str = "RS", area: str = "",
     for (peneira, forca), n in sorted(placar.items(), key=lambda x: -x[1]):
         _log("      %-10s %-8s %6d (%4.1f%%)"
              % (peneira, forca, n, 100.0 * n / len(linhas)))
+    bplacar = Counter(l["bairro_fonte"] or "sem bairro" for l in linhas)
+    _log("   bairro: " + " · ".join("%s %d" % kv for kv in bplacar.most_common()))
+    def _familia(m):
+        if " publica " in m:
+            return m.split(" publica ")[0] + " diverge da coordenada"
+        if m.startswith("a fonte escreveu") and "cidade" not in m:
+            return "a fonte escreveu lixo no lugar do bairro"
+        return m
+    duvidas = Counter(_familia(l["bairro_motivo"]) for l in linhas
+                      if l["bairro_motivo"])
+    for motivo, n in duvidas.most_common(8):
+        _log("      duvida: %-60s %6d" % (motivo[:60], n))
     prova = sum(1 for l in linhas if l["forca"] == "prova")
     indicio = sum(1 for l in linhas if l["forca"] == "indicio")
     humano = sum(1 for l in linhas if l["revisao_humana"])
@@ -539,7 +644,8 @@ def do_municipio(cod: str, cidade: str, uf: str = "RS", area: str = "",
         insert into radar_comercial.logradouro_resolvido
             (poi_id, cod_municipio, logradouro, numero, cep, bairro,
              num_quadra, num_face, peneira, forca, metros,
-             logradouro_original, cep_original, revisao_humana, motivo)
+             logradouro_original, cep_original, revisao_humana, motivo,
+             bairro_publicado, bairro_reverso, bairro_fonte, bairro_motivo)
         values %s
         -- `id_empresa` NÃO vai no INSERT: quem carimba é a trigger
         -- `preencher_empresa`. Mandar aqui abriria caminho para gravar na
@@ -559,6 +665,10 @@ def do_municipio(cod: str, cidade: str, uf: str = "RS", area: str = "",
             cep_original = excluded.cep_original,
             revisao_humana = excluded.revisao_humana,
             motivo = excluded.motivo,
+            bairro_publicado = excluded.bairro_publicado,
+            bairro_reverso = excluded.bairro_reverso,
+            bairro_fonte = excluded.bairro_fonte,
+            bairro_motivo = excluded.bairro_motivo,
             resolvido_em = now()
     """, valores, page_size=1000)
     con.commit()
