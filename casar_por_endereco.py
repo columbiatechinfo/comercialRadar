@@ -37,6 +37,10 @@ import base_comum as bc
 import regra_vinculo as rv
 import bairro as bz
 from cruzar_ligacao import _via
+# A GRAFIA NAO SEPARA A RUA (dono do produto, 12/09/2026): a Corsan escreve
+# 'VINTE E DOIS DE OUTUBRO', o iFood e o Google '22 de Outubro'. A chave vem
+# depois da normalizacao da skill e so junta variantes do mesmo nome.
+import via_chave as vc
 
 
 #: CIDADE COMPARADA SEM ACENTO, DOS DOIS LADOS.
@@ -130,7 +134,7 @@ def main(argv=None):
         if not v or not n:
             continue
         n_lig += 1
-        porta[(v, n)].append((lig, la, lo, _cep(cep), bai, bool(apta)))
+        porta[(vc.chave(v), n)].append((lig, la, lo, _cep(cep), bai, bool(apta)))
     _log("   %d ligações com rua e número · %d endereços distintos"
          % (n_lig, len(porta)))
 
@@ -177,7 +181,7 @@ def main(argv=None):
         if not v or not n:
             placar["sem rua ou numero utilizavel"] += 1
             continue
-        alvos = porta.get((v, n))
+        alvos = porta.get((vc.chave(v), n))
         if not alvos:
             placar["nenhuma ligacao neste endereco"] += 1
             continue
