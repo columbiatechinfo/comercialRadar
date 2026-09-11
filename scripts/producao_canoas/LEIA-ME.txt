@@ -1,0 +1,2 @@
+Scripts da producao de Canoas (11/09/2026). Rodam de ~/producao_canoas no i9 e no notebook.
+Ver docs/RETOMAR-11-09-2026.md, secao Producao de Canoas.
