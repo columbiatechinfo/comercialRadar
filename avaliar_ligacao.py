@@ -522,7 +522,8 @@ SEM_VEREDITO = """
 
 def fila(con, limite, refazer, ligacoes=None, sem_catalogo=False,
          desatualizados=False, fonte=None, exceto_fonte=None,
-         exigir_busca=False, fotos_desde=None, fatia=None, vinculo_novo=False):
+         exigir_busca=False, fotos_desde=None, fatia=None, vinculo_novo=False,
+         cidade=None):
     if ligacoes:
         return [str(x) for x in ligacoes]
     cur = con.cursor()
@@ -562,6 +563,20 @@ def fila(con, limite, refazer, ligacoes=None, sem_catalogo=False,
         saida += novas
         _log("   %d ligação(ões) ganharam POI depois do veredito e voltam à fila"
              % len(novas))
+    if cidade:
+        # A CIDADE PELO NOME, sem acento, como o casamento por endereco faz.
+        import unicodedata
+
+        def _sa(t):
+            return unicodedata.normalize("NFKD", t or "").encode("ascii", "ignore").decode().lower().strip()
+        cur.execute("""select num_ligacao::text, cidade from resources_root.cadastro_corsan
+                        where qualificacao is not null""")
+        quero = _sa(cidade)
+        da_cidade = {r[0] for r in cur.fetchall() if _sa(r[1]) == quero}
+        antes = len(saida)
+        saida = [l for l in saida if str(l) in da_cidade]
+        _log("   %d ligação(ões) de %s · %d de outras cidades ficaram de fora"
+             % (len(saida), cidade, antes - len(saida)))
 
     if fonte or exceto_fonte:
         # O RECORTE POR FONTE, tambem em memoria e pelo mesmo motivo dos
@@ -1146,13 +1161,14 @@ def uma(poco, ligacao, modelo, secoes, placar, trava, aplicar):
 def rodar(limite, aplicar, trabalhadores, modelo, ligacoes, refazer,
           sem_catalogo=False, desatualizados=False, fonte=None,
           exceto_fonte=None, exigir_busca=False, fotos_desde=None, fatia=None,
-          vinculo_novo=False):
+          vinculo_novo=False, cidade=None):
     con = bc.conectar()
     alvos = fila(con, limite, refazer, ligacoes,
                  sem_catalogo=sem_catalogo,
                  desatualizados=desatualizados, fonte=fonte,
                  exceto_fonte=exceto_fonte, exigir_busca=exigir_busca,
-                 fotos_desde=fotos_desde, fatia=fatia, vinculo_novo=vinculo_novo)
+                 fotos_desde=fotos_desde, fatia=fatia, vinculo_novo=vinculo_novo,
+                 cidade=cidade)
     _log("▶ veredito por LIGACAO — o dossiê de todas as fontes numa chamada")
     _log("   %d ligação(ões) na fila" % len(alvos))
     if not alvos:
@@ -1261,6 +1277,7 @@ def main(argv=None):
     p.add_argument("--fatia", default="", help="k/n: so as ligacoes com crc32 %% n == k")
     p.add_argument("--vinculo-novo", dest="vinculo_novo", action="store_true",
                    help="tambem as ligacoes que ganharam POI depois do veredito")
+    p.add_argument("--cidade", default=None, help="so as ligacoes desta cidade")
     p.add_argument("--aplicar", action="store_true")
     a = p.parse_args(argv)
     r = rodar(a.limite, a.aplicar, a.trabalhadores, a.modelo, a.ligacao,
@@ -1269,7 +1286,7 @@ def main(argv=None):
               exceto_fonte=a.exceto_fonte, exigir_busca=a.exigir_busca,
               fotos_desde=a.fotos_desde,
               fatia=tuple(int(x) for x in a.fatia.split("/")) if a.fatia else None,
-              vinculo_novo=a.vinculo_novo)
+              vinculo_novo=a.vinculo_novo, cidade=a.cidade)
     return 1 if r.get("erro") else 0
 
 
