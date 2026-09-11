@@ -179,7 +179,7 @@ def uma(poco, ligacao, modelo, placar, trava, aplicar):
     teto = min(3000, 900 + 25 * len(ids))
     try:
         r = di._chat_local(modelo, PROMPT + dados, [base64.b64encode(b).decode() for b in fotos],
-                           max_tokens=teto, timeout=al.TIMEOUT)
+                           max_tokens=teto, timeout=max(al.TIMEOUT, min(3600, 40 * len(ids))))
     except Exception as e:                                     # noqa: BLE001
         with trava:
             placar["falha"] += 1
@@ -236,11 +236,24 @@ def feitas_na_rodada(placar):
     return sum(placar[v] for v in VEREDITOS) > 0
 
 
-def rodar(limite, aplicar, trabalhadores, modelo, ligacoes, cidade, exigir_busca, vinculo_novo):
+def rodar(limite, aplicar, trabalhadores, modelo, ligacoes, cidade, exigir_busca, vinculo_novo,
+          adiar_grandes=0, so_grandes=0):
     al.PULAR_SEM_IMAGEM = bool(exigir_busca)
     con = bc.conectar()
-    alvos = al.fila(con, limite, False, ligacoes, sem_catalogo=True, exigir_busca=exigir_busca,
-                    vinculo_novo=vinculo_novo, cidade=cidade, adiar_grandes=0)
+    alvos = al.fila(con, 0 if so_grandes else limite, False, ligacoes, sem_catalogo=True,
+                    exigir_busca=exigir_busca, vinculo_novo=vinculo_novo, cidade=cidade,
+                    adiar_grandes=adiar_grandes)
+    if so_grandes:
+        # O LACO DOS PREDIOS: so as ligacoes com mais de `so_grandes` POIs.
+        cur = con.cursor()
+        cur.execute("""select lp.ligacao, count(*) from radar_comercial.ligacao_poi lp
+                         join radar_comercial.pois p on p.id = lp.poi_id
+                        where lp.ligacao = any(%s) and lp.descartado_em is null and p.fundido_em is null
+                        group by 1 having count(*) > %s""", ([str(x) for x in alvos], so_grandes))
+        grandes_ = {str(r[0]) for r in cur.fetchall()}
+        alvos = [x for x in alvos if str(x) in grandes_]
+        if limite:
+            alvos = alvos[:limite]
     con.close()
     al._log("▶ avaliação ENXUTA — até 5 fotos, a página da busca em texto, prompt curto")
     al._log("   %d ligação(ões) na fila" % len(alvos))
@@ -317,13 +330,18 @@ def main(argv=None):
     p.add_argument("--exigir-busca-web", dest="exigir_busca", action="store_true")
     p.add_argument("--vinculo-novo", dest="vinculo_novo", action="store_true")
     p.add_argument("--saida", default=None, help="pasta para gravar cada julgamento e as fotos")
+    p.add_argument("--adiar-grandes", dest="adiar_grandes", type=int, default=0,
+                   help="a fila tira as ligacoes com mais de N POIs (elas vao para o laco dos predios)")
+    p.add_argument("--so-grandes", dest="so_grandes", type=int, default=0,
+                   help="o laco dos predios: so as ligacoes com mais de N POIs")
     p.add_argument("--aplicar", action="store_true")
     a = p.parse_args(argv)
     global SAIDA
     if a.saida:
         os.makedirs(a.saida, exist_ok=True)
         SAIDA = a.saida
-    r = rodar(a.limite, a.aplicar, a.trabalhadores, a.modelo, a.ligacao, a.cidade, a.exigir_busca, a.vinculo_novo)
+    r = rodar(a.limite, a.aplicar, a.trabalhadores, a.modelo, a.ligacao, a.cidade, a.exigir_busca, a.vinculo_novo,
+              a.adiar_grandes, a.so_grandes)
     return 1 if r.get("erro") else 0
 
 
