@@ -50,6 +50,7 @@ MODELO = os.environ.get("SPARK_MODELO") or os.environ.get("MODELO_VISAO") or "ia
 MEI = re.compile(r"(^\s*\d[\d.\-/]{7,}|\d[\d.\-/]{7,}\s*$)")
 MOTORES = {
     "google": "https://www.google.com/search?q=%s&hl=pt-BR&gl=br&num=10",
+    "google_maps": "https://www.google.com/maps/search/%s?hl=pt-BR&gl=br",
     "bing": "https://www.bing.com/search?q=%s&setlang=pt-BR&cc=BR",
 }
 #: Quantas vezes a mesma consulta tenta, cada vez por um IP, antes de passar ao
@@ -66,7 +67,9 @@ TENTATIVAS_GOOGLE = 1
 LER_COM_IA = False
 #: SO O GOOGLE desde 12/09/2026: o Bing devolvia pagina generica para 99,8% das
 #: buscas. O codigo do Bing fica em `MOTORES` para quem quiser testar de novo.
-MOTORES_EM_USO = ("google",)
+MOTORES_EM_USO = ("google_maps",)
+#: O GOOGLE DE QUE SE FALA: a pagina de busca e o Maps. Os dois tem castigo de IP.
+GOOGLES = ("google", "google_maps")
 #: Largura da pagina que vai para o modelo: densidade normal (decisao de 11/09).
 LARGURA = 1366
 ALVO = ("SIM", "SIM_COM_ANALISE_HUMANA")
@@ -145,10 +148,29 @@ JS_TEXTO_GOOGLE = r"""() => {
 #: Google responde, e a `--sonda` testa uma busca so antes de abrir os navegadores.
 DISJUNTOR_JANELA = 30
 DISJUNTOR_BLOQUEADAS = 27
-RITMO_INICIAL = 20.0
-RITMO_MAX = 60.0
+RITMO_INICIAL = 40.0
+RITMO_MAX = 90.0
 RITMO_MIN = 4.0
 CONSULTA_SONDA = "Rua Albani 114 Canoas RS empresa"
+
+#: O TEXTO DO PAINEL DO GOOGLE MAPS: a lista de lugares (`feed`) quando a busca
+#: acha varios, a ficha (`main`) quando acha um so. O resto da pagina e mapa e
+#: menu. Desde 12/09/2026 a busca e pelo Maps: a pagina de busca bloqueia.
+JS_TEXTO_MAPS = r"""() => {
+  const t = (e) => e ? (e.innerText || '').trim() : '';
+  const feed = document.querySelector('div[role="feed"]');
+  const mains = Array.from(document.querySelectorAll('div[role="main"]')).map(t).filter(Boolean);
+  let s;
+  if (feed) s = 'LUGARES NO GOOGLE MAPS PARA ESTA BUSCA:\n' + t(feed);
+  else if (mains.length) s = 'FICHA DO LUGAR NO GOOGLE MAPS:\n' + mains.join('\n\n');
+  else s = 'PAGINA DO GOOGLE MAPS:\n' + t(document.body);
+  return s.replace(/[ \t]+/g, ' ').replace(/\n\s*\n\s*\n+/g, '\n\n').trim().slice(0, 120000);
+}"""
+JS_POR_MOTOR = {"google": "JS_TEXTO_GOOGLE", "google_maps": "JS_TEXTO_MAPS"}
+
+
+def _js_texto(motor):
+    return globals().get(JS_POR_MOTOR.get(motor, ""), None) or bn.JS_TEXTO
 
 
 class Ritmo:
@@ -194,7 +216,7 @@ class Ritmo:
 def sonda():
     """Uma busca so, por um IP do rodizio: 0 se o Google respondeu, 3 se bloqueou."""
     px = bn.rodizio(quantos=500, pais="", embaralhar=True)()
-    ok, bloq, texto, url, erro, jpeg = capturar(CONSULTA_SONDA, "google", px)
+    ok, bloq, texto, url, erro, jpeg = capturar(CONSULTA_SONDA, MOTORES_EM_USO[0], px)
     _log("   sonda: %s · %s" % ("BLOQUEADA" if bloq else ("ok" if ok and jpeg else "falhou"),
                                 (erro or url or "")[:90]))
     return 0 if ok and jpeg and not bloq else 3
@@ -410,6 +432,12 @@ def capturar(consulta, motor, proxy):
             if "verificando sua solicita" not in corpo.lower() and "checking your request" not in corpo.lower():
                 break
             page.wait_for_timeout(1000)
+        if motor == "google_maps":
+            try:
+                page.wait_for_selector('div[role="feed"], div[role="main"]', timeout=15000)
+            except Exception:                                  # noqa: BLE001
+                pass
+            page.wait_for_timeout(2500)
         page.wait_for_timeout(1500)
         corpo = (page.evaluate("() => document.body ? document.body.innerText : ''") or "")
         caixa["url"] = page.url
@@ -419,8 +447,8 @@ def capturar(consulta, motor, proxy):
                               or "verificando sua solicita" in baixo
                               or "checking your request" in baixo)
         page.set_viewport_size({"width": LARGURA, "height": 900})
-        caixa["img"] = page.screenshot(full_page=True, type="jpeg", quality=82)
-        caixa["texto"] = page.evaluate(JS_TEXTO_GOOGLE if motor == "google" else bn.JS_TEXTO) or ""
+        caixa["img"] = page.screenshot(full_page=(motor != "google_maps"), type="jpeg", quality=82)
+        caixa["texto"] = page.evaluate(_js_texto(motor)) or ""
 
     try:
         with StealthySession(headless=True, proxy=proxy, locale="pt-BR",
@@ -434,7 +462,7 @@ def capturar(consulta, motor, proxy):
             caixa.get("url", ""), "", caixa.get("img"))
 
 
-def capturar_humano(consulta, proxy):
+def capturar_humano(consulta, proxy, motor="google"):
     """(ok, bloqueado, texto, url_final, erro, jpeg) pela sessao humanizada.
 
     A MESMA SESSAO QUE COLHE O GOOGLE MAPS (`human_browser.HumanSession`,
@@ -456,7 +484,13 @@ def capturar_humano(consulta, proxy):
         try:
             async with async_playwright() as pw:
                 sess = await HumanSession.create(pw, proxy, perfil, layer="maps", headless=True)
-                await sess.humanized_goto(MOTORES["google"] % urllib.parse.quote(consulta), timeout=45000)
+                await sess.humanized_goto(MOTORES[motor] % urllib.parse.quote(consulta), timeout=45000)
+                if motor == "google_maps":
+                    try:
+                        await sess.page.wait_for_selector('div[role="feed"], div[role="main"]', timeout=15000)
+                    except Exception:                          # noqa: BLE001
+                        pass
+                    await sess.page.wait_for_timeout(2500)
                 corpo = ""
                 for _ in range(25):
                     corpo = (await sess.page.evaluate("() => document.body ? document.body.innerText : ''")) or ""
@@ -468,8 +502,8 @@ def capturar_humano(consulta, proxy):
                 bloq = (await sess.is_captcha() or "tráfego incomum" in baixo or "unusual traffic" in baixo
                         or "verificando sua solicita" in baixo or "checking your request" in baixo)
                 await sess.page.set_viewport_size({"width": LARGURA, "height": 900})
-                img = await sess.page.screenshot(full_page=True, type="jpeg", quality=82)
-                texto = (await sess.page.evaluate(JS_TEXTO_GOOGLE)) or ""
+                img = await sess.page.screenshot(full_page=(motor != "google_maps"), type="jpeg", quality=82)
+                texto = (await sess.page.evaluate(_js_texto(motor))) or ""
                 url = sess.page.url
                 await sess.close()
                 sess = None
@@ -599,7 +633,7 @@ def rodar(itens, trabalhadores, aplicar):
 
     def ip_para(motor):
         """O proximo IP; para o Google, pula o que esta de castigo."""
-        if motor != "google":
+        if motor not in GOOGLES:
             return proximo()
         agora = time.time()
         px = proximo()
@@ -614,7 +648,7 @@ def rodar(itens, trabalhadores, aplicar):
     def castigar(px):
         with trava_ip:
             castigo[px] = time.time() + CASTIGO_S
-    placar = {"ok_google": 0, "ok_bing": 0, "bloqueado": 0, "falha": 0, "falha_ia": 0}
+    placar = {"ok_google_maps": 0, "ok_google": 0, "ok_bing": 0, "bloqueado": 0, "falha": 0, "falha_ia": 0}
     trava = threading.Lock()
     feitos = [0]
     t_ini = time.time()
@@ -633,7 +667,7 @@ def rodar(itens, trabalhadores, aplicar):
         for motor in MOTORES_EM_USO:
             # UMA TENTATIVA NO GOOGLE: na noite de 11/09/2026 ele bloqueou ate
             # IP novo do pool; insistir tres vezes so queimava mais IPs.
-            for tentativa in range(1, (TENTATIVAS_GOOGLE if motor == "google" else TENTATIVAS) + 1):
+            for tentativa in range(1, (TENTATIVAS_GOOGLE if motor in GOOGLES else TENTATIVAS) + 1):
                 # PRIMEIRO O NAVEGADOR DO REPOSITORIO; se ele nao passar, a sessao
                 # humanizada do Google Maps, com outro IP descansado. Medido em
                 # 12/09/2026: o repositorio passou em 23 de 25, a sessao em 2.
@@ -642,15 +676,15 @@ def rodar(itens, trabalhadores, aplicar):
                 ok, bloq, texto, url, erro, jpeg = capturar(q, motor, px)
                 ritmo.resultado(bloq)
                 navegador = "repositorio"
-                if motor == "google" and bloq:
+                if motor in GOOGLES and bloq:
                     castigar(px)
                 if not (ok and not bloq and jpeg) and not ritmo.aberto:
                     px = ip_para(motor)
                     ritmo.esperar()
-                    ok, bloq, texto, url, erro, jpeg = capturar_humano(q, bn_proxy_dict(px))
+                    ok, bloq, texto, url, erro, jpeg = capturar_humano(q, bn_proxy_dict(px), motor)
                     ritmo.resultado(bloq)
                     navegador = "sessao_humana"
-                    if motor == "google" and bloq:
+                    if motor in GOOGLES and bloq:
                         castigar(px)
                 if ok and not bloq:
                     break
@@ -692,9 +726,9 @@ def rodar(itens, trabalhadores, aplicar):
             feitos[0] += 1
             n = feitos[0]
         if n % 20 == 0 or n == len(trabalhos):
-            ritmo = n / max(1e-6, (time.time() - t_ini) / 60.0)
+            vel = n / max(1e-6, (time.time() - t_ini) / 60.0)
             _log("   [%d/%d] %.1f consultas/min · falta ~%.0f min · %s"
-                 % (n, len(trabalhos), ritmo, (len(trabalhos) - n) / max(ritmo, 1e-6), placar))
+                 % (n, len(trabalhos), vel, (len(trabalhos) - n) / max(vel, 1e-6), placar))
 
     with cf.ThreadPoolExecutor(trabalhadores) as ex:
         list(ex.map(um, trabalhos))

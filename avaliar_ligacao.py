@@ -575,7 +575,7 @@ def fila(con, limite, refazer, ligacoes=None, sem_catalogo=False,
         cur.execute("""select b.ligacao
                          from radar_comercial.busca_web b
                          join radar_comercial.ligacao_veredito v on v.ligacao = b.ligacao
-                        where b.tipo = 'endereco' and b.motor = 'google'
+                        where b.tipo = 'endereco' and b.motor in ('google', 'google_maps')
                           and (b.ia is not null or b.texto is not null)
                           and b.feito_em > v.avaliado_em and v.veredito = 'reprovado'
                         group by b.ligacao""")

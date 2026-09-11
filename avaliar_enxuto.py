@@ -88,7 +88,7 @@ def _texto_da_busca(cur, ligacao):
     """(consulta, texto) da busca pelo endereco: o texto do navegador; na pagina
     antiga, que so tem a leitura da IA, a lista do que ela achou."""
     cur.execute("""select consulta, texto, ia from radar_comercial.busca_web
-                    where ligacao = %s and tipo = 'endereco' and motor = 'google' and not bloqueado
+                    where ligacao = %s and tipo = 'endereco' and motor in ('google', 'google_maps') and not bloqueado
                       and (texto is not null or ia is not null)
                     order by (texto is not null) desc, feito_em desc limit 1""", (str(ligacao),))
     r = cur.fetchone()
