@@ -122,7 +122,39 @@ PERTO_M = 10.0
 #: repete em bairros diferentes (Canoas tem varias "Rua Sao Jose"), e ha POI
 #: com coordenada errada que casa por texto. Em ambos os casos o par so
 #: existe porque a comparacao e de STRING, e string nao sabe onde fica.
-TETO_M = 50.0
+TETO_M = 200.0
+
+#: O TETO SUBIU DE 50 PARA 200 M EM 10/09/2026, e o bairro entrou junto.
+#:
+#: O QUE MOSTROU QUE 50 ERA APERTADO: os 102 POIs do iFood que publicam o
+#: endereco EXATO de uma ligacao de Canoas — rua e numero iguais, letra por
+#: letra — e ficavam de fora. 48 deles entre 51 e 100 m, 23 entre 100 e 200.
+#: O caso classico e o Canoas Shopping: onze lojas da praca de alimentacao na
+#: Guilherme Schell 6750, todas a 82-100 m do hidrometro, porque o pino do
+#: iFood marca a ENTRADA do shopping e nao a loja.
+#:
+#: Nao e so do iFood: a mesma coisa acontece com o pino do Maps num predio
+#: grande, com o centroide do lote na Receita e com o ponto do CNEFE na
+#: fachada errada de um terreno de esquina. Por isso a regra vale para TODAS
+#: as fontes — decisao do dono do produto no mesmo dia.
+#:
+#: O BAIRRO E O QUE PERMITE AFROUXAR SEM ABRIR A PORTA. A 200 m cabe a quadra
+#: inteira e as vizinhas, e "Rua Sao Jose, 150" existe em varios bairros da
+#: mesma cidade. Com rua + numero + cidade + BAIRRO batendo, o par so
+#: sobrevive se as quatro coisas concordarem — e o bairro esta preenchido em
+#: 100% das ligacoes de Canoas.
+#:
+#: QUANDO NAO HA BAIRRO dos dois lados, o teto continua valendo sozinho: e o
+#: caso da fonte que nao publica bairro, e exigir o que ela nao tem seria
+#: exclui-la inteira.
+
+
+def _bairro_bate(c):
+    """Bairro da ligacao e do POI concordam — ou um dos dois nao existe?"""
+    a, b = c.get("bairro_lig"), c.get("bairro_poi")
+    if not a or not b:
+        return True
+    return set(normalizar(a)) & set(normalizar(b)) != set()
 
 #: Quanto os tokens em comum precisam somar para dois nomes serem o mesmo
 #: negócio. Ver a calibração no cabeçalho: o pior par certo deu 10,06 e o
@@ -405,7 +437,14 @@ def _dentro_do_teto(c):
     depois — la a distancia vale ponto, e sem numero ela vale zero.
     """
     m = c.get("metros")
-    return m is None or m <= TETO_M
+    if m is not None and m > TETO_M:
+        return False
+    # ACIMA DE 50 M O BAIRRO PASSA A SER EXIGIDO. Ate 50 m o par esta na
+    # mesma quadra e o bairro nao acrescenta; entre 50 e 200 ele e o que
+    # separa a "Rua Sao Jose, 150" de um bairro da do outro.
+    if m is not None and m > 50.0:
+        return _bairro_bate(c)
+    return True
 
 
 def aceitar(candidatos):

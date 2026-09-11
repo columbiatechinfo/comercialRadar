@@ -28,6 +28,7 @@ SQL = """
 select lp.ligacao, lp.poi_id, lp.mesmo_endereco, lp.mesmo_numero,
        lp.mesmo_telhado, lp.metros, coalesce(p.nome,''),
        coalesce(lr.numero,''), coalesce(c.nro,''),
+       coalesce(c.nom_bairro,''), coalesce(lr.bairro,''),
        coalesce(lr.forca,'') = 'prova' as num_e_prova,
        -- A FONTE DECIDE SE A REGRA ESTRITA VALE. O Airbnb nao publica numero
        -- de porta — e do desenho da plataforma —, e exigi-lo dele excluiria a
@@ -108,11 +109,12 @@ def main(argv=None):
 
     por_lig = defaultdict(list)
     for (lig, poi, m_end, m_num, m_tel, metros, nome, n_poi, n_lig,
-         prova, fonte) in cur:
+         b_lig, b_poi, prova, fonte) in cur:
         por_lig[lig].append({
             "poi": poi, "fonte": fonte,
             "mesma_rua": bool(m_end), "mesmo_numero": bool(m_num),
             "mesmo_telhado": bool(m_tel), "metros": metros, "nome": nome,
+            "bairro_lig": b_lig, "bairro_poi": b_poi,
             "contradiz": rv.contradiz_numero(n_poi, n_lig, prova)})
     _log("%d ligações · %d vínculos"
          % (len(por_lig), sum(len(v) for v in por_lig.values())))

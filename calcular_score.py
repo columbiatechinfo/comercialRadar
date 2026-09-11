@@ -103,7 +103,32 @@ NAO = "NAO"
 FONTES_CONCLUSIVAS = ("maps", "ifood")
 
 
-def status_oficial(veredito, tem_telhado, tem_conclusiva):
+#: O NOME QUE E, NA VERDADE, UM DOCUMENTO.
+#:
+#: A Receita registra o MEI e o empresario individual pelo nome da PESSOA, com
+#: o CNPJ na frente ou o CPF atras: "12.345.678 FULANO DE TAL", "FULANA DE TAL
+#: 98765432100". Medido em 10/09/2026: 9.591 das 21.727 ligacoes candidatas de
+#: Canoas — 44,1% — se apoiam SO em registros assim.
+#:
+#: ISSO NAO E COMERCIO NA PORTA, e tambem nao e nada. E um CNPJ registrado
+#: naquele endereco: pode ser a costureira que atende em casa, o caminhoneiro
+#: que so tem o carro, ou a loja de verdade que nunca trocou a razao social.
+#: A diferenca entre os tres nao esta em nenhum dado que temos.
+#:
+#: Decisao do dono do produto: quando a ligacao esta marcada SIM na tabela
+#: cadastral e o que a sustenta e so isso, ela vira SIM_COM_ANALISE_HUMANA —
+#: continua alvo, mas alguem olha antes de alguem ir.
+import re as _re
+
+_DOCUMENTO_NO_NOME = _re.compile(r"(^\s*\d[\d.\-/]{7,}|\d[\d.\-/]{7,}\s*$)")
+
+
+def parece_mei(nome):
+    """O nome do POI carrega o documento colado, do jeito da Receita?"""
+    return bool(_DOCUMENTO_NO_NOME.search(str(nome or "")))
+
+
+def status_oficial(veredito, tem_telhado, tem_conclusiva, so_mei=False):
     """`(status, motivo)` — a flag que o cliente filtra na aba inicial.
 
     O SISTEMA NAO DECIDE, ele sinaliza. Regra do dono do produto em 09/09/2026:
@@ -130,6 +155,10 @@ def status_oficial(veredito, tem_telhado, tem_conclusiva):
     """
     if (veredito or "").startswith("reprovado"):
         return (NAO, "a IA nao viu comercio nas fontes nem na fachada")
+    if so_mei:
+        return (SIM_HUMANO,
+                "toda a evidencia e CNPJ de pessoa fisica registrado no "
+                "endereco: pode ser comercio, pode ser so o registro")
     if not tem_conclusiva and not tem_telhado:
         return (SIM_HUMANO,
                 "so cadastro (Receita, Estadual, IBGE) e nenhum vinculo no "
@@ -223,7 +252,8 @@ def main(argv=None):
                -- ALGUMA FONTE PROVA QUE ALGUEM ESTEVE LA? Isso, com
                -- `bool_or(lp.mesmo_telhado)` acima, separa o SIM do
                -- SIM_COM_ANALISE_HUMANA. Ver `status_oficial`.
-               bool_or(lower(coalesce(p.fonte,'')) in %(conclusivas)s)
+               bool_or(lower(coalesce(p.fonte,'')) in %(conclusivas)s),
+               bool_and(coalesce(p.nome,'') ~ '(^[[:space:]]*[0-9][0-9.\-/]{7,}|[0-9][0-9.\-/]{7,}[[:space:]]*$)')
           from radar_comercial.ligacao_veredito v
           join radar_comercial.ligacao_poi lp
             on lp.ligacao = v.ligacao and lp.descartado_em is null
@@ -277,13 +307,14 @@ def main(argv=None):
     _log("   %d ligação(ões) com post datado" % len(post_por_lig))
 
     linhas, faixas, por_status = [], {}, {}
-    for (lig, pres, fotos, ano, metros, tel, telc, pois, ver, viva) in base:
+    for (lig, pres, fotos, ano, metros, tel, telc, pois, ver, viva,
+         so_mei) in base:
         p, f, d, n = pontuar((lig, pres, fotos, ano, metros, tel, telc, pois,
                               dias_por_lig.get(lig), post_por_lig.get(lig)))
         total = sum(p.values())
         faixa = (total // 10) * 10
         faixas[faixa] = faixas.get(faixa, 0) + 1
-        st = status_oficial(ver, tel, viva)
+        st = status_oficial(ver, tel, viva, bool(so_mei))
         por_status[st[0]] = por_status.get(st[0], 0) + 1
         linhas.append((empresa, lig, p["p_distancia"], p["p_telhado"],
                        p["p_streetview"], p["p_avaliacoes"], p["p_fotos"],

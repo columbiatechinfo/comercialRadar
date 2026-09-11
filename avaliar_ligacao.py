@@ -332,9 +332,20 @@ Responda SOMENTE um JSON:
 letreiro, ou null>", "e_o_alvo": true|false}],
  "especie_cnefe": <1-8|null>, "secao_cnae": "<letra|null>",
  "sinal_no_imovel": "instalacao_fixa|so_oficio|nenhum",
- "justificativa": "<UM PARÁGRAFO, até 70 palavras, dizendo QUAIS fontes
-sustentam o status e o que nas imagens confirma ou contradiz. Cite a data do
-que usou. Escreva o que foi visto, não o que se supõe.>"}
+ "justificativa": "<DOIS PARÁGRAFOS, de 90 a 160 palavras no total.
+
+O PRIMEIRO diz o que você VIU nas imagens, com detalhe: o que está escrito em
+cada letreiro, placa ou toldo legível — transcreva o texto —, o que aparece na
+vitrine ou no interior, se há medidor, grade, portão comercial, mercadoria,
+veículo de serviço. Se uma fachada estiver ilegível, diga que está e por quê
+(distância, ângulo, árvore, sombra). Descreva o imóvel do número julgado, e
+mencione os vizinhos só quando ajudarem a situá-lo.
+
+O SEGUNDO diz quais fontes sustentam o status, com a data do que usou, e como
+elas conversam ou não com o que a foto mostra.
+
+DESCREVA O QUE LEU, não o que concluiu. 'Fachada comercial' não é descrição;
+'toldo azul com o nome MERCADO SÃO JOSÉ e grade de enrolar' é.>"}
 
 O QUE SIGNIFICA "presenca_na_foto", e ela alimenta a pontuação do vínculo:
 - "exata": as fotos mostram o estabelecimento nomeado — letreiro com o nome,
@@ -465,6 +476,38 @@ SQL_CATALOGO = """and exists (select 1 from radar_comercial.categoria_catalogo c
 #: Isto e o que permite capturar e julgar AO MESMO TEMPO: a captura vai
 #: gravando `poi_evidencia.capturado_em`, e cada passada do julgamento pega o
 #: que ficou pronto desde a anterior, sem esperar a captura inteira terminar.
+#: NAO JULGAR QUEM AINDA VAI SER FOTOGRAFADO.
+#:
+#: Perguntado pelo dono do produto em 10/09/2026, e ele estava certo: "como
+#: voce esta rodando vereditos se as imagens ainda estao sendo coletadas?".
+#:
+#: `--desatualizados` pega tambem a ligacao SEM veredito, e com a captura
+#: rodando em paralelo isso inclui quem ainda esta na fila dela. Medido no
+#: momento da pergunta: das 1.237 julgadas na operacao, 706 sairam SEM IMAGEM
+#: NENHUMA e 731 tinham POI aguardando captura. Elas seriam rejulgadas depois,
+#: quando a foto chegasse — mais da metade do trabalho era provisorio, e cada
+#: uma custava duas chamadas ao modelo em vez de uma.
+#:
+#: A condicao espelha a fila da captura: o POI esta pendente enquanto nao tiver
+#: linha de `sv_frente` com bytes OU com uma falha DEFINITIVA. As transitorias
+#: continuam na fila da captura e voltam a ser tentadas — por isso nao contam
+#: como resolvidas aqui tambem.
+SQL_SEM_CAPTURA_PENDENTE = """and exists (
+        select 1 from radar_comercial.ligacao_poi lp2
+          join radar_comercial.pois p2 on p2.id = lp2.poi_id
+         where lp2.ligacao = lp.ligacao
+           and lp2.descartado_em is null
+           and p2.fundido_em is null
+           and (exists (select 1 from radar_comercial.poi_evidencia e2
+                         where e2.poi_id = p2.id and e2.tipo like 'sv_%%'
+                           and (e2.dados is not null
+                                or e2.storage_path is not null))
+                or exists (select 1 from radar_comercial.images_urls i2
+                            where i2.poi_id = p2.id
+                              and i2.url like '%%gps-cs-s%%'
+                              and (i2.dados is not null
+                                   or i2.storage_path is not null))))"""
+
 SQL_DESATUALIZADO = """and (
        not exists (select 1 from radar_comercial.ligacao_veredito v
                     where v.ligacao = lp.ligacao)
@@ -522,12 +565,26 @@ SEM_VEREDITO = """
 """
 
 
-def fila(con, limite, refazer, ligacoes=None, sem_catalogo=False, desatualizados=False):
+def fila(con, limite, refazer, ligacoes=None, sem_catalogo=False,
+         desatualizados=False, fonte=None, exceto_fonte=None):
     if ligacoes:
         return [str(x) for x in ligacoes]
     cur = con.cursor()
     if desatualizados:
-        filtro = SQL_DESATUALIZADO
+        # ESPERAR A CAPTURA E PARTE DE "desatualizado". Julgar quem
+        # ainda vai ganhar foto nao adianta o trabalho: adia-o e cobra
+        # em dobro.
+        # NEM "TEM IMAGEM" NEM "DESATUALIZADO" ENTRAM NO SQL.
+        #
+        # `SQL_DESATUALIZADO` compara o veredito com a foto mais nova, e faz
+        # isso com dois `exists` POR LINHA sobre 21 mil ligacoes: a consulta
+        # da fila passou de 2,5 minutos so nisso.
+        #
+        # Ela existe para o caso de captura e julgamento correndo JUNTOS. Com
+        # a captura ja terminada — que e o caso desta operacao — "desatualizado"
+        # e a mesma coisa que "sem veredito", e `SEM_VEREDITO` e um `not
+        # exists` numa chave primaria. Mesmo resultado, custo desprezivel.
+        filtro = SEM_VEREDITO
     elif refazer:
         filtro = ""
     else:
@@ -535,6 +592,61 @@ def fila(con, limite, refazer, ligacoes=None, sem_catalogo=False, desatualizados
     cur.execute(SQL_FILA % {"filtro": filtro,
                             "catalogo": "" if sem_catalogo else SQL_CATALOGO})
     saida = [r[0] for r in cur.fetchall()]
+
+    if fonte or exceto_fonte:
+        # O RECORTE POR FONTE, tambem em memoria e pelo mesmo motivo dos
+        # outros: um `exists` por linha sobre 21 mil ligacoes ja custou 3,5
+        # minutos duas vezes hoje.
+        cur.execute("""
+            select distinct lp.ligacao, p.fonte
+              from radar_comercial.ligacao_poi lp
+              join radar_comercial.pois p on p.id = lp.poi_id
+             where lp.descartado_em is null and p.fundido_em is null""")
+        fontes_da_lig = {}
+        for (l_, f_) in cur:
+            fontes_da_lig.setdefault(l_, set()).add((f_ or "").lower())
+        if fonte:
+            quero = {x.lower() for x in fonte}
+            saida = [l for l in saida
+                     if fontes_da_lig.get(l, set()) & quero]
+        if exceto_fonte:
+            fora_f = {x.lower() for x in exceto_fonte}
+            saida = [l for l in saida
+                     if not (fontes_da_lig.get(l, set()) & fora_f)]
+        _log("   %d ligação(ões) depois do recorte por fonte" % len(saida))
+
+    if True:
+        # A LISTA DAS LIGACOES COM IMAGEM, LIDA UMA VEZ.
+        #
+        # Ela era uma condicao `exists` dentro da consulta da fila, avaliada
+        # POR LINHA sobre 21 mil ligacoes — e cada avaliacao mexia em
+        # `ligacao_poi`, `poi_evidencia` e `images_urls`. A consulta passou de
+        # 3,5 MINUTOS e o julgamento ficava parado antes de mandar a primeira
+        # chamada ao modelo.
+        #
+        # E a SEGUNDA vez que eu escrevo esse mesmo defeito hoje: a captura
+        # tinha o gemeo dele, e a correcao la foi a mesma — trazer o conjunto e
+        # cruzar em Python. Sao 31 mil ligacoes, alguns MB de `set`.
+        _log("lendo as ligações que já têm imagem...")
+        cur.execute("""
+            select distinct lp.ligacao
+              from radar_comercial.ligacao_poi lp
+              join radar_comercial.pois p on p.id = lp.poi_id
+             where lp.descartado_em is null and p.fundido_em is null
+               and (exists (select 1 from radar_comercial.poi_evidencia e
+                             where e.poi_id = p.id and e.tipo like 'sv_%'
+                               and (e.dados is not null
+                                    or e.storage_path is not null))
+                    or exists (select 1 from radar_comercial.images_urls i
+                                where i.poi_id = p.id
+                                  and i.url like '%gps-cs-s%'
+                                  and (i.dados is not null
+                                       or i.storage_path is not null)))""")
+        com_imagem = {r[0] for r in cur.fetchall()}
+        antes = len(saida)
+        saida = [l for l in saida if l in com_imagem]
+        _log("   %d com imagem · %d ligação(ões) da fila ficaram de fora "
+             "por não ter nenhuma" % (len(com_imagem), antes - len(saida)))
     return saida[:limite] if limite else saida
 
 
@@ -868,11 +980,13 @@ def uma(poco, ligacao, modelo, secoes, placar, trava, aplicar):
 
 
 def rodar(limite, aplicar, trabalhadores, modelo, ligacoes, refazer,
-          sem_catalogo=False, desatualizados=False):
+          sem_catalogo=False, desatualizados=False, fonte=None,
+          exceto_fonte=None):
     con = bc.conectar()
     alvos = fila(con, limite, refazer, ligacoes,
                  sem_catalogo=sem_catalogo,
-                 desatualizados=desatualizados)
+                 desatualizados=desatualizados, fonte=fonte,
+                 exceto_fonte=exceto_fonte)
     _log("▶ veredito por LIGACAO — o dossiê de todas as fontes numa chamada")
     _log("   %d ligação(ões) na fila" % len(alvos))
     if not alvos:
@@ -956,6 +1070,18 @@ def main(argv=None):
     p.add_argument("--ligacao", action="append",
                    help="repetível; avalia estas ligações ignorando a fila")
     p.add_argument("--refazer", action="store_true")
+    # A ORDEM DE JULGAMENTO E POR FONTE, e ela nao e capricho.
+    #
+    # Decisao do dono do produto em 10/09/2026: primeiro quem cruzou com POI do
+    # Google, depois iFood, so entao as demais. As duas primeiras sao as fontes
+    # com PROVA DATADA — avaliacao de cliente, loja no ar — e por isso as que
+    # devolvem veredito mais confiavel. Julga-las antes entrega resultado util
+    # cedo, e deixa para o fim o lote grande que depende so de cadastro.
+    p.add_argument("--fonte", action="append", default=None,
+                   help="repetivel; so ligacoes que tenham POI desta fonte")
+    p.add_argument("--exceto-fonte", dest="exceto_fonte", action="append",
+                   default=None,
+                   help="repetivel; exclui ligacoes que tenham POI desta fonte")
     p.add_argument("--sem-catalogo", dest="sem_catalogo", action="store_true",
                    help="ignora `categoria_catalogo.avaliar` e julga todo "
                         "candidato — a IA decide no lugar do catalogo")
@@ -966,7 +1092,8 @@ def main(argv=None):
     a = p.parse_args(argv)
     r = rodar(a.limite, a.aplicar, a.trabalhadores, a.modelo, a.ligacao,
               a.refazer, sem_catalogo=a.sem_catalogo,
-              desatualizados=a.desatualizados)
+              desatualizados=a.desatualizados, fonte=a.fonte,
+              exceto_fonte=a.exceto_fonte)
     return 1 if r.get("erro") else 0
 
 

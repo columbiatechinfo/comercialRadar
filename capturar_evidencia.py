@@ -48,6 +48,25 @@ import streetview_geo as sv
 
 LARG, ALT = 1280, 900
 
+#: QUANTOS PIXELS POR PONTO DE TELA. Era 1 — o padrão — e por isso a visada
+#: gravada tinha 934x567 depois do corte da interface.
+#:
+#: NESSA RESOLUÇÃO A IA NÃO LÊ LETREIRO. Apontado pelo dono do produto em
+#: 10/09/2026: "não está vendo banners de empresas por conta da qualidade baixa
+#: das imagens enviadas". Ele está certo, e o número explica: a fachada de um
+#: comércio ocupa talvez 200 pixels de largura numa imagem de 934, e o nome
+#: escrito nela, uns 60. Não há o que ler ali.
+#:
+#: `device_scale_factor` é a alavanca CERTA, e não aumentar `LARG`. Um viewport
+#: maior mostra MAIS RUA no mesmo espaço — cada imóvel fica do mesmo tamanho
+#: relativo e nada melhora. A densidade mantém o enquadramento e dobra o pixel:
+#: a mesma fachada passa a ter 400 pixels de largura, e o letreiro 120.
+#:
+#: O PREÇO É REAL e vai dito: quatro vezes mais pixel significa arquivo maior,
+#: mais banda para o modelo e mais tempo por chamada. A alternativa é continuar
+#: gastando a chamada inteira numa imagem que não responde à pergunta.
+DENSIDADE = 2
+
 # O SATÉLITE TEM JANELA PRÓPRIA, e menor de propósito.
 #
 # A 1280×900 no zoom 21 a vista cobre ~120 m — o quarteirão inteiro, com o
@@ -174,7 +193,7 @@ def _data_do_pano(pano_id: str) -> str | None:
     return data
 
 
-def _para_webp(png: bytes, qualidade: int = 88) -> bytes:
+def _para_webp(png: bytes, qualidade: int = 93) -> bytes:
     """PNG -> WebP, SEM MEXER EM PIXEL.
 
     `_cortar_interface` e `_marcar_centro` trabalham com `cv2.imencode(".png")`,
@@ -326,6 +345,24 @@ SQL_ALVO = """
                 and not exists (select 1
                                   from radar_comercial.ligacao_poi lp0
                                  where lp0.poi_id = p.id)))
+       -- SO QUANDO NENHUMA FONTE TROUXE IMAGEM PARA A LIGACAO.
+       --
+       -- Regra do dono do produto em 10/09/2026: "se a mesma ligacao tem 3
+       -- fontes de POI e 1 deles ja tem as imagens de street view e alguma
+       -- outra, essa instalacao ja pode ir pra avaliacao".
+       --
+       -- A LISTA E MONTADA UMA VEZ, numa temporaria, e NAO por POI.
+       --
+       -- A primeira versao disto perguntava, para cada POI, "alguma ligacao
+       -- deste POI tem alguma outra fonte com imagem?" — uma subconsulta
+       -- aninhada sobre `ligacao_poi` dentro do laco dos 300 mil POIs. Ela
+       -- rodou 33 MINUTOS sem terminar, e eu ainda subi quatro copias dela
+       -- antes de ir olhar `pg_stat_activity`. O sintoma parecia "a captura
+       -- travou"; a causa era a consulta que monta a fila.
+       --
+       -- `radar_comercial.tmp_lig_com_imagem` e preenchida antes, num
+       -- comando so, e aqui vira um `not exists` contra chave primaria.
+
        -- QUEM JA TEM FOTO NAO VOLTA. Quem FALHOU volta, e essa distincao
        -- custou 17 POIs de 143 na primeira corrida do bloco de Canoas.
        --
@@ -413,6 +450,13 @@ def alvos(con, poligono, limite, pois=None, sem_catalogo=False,
     quem se quer refazer.
     """
     cur = con.cursor()
+    # O RAMO `--poi` NAO MONTA OS INDICES, e por isso eles nascem vazios.
+    #
+    # `com_imagem` e `ligs_do_poi` sao construidos so no ramo da fila normal.
+    # Com `--poi` o laco de filtro os usava mesmo assim e morria com
+    # `UnboundLocalError` — recapturar um POI escolhido a dedo e justamente o
+    # caso em que nao se quer filtro nenhum: quem pediu, pediu.
+    com_imagem, ligs_do_poi = set(), {}
     if pois:
         cur.execute(SQL_POR_ID, (list(pois),))
     else:
@@ -420,9 +464,50 @@ def alvos(con, poligono, limite, pois=None, sem_catalogo=False,
         if sem:
             _log("   regra `capturar_sem_ligacao` DESTRAVADA: entram também "
                  "os POIs sem ligação vinculada")
+        # A LISTA VAI PARA A MEMORIA, e nao para uma tabela.
+        #
+        # A versao anterior materializava as ligacoes com imagem numa tabela
+        # `unlogged` compartilhada. Com DUAS MAQUINAS na mesma fila isso vira
+        # estado mutavel compartilhado: o notebook chamava `truncate` enquanto
+        # o i9 ainda lia dali, ficava preso num `Lock: relation` por minutos —
+        # e, se o truncate tivesse passado, teria apagado a lista que o outro
+        # estava usando no meio da consulta.
+        #
+        # Sao 24 mil ligacoes: um `set` em Python custa poucos MB e nao tem
+        # dono, nao tem lock e nao precisa de GRANT. Mesma licao de
+        # `nao-usar-sql-caro-tem-py`: trazer os dois lados e cruzar aqui.
+        _log("   lendo as ligações que já têm imagem...")
+        cur.execute("""
+            select distinct lp.ligacao
+              from radar_comercial.ligacao_poi lp
+              join radar_comercial.pois p on p.id = lp.poi_id
+             where lp.descartado_em is null and p.fundido_em is null
+               and (exists (select 1 from radar_comercial.poi_evidencia e
+                             where e.poi_id = p.id and e.tipo like 'sv_%'
+                               and (e.dados is not null
+                                    or e.storage_path is not null))
+                    or exists (select 1 from radar_comercial.images_urls i
+                                where i.poi_id = p.id
+                                  and i.url like '%gps-cs-s%'
+                                  and (i.dados is not null
+                                       or i.storage_path is not null)))""")
+        com_imagem = {r[0] for r in cur.fetchall()}
+        _log("   %d ligação(ões) já têm imagem de alguma fonte"
+             % len(com_imagem))
+
+        # E de quais ligacoes cada POI participa, para cruzar sem ir ao banco
+        # de novo dentro do laco.
+        cur.execute("""select poi_id, ligacao
+                         from radar_comercial.ligacao_poi
+                        where descartado_em is null""")
+        ligs_do_poi = {}
+        for (pid_, lig_) in cur:
+            ligs_do_poi.setdefault(pid_, []).append(lig_)
+
         cur.execute(SQL_ALVO, {"sem_ligacao": 1 if sem else 0,
                                "sem_catalogo": 1 if sem_catalogo else 0})
     fora = 0
+    fora_com_imagem = 0
     saida = []
     # `--fatia 0,1/3` — MAIS DE UMA FATIA POR PROCESSO.
     #
@@ -443,6 +528,11 @@ def alvos(con, poligono, limite, pois=None, sem_catalogo=False,
         n_fatia = {int(x) for x in quais.split(",") if x.strip() != ""}
     for pid, la, lo, nome, fonte, cat in cur.fetchall():
         if m_fatia and (pid % m_fatia) not in n_fatia:
+            continue
+        # ALGUMA LIGACAO DESTE POI JA TEM IMAGEM DE OUTRA FONTE? Entao ele nao
+        # precisa ser fotografado: a instalacao ja tem o que a IA ver.
+        if any(l in com_imagem for l in ligs_do_poi.get(pid, ())):
+            fora_com_imagem += 1
             continue
         if poligono and not area_utils.ponto_no_poligono(la, lo, poligono):
             fora += 1
@@ -779,7 +869,8 @@ async def rodar(area, limite, aplicar, trabalhadores, pois=None,
 
             async def obreiro(n):
                 ctx = await nav.new_context(
-                    viewport={"width": LARG, "height": ALT})
+                    viewport={"width": LARG, "height": ALT},
+                    device_scale_factor=DENSIDADE)
                 page = await ctx.new_page()
                 # PARTIDA ESCALONADA E ABA AQUECIDA — ver `_aquecer`.
                 await asyncio.sleep(ESCALONAR_S * n)
@@ -813,7 +904,8 @@ async def rodar(area, limite, aplicar, trabalhadores, pois=None,
                             # restante e o placar culpa POIs que estão sãos.
                             if page.is_closed():
                                 ctx = await nav.new_context(
-                                    viewport={"width": LARG, "height": ALT})
+                                    viewport={"width": LARG, "height": ALT},
+                                    device_scale_factor=DENSIDADE)
                                 page = await ctx.new_page()
                         feitos = placar["sv_frente"] + placar["sem_pano"]
                         if feitos and feitos % 5 == 0:

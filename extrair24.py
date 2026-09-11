@@ -15,7 +15,7 @@ import imagens as bi
 from PIL import Image
 
 
-def encolher(b, largura=880, q=76):
+def encolher(b, largura=620, q=70):
     """Grande o bastante para o zoom em tela cheia valer alguma coisa."""
     try:
         im = Image.open(_io.BytesIO(b)).convert("RGB")
@@ -73,6 +73,11 @@ def main():
             "fotos_validam": resp.get("fotos_do_google_validam"),
             "pois_coerentes": resp.get("pois_coerentes"),
             "pois_de_outro_endereco": resp.get("pois_de_outro_endereco"),
+            # O RETORNO INTEIRO DA IA, e nao so os campos que a tela usa.
+            # Quem audita precisa ver o que ela respondeu, inclusive o que o
+            # cartao nao mostra — `especie_cnefe`, `sinal_no_imovel`,
+            # `pois_coerentes`, o `estabelecimento` que ela nomeou.
+            "resposta_completa": resp,
             "prompt": prompt, "fotos": fotos})
         print("%2d/%d  %s  %d img  %.1f MB"
               % (n, len(ligs), lig, len(fotos), tot / 1e6), flush=True)
