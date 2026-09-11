@@ -569,6 +569,20 @@ def fila(con, limite, refazer, ligacoes=None, sem_catalogo=False,
         saida += novas
         _log("   %d ligação(ões) ganharam POI depois do veredito e voltam à fila"
              % len(novas))
+        # E A REPROVADA QUE GANHOU A BUSCA DO GOOGLE DEPOIS DO VEREDITO: julgada
+        # quando so havia a pagina generica do Bing (12/09/2026), ela volta. SO A
+        # REPROVADA (dono do produto): aprovada e revisao humana ficam.
+        cur.execute("""select b.ligacao
+                         from radar_comercial.busca_web b
+                         join radar_comercial.ligacao_veredito v on v.ligacao = b.ligacao
+                        where b.tipo = 'endereco' and b.motor = 'google' and b.ia is not null
+                          and b.feito_em > v.avaliado_em and v.veredito = 'reprovado'
+                        group by b.ligacao""")
+        ja = set(saida)
+        novas = [str(r[0]) for r in cur.fetchall() if str(r[0]) not in ja]
+        saida += novas
+        _log("   %d ligação(ões) ganharam a busca do Google depois do veredito e voltam à fila"
+             % len(novas))
     if cidade:
         # A CIDADE PELO NOME, sem acento, como o casamento por endereco faz.
         import unicodedata
@@ -1119,6 +1133,11 @@ def _teto_da_resposta(prompt, imgs, resumo):
     return max(1200, min(quero, CONTEXTO_DA_SPARK - ocupado - 256))
 
 
+#: Enquanto a busca web divide a Spark, ligacao sem imagem no dossie espera a
+#: fase final. `rodar` liga isto junto com `--exigir-busca-web`.
+PULAR_SEM_IMAGEM = False
+
+
 def uma(poco, ligacao, modelo, secoes, placar, trava, aplicar):
     t0 = time.time()
     # O BANCO SO ENQUANTO SE MONTA O DOSSIE. Depois a conexao volta ao poco e
@@ -1129,6 +1148,10 @@ def uma(poco, ligacao, modelo, secoes, placar, trava, aplicar):
     if texto is None:
         with trava:
             placar["sem_poi"] += 1
+        return
+    if PULAR_SEM_IMAGEM and not imgs:
+        with trava:
+            placar["sem_imagem_fica_para_o_fim"] = placar.get("sem_imagem_fica_para_o_fim", 0) + 1
         return
     lista = "\n".join("%d. %s" % (i + 1, t) for i, t in enumerate(tipos))
     # AS PALAVRAS DO SETOR entram aqui, e nao no texto: o mesmo prompt serve
@@ -1216,6 +1239,8 @@ def rodar(limite, aplicar, trabalhadores, modelo, ligacoes, refazer,
           sem_catalogo=False, desatualizados=False, fonte=None,
           exceto_fonte=None, exigir_busca=False, fotos_desde=None, fatia=None,
           vinculo_novo=False, cidade=None, adiar_grandes=0):
+    global PULAR_SEM_IMAGEM
+    PULAR_SEM_IMAGEM = bool(exigir_busca)
     con = bc.conectar()
     alvos = fila(con, limite, refazer, ligacoes,
                  sem_catalogo=sem_catalogo,

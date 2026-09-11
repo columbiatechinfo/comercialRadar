@@ -59,7 +59,10 @@ TENTATIVAS = 3
 #: incomum") dura horas por IP; insistir nele queima as tres tentativas e manda
 #: a busca para o Bing, que traz menos (medido na noite de 11/09/2026).
 CASTIGO_S = 3600
-TENTATIVAS_GOOGLE = 1
+TENTATIVAS_GOOGLE = 2
+#: SO O GOOGLE desde 12/09/2026: o Bing devolvia pagina generica para 99,8% das
+#: buscas. O codigo do Bing fica em `MOTORES` para quem quiser testar de novo.
+MOTORES_EM_USO = ("google",)
 #: Largura da pagina que vai para o modelo: densidade normal (decisao de 11/09).
 LARGURA = 1366
 ALVO = ("SIM", "SIM_COM_ANALISE_HUMANA")
@@ -480,7 +483,7 @@ def rodar(itens, trabalhadores, aplicar):
         jpeg = None
         motor = "google"
         tentativa = 0
-        for motor in ("google", "bing"):
+        for motor in MOTORES_EM_USO:
             # UMA TENTATIVA NO GOOGLE: na noite de 11/09/2026 ele bloqueou ate
             # IP novo do pool; insistir tres vezes so queimava mais IPs.
             for tentativa in range(1, (TENTATIVAS_GOOGLE if motor == "google" else TENTATIVAS) + 1):
