@@ -1,0 +1,178 @@
+<title>Esteira de Canoas</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+:root{
+  --chao:#f1f4f3; --papel:#ffffff; --tinta:#13262b; --tinta-2:#556a6f; --regua:#d3dedd;
+  --acento:#2f5d8a; --acento-f:#e4edf6;
+  --pago:#9a5a14; --pago-f:#f7ecdc; --gratis:#2b7254; --gratis-f:#e2f1e9; --ia:#5a4a9c; --ia-f:#ebe8f7;
+  --display:"Barlow Semi Condensed","Arial Narrow",sans-serif;
+  --texto:"IBM Plex Sans","Segoe UI",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --chao:#0e181b; --papel:#152327; --tinta:#e3eeef; --tinta-2:#9bb0b4; --regua:#29403f;
+  --acento:#7fb0de; --acento-f:#1a3044; --pago:#e3aa62; --pago-f:#3a2a15; --gratis:#7fd2a8; --gratis-f:#16342a;
+  --ia:#b9aef0; --ia-f:#28223f;}}
+:root[data-theme="dark"]{
+  --chao:#0e181b; --papel:#152327; --tinta:#e3eeef; --tinta-2:#9bb0b4; --regua:#29403f;
+  --acento:#7fb0de; --acento-f:#1a3044; --pago:#e3aa62; --pago-f:#3a2a15; --gratis:#7fd2a8; --gratis-f:#16342a;
+  --ia:#b9aef0; --ia-f:#28223f;}
+*{box-sizing:border-box}
+body{margin:0;background:var(--chao);color:var(--tinta);font:400 15px/1.55 var(--texto)}
+main{max-width:1080px;margin:0 auto;padding:40px 22px 70px;display:grid;gap:34px}
+h1,h2,h3{font-family:var(--display);margin:0;text-wrap:balance}
+h1{font-size:46px;font-weight:700;line-height:1;letter-spacing:-.01em}
+h2{font-size:26px;font-weight:600}
+h3{font-size:19px;font-weight:600}
+p{margin:0;max-width:68ch}
+.rotulo{font:500 11.5px/1.2 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--tinta-2)}
+.cabeca{display:grid;gap:12px}
+.legenda{display:flex;flex-wrap:wrap;gap:10px}
+.tag{font:500 12px/1 var(--mono);padding:6px 9px;border-radius:4px;white-space:nowrap}
+.tag.pago{color:var(--pago);background:var(--pago-f)} .tag.gratis{color:var(--gratis);background:var(--gratis-f)}
+.tag.ia{color:var(--ia);background:var(--ia-f)}
+.mapa{background:var(--papel);border:1px solid var(--regua);padding:18px;overflow-x:auto}
+.passos{display:grid;gap:0;counter-reset:passo}
+.passo{display:grid;grid-template-columns:56px 1fr;gap:0 18px;padding:18px 0;border-top:1px solid var(--regua)}
+.passo:last-child{border-bottom:1px solid var(--regua)}
+.num{font:700 30px/1 var(--display);color:var(--acento)}
+.corpo{display:grid;gap:10px}
+.fluxo{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
+.caixa{background:var(--papel);border:1px solid var(--regua);padding:10px 12px;display:grid;gap:4px;font-size:14px}
+.caixa b{font:500 11px/1.2 var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--tinta-2)}
+code,.tab{font:400 13px/1.4 var(--mono)}
+.tab{color:var(--acento)}
+.linha{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.rolar{overflow-x:auto}
+table{border-collapse:collapse;width:100%;min-width:560px;font-size:14px;background:var(--papel)}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--regua);vertical-align:top}
+th{font:500 11.5px/1.2 var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--tinta-2)}
+td.n{font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+.nota{border-left:3px solid var(--acento);background:var(--acento-f);padding:10px 14px;font-size:14px}
+</style>
+<main>
+<header class="cabeca">
+  <span class="rotulo">Radar Comercial · Canoas · produção disparada em 11/09/2026, 03h40</span>
+  <h1>Esteira de Canoas</h1>
+  <p>Como cada instalação residencial marcada como apta pela Corsan vira um veredito da IA: quem são as fontes, o que a busca na web acrescenta, o que a IA recebe e onde tudo fica guardado. Os números são os medidos na noite do disparo e nas provas do mesmo dia.</p>
+  <div class="legenda"><span class="tag pago">custa dinheiro</span><span class="tag gratis">grátis, roda nas nossas máquinas</span><span class="tag ia">IA local, na Spark</span></div>
+</header>
+
+<section class="mapa" aria-label="Mapa do fluxo">
+<pre class="mermaid">
+flowchart LR
+  A["Cadastro da Corsan<br/>ligações aptas"] --> B["Vínculos<br/>quem aponta para a ligação"]
+  B --> C["Imagens que já existem<br/>foto de rua e foto do Google"]
+  C --> D["Busca na web<br/>uma por instalação"]
+  D --> E["Dossiê<br/>tudo junto, com datas"]
+  E --> F["IA julga<br/>prompt v5.3"]
+  F --> G["Veredito"]
+  F --> H["POI de outro endereço<br/>é descartado"]
+  H --> I["Casamento por endereço<br/>procura outra ligação"]
+  I --> E
+  G --> J["Painel"]
+</pre>
+</section>
+
+<section class="passos" aria-label="Os passos">
+  <article class="passo"><div class="num">1</div><div class="corpo">
+    <h3>O cadastro diz quais instalações olhar</h3>
+    <p>Da base da Corsan saem as ligações residenciais ativas que ela marcou como SIM ou SIM com análise humana. Só essas entram.</p>
+    <div class="fluxo">
+      <div class="caixa"><b>Entra</b>102.131 ligações de Canoas com qualificação</div>
+      <div class="caixa"><b>Sai</b>23.407 aptas com algum estabelecimento vinculado</div>
+      <div class="caixa"><b>Tabela</b><span class="tab">cadastro_corsan</span> — escrita pela carga da Corsan</div>
+    </div>
+    <div class="linha"><span class="tag gratis">grátis</span></div>
+  </div></article>
+
+  <article class="passo"><div class="num">2</div><div class="corpo">
+    <h3>Os vínculos dizem quem aponta para cada instalação</h3>
+    <p>Estabelecimentos de várias bases — Receita, Google Maps, iFood, bases estaduais, IBGE, Airbnb — ficam ligados à instalação quando rua, número, bairro e cidade batem. A distância não decide. Um estabelecimento fica em uma instalação só; uma instalação pode ter vários.</p>
+    <div class="fluxo">
+      <div class="caixa"><b>Entra</b>os estabelecimentos das bases, com o endereço publicado</div>
+      <div class="caixa"><b>Sai</b>98.318 vínculos vivos em Canoas</div>
+      <div class="caixa"><b>Tabela</b><span class="tab">ligacao_poi</span> — escrita pelo casamento por endereço</div>
+    </div>
+    <div class="linha"><span class="tag gratis">grátis</span></div>
+  </div></article>
+
+  <article class="passo"><div class="num">3</div><div class="corpo">
+    <h3>Só entra quem já tem imagem</h3>
+    <p>Nesta rodada não se tira foto nova: vale a foto de rua (quatro visadas do ponto mais próximo do medidor, até 60 m) e a foto que o estabelecimento publicou no Google. A ordem da fila é Google Maps, depois iFood, depois o resto.</p>
+    <div class="fluxo">
+      <div class="caixa"><b>Entra</b>23.407 instalações aptas</div>
+      <div class="caixa"><b>Sai</b>21.966 com imagem, na fila</div>
+      <div class="caixa"><b>Tabelas</b><span class="tab">poi_evidencia</span> (foto de rua) e <span class="tab">images_urls</span> (foto do Google)</div>
+    </div>
+    <div class="linha"><span class="tag gratis">grátis</span></div>
+  </div></article>
+
+  <article class="passo"><div class="num">4</div><div class="corpo">
+    <h3>A busca na web, uma por instalação</h3>
+    <p>O navegador pesquisa o endereço da instalação — com o nome da rua corrigido pelo cadastro do IBGE — mais a palavra "empresa". Tenta o Google em até três IPs e, se não der, o Bing. A página vira print e texto, e a IA lê tudo o que ela mostra, de qualquer fonte, oficial ou não. Resultado de outro endereço fica de fora.</p>
+    <div class="fluxo">
+      <div class="caixa"><b>Entra</b>o endereço normalizado da instalação</div>
+      <div class="caixa"><b>Sai</b>os estabelecimentos da página: nome, telefone, site, horário, nota, CNPJ, e de onde veio cada um</div>
+      <div class="caixa"><b>Tabela</b><span class="tab">busca_web</span> — escrita por <code>buscar_web.py</code>, com o print</div>
+    </div>
+    <div class="linha"><span class="tag pago">proxies da Webshare</span><span class="tag gratis">20 navegadores no i9, 10 no notebook</span><span class="tag ia">leitura da página</span></div>
+  </div></article>
+
+  <article class="passo"><div class="num">5</div><div class="corpo">
+    <h3>O dossiê junta tudo, com as datas</h3>
+    <p>Para cada instalação, um texto único: o que cada fonte diz, quem mais disputa cada estabelecimento, o que a web achou, quando cada CNPJ abriu, e se isso foi antes ou depois da foto de rua. A conta das datas é feita pelo sistema, porque a IA a invertia.</p>
+    <div class="fluxo">
+      <div class="caixa"><b>Entra</b>vínculos, busca na web, fotos e datas</div>
+      <div class="caixa"><b>Sai</b>o dossiê e até seis imagens, cada uma com rótulo e data</div>
+      <div class="caixa"><b>Tabelas lidas</b><span class="tab">pois</span>, <span class="tab">receita_data</span>, <span class="tab">busca_web</span>, <span class="tab">poi_evidencia</span></div>
+    </div>
+    <div class="linha"><span class="tag gratis">grátis</span></div>
+  </div></article>
+
+  <article class="passo"><div class="num">6</div><div class="corpo">
+    <h3>A IA julga, pesando cada prova pela data</h3>
+    <p>Em quatro passos: descreve o que vê, confere cada estabelecimento candidato, junta o mesmo negócio numa ficha enriquecida com a web, e decide. A foto de rua é uma prova a mais. Só comércio e serviço aprovam; templo, associação e escola não. Na instalação que só tem Receita, a IA decide com o que houver.</p>
+    <div class="fluxo">
+      <div class="caixa"><b>Entra</b>o dossiê e as imagens</div>
+      <div class="caixa"><b>Sai</b>aprovado, reprovado, ou revisão humana quando não se sabe se o negócio é desta unidade ou da vizinha</div>
+      <div class="caixa"><b>Tabela</b><span class="tab">ligacao_veredito</span> — escrita pela avaliação, com o dossiê inteiro</div>
+    </div>
+    <div class="linha"><span class="tag ia">Qwen3.5-35B na Spark</span><span class="tag gratis">sem API paga</span></div>
+  </div></article>
+
+  <article class="passo"><div class="num">7</div><div class="corpo">
+    <h3>O que a IA descarta procura outra instalação</h3>
+    <p>Estabelecimento que a IA diz ser de outro endereço sai daquela instalação. A cada meia hora, o casamento por endereço tenta ligá-lo a outra; a instalação que ganha um estabelecimento novo volta para a fila da IA.</p>
+    <div class="fluxo">
+      <div class="caixa"><b>Entra</b>os descartados pela IA</div>
+      <div class="caixa"><b>Sai</b>vínculos novos, e instalações de volta na fila</div>
+      <div class="caixa"><b>Tabela</b><span class="tab">ligacao_poi</span> — descarte pela avaliação, vínculo novo pelo casamento</div>
+    </div>
+    <div class="linha"><span class="tag gratis">grátis</span></div>
+  </div></article>
+
+  <article class="passo"><div class="num">8</div><div class="corpo">
+    <h3>O painel mostra o resultado</h3>
+    <p>O painel lê os vínculos e os vereditos e mostra cada instalação com o que a IA disse. Ele roda no i9, com login.</p>
+    <div class="linha"><span class="tag gratis">grátis</span></div>
+  </div></article>
+</section>
+
+<section class="cabeca">
+  <h2>Os números medidos</h2>
+  <div class="rolar"><table>
+    <thead><tr><th>O quê</th><th>Medido</th><th>Onde</th></tr></thead>
+    <tbody>
+      <tr><td>Instalações na fila da busca e da IA</td><td class="n">21.966</td><td>i9 14.656 · notebook 7.310</td></tr>
+      <tr><td>Buscas que o Google respondeu, nos primeiros 40</td><td class="n">72%</td><td>o Bing cobriu o resto</td></tr>
+      <tr><td>Captura de uma página, mediana</td><td class="n">4,8 s</td><td>navegador</td></tr>
+      <tr><td>Leitura da página pela IA, mediana</td><td class="n">102 s</td><td>Spark, com 36 chamadas ao mesmo tempo</td></tr>
+      <tr><td>Ritmo inicial das duas máquinas juntas</td><td class="n">~10 buscas/min</td><td>o limite é a Spark, não o navegador</td></tr>
+      <tr><td>Prova do prompt, 8 instalações com foto publicada</td><td class="n">5 aprovadas</td><td>3 reprovadas: igreja, outra rua, condomínio</td></tr>
+      <tr><td>Prova do prompt, 7 instalações só com Receita</td><td class="n">0 aprovadas</td><td>6 reprovadas, 1 revisão humana</td></tr>
+    </tbody>
+  </table></div>
+  <p class="nota">Estimativa de largada: cerca de um dia e meio para Canoas inteira, porque cada página e cada dossiê passam pela mesma Spark. Ela será corrigida pelo ritmo medido.</p>
+</section>
+</main>
