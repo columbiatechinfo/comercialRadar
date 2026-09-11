@@ -54,7 +54,12 @@ RE_NAO_COMERCIO = re.compile(
     r"congrega[cç][aã]o|comunidade evang|condom[ií]nio|associa[cç][aã]o|sindicato|"
     r"escola (estadual|municipal|p[uú]blica)|\bemef\b|\beeef\b|\bemei\b|senai|\bsesi\b|\bsesc\b|senac|"
     r"prefeitura|secretaria (municipal|estadual)|posto de sa[uú]de|\bubs\b|centro de tradi[cç]|\bctg\b|"
-    r"marco/edif[ií]cio", re.I)
+    r"marco/edif[ií]cio|"
+    # 2a analise (12/09/2026): passavam 'Organizacao religiosa' (Ile Axe Abaya
+    # Bomi) e 'COMITE POLITICO' do IBGE
+    r"organiza[cç][aã]o religiosa|candombl|il[eê] ax[eé]|kardec|"
+    r"sal[aã]o do reino|testemunhas de jeov|mesquita|sinagoga|ma[cç]onaria|loja ma[cç][oô]nica|"
+    r"comit[eê] pol[ií]tico|partido pol[ií]tico|diret[oó]rio (municipal|do partido)", re.I)
 
 
 def _numeros(txt):
@@ -74,7 +79,13 @@ def complemento_da_instalacao(end_ligacao, bairro):
     partes = (end_ligacao or "").split("-")
     if len(partes) < 6:
         return ""
-    return "-".join(partes[1:-4]).strip()
+    comp = "-".join(partes[1:-4]).strip()
+    # O NUMERO DA CASA REPETIDO NAO E COMPLEMENTO: 'RUA BAMBUS,77-77-...' fez a
+    # 2a analise reprovar a CASA 02 do numero 77 por 'complemento diferente'.
+    nro = re.sub(r"\D", "", partes[0].split(",")[-1]) if "," in partes[0] else ""
+    if nro and re.fullmatch(r"0*%s\s*[A-Z]?" % re.escape(nro.lstrip("0") or "0"), comp.upper()):
+        return ""
+    return comp
 
 
 def complemento_diverge(inst, reg):
