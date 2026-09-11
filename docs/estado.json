@@ -551,6 +551,13 @@
       "nivel": "info",
       "evento": "Prompt v5 provado em 15 ligacoes com foto, fora da producao",
       "detalhe": "Foto de rua e so uma fonte e cada prova vale pela data; fonte nao oficial entra inteira, outro endereco fica fora; a regra do codigo nao conta a busca web. 8 com foto publicada: 5 aprovadas. 7 so com Receita: 0 aprovadas, 1 revisao humana. Defeito da lista de imagens vazia corrigido. Codigo em ~/sonda_busca_web/codigo_v5.3 no i9."
+    },
+    {
+      "data": "2026-09-11",
+      "skill": "(producao)",
+      "nivel": "info",
+      "evento": "Producao de Canoas disparada: busca web e avaliacao pela IA com o prompt v5.3",
+      "detalhe": "21.966 buscas, uma por instalacao, pelo endereco normalizado + empresa: 20 navegadores no i9 e 10 no notebook, so ligacoes com imagem, ordem Maps, iFood, demais. Avaliacao em rodadas no i9, 15 min depois da busca de cada ligacao. Sem recaptura de foto de rua. Scripts em ~/producao_canoas."
     }
   ],
   "caminho_dados": "psycopg",
