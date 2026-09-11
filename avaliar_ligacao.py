@@ -1070,6 +1070,24 @@ def _para_veredito(resposta):
     return None
 
 
+#: O CONTEXTO DA SPARK (vLLM `--max-model-len`). Prompt + imagens + resposta
+#: tem de caber nele; passar disso volta 400 e a ligacao falha calada.
+CONTEXTO_DA_SPARK = 32768
+
+
+def _teto_da_resposta(prompt, imgs, resumo):
+    """2.400 tokens + 150 por POI, ate 8.000, sem estourar o contexto.
+
+    O prompt v5.3 pede um registro por POI e uma ficha por estabelecimento: a
+    resposta cresce com a ligacao. A conta do prompt e grosseira de proposito
+    (3 caracteres por token, 1.300 tokens por imagem) — erra para o lado seguro.
+    """
+    n = int((resumo or {}).get("pois") or 0)
+    quero = min(8000, 2400 + 150 * n)
+    ocupado = len(prompt) // 3 + 1300 * len(imgs or [])
+    return max(1200, min(quero, CONTEXTO_DA_SPARK - ocupado - 256))
+
+
 def uma(poco, ligacao, modelo, secoes, placar, trava, aplicar):
     t0 = time.time()
     # O BANCO SO ENQUANTO SE MONTA O DOSSIE. Depois a conexao volta ao poco e
@@ -1108,7 +1126,8 @@ def uma(poco, ligacao, modelo, secoes, placar, trava, aplicar):
         # Falha aqui nao grava veredito, entao a ligacao volta para a fila
         # sozinha na proxima rodada — o estrago foi tempo, nao dado perdido.
         resposta = di._chat_local(modelo, prompt, [ia._b64(b) for b in imgs],
-                                  max_tokens=2400, timeout=TIMEOUT)
+                                  max_tokens=_teto_da_resposta(prompt, imgs, resumo),
+                                  timeout=TIMEOUT)
     except Exception as e:                                     # noqa: BLE001
         with trava:
             placar["falha"] += 1
