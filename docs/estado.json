@@ -558,6 +558,13 @@
       "nivel": "info",
       "evento": "Producao de Canoas disparada: busca web e avaliacao pela IA com o prompt v5.3",
       "detalhe": "21.966 buscas, uma por instalacao, pelo endereco normalizado + empresa: 20 navegadores no i9 e 10 no notebook, so ligacoes com imagem, ordem Maps, iFood, demais. Avaliacao em rodadas no i9, 15 min depois da busca de cada ligacao. Sem recaptura de foto de rua. Scripts em ~/producao_canoas."
+    },
+    {
+      "data": "2026-09-12",
+      "skill": "(producao)",
+      "nivel": "atencao",
+      "evento": "Noite de producao em Canoas: Google bloqueou o pool, a Spark e o gargalo",
+      "detalhe": "Correcoes sem parar o processo: espera de 15 min e 12 avaliacoes (a0de5af), teto da resposta por POI (636d4ca), predios para o fim (1e9ab08), Google em uma tentativa por IP descansado (2589f06), casamento a cada 30 min. As 08:10: 4.962 buscas, 460 vereditos (21% revisao humana), ~15 buscas e ~2 vereditos por minuto."
     }
   ],
   "caminho_dados": "psycopg",
