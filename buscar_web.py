@@ -244,7 +244,11 @@ def fila(con, cidade=None, limite=0, ligacoes=None, fatia=None, refazer_bing=Fal
     saida = []
 
     def chave(l):
-        return (prioridade({poi[p]["fonte"] for p in por_lig[l] if p in poi}), l)
+        # O SIM ANTES do SIM com analise humana (dono do produto, 12/09/2026),
+        # e dentro de cada um a ordem das fontes.
+        q = lig[l][4]
+        return (0 if q == "SIM" else (1 if q == "SIM_COM_ANALISE_HUMANA" else 2),
+                prioridade({poi[p]["fonte"] for p in por_lig[l] if p in poi}), l)
 
     for l in sorted(por_lig, key=chave):
         if com_imagem is not None and l not in com_imagem:

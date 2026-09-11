@@ -686,9 +686,18 @@ def fila(con, limite, refazer, ligacoes=None, sem_catalogo=False,
         _log("   %d ligação(ões) com mais de %d POIs ficaram para o fim"
              % (antes - len(saida), adiar_grandes))
 
+    # A QUALIFICACAO VEM ANTES DA FONTE (dono do produto, 12/09/2026): primeiro
+    # o SIM, depois o SIM com analise humana, e so dentro de cada um a ordem
+    # das fontes.
+    cur.execute("""select num_ligacao::text, qualificacao from resources_root.cadastro_corsan
+                    where qualificacao is not null""")
+    qual_de = dict(cur.fetchall())
+
     def _prio(l):
         fs = fontes_de.get(str(l), set())
-        return 0 if "maps" in fs else (1 if "ifood" in fs else 2)
+        q = qual_de.get(str(l))
+        return (0 if q == "SIM" else (1 if q == "SIM_COM_ANALISE_HUMANA" else 2),
+                0 if "maps" in fs else (1 if "ifood" in fs else 2))
     saida.sort(key=_prio)
     return saida[:limite] if limite else saida
 
