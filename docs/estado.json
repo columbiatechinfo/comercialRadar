@@ -537,6 +537,13 @@
       "nivel": "info",
       "evento": "Bairro publicado guardado e vinculos refeitos sem teto de distancia",
       "detalhe": "Migracao 0098. Regra: rua, numero, bairro e cidade; ligacao SIM ou SIM_COM; Receita so ativa. Bairro concordando com a Corsan: iFood de 20% para 95%. Alvo: 21.986 para 23.407 ligacoes com POI. Avaliacoes antigas apagadas; backup em ~/backups/radar/2026-09-11 no i9. Commit 2a5d867."
+    },
+    {
+      "data": "2026-09-11",
+      "skill": "(avaliacao)",
+      "nivel": "info",
+      "evento": "Busca web e prompt neutro de setor provados em 22 ligacoes, fora da producao",
+      "detalhe": "Busca web: Google com Bing de reserva, 17 de 17 buscas passaram. Prompt v4.2: A 1 aprovada e 1 revisao humana de 10; B 4 aprovadas e 2 revisao humana de 12. Diretorio de CNPJ conta como Receita, e nao como segunda fonte. Codigo em ~/sonda_busca_web/codigo_v4.2 no i9; aguarda consenso do dono antes da producao."
     }
   ],
   "caminho_dados": "psycopg",
