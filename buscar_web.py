@@ -55,6 +55,11 @@ MOTORES = {
 #: Bing. Esperar ate 15 s em "Verificando sua solicitacao" zerou os bloqueios
 #: na sonda; os tres IPs cobrem o resto.
 TENTATIVAS = 3
+#: O IP QUE O GOOGLE BLOQUEOU fica uma hora fora do Google. O /sorry/ ("trafego
+#: incomum") dura horas por IP; insistir nele queima as tres tentativas e manda
+#: a busca para o Bing, que traz menos (medido na noite de 11/09/2026).
+CASTIGO_S = 3600
+TENTATIVAS_GOOGLE = 1
 #: Largura da pagina que vai para o modelo: densidade normal (decisao de 11/09).
 LARGURA = 1366
 ALVO = ("SIM", "SIM_COM_ANALISE_HUMANA")
@@ -184,7 +189,7 @@ def ligacoes_com_imagem(cur):
     return {str(l) for l, p in cur.fetchall() if p in com}
 
 
-def fila(con, cidade=None, limite=0, ligacoes=None, fatia=None):
+def fila(con, cidade=None, limite=0, ligacoes=None, fatia=None, refazer_bing=False):
     """As ligacoes do alvo com consulta por fazer, e as consultas de cada uma.
 
     Alvo: residencial ATIVA, qualificada SIM ou SIM_COM_ANALISE_HUMANA, com
@@ -224,9 +229,13 @@ def fila(con, cidade=None, limite=0, ligacoes=None, fatia=None):
                      from radar_comercial.pois where fundido_em is null and id = any(%s)""", (ids,))
     poi = {r[0]: {"id": r[0], "fonte": r[1], "nome": r[2], "endereco": r[3], "telefone": r[4]}
            for r in cur.fetchall()}
-    cur.execute("""select ligacao, tipo, coalesce(poi_id, 0) from radar_comercial.busca_web
+    cur.execute("""select ligacao, tipo, coalesce(poi_id, 0), motor from radar_comercial.busca_web
                     where ia is not null""")
-    feitas = {(str(a), b, c) for a, b, c in cur.fetchall()}
+    por_motor = {}
+    for a_, b_, c_, m_ in cur.fetchall():
+        por_motor.setdefault((str(a_), b_, c_), set()).add(m_)
+    # REBUSCAR NO GOOGLE o que so o Bing respondeu, quando o bloqueio passar.
+    feitas = {k for k, ms in por_motor.items() if not refazer_bing or "google" in ms}
     # SO QUEM JA TEM IMAGEM (dono do produto, 11/09/2026): a busca web e para
     # as ligacoes que a IA ja pode julgar com foto.
     com_imagem = ligacoes_com_imagem(cur) if not so else None
@@ -308,7 +317,7 @@ def capturar(consulta, motor, proxy):
         # "Verificando sua solicitacao". Espera ate 15 s por ela antes de
         # chamar de bloqueio (na sonda, 5 de 17 buscas eram so isso).
         corpo = ""
-        for _ in range(15):
+        for _ in range(25):
             corpo = (page.evaluate("() => document.body ? document.body.innerText : ''") or "")
             if "verificando sua solicita" not in corpo.lower() and "checking your request" not in corpo.lower():
                 break
@@ -432,7 +441,28 @@ def rodar(itens, trabalhadores, aplicar):
     if not trabalhos:
         return {"ligacoes": 0, "consultas": 0}
     grav = Gravador(aplicar)
-    proximo = bn.rodizio(quantos=16)
+    # MUITOS IPS E CASTIGO PARA O BLOQUEADO. Ver o comentario de `CASTIGO_S`.
+    proximo = bn.rodizio(quantos=min(250, max(16, trabalhadores * 12)))
+    castigo = {}
+    trava_ip = threading.Lock()
+
+    def ip_para(motor):
+        """O proximo IP; para o Google, pula o que esta de castigo."""
+        if motor != "google":
+            return proximo()
+        agora = time.time()
+        px = proximo()
+        for _ in range(300):
+            with trava_ip:
+                livre = castigo.get(px, 0) <= agora
+            if livre:
+                return px
+            px = proximo()
+        return px
+
+    def castigar(px):
+        with trava_ip:
+            castigo[px] = time.time() + CASTIGO_S
     placar = {"ok_google": 0, "ok_bing": 0, "bloqueado": 0, "falha": 0, "falha_ia": 0}
     trava = threading.Lock()
     feitos = [0]
@@ -447,8 +477,13 @@ def rodar(itens, trabalhadores, aplicar):
         motor = "google"
         tentativa = 0
         for motor in ("google", "bing"):
-            for tentativa in range(1, TENTATIVAS + 1):
-                ok, bloq, texto, url, erro, jpeg = capturar(q, motor, proximo())
+            # UMA TENTATIVA NO GOOGLE: na noite de 11/09/2026 ele bloqueou ate
+            # IP novo do pool; insistir tres vezes so queimava mais IPs.
+            for tentativa in range(1, (TENTATIVAS_GOOGLE if motor == "google" else TENTATIVAS) + 1):
+                px = ip_para(motor)
+                ok, bloq, texto, url, erro, jpeg = capturar(q, motor, px)
+                if motor == "google" and bloq:
+                    castigar(px)
                 if ok and not bloq:
                     break
             if ok and not bloq:
@@ -499,6 +534,8 @@ def main(argv=None):
     p.add_argument("--limite", type=int, default=0)
     p.add_argument("--trabalhadores", type=int, default=6)
     p.add_argument("--fatia", default="", help="k[,k2]/n: so as ligacoes com crc32 %% n num dos k")
+    p.add_argument("--refazer-bing", dest="refazer_bing", action="store_true",
+                   help="busca de novo, no Google, as consultas que so o Bing respondeu")
     p.add_argument("--contar", action="store_true",
                    help="so conta ligacoes e consultas por fazer, sem buscar nada")
     p.add_argument("--aplicar", action="store_true")
@@ -507,7 +544,7 @@ def main(argv=None):
     if not a.cidade and not a.ligacao:
         p.error("diga --cidade ou --ligacao")
     con = bc.conectar()
-    itens = fila(con, a.cidade, a.limite, a.ligacao, fatia)
+    itens = fila(con, a.cidade, a.limite, a.ligacao, fatia, refazer_bing=a.refazer_bing)
     con.close()
     if a.contar:
         n_end = sum(1 for it in itens for t, _ in it["tarefas"] if t == "endereco")
