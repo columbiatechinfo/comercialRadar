@@ -31,6 +31,8 @@ import argparse
 import base64
 import collections
 import io
+import json
+import os
 import threading
 import time
 
@@ -44,8 +46,11 @@ import dossie_ligacao as dl
 import imagens
 
 LARGURA_FOTO = 640
-TEXTO_MAX = 6000
+TEXTO_MAX = 7000
 VEREDITOS = ("aprovado", "reprovado", "revisao_humana")
+#: `--saida DIR`: grava cada julgamento (e as fotos) numa pasta, para a galeria
+#: de validacao — o lote de conferencia roda sem `--aplicar`.
+SAIDA = None
 
 PROMPT = """Você confere se um imóvel cobrado como RESIDENCIAL tem comércio ou serviço funcionando nele.
 
@@ -57,8 +62,8 @@ Olhe todos os dados e responda, nesta ordem:
 3. O motivo do veredito e o veredito:
    - "aprovado" se ao menos um registro de comércio ou serviço pertence a esta instalação;
    - "reprovado" se nenhum pertence;
-   - "revisao_humana" só com dúvida fundada — não dá para garantir se um registro é ou não desta instalação —, e o motivo diz qual é a dúvida.
-Templo, igreja, associação e escola não são comércio nem serviço. CNPJ ou MEI com atividade de comércio ou serviço registrada é negócio, mesmo com nome de pessoa. A foto de rua mostra a data em que foi tirada, e não hoje. Resultado da busca que fala de outro endereço não conta.
+   - "revisao_humana" só quando a dúvida é a qual instalação o registro pertence — a unidade do número —, e o motivo diz qual é. Dúvida sobre se o negócio funciona não é revisão: decida pelas provas.
+Templo, igreja, associação e escola não são comércio nem serviço. CNPJ ou MEI com atividade de comércio ou serviço registrada é negócio, mesmo com nome de pessoa. A foto de rua mostra a data em que foi tirada, e não hoje. A ficha do lugar no painel do Google, ou um resultado da busca, com o nome, o endereço desta instalação e horário ou telefone, confirma o registro. Foto de rua sem sinal de comércio NÃO desmente uma confirmação: muito comércio e serviço funciona em casa comum, e a foto não pesa mais que as outras provas. Resultado da busca que fala de outro endereço não conta.
 
 Responda SOMENTE um JSON:
 {"aderentes": [{"poi": <número>, "confirmado": true|false, "por": "<até 12 palavras>"}],
@@ -191,6 +196,14 @@ def uma(poco, ligacao, modelo, placar, trava, aplicar):
                  "ids": ids}
     resumo = {"pois": len(ids), "fontes": n_fontes, "ids": ids}
     fora = 0
+    if SAIDA:
+        with trava:
+            with open(os.path.join(SAIDA, "resultado.jsonl"), "a", encoding="utf-8") as f:
+                f.write(json.dumps({"ligacao": ligacao, "veredito": v, "resposta": r, "dados": dados,
+                                    "fotos": rot, "segundos": round(time.time() - t0, 1)},
+                                   ensure_ascii=False) + "\n")
+            for i, b in enumerate(fotos):
+                open(os.path.join(SAIDA, "%s_%d.jpg" % (ligacao, i + 1)), "wb").write(b)
     if aplicar:
         with poco.pegar() as con:
             al.gravar(con, ligacao, v, r, percepcao, resumo, modelo, len(fotos), time.time() - t0)
@@ -255,8 +268,13 @@ def main(argv=None):
     p.add_argument("--cidade", default=None)
     p.add_argument("--exigir-busca-web", dest="exigir_busca", action="store_true")
     p.add_argument("--vinculo-novo", dest="vinculo_novo", action="store_true")
+    p.add_argument("--saida", default=None, help="pasta para gravar cada julgamento e as fotos")
     p.add_argument("--aplicar", action="store_true")
     a = p.parse_args(argv)
+    global SAIDA
+    if a.saida:
+        os.makedirs(a.saida, exist_ok=True)
+        SAIDA = a.saida
     r = rodar(a.limite, a.aplicar, a.trabalhadores, a.modelo, a.ligacao, a.cidade, a.exigir_busca, a.vinculo_novo)
     return 1 if r.get("erro") else 0
 

@@ -124,6 +124,20 @@ Responda SOMENTE um JSON:
 A FICHA E A BUSCA (o que muda a cada chamada vem aqui no fim):
 """
 
+#: O TEXTO DA PAGINA DE RESULTADOS DO GOOGLE: a ficha do lugar (#rhs) na
+#: frente, com titulo, e os resultados (#search) depois, com as quebras de linha
+#: que a pagina mostra. O `JS_TEXTO` do repositorio junta tudo num bloco so, e
+#: a ficha ficava perdida no meio (ligacao 2089611, 12/09/2026).
+JS_TEXTO_GOOGLE = r"""() => {
+  const pega = (sel) => { const e = document.querySelector(sel); return e ? (e.innerText || '').trim() : ''; };
+  const painel = pega('#rhs');
+  const busca = pega('#search') || pega('#rso') || pega('#center_col') || (document.body ? document.body.innerText : '');
+  let s = '';
+  if (painel) s += 'FICHA DO LUGAR NO PAINEL DO GOOGLE:\n' + painel + '\n\n';
+  s += 'RESULTADOS DA BUSCA:\n' + busca;
+  return s.replace(/[ \t]+/g, ' ').replace(/\n\s*\n\s*\n+/g, '\n\n').trim().slice(0, 120000);
+}"""
+
 _trava_log = threading.Lock()
 
 
@@ -195,7 +209,7 @@ def ligacoes_com_imagem(cur):
     return {str(l) for l, p in cur.fetchall() if p in com}
 
 
-def fila(con, cidade=None, limite=0, ligacoes=None, fatia=None, refazer_bing=False):
+def fila(con, cidade=None, limite=0, ligacoes=None, fatia=None, refazer_bing=False, refazer=False):
     """As ligacoes do alvo com consulta por fazer, e as consultas de cada uma.
 
     Alvo: residencial ATIVA, qualificada SIM ou SIM_COM_ANALISE_HUMANA, com
@@ -242,6 +256,8 @@ def fila(con, cidade=None, limite=0, ligacoes=None, fatia=None, refazer_bing=Fal
         por_motor.setdefault((str(a_), b_, c_), set()).add(m_)
     # REBUSCAR NO GOOGLE o que so o Bing respondeu, quando o bloqueio passar.
     feitas = {k for k, ms in por_motor.items() if not refazer_bing or "google" in ms}
+    if refazer:
+        feitas = set()
     # SO QUEM JA TEM IMAGEM (dono do produto, 11/09/2026): a busca web e para
     # as ligacoes que a IA ja pode julgar com foto.
     com_imagem = ligacoes_com_imagem(cur) if not so else None
@@ -342,7 +358,7 @@ def capturar(consulta, motor, proxy):
                               or "checking your request" in baixo)
         page.set_viewport_size({"width": LARGURA, "height": 900})
         caixa["img"] = page.screenshot(full_page=True, type="jpeg", quality=82)
-        caixa["texto"] = page.evaluate(bn.JS_TEXTO) or ""
+        caixa["texto"] = page.evaluate(JS_TEXTO_GOOGLE if motor == "google" else bn.JS_TEXTO) or ""
 
     try:
         with StealthySession(headless=True, proxy=proxy, locale="pt-BR",
@@ -391,7 +407,7 @@ def capturar_humano(consulta, proxy):
                         or "verificando sua solicita" in baixo or "checking your request" in baixo)
                 await sess.page.set_viewport_size({"width": LARGURA, "height": 900})
                 img = await sess.page.screenshot(full_page=True, type="jpeg", quality=82)
-                texto = (await sess.page.evaluate(bn.JS_TEXTO)) or ""
+                texto = (await sess.page.evaluate(JS_TEXTO_GOOGLE)) or ""
                 url = sess.page.url
                 await sess.close()
                 sess = None
@@ -624,6 +640,8 @@ def main(argv=None):
     p.add_argument("--limite", type=int, default=0)
     p.add_argument("--trabalhadores", type=int, default=6)
     p.add_argument("--fatia", default="", help="k[,k2]/n: so as ligacoes com crc32 %% n num dos k")
+    p.add_argument("--refazer", action="store_true",
+                   help="busca de novo as ligacoes pedidas, mesmo as ja buscadas")
     p.add_argument("--ler-com-ia", dest="ler_com_ia", action="store_true",
                    help="le cada pagina com a IA numa chamada separada (o processo antigo)")
     p.add_argument("--refazer-bing", dest="refazer_bing", action="store_true",
@@ -638,7 +656,7 @@ def main(argv=None):
     if not a.cidade and not a.ligacao:
         p.error("diga --cidade ou --ligacao")
     con = bc.conectar()
-    itens = fila(con, a.cidade, a.limite, a.ligacao, fatia, refazer_bing=a.refazer_bing)
+    itens = fila(con, a.cidade, a.limite, a.ligacao, fatia, refazer_bing=a.refazer_bing, refazer=a.refazer)
     con.close()
     if a.contar:
         n_end = sum(1 for it in itens for t, _ in it["tarefas"] if t == "endereco")
