@@ -169,6 +169,21 @@ JS_TEXTO_MAPS = r"""() => {
 JS_POR_MOTOR = {"google": "JS_TEXTO_GOOGLE", "google_maps": "JS_TEXTO_MAPS"}
 
 
+def _pagina_leve(page):
+    """O Maps sem o que pesa: imagem, midia, fonte, ladrilho do mapa, Street View.
+    O painel de texto, que e o que vai para a IA, vem inteiro."""
+    def rota(r):
+        req = r.request
+        u = req.url
+        if (req.resource_type in ("image", "media", "font", "imageset")
+                or "/maps/vt" in u or "/kh/v=" in u or "streetviewpixels" in u
+                or "googleusercontent.com" in u):
+            r.abort()
+        else:
+            r.continue_()
+    page.route("**/*", rota)
+
+
 def _js_texto(motor):
     return globals().get(JS_POR_MOTOR.get(motor, ""), None) or bn.JS_TEXTO
 
@@ -451,9 +466,10 @@ def capturar(consulta, motor, proxy):
         caixa["texto"] = page.evaluate(_js_texto(motor)) or ""
 
     try:
+        extra = {"page_setup": _pagina_leve} if motor == "google_maps" else {}
         with StealthySession(headless=True, proxy=proxy, locale="pt-BR",
                              timezone_id="America/Sao_Paulo",
-                             extra_flags=["--disable-http2"], block_webrtc=True) as s:
+                             extra_flags=["--disable-http2"], block_webrtc=True, **extra) as s:
             s.fetch(MOTORES[motor] % urllib.parse.quote(consulta), page_action=acao,
                     timeout=45000)
     except Exception as e:                                     # noqa: BLE001
