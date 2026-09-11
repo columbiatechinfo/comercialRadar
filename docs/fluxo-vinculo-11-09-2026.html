@@ -1,0 +1,359 @@
+<title>Do POI ao Hidrômetro</title>
+<meta name="description" content="Como um estabelecimento achado em bases públicas passa a ser ligado a uma ligação de água da Corsan em Canoas, pela regra de 11/09/2026.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+:root {
+  --chao: #f2f6f6;
+  --papel: #ffffff;
+  --tinta: #14272c;
+  --tinta-2: #4a5f64;
+  --regua: #cad8da;
+  --agua: #0b7285;
+  --agua-fundo: #e1f0f2;
+  --latao: #9a5b12;
+  --latao-fundo: #f6ead8;
+  --pendente: #7a8a8e;
+  --barra-antes: #b9c9cc;
+  --display: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
+  --texto: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --chao: #0d1a1e;
+    --papel: #13242a;
+    --tinta: #e2eef0;
+    --tinta-2: #9db3b8;
+    --regua: #27414a;
+    --agua: #45b8cb;
+    --agua-fundo: #133840;
+    --latao: #e0a860;
+    --latao-fundo: #3a2a14;
+    --pendente: #7f9499;
+    --barra-antes: #36525a;
+  }
+}
+:root[data-theme="dark"] {
+  --chao: #0d1a1e;
+  --papel: #13242a;
+  --tinta: #e2eef0;
+  --tinta-2: #9db3b8;
+  --regua: #27414a;
+  --agua: #45b8cb;
+  --agua-fundo: #133840;
+  --latao: #e0a860;
+  --latao-fundo: #3a2a14;
+  --pendente: #7f9499;
+  --barra-antes: #36525a;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--chao);
+  color: var(--tinta);
+  font: 400 15px/1.55 var(--texto);
+}
+.folha { max-width: 1060px; margin: 0 auto; padding: 40px 24px 64px; display: grid; gap: 40px; }
+h1, h2, h3 { font-family: var(--display); font-weight: 700; letter-spacing: 0.01em; text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(34px, 5vw, 50px); line-height: 1.02; }
+h2 { font-size: 28px; line-height: 1.1; }
+h3 { font-size: 21px; line-height: 1.15; font-weight: 600; }
+p { margin: 0; max-width: 68ch; }
+.rotulo { font: 500 11px/1.2 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--tinta-2); }
+.mono { font-family: var(--mono); font-size: 0.92em; }
+.num { font-variant-numeric: tabular-nums; }
+
+/* cabecalho */
+.cabeca { display: grid; gap: 14px; }
+.cabeca p { color: var(--tinta-2); font-size: 16px; }
+.endereco-corsan {
+  font: 400 13px/1.4 var(--mono); color: var(--tinta);
+  background: var(--papel); border: 1px solid var(--regua);
+  padding: 8px 12px; overflow-x: auto; white-space: nowrap; max-width: 100%;
+}
+.endereco-corsan b { color: var(--agua); font-weight: 500; }
+.placar { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-top: 2px solid var(--tinta); border-bottom: 1px solid var(--regua); }
+.placar div { padding: 14px 16px 14px 0; display: grid; gap: 2px; align-content: start; }
+.placar div + div { padding-left: 16px; border-left: 1px solid var(--regua); }
+.placar strong { font: 700 34px/1 var(--display); font-variant-numeric: tabular-nums; }
+.placar span { font-size: 13px; color: var(--tinta-2); }
+.placar em { font-style: normal; color: var(--agua); font-weight: 600; }
+
+/* a tubulacao */
+.tubo { display: grid; gap: 0; }
+.estacao { display: grid; grid-template-columns: 56px minmax(0, 1fr); }
+.marco { position: relative; display: flex; justify-content: center; }
+.marco::before { content: ""; position: absolute; top: 0; bottom: 0; left: 50%; width: 4px; margin-left: -2px; background: var(--agua); }
+.estacao:first-child .marco::before { top: 18px; }
+.estacao:last-child .marco::before { bottom: auto; height: 18px; }
+.marco span {
+  position: relative; z-index: 1; margin-top: 6px;
+  width: 30px; height: 30px; border-radius: 50%;
+  display: grid; place-items: center;
+  font: 700 15px/1 var(--display); color: var(--papel); background: var(--agua);
+  border: 3px solid var(--chao);
+}
+.estacao.falta .marco::before { background: repeating-linear-gradient(to bottom, var(--pendente) 0 7px, transparent 7px 13px); }
+.estacao.falta .marco span { background: var(--chao); color: var(--pendente); border: 2px dashed var(--pendente); }
+.corpo { padding: 4px 0 30px 6px; display: grid; gap: 10px; }
+.titulo-linha { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 14px; }
+.selo { font: 500 11px/1 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; padding: 5px 8px; border-radius: 3px; white-space: nowrap; }
+.selo.gratis { color: var(--agua); background: var(--agua-fundo); }
+.selo.custa { color: var(--latao); background: var(--latao-fundo); }
+.selo.espera { color: var(--pendente); border: 1px dashed var(--pendente); }
+.fluxo { display: grid; grid-template-columns: minmax(0, 1fr) 28px minmax(0, 1fr); align-items: stretch; background: var(--papel); border: 1px solid var(--regua); }
+.fluxo > div { padding: 10px 12px; display: grid; gap: 3px; align-content: start; }
+.fluxo .seta { padding: 0; display: grid; place-items: center; color: var(--agua); font: 600 18px/1 var(--texto); border-left: 1px solid var(--regua); border-right: 1px solid var(--regua); background: var(--chao); }
+.fluxo p { font-size: 14px; }
+.tabelas { display: flex; flex-wrap: wrap; gap: 8px; }
+.tabela { font-size: 13px; padding: 5px 9px; border: 1px solid var(--regua); background: var(--papel); display: inline-flex; gap: 6px; align-items: baseline; }
+.tabela b { font: 500 13px/1.2 var(--mono); color: var(--tinta); }
+.tabela i { font-style: normal; color: var(--tinta-2); font-size: 12px; }
+.medido { display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 14px; color: var(--tinta-2); }
+.medido b { color: var(--tinta); font-weight: 600; font-variant-numeric: tabular-nums; }
+.estacao.falta .corpo p, .estacao.falta .medido { color: var(--tinta-2); }
+
+/* grafico do bairro */
+.bloco { display: grid; gap: 14px; }
+.grafico { background: var(--papel); border: 1px solid var(--regua); padding: 16px 18px; display: grid; gap: 12px; overflow-x: auto; }
+.linha-g { display: grid; grid-template-columns: 120px minmax(220px, 1fr) 104px; gap: 12px; align-items: center; min-width: 460px; }
+.linha-g .fonte { font-weight: 600; font-size: 14px; }
+.trilho { position: relative; height: 26px; background:
+  linear-gradient(to right, transparent calc(50% - 0.5px), var(--regua) calc(50% - 0.5px), var(--regua) calc(50% + 0.5px), transparent calc(50% + 0.5px)); }
+.trilho .antes, .trilho .depois { position: absolute; left: 0; }
+.trilho .antes { top: 3px; height: 6px; background: var(--barra-antes); }
+.trilho .depois { top: 12px; height: 11px; background: var(--agua); }
+.linha-g .valor { font: 500 13px/1.2 var(--mono); font-variant-numeric: tabular-nums; text-align: right; color: var(--tinta-2); }
+.linha-g .valor b { color: var(--tinta); font-weight: 500; }
+.escala { display: grid; grid-template-columns: 120px minmax(220px, 1fr) 104px; gap: 12px; min-width: 460px; }
+.escala div { display: flex; justify-content: space-between; font: 400 11px/1 var(--mono); color: var(--tinta-2); }
+.legenda { display: flex; flex-wrap: wrap; gap: 16px; font-size: 13px; color: var(--tinta-2); }
+.legenda span { display: inline-flex; align-items: center; gap: 6px; }
+.legenda i { display: inline-block; width: 22px; }
+.legenda .a { height: 6px; background: var(--barra-antes); }
+.legenda .d { height: 11px; background: var(--agua); }
+.nota { font-size: 13px; color: var(--tinta-2); }
+
+/* tabela de fontes */
+.quadro-wrap { overflow-x: auto; border: 1px solid var(--regua); background: var(--papel); }
+table { border-collapse: collapse; width: 100%; min-width: 520px; font-size: 14px; }
+th, td { padding: 8px 12px; text-align: right; border-bottom: 1px solid var(--regua); font-variant-numeric: tabular-nums; }
+th:first-child, td:first-child { text-align: left; }
+thead th { font: 500 11px/1.2 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--tinta-2); }
+tbody tr:last-child td { border-bottom: 0; }
+td.sobe { color: var(--agua); font-weight: 600; }
+td.cai { color: var(--latao); font-weight: 600; }
+
+.duas { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 32px; align-items: start; }
+.aberto { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.aberto li { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; align-items: baseline; font-size: 14px; }
+.aberto li p { font-size: 14px; }
+.rodape { font-size: 12px; color: var(--tinta-2); border-top: 1px solid var(--regua); padding-top: 14px; }
+
+@media (max-width: 760px) {
+  .placar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .placar div:nth-child(3) { border-left: 0; padding-left: 0; }
+  .placar div:nth-child(n+3) { border-top: 1px solid var(--regua); }
+  .fluxo { grid-template-columns: minmax(0, 1fr); }
+  .fluxo .seta { border: 0; border-top: 1px solid var(--regua); border-bottom: 1px solid var(--regua); padding: 4px 0; }
+  .fluxo .seta::before { content: "↓"; } .fluxo .seta span { display: none; }
+  .duas { grid-template-columns: minmax(0, 1fr); }
+  .estacao { grid-template-columns: 44px minmax(0, 1fr); }
+}
+</style>
+
+<main class="folha">
+  <header class="cabeca">
+    <span class="rotulo">Radar Comercial · Corsan · Canoas · regra de 11/09/2026</span>
+    <h1>Do POI ao Hidrômetro</h1>
+    <p>Um estabelecimento aparece em alguma base pública: Receita, IBGE, Google Maps, iFood. Para virar caso de tarifa errada, ele precisa ser preso a uma ligação de água que a Corsan cobra como residencial. Esta página mostra cada passo desse caminho, em ordem, com o que entra, o que sai e onde fica guardado.</p>
+    <p>A peça que mudou hoje é o endereço. A Corsan escreve assim, e agora o sistema compara a rua, o número, o bairro e até a casa:</p>
+    <div class="endereco-corsan">RUA IRMA MARIA HILTGARDIS,<b>376</b>-<b>CASA 02</b>-<b>OLARIA</b>-CANOAS-RS-CEP:92035535 · hidrômetro A20DM3807690</div>
+    <div class="placar">
+      <div><strong class="num">98.318</strong><span>vínculos entre POI e ligação em Canoas</span></div>
+      <div><strong class="num">23.407</strong><span>ligações do alvo com POI, <em>eram 21.986</em></span></div>
+      <div><strong class="num">95%</strong><span>bairro do iFood igual ao da Corsan, <em>era 20%</em></span></div>
+      <div><strong class="num">7.208</strong><span>POIs com mais de uma ligação candidata, esperando a IA</span></div>
+    </div>
+  </header>
+
+  <section class="bloco" aria-labelledby="t-caminho">
+    <h2 id="t-caminho">O caminho, passo a passo</h2>
+    <div class="tubo">
+
+      <article class="estacao">
+        <div class="marco"><span>1</span></div>
+        <div class="corpo">
+          <div class="titulo-linha"><h3>As fontes trazem o estabelecimento</h3><span class="selo custa">Maps, iFood e Airbnb custam proxy</span></div>
+          <p>Cada base registra o lugar do seu jeito. Hoje as fontes passaram a guardar o bairro que publicam, e a Receita passou a guardar se o CNPJ está ativo.</p>
+          <div class="fluxo">
+            <div><span class="rotulo">Entra</span><p>Coleta do Maps, iFood e Airbnb; arquivos das bases públicas; base bruta da Receita, com 72,8 milhões de CNPJs.</p></div>
+            <div class="seta"><span>→</span></div>
+            <div><span class="rotulo">Sai</span><p>117.687 POIs em Canoas, cada um com o endereço e o bairro que a fonte escreveu.</p></div>
+          </div>
+          <div class="tabelas">
+            <span class="tabela"><b>pois</b><i>coleta de cada fonte</i></span>
+            <span class="tabela"><b>receita_data</b><i>carregar_receita_data.py</i></span>
+            <span class="tabela"><b>osm_data · overture_data · foursquare_data</b><i>carregar_bairro_estadual.py</i></span>
+            <span class="tabela"><b>ifood_merchant · airbnb_anuncio</b><i>coleta do iFood e do Airbnb</i></span>
+          </div>
+          <div class="medido"><span>Receita <b>58.803</b>, todos ativos</span><span>com complemento <b>23.176</b></span><span>leitura da base bruta <b>36 s</b></span></div>
+        </div>
+      </article>
+
+      <article class="estacao">
+        <div class="marco"><span>2</span></div>
+        <div class="corpo">
+          <div class="titulo-linha"><h3>Cada POI ganha rua, número e bairro</h3><span class="selo gratis">de graça, serviços no i9</span></div>
+          <p>O endereço escrito é conferido contra o cadastro do IBGE. O bairro é o que a fonte publicou. Quando há dúvida, porque a fonte não publicou, escreveu o nome da cidade ou diverge da própria coordenada, o bairro vem do ponto no mapa.</p>
+          <div class="fluxo">
+            <div><span class="rotulo">Entra</span><p>O texto do endereço de cada POI, o bairro da fonte e a coordenada.</p></div>
+            <div class="seta"><span>→</span></div>
+            <div><span class="rotulo">Sai</span><p>Rua, número e bairro de cada POI, dizendo de onde veio o bairro.</p></div>
+          </div>
+          <div class="tabelas"><span class="tabela"><b>logradouro_resolvido</b><i>resolver_logradouro.py</i></span></div>
+          <div class="medido"><span>bairro publicado <b>75.953</b></span><span>bairro da coordenada <b>41.637</b></span><span>sem bairro <b>57</b></span></div>
+        </div>
+      </article>
+
+      <article class="estacao">
+        <div class="marco"><span>3</span></div>
+        <div class="corpo">
+          <div class="titulo-linha"><h3>O cadastro da Corsan define o alvo</h3><span class="selo gratis">dado do cliente</span></div>
+          <p>Só interessa a ligação residencial e ativa que o cliente marcou como SIM ou SIM com análise humana. Onde a Corsan escreveu "BAIRRO NÃO INFORMADO", o bairro vem do ponto do hidrômetro.</p>
+          <div class="fluxo">
+            <div><span class="rotulo">Entra</span><p>O cadastro de ligações, com endereço, categoria, situação e a marcação do cliente.</p></div>
+            <div class="seta"><span>→</span></div>
+            <div><span class="rotulo">Sai</span><p>As ligações que podem receber POI.</p></div>
+          </div>
+          <div class="tabelas"><span class="tabela"><b>cadastro_corsan</b><i>importação do cadastro do cliente</i></span></div>
+          <div class="medido"><span>ligações em Canoas <b>102.131</b></span><span>no alvo <b>72.455</b></span><span>bairro tirado do hidrômetro <b>224</b></span></div>
+        </div>
+      </article>
+
+      <article class="estacao">
+        <div class="marco"><span>4</span></div>
+        <div class="corpo">
+          <div class="titulo-linha"><h3>Vizinhos a até 60 m viram candidatos</h3><span class="selo gratis">de graça</span></div>
+          <p>Em volta de cada hidrômetro, o sistema olha os POIs próximos e fica com os de rua e número iguais aos da ligação.</p>
+          <div class="fluxo">
+            <div><span class="rotulo">Entra</span><p>Ligações residenciais e POIs com endereço resolvido.</p></div>
+            <div class="seta"><span>→</span></div>
+            <div><span class="rotulo">Sai</span><p>Pares ligação e POI com o mesmo endereço.</p></div>
+          </div>
+          <div class="tabelas"><span class="tabela"><b>ligacao_poi</b><i>cruzar_ligacao.py</i></span></div>
+          <div class="medido"><span>pares examinados <b>1.902.074</b></span><span>com rua e número iguais <b>49.790</b></span></div>
+        </div>
+      </article>
+
+      <article class="estacao">
+        <div class="marco"><span>5</span></div>
+        <div class="corpo">
+          <div class="titulo-linha"><h3>O endereço casa, esteja o ponto onde estiver</h3><span class="selo gratis">de graça</span></div>
+          <p>A distância deixou de decidir. Se rua, número, bairro e cidade batem e a ligação é SIM, o par vale, mesmo com o ponto do POI a quilômetros, porque o erro costuma ser da coordenada e não do endereço.</p>
+          <div class="fluxo">
+            <div><span class="rotulo">Entra</span><p>Todo POI com endereço publicado.</p></div>
+            <div class="seta"><span>→</span></div>
+            <div><span class="rotulo">Sai</span><p>Pares novos e pares que o teto de 200 m barrava.</p></div>
+          </div>
+          <div class="tabelas"><span class="tabela"><b>ligacao_poi</b><i>casar_por_endereco.py</i></span></div>
+          <div class="medido"><span>POIs que casaram <b>57.605</b></span><span>acima de 200 m <b>17.171</b></span><span>recusados, ligação não é SIM <b>22.125</b></span><span>recusados, bairro diverge <b>8.853</b></span></div>
+        </div>
+      </article>
+
+      <article class="estacao">
+        <div class="marco"><span>6</span></div>
+        <div class="corpo">
+          <div class="titulo-linha"><h3>A regra passa em tudo o que ficou</h3><span class="selo gratis">de graça</span></div>
+          <p>Cada vínculo é conferido de novo. O POI pode continuar candidato de mais de uma ligação: quem decide de qual ele é, é a IA.</p>
+          <div class="fluxo">
+            <div><span class="rotulo">Entra</span><p>Todos os vínculos vivos dos passos 4 e 5.</p></div>
+            <div class="seta"><span>→</span></div>
+            <div><span class="rotulo">Sai</span><p>Os vínculos que ficam, e o motivo escrito de cada um que cai.</p></div>
+          </div>
+          <div class="tabelas"><span class="tabela"><b>ligacao_poi</b><i>revisar_vinculo.py</i></span></div>
+          <div class="medido"><span>ficam <b>98.318</b></span><span>caem, ligação não é SIM <b>4.073</b></span><span>caem, bairro diverge <b>2.037</b></span></div>
+        </div>
+      </article>
+
+      <article class="estacao falta">
+        <div class="marco"><span>7</span></div>
+        <div class="corpo">
+          <div class="titulo-linha"><h3>Fotos de rua em alta resolução</h3><span class="selo custa">custa proxy</span><span class="selo espera">ainda não rodou</span></div>
+          <p>A câmera passa a gravar com o dobro de pixels, para a IA ler letreiro. O código já está nas duas máquinas; nenhuma foto do banco foi tirada assim.</p>
+          <div class="tabelas"><span class="tabela"><b>poi_evidencia</b><i>capturar_evidencia.py</i></span></div>
+          <div class="medido"><span>fotos na qualidade nova <b>0 de 56.367</b></span><span>ligações do alvo sem foto <b>1.431</b></span></div>
+        </div>
+      </article>
+
+      <article class="estacao falta">
+        <div class="marco"><span>8</span></div>
+        <div class="corpo">
+          <div class="titulo-linha"><h3>Busca na web pelo nome</h3><span class="selo custa">custa proxy</span><span class="selo espera">ainda não começou</span></div>
+          <p>Nome do estabelecimento com cidade e UF, pelo navegador do iFood com proxies. A página vira imagem e a IA extrai o que servir.</p>
+        </div>
+      </article>
+
+      <article class="estacao falta">
+        <div class="marco"><span>9</span></div>
+        <div class="corpo">
+          <div class="titulo-linha"><h3>A IA julga cada ligação</h3><span class="selo gratis">de graça, GPU da Spark</span><span class="selo espera">ainda não rodou</span></div>
+          <p>Ela recebe todos os candidatos, diz quais são o mesmo estabelecimento em fontes diferentes, e decide de qual ligação cada POI é. Só se ela não decidir entra o desempate: critério mais forte, a mesma casa no complemento, e por último a ligação mais próxima. O POI que ela recusar procura outra ligação.</p>
+          <div class="tabelas"><span class="tabela"><b>ligacao_veredito</b><i>avaliar_ligacao.py</i></span></div>
+        </div>
+      </article>
+
+    </div>
+  </section>
+
+  <section class="bloco" aria-labelledby="t-bairro">
+    <h2 id="t-bairro">O bairro, antes e depois</h2>
+    <p>Quanto o bairro de cada fonte concorda com o da Corsan, nos endereços em que rua e número já batem com uma ligação do alvo.</p>
+    <div class="grafico" role="img" aria-label="Concordância do bairro com a Corsan, por fonte, antes e depois de 11/09/2026">
+      <div class="linha-g"><span class="fonte">iFood</span><div class="trilho"><i class="antes" style="width:19.5%"></i><i class="depois" style="width:95.3%"></i></div><span class="valor">20% → <b>95%</b></span></div>
+      <div class="linha-g"><span class="fonte">Base estadual</span><div class="trilho"><i class="antes" style="width:0%"></i><i class="depois" style="width:92.7%"></i></div><span class="valor">sem → <b>93%</b></span></div>
+      <div class="linha-g"><span class="fonte">Airbnb</span><div class="trilho"><i class="antes" style="width:29.4%"></i><i class="depois" style="width:97.1%"></i></div><span class="valor">29% → <b>97%</b></span></div>
+      <div class="linha-g"><span class="fonte">IBGE</span><div class="trilho"><i class="antes" style="width:90.7%"></i><i class="depois" style="width:95.0%"></i></div><span class="valor">91% → <b>95%</b></span></div>
+      <div class="linha-g"><span class="fonte">Receita</span><div class="trilho"><i class="antes" style="width:95.3%"></i><i class="depois" style="width:95.9%"></i></div><span class="valor">95% → <b>96%</b></span></div>
+      <div class="linha-g"><span class="fonte">Maps</span><div class="trilho"><i class="antes" style="width:92.4%"></i><i class="depois" style="width:93.0%"></i></div><span class="valor">92% → <b>93%</b></span></div>
+      <div class="linha-g"><span class="fonte">Cadastur</span><div class="trilho"><i class="antes" style="width:98.6%"></i><i class="depois" style="width:95.6%"></i></div><span class="valor">99% → <b>96%</b></span></div>
+      <div class="escala"><span></span><div><span>0%</span><span>50%</span><span>100%</span></div><span></span></div>
+      <div class="legenda"><span><i class="a"></i>antes, até 10/09</span><span><i class="d"></i>depois, 11/09</span></div>
+    </div>
+    <p class="nota">O antes foi medido com a comparação antiga, que aceitava qualquer palavra em comum e dava "São José" igual a "São Luís". O depois exige a palavra que distingue o bairro. O Cadastur caiu três pontos por essa régua mais rígida, em 68 endereços.</p>
+  </section>
+
+  <section class="duas">
+    <div class="bloco">
+      <h2>Ligações do alvo, por fonte</h2>
+      <div class="quadro-wrap">
+        <table>
+          <thead><tr><th>Fonte</th><th>Antes</th><th>Depois</th></tr></thead>
+          <tbody>
+            <tr><td>Receita</td><td>17.883</td><td class="sobe">19.822</td></tr>
+            <tr><td>Base estadual</td><td>4.138</td><td class="sobe">4.877</td></tr>
+            <tr><td>Maps</td><td>2.930</td><td class="sobe">3.174</td></tr>
+            <tr><td>IBGE</td><td>2.756</td><td class="sobe">3.019</td></tr>
+            <tr><td>iFood</td><td>262</td><td class="sobe">495</td></tr>
+            <tr><td>Cadastur</td><td>51</td><td class="sobe">68</td></tr>
+            <tr><td>Airbnb</td><td>21</td><td class="cai">0</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="nota">O Airbnb não publica número de porta e entrava pelo mesmo telhado. Desde 07/09 o tile de telhado é apagado ao fim de cada rodada, então esse critério não tem com o que comparar.</p>
+    </div>
+    <div class="bloco">
+      <h2>O que ficou em aberto</h2>
+      <ul class="aberto">
+        <li><span class="selo espera">decisão</span><p>Quando a IA aponta o POI mais ajustado, qual coordenada muda: a dos outros POIs, a da ligação, ou as duas.</p></li>
+        <li><span class="selo espera">decisão</span><p>Na busca web, o que fazer com nome de pessoa, os MEI.</p></li>
+        <li><span class="selo espera">prompt</span><p>A IA precisa saber que o POI é candidato de várias ligações. A regra "três registros na mesma porta, aprove" aprovaria hoje as 241 casas de um mesmo condomínio.</p></li>
+        <li><span class="selo espera">efeito</span><p>2.259 POIs perderam o número de porta que ganhavam do vizinho do IBGE, porque o OSRM voltou a responder dentro do contêiner.</p></li>
+      </ul>
+    </div>
+  </section>
+
+  <footer class="rodape">Números medidos em 11/09/2026 no banco do i9. Backup das tabelas alteradas em ~/backups/radar/2026-09-11. Código no commit 2a5d867 do repositório comercialRadar.</footer>
+</main>

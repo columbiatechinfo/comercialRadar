@@ -4,7 +4,7 @@
   "perfil": "saas-multi-cliente",
   "versao": "0.1.0",
   "ambiente": "wsl-dev",
-  "atualizado_em": "2026-08-28",
+  "atualizado_em": "2026-09-11",
   "atualizado_por": "(analise de estado)",
   "commit": "daeba39",
   "seguranca": {
@@ -523,6 +523,20 @@
       "nivel": "info",
       "evento": "Modo objetivo adotado a partir de 28/08/2026",
       "detalhe": "Duvida sobe na caixa de pergunta formal; resposta traz resultado, numero medido e o que ficou em aberto. Nao autoriza omitir erro, risco, custo nem o que nao foi verificado."
+    },
+    {
+      "data": "2026-09-11",
+      "skill": "(objetividade)",
+      "nivel": "info",
+      "evento": "Modo objetivo reafirmado em 11/09/2026",
+      "detalhe": "Chamado de novo no meio da sessao de 11/09. Mesmas regras de 28/08: duvida na caixa formal, resultado com numero medido, monitor em tarefa longa, desenho do fluxo ao fim de ciclo grande."
+    },
+    {
+      "data": "2026-09-11",
+      "skill": "(vinculo)",
+      "nivel": "info",
+      "evento": "Bairro publicado guardado e vinculos refeitos sem teto de distancia",
+      "detalhe": "Migracao 0098. Regra: rua, numero, bairro e cidade; ligacao SIM ou SIM_COM; Receita so ativa. Bairro concordando com a Corsan: iFood de 20% para 95%. Alvo: 21.986 para 23.407 ligacoes com POI. Avaliacoes antigas apagadas; backup em ~/backups/radar/2026-09-11 no i9. Commit 2a5d867."
     }
   ],
   "caminho_dados": "psycopg",
