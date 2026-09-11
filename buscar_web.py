@@ -60,6 +60,9 @@ TENTATIVAS = 3
 #: a busca para o Bing, que traz menos (medido na noite de 11/09/2026).
 CASTIGO_S = 3600
 TENTATIVAS_GOOGLE = 2
+#: A LEITURA DA PAGINA PELA IA, numa chamada separada: DESLIGADA no processo
+#: enxuto (12/09/2026) — o texto vai direto para a avaliacao. `--ler-com-ia`.
+LER_COM_IA = False
 #: SO O GOOGLE desde 12/09/2026: o Bing devolvia pagina generica para 99,8% das
 #: buscas. O codigo do Bing fica em `MOTORES` para quem quiser testar de novo.
 MOTORES_EM_USO = ("google",)
@@ -233,7 +236,7 @@ def fila(con, cidade=None, limite=0, ligacoes=None, fatia=None, refazer_bing=Fal
     poi = {r[0]: {"id": r[0], "fonte": r[1], "nome": r[2], "endereco": r[3], "telefone": r[4]}
            for r in cur.fetchall()}
     cur.execute("""select ligacao, tipo, coalesce(poi_id, 0), motor from radar_comercial.busca_web
-                    where ia is not null""")
+                    where (ia is not null or texto is not null) and not bloqueado""")
     por_motor = {}
     for a_, b_, c_, m_ in cur.fetchall():
         por_motor.setdefault((str(a_), b_, c_), set()).add(m_)
@@ -353,6 +356,68 @@ def capturar(consulta, motor, proxy):
             caixa.get("url", ""), "", caixa.get("img"))
 
 
+def capturar_humano(consulta, proxy):
+    """(ok, bloqueado, texto, url_final, erro, jpeg) pela sessao humanizada.
+
+    A MESMA SESSAO QUE COLHE O GOOGLE MAPS (`human_browser.HumanSession`,
+    usada por `google_enriquece`): perfil proprio, stealth, cookies de
+    consentimento do Google e o proxy do pool. Pedido do dono do produto em
+    12/09/2026: "tenta o Google com proxy como ja busca os itens do Google; so
+    se nao conseguir vira para o navegador do repositorio".
+    """
+    import asyncio
+    import shutil
+    import tempfile
+    from pathlib import Path
+
+    async def _rodar():
+        from playwright.async_api import async_playwright
+        from human_browser import HumanSession
+        perfil = Path(tempfile.mkdtemp(prefix="radar_busca_"))
+        sess = None
+        try:
+            async with async_playwright() as pw:
+                sess = await HumanSession.create(pw, proxy, perfil, layer="maps", headless=True)
+                await sess.humanized_goto(MOTORES["google"] % urllib.parse.quote(consulta), timeout=45000)
+                corpo = ""
+                for _ in range(25):
+                    corpo = (await sess.page.evaluate("() => document.body ? document.body.innerText : ''")) or ""
+                    if "verificando sua solicita" not in corpo.lower() and "checking your request" not in corpo.lower():
+                        break
+                    await sess.page.wait_for_timeout(1000)
+                await sess.page.wait_for_timeout(1500)
+                baixo = ((await sess.page.evaluate("() => document.body ? document.body.innerText : ''")) or "").lower()
+                bloq = (await sess.is_captcha() or "tráfego incomum" in baixo or "unusual traffic" in baixo
+                        or "verificando sua solicita" in baixo or "checking your request" in baixo)
+                await sess.page.set_viewport_size({"width": LARGURA, "height": 900})
+                img = await sess.page.screenshot(full_page=True, type="jpeg", quality=82)
+                texto = (await sess.page.evaluate(bn.JS_TEXTO)) or ""
+                url = sess.page.url
+                await sess.close()
+                sess = None
+                return True, bloq, texto, url, "", img
+        except Exception as e:                                 # noqa: BLE001
+            return False, None, "", "", "%s: %s" % (type(e).__name__, str(e)[:160]), None
+        finally:
+            if sess is not None:
+                try:
+                    await sess.close()
+                except Exception:                              # noqa: BLE001
+                    pass
+            shutil.rmtree(perfil, ignore_errors=True)
+
+    return asyncio.run(_rodar())
+
+
+def bn_proxy_dict(url):
+    """"http://user:senha@host:porta" -> o dicionario que o `ProxyPool.to_playwright` le."""
+    if not url:
+        return None
+    u = urllib.parse.urlsplit(url)
+    return {"server": "http://%s:%s" % (u.hostname, u.port), "username": u.username or "",
+            "password": u.password or ""}
+
+
 def _print_para_modelo(jpeg):
     """O print em densidade normal, cortado em 7.000 px: (jpeg, base64)."""
     import base64
@@ -413,14 +478,14 @@ class Gravador:
         sql = """insert into radar_comercial.busca_web
                     (id_empresa, ligacao, tipo, poi_id, consulta, motor, bloqueado, erro,
                      tentativas, url, dados, bytes_tam, chars_texto, ia, modelo,
-                     segundos_captura, segundos_ia)
-                 values ((select core.empresa_atual()), %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"""
+                     segundos_captura, segundos_ia, texto, navegador)
+                 values ((select core.empresa_atual()), %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"""
         args = (c["ligacao"], c["tipo"], c.get("poi_id"), c["consulta"], c["motor"],
                 bool(c.get("bloqueado")), c.get("erro") or None, c.get("tentativas"),
                 c.get("url") or None, c.get("dados"), len(c["dados"]) if c.get("dados") else None,
                 c.get("chars_texto"), json.dumps(c["ia"], ensure_ascii=False) if c.get("ia") is not None else None,
                 MODELO if c.get("ia") is not None else None,
-                c.get("segundos_captura"), c.get("segundos_ia"))
+                c.get("segundos_captura"), c.get("segundos_ia"), c.get("texto"), c.get("navegador"))
         with self.trava:
             for tentativa in (1, 2):
                 try:
@@ -483,14 +548,25 @@ def rodar(itens, trabalhadores, aplicar):
         jpeg = None
         motor = "google"
         tentativa = 0
+        navegador = None
         for motor in MOTORES_EM_USO:
             # UMA TENTATIVA NO GOOGLE: na noite de 11/09/2026 ele bloqueou ate
             # IP novo do pool; insistir tres vezes so queimava mais IPs.
             for tentativa in range(1, (TENTATIVAS_GOOGLE if motor == "google" else TENTATIVAS) + 1):
+                # PRIMEIRO O NAVEGADOR DO REPOSITORIO; se ele nao passar, a sessao
+                # humanizada do Google Maps, com outro IP descansado. Medido em
+                # 12/09/2026: o repositorio passou em 23 de 25, a sessao em 2.
                 px = ip_para(motor)
                 ok, bloq, texto, url, erro, jpeg = capturar(q, motor, px)
+                navegador = "repositorio"
                 if motor == "google" and bloq:
                     castigar(px)
+                if not (ok and not bloq and jpeg):
+                    px = ip_para(motor)
+                    ok, bloq, texto, url, erro, jpeg = capturar_humano(q, bn_proxy_dict(px))
+                    navegador = "sessao_humana"
+                    if motor == "google" and bloq:
+                        castigar(px)
                 if ok and not bloq:
                     break
             if ok and not bloq:
@@ -498,10 +574,17 @@ def rodar(itens, trabalhadores, aplicar):
         dt_cap = time.time() - t0
         reg = {"ligacao": it["ligacao"], "tipo": tipo, "poi_id": p["id"] if p else None,
                "consulta": q, "motor": motor, "bloqueado": bool(bloq), "erro": erro,
+               "texto": (texto or None) if ok and not bloq else None, "navegador": navegador,
                "tentativas": tentativa, "url": url, "chars_texto": len(texto or ""),
                "segundos_captura": round(dt_cap, 1)}
         chave = "falha"
-        if ok and not bloq and jpeg:
+        if ok and not bloq and jpeg and not LER_COM_IA:
+            # O PROCESSO ENXUTO: o texto vai direto para a avaliacao; guarda-se
+            # o print (o que o modelo leria) e o texto, sem chamar a Spark.
+            lido, _b64 = _print_para_modelo(jpeg)
+            reg["dados"] = _print_para_guardar(lido)
+            chave = "ok_" + motor
+        elif ok and not bloq and jpeg:
             lido, b64 = _print_para_modelo(jpeg)
             r, erro_ia, dt_ia = extrair(it, q, texto, b64)
             reg["segundos_ia"] = round(dt_ia, 1)
@@ -541,6 +624,8 @@ def main(argv=None):
     p.add_argument("--limite", type=int, default=0)
     p.add_argument("--trabalhadores", type=int, default=6)
     p.add_argument("--fatia", default="", help="k[,k2]/n: so as ligacoes com crc32 %% n num dos k")
+    p.add_argument("--ler-com-ia", dest="ler_com_ia", action="store_true",
+                   help="le cada pagina com a IA numa chamada separada (o processo antigo)")
     p.add_argument("--refazer-bing", dest="refazer_bing", action="store_true",
                    help="busca de novo, no Google, as consultas que so o Bing respondeu")
     p.add_argument("--contar", action="store_true",
@@ -548,6 +633,8 @@ def main(argv=None):
     p.add_argument("--aplicar", action="store_true")
     a = p.parse_args(argv)
     fatia = ler_fatia(a.fatia)
+    global LER_COM_IA
+    LER_COM_IA = bool(a.ler_com_ia)
     if not a.cidade and not a.ligacao:
         p.error("diga --cidade ou --ligacao")
     con = bc.conectar()

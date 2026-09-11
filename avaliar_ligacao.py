@@ -575,7 +575,8 @@ def fila(con, limite, refazer, ligacoes=None, sem_catalogo=False,
         cur.execute("""select b.ligacao
                          from radar_comercial.busca_web b
                          join radar_comercial.ligacao_veredito v on v.ligacao = b.ligacao
-                        where b.tipo = 'endereco' and b.motor = 'google' and b.ia is not null
+                        where b.tipo = 'endereco' and b.motor = 'google'
+                          and (b.ia is not null or b.texto is not null)
                           and b.feito_em > v.avaliado_em and v.veredito = 'reprovado'
                         group by b.ligacao""")
         ja = set(saida)
@@ -657,9 +658,11 @@ def fila(con, limite, refazer, ligacoes=None, sem_catalogo=False,
         # cobra a Spark duas vezes pela mesma ligacao. A FOLGA DE 15 MINUTOS e
         # para as buscas pelo NOME da mesma ligacao, que `buscar_web` faz logo
         # em seguida a do endereco e podem ainda estar na fila.
+        # A BUSCA FEITA TEM LEITURA (processo anterior) OU TEXTO (o enxuto de
+        # 12/09/2026). Sem a folga de 15 min: a busca pelo nome foi desligada.
         cur.execute("""select distinct ligacao from radar_comercial.busca_web
-                        where tipo = 'endereco' and ia is not null
-                          and feito_em < now() - interval '15 minutes'""")
+                        where tipo = 'endereco' and not bloqueado
+                          and (ia is not null or texto is not null)""")
         buscadas = {str(r[0]) for r in cur.fetchall()}
         antes = len(saida)
         saida = [l for l in saida if l in buscadas]
