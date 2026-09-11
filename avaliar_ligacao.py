@@ -526,7 +526,7 @@ SEM_VEREDITO = """
 def fila(con, limite, refazer, ligacoes=None, sem_catalogo=False,
          desatualizados=False, fonte=None, exceto_fonte=None,
          exigir_busca=False, fotos_desde=None, fatia=None, vinculo_novo=False,
-         cidade=None):
+         cidade=None, adiar_grandes=0):
     if ligacoes:
         return [str(x) for x in ligacoes]
     cur = con.cursor()
@@ -674,6 +674,17 @@ def fila(con, limite, refazer, ligacoes=None, sem_catalogo=False,
     fontes_de = {}
     for l_, f_ in cur.fetchall():
         fontes_de.setdefault(str(l_), set()).add(f_)
+    if adiar_grandes:
+        cur.execute("""select lp.ligacao, count(*)
+                         from radar_comercial.ligacao_poi lp
+                         join radar_comercial.pois p on p.id = lp.poi_id
+                        where lp.descartado_em is null and p.fundido_em is null
+                        group by lp.ligacao having count(*) > %s""", (adiar_grandes,))
+        grandes = {str(r[0]) for r in cur.fetchall()}
+        antes = len(saida)
+        saida = [l for l in saida if str(l) not in grandes]
+        _log("   %d ligação(ões) com mais de %d POIs ficaram para o fim"
+             % (antes - len(saida), adiar_grandes))
 
     def _prio(l):
         fs = fontes_de.get(str(l), set())
@@ -1073,6 +1084,8 @@ def _para_veredito(resposta):
 #: O CONTEXTO DA SPARK (vLLM `--max-model-len`). Prompt + imagens + resposta
 #: tem de caber nele; passar disso volta 400 e a ligacao falha calada.
 CONTEXTO_DA_SPARK = 32768
+#: LIGACAO GRANDE: mais POIs que isso pede resposta de 6 a 8 mil tokens.
+GRANDE = 20
 
 
 def _teto_da_resposta(prompt, imgs, resumo):
@@ -1127,7 +1140,8 @@ def uma(poco, ligacao, modelo, secoes, placar, trava, aplicar):
         # sozinha na proxima rodada — o estrago foi tempo, nao dado perdido.
         resposta = di._chat_local(modelo, prompt, [ia._b64(b) for b in imgs],
                                   max_tokens=_teto_da_resposta(prompt, imgs, resumo),
-                                  timeout=TIMEOUT)
+                                  timeout=(TIMEOUT if int(resumo.get("pois") or 0) <= GRANDE
+                                           else max(TIMEOUT, 2700)))
     except Exception as e:                                     # noqa: BLE001
         with trava:
             placar["falha"] += 1
@@ -1183,14 +1197,14 @@ def uma(poco, ligacao, modelo, secoes, placar, trava, aplicar):
 def rodar(limite, aplicar, trabalhadores, modelo, ligacoes, refazer,
           sem_catalogo=False, desatualizados=False, fonte=None,
           exceto_fonte=None, exigir_busca=False, fotos_desde=None, fatia=None,
-          vinculo_novo=False, cidade=None):
+          vinculo_novo=False, cidade=None, adiar_grandes=0):
     con = bc.conectar()
     alvos = fila(con, limite, refazer, ligacoes,
                  sem_catalogo=sem_catalogo,
                  desatualizados=desatualizados, fonte=fonte,
                  exceto_fonte=exceto_fonte, exigir_busca=exigir_busca,
                  fotos_desde=fotos_desde, fatia=fatia, vinculo_novo=vinculo_novo,
-                 cidade=cidade)
+                 cidade=cidade, adiar_grandes=adiar_grandes)
     _log("▶ veredito por LIGACAO — o dossiê de todas as fontes numa chamada")
     _log("   %d ligação(ões) na fila" % len(alvos))
     if not alvos:
@@ -1300,6 +1314,9 @@ def main(argv=None):
     p.add_argument("--vinculo-novo", dest="vinculo_novo", action="store_true",
                    help="tambem as ligacoes que ganharam POI depois do veredito")
     p.add_argument("--cidade", default=None, help="so as ligacoes desta cidade")
+    p.add_argument("--adiar-grandes", dest="adiar_grandes", type=int, default=None,
+                   help="deixa de fora ligacoes com mais de N POIs; o padrao e 20 com "
+                        "--exigir-busca-web (a Spark dividida) e 0 sem ele")
     p.add_argument("--aplicar", action="store_true")
     a = p.parse_args(argv)
     r = rodar(a.limite, a.aplicar, a.trabalhadores, a.modelo, a.ligacao,
@@ -1308,7 +1325,9 @@ def main(argv=None):
               exceto_fonte=a.exceto_fonte, exigir_busca=a.exigir_busca,
               fotos_desde=a.fotos_desde,
               fatia=tuple(int(x) for x in a.fatia.split("/")) if a.fatia else None,
-              vinculo_novo=a.vinculo_novo, cidade=a.cidade)
+              vinculo_novo=a.vinculo_novo, cidade=a.cidade,
+              adiar_grandes=(a.adiar_grandes if a.adiar_grandes is not None
+                             else (GRANDE if a.exigir_busca else 0)))
     return 1 if r.get("erro") else 0
 
 
