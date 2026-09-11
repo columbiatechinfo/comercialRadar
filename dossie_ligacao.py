@@ -154,7 +154,54 @@ def _linha_da_ligacao(cur, ligacao):
     return cur.fetchone()
 
 
-def montar(con, ligacao, ia, imagens_mod):
+#: Os sites que so republicam o cadastro da Receita. Contar um deles como
+#: segunda fonte era contar a Receita duas vezes.
+DIRETORIOS_DE_CNPJ = ("cnpj", "econodata", "solutudo", "casadosdados", "empresaqui",
+                      "informecadastral", "ondefica", "guiamais", "apontador",
+                      "telelistas", "listamais", "consultasocio", "empresas")
+#: As plataformas em que o negocio opera de fato: pedido, reserva, venda,
+#: agenda. Estar nelas e prova de atividade, e nao copia de cadastro.
+PLATAFORMAS = ("ifood.", "airbnb.", "booking.", "mercadolivre.", "olx.", "elo7.",
+               "shopee.", "getninjas.", "doctoralia.", "rappi.", "aiqfome.",
+               "tripadvisor.", "trivago.", "99app.", "keeta.")
+REDES_SOCIAIS = ("instagram.", "facebook.", "tiktok.", "linkedin.", "wa.me", "whatsapp.")
+
+
+def _de_onde_vem(x):
+    """O tipo da prova como o modelo deve le-lo — o dominio corrige a leitura."""
+    f = familia_da_prova(dict(x, status=None, mesmo_endereco=None))
+    if f == "receita":
+        return "site de consulta de CNPJ (fonte não oficial)"
+    return x.get("tipo_da_prova")
+
+
+def familia_da_prova(x):
+    """A familia de fonte que um resultado da busca web acrescenta — ou ''.
+
+    O TIPO QUE A LEITURA ESCREVEU NAO BASTA: ela chamou diretorio de CNPJ de
+    "plataforma". O dominio decide; o tipo so vale para o painel do Google,
+    que nao tem dominio.
+    """
+    t = str(x.get("tipo_da_prova") or "")
+    d = str(x.get("dominio") or "").lower()
+    if x.get("status") == "fechado_permanente" or x.get("mesmo_endereco") is False:
+        return ""
+    if d and any(k in d for k in DIRETORIOS_DE_CNPJ):
+        return "receita"
+    if t == "perfil_google" or x.get("onde_na_pagina") in ("painel", "mapa"):
+        return "google"
+    if d and any(k in d for k in PLATAFORMAS):
+        return "plataforma"
+    if d and any(k in d for k in REDES_SOCIAIS):
+        return "web"
+    if t in ("site_proprio", "rede_social") and d:
+        return "web"
+    if t == "cadastro_cnpj":
+        return "receita"
+    return ""
+
+
+def montar(con, ligacao, ia, imagens_mod, busca_web=None):
     """Devolve (texto_do_dossie, imagens_b64, tipos, resumo).
 
     `ia` e o modulo `avaliar_ia` — usado para `_sinal_do_maps` e `_dias_atras`,
@@ -163,7 +210,11 @@ def montar(con, ligacao, ia, imagens_mod):
     """
     # AS PALAVRAS DO SETOR, e nao "hidrometro" escrito no texto. O mesmo
     # dossie serve agua, energia e gas; ver `setor.py` e a migracao 0095.
-    pal = setor.palavras(con)
+    # VOCABULARIO NEUTRO no que a IA le. Pedido do dono do produto em
+    # 11/09/2026: o servico atende agua, energia e gas, e o prompt nao pode
+    # empurrar o modelo para um setor. `setor` continua valendo para a tela.
+    pal = dict(setor.palavras(con), ligacao_mai="INSTALAÇÃO", medidor="medidor",
+               consumo="consumo")
     cur = con.cursor()
     lig = _linha_da_ligacao(cur, ligacao)
     cur.execute(SQL_POIS, (ligacao,))
@@ -194,9 +245,6 @@ def montar(con, ligacao, ia, imagens_mod):
         # seis economias nao e uma casa.
         linhas.append("- economias: %d residencial(is), %d comercial(is), "
                       "%d industrial(is)" % (eres, ecom, eind))
-        if ecom or eind:
-            linhas.append("  ATENÇÃO: esta ligação JÁ tem economia comercial "
-                          "ou industrial declarada.")
         if eres > 1:
             linhas.append("  ATENÇÃO: %d economias residenciais num mesmo "
                           "ponto — várias moradias ou uso misto." % eres)
@@ -206,6 +254,50 @@ def montar(con, ligacao, ia, imagens_mod):
                       "dela." % (pal["ligacao_mai"], ligacao))
 
     # ── 2 · quem aponta para ela ─────────────────────────────────────────
+    # O ENDERECO COMPLETO COMO A CORSAN ESCREVE: e nele que mora a unidade
+    # ("CASA 02", "ESQ SALAO", "APT. 03"), que desempata o condominio.
+    ids_pois = [r[0] for r in pois]
+    outras, compl, aberto = {}, {}, {}
+    try:
+        cur.execute("""select coalesce(end_ligacao,'') from resources_root.cadastro_corsan
+                        where num_ligacao::text = %s limit 1""", (ligacao,))
+        k = cur.fetchone()
+        if k and k[0]:
+            linhas.append("- endereço completo no cadastro: %s" % k[0])
+        # QUEM MAIS DISPUTA CADA REGISTRO. Ver a regra "o registro que tambem
+        # e candidato de outras ligacoes" no prompt.
+        cur.execute("""select lp.poi_id, lp.ligacao, coalesce(c.end_ligacao,'')
+                         from radar_comercial.ligacao_poi lp
+                         join resources_root.cadastro_corsan c
+                           on c.num_ligacao::text = lp.ligacao
+                        where lp.descartado_em is null and lp.poi_id = any(%s)
+                          and lp.ligacao <> %s""", (ids_pois, ligacao))
+        for pid, lig2, end2 in cur.fetchall():
+            outras.setdefault(pid, []).append((lig2, end2))
+        cur.execute("""select poi_id, complemento from radar_comercial.receita_data
+                        where poi_id = any(%s) and coalesce(complemento,'') <> ''""",
+                    (ids_pois,))
+        compl = dict(cur.fetchall())
+        # A ABERTURA DO CNPJ E UMA DATA, e a foto de rua tambem: uma casa
+        # fotografada antes do negocio abrir nao o desmente.
+        cur.execute("""select poi_id, bruto->>'data_inicio' from radar_comercial.receita_data
+                        where poi_id = any(%s) and bruto ? 'data_inicio'""", (ids_pois,))
+        aberto = {p: v for p, v in cur.fetchall() if v and len(v) >= 6}
+    except Exception:                                          # noqa: BLE001
+        con.rollback()
+    # A DATA DA FOTO DE RUA ANTES DOS REGISTROS: e contra ela que se pesa a
+    # abertura de cada CNPJ. Mesmo POI que a secao das imagens escolhe — o
+    # mais proximo do medidor, se estiver dentro do raio.
+    ym_foto = None
+    prox = min(((r[0], _metros(la, lo, r[10], r[11])) for r in pois), key=lambda x: x[1])
+    if prox[1] <= RAIO_DA_FOTO_M:
+        try:
+            with con.cursor() as k:
+                dd = _datas_das_visadas(k, prox[0])
+            ym_foto = max((v[:7] for tp, v in dd.items()
+                           if tp.startswith("sv_") and len(v) >= 7), default=None)
+        except Exception:                                      # noqa: BLE001
+            con.rollback()
     linhas.append("")
     linhas.append("O QUE AS FONTES DIZEM SOBRE ESTE ENDEREÇO — são %d "
                   "registro(s) independentes:" % len(pois))
@@ -232,6 +324,32 @@ def montar(con, ligacao, ia, imagens_mod):
         linhas.append("    atividade declarada: %s" % (categoria or "?"))
         if endereco:
             linhas.append("    endereço que esta fonte traz: %s" % endereco)
+        if compl.get(pid):
+            linhas.append("    complemento na Receita: %s" % compl[pid])
+        if aberto.get(pid):
+            ab = aberto[pid]
+            txt = "    CNPJ aberto em: %s/%s" % (ab[4:6], ab[:4])
+            if ym_foto:
+                try:
+                    m_ab = int(ab[:4]) * 12 + int(ab[4:6])
+                    m_ft = int(ym_foto[:4]) * 12 + int(ym_foto[5:7])
+                    foto = "%s/%s" % (ym_foto[5:7], ym_foto[:4])
+                    if m_ab > m_ft:
+                        txt += (" — DEPOIS da foto de rua (%s): a foto é de antes "
+                                "deste negócio existir" % foto)
+                    elif m_ab < m_ft:
+                        txt += " — %d mês(es) ANTES da foto de rua (%s)" % (m_ft - m_ab, foto)
+                    else:
+                        txt += " — no mesmo mês da foto de rua (%s)" % foto
+                except ValueError:
+                    pass
+            linhas.append(txt)
+        if outras.get(pid):
+            os_ = outras[pid]
+            amostra = "; ".join("%s (%s)" % (l2, "-".join(e2.split("-")[1:2]) or "?")
+                                for l2, e2 in os_[:6])
+            linhas.append("    TAMBÉM é candidato de %d outra(s) instalação(ões): %s%s"
+                          % (len(os_), amostra, " ..." if len(os_) > 6 else ""))
         if d < 9e8:
             linhas.append("    fica a %.0f m do %s" % (d, pal["medidor"]))
         for rot, val in (("telefone", tel), ("site", site),
@@ -287,7 +405,7 @@ def montar(con, ligacao, ia, imagens_mod):
     if airbnb:
         linhas.append("")
         linhas.append("NO AIRBNB — hospedagem remunerada, que é %s "
-                      "comercial numa ligação residencial:" % pal["consumo"])
+                      "comercial numa instalação residencial:" % pal["consumo"])
         for (pid, titulo, tipo, hosp, qua, camas, banh, nota, aval,
              bairro, anfitriao) in airbnb:
             linhas.append("  POI #%s · %s" % (pid, titulo or "(sem titulo)"))
@@ -310,6 +428,41 @@ def montar(con, ligacao, ia, imagens_mod):
                           "plataforma mostra so um circulo aproximado.")
 
     # ── 3 · os comentarios, de todos os POIs juntos ──────────────────────
+    if busca_web:
+        linhas.append("")
+        linhas.append("O QUE A BUSCA NA WEB ACHOU — Google, e o Bing só quando "
+                      "o Google falhou:")
+        for b in busca_web:
+            linhas.append("  busca: \"%s\" (%s)" % (b.get("consulta"), b.get("motor")))
+            # OUTRO ENDERECO FICA DE FORA; o resto entra INTEIRO, de qualquer
+            # fonte e sem corte. Fonte nao oficial e dado obtido, e quem julga
+            # se casa com algum registro e o modelo (dono do produto, 11/09/2026).
+            ests = [x for x in (b.get("estabelecimentos") or [])
+                    if x.get("mesmo_endereco") is not False]
+            if not ests:
+                linhas.append("    nenhum estabelecimento neste endereço")
+            for x in ests:
+                campos = [("endereço", x.get("endereco")), ("telefone", x.get("telefone")),
+                          ("site", x.get("site")), ("Instagram", x.get("instagram")),
+                          ("horário", x.get("horario")), ("nota", x.get("nota")),
+                          ("avaliações", x.get("avaliacoes")),
+                          ("avaliação mais recente",
+                           (x.get("avaliacao_mais_recente") or {}).get("quando")),
+                          ("CNPJ", x.get("cnpj")), ("situação", x.get("status")),
+                          ("atividade", x.get("categoria")), ("e-mail", x.get("email")),
+                          ("aberto em", x.get("data_abertura")),
+                          ("o que a página diz", x.get("descricao")),
+                          ("onde na página", x.get("onde_na_pagina")),
+                          ("de onde vem", _de_onde_vem(x)),
+                          ("domínio", x.get("dominio"))]
+                linhas.append("    %s · %s" % (x.get("nome") or "(sem nome)",
+                              " · ".join("%s: %s" % (k2, v2) for k2, v2 in campos
+                                         if v2 not in (None, "", [], {}))))
+            conf = b.get("pois_confirmados") or (
+                [b["poi_confirmado"]] if b.get("poi_confirmado") else [])
+            if conf:
+                linhas.append("    a leitura da página diz que ela comprova: %s"
+                              % ", ".join("POI #%s" % c for c in conf))
     for r in pois:
         pid, nome, fonte = r[0], r[1], r[2]
         alvo = {"id": pid}
@@ -331,7 +484,7 @@ def montar(con, ligacao, ia, imagens_mod):
     # O MAIS PROXIMO SO SERVE SE ESTIVER PERTO. Ver `RAIO_DA_FOTO_M`.
     if melhor_sv and melhor_sv[1] > RAIO_DA_FOTO_M:
         linhas.append("")
-        linhas.append("SEM FOTO DA FACHADA DESTA LIGAÇÃO. O registro mais "
+        linhas.append("SEM FOTO DA FACHADA DESTA INSTALAÇÃO. O registro mais "
                       "próximo está a %.0f m do %s — longe demais para que a "
                       "foto dele seja deste imóvel. Julgue pelas fontes."
                       % (melhor_sv[1], pal["medidor"]))
@@ -401,7 +554,24 @@ def montar(con, ligacao, ia, imagens_mod):
                       "capturado ainda. Julgue SÓ pelas fontes, e não comente "
                       "fachada — você não viu nenhuma.")
 
+    # O QUE A REGRA DO CODIGO PRECISA: as economias ja cobradas como
+    # comercio, a fonte de cada POI, e as familias de fonte que a busca web
+    # acrescenta a cada POI que ela comprovou. Ver `avaliar_ligacao.aplicar_regra`.
+    eco_com = eco_ind = 0
+    if lig:
+        eco_com, eco_ind = (lig[9] or 0), (lig[10] or 0)
+    web_familias = {}
+    for b in (busca_web or []):
+        # NAO SE CHAMA `tipos`: esse nome e a lista dos rotulos das imagens,
+        # e reusa-lo aqui mandava o prompt com a lista de imagens vazia.
+        fams = {familia_da_prova(x) for x in (b.get("estabelecimentos") or [])}
+        fams.discard("")
+        for c in (b.get("pois_confirmados") or []):
+            web_familias.setdefault(str(c), set()).update(fams)
     resumo = {"pois": len(pois), "fontes": len(fontes),
+              "eco_com": eco_com, "eco_ind": eco_ind,
+              "fonte_de": {str(r[0]): str(r[2] or "").lower() for r in pois},
+              "web_familias": {k: sorted(v) for k, v in web_familias.items()},
               "ifood": len(ifood), "airbnb": len(airbnb),
               "ano_das_visadas": anos[-1] if anos else None,
               "ids": [r[0] for r in pois],

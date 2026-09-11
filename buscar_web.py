@@ -1,0 +1,468 @@
+# -*- coding: utf-8 -*-
+"""Busca web do enriquecimento, por LIGACAO. Producao desde 11/09/2026.
+
+O DESENHO, do dono do produto, provado em 22 + 15 ligacoes de Canoas antes de
+entrar aqui (docs/RETOMAR-11-09-2026.md):
+
+- toda ligacao do alvo e buscada pelo ENDERECO: o logradouro NORMALIZADO (o
+  nome canonico do IBGE, e nao o texto cru da Corsan), numero, bairro, cidade,
+  UF e "empresa";
+- todo POI com nome de negocio e buscado tambem pelo NOME + cidade + UF;
+- Google na frente; o Bing so quando o Google falha em tres IPs;
+- navegador: a sessao furtiva do Scrapling (a do iFood), com o pool de
+  proxies, um IP por sessao, HTTP/2 desligado;
+- a pagina vira print e texto, e o modelo da Spark devolve TODO estabelecimento
+  que ela mostra, de qualquer fonte, oficial ou nao. O de OUTRO endereco vem
+  marcado e fica fora do dossie; o resto entra inteiro, sem corte.
+
+Grava em `radar_comercial.busca_web` (migracao 0099), uma linha por consulta.
+Quem le e `avaliar_ligacao.busca_web_da`.
+
+A Spark so roda a IA: a captura, o navegador e a gravacao rodam aqui, no i9,
+e transbordam para o notebook com `--fatia 1/2`.
+
+Uso:
+    python buscar_web.py --cidade Canoas --aplicar
+    python buscar_web.py --cidade Canoas --fatia 0/2 --trabalhadores 6 --aplicar
+    python buscar_web.py --ligacao 2051224 --aplicar
+"""
+import argparse
+import concurrent.futures as cf
+import io
+import os
+import re
+import threading
+import time
+import unicodedata
+import urllib.parse
+import zlib
+
+import base_comum as bc
+import busca_navegador as bn
+import descrever_imagens as di
+import resolver_logradouro as rl
+
+MODELO = os.environ.get("SPARK_MODELO") or os.environ.get("MODELO_VISAO") or "ia-principal"
+#: Nome que e so CNPJ + pessoa ("12.345.678 FULANO DE TAL"): o MEI. Buscar o
+#: nome dele devolve o proprio cadastro; ele e achado pela busca do endereco.
+MEI = re.compile(r"(^\s*\d[\d.\-/]{7,}|\d[\d.\-/]{7,}\s*$)")
+MOTORES = {
+    "google": "https://www.google.com/search?q=%s&hl=pt-BR&gl=br&num=10",
+    "bing": "https://www.bing.com/search?q=%s&setlang=pt-BR&cc=BR",
+}
+#: Quantas vezes a mesma consulta tenta, cada vez por um IP, antes de passar ao
+#: Bing. Esperar ate 15 s em "Verificando sua solicitacao" zerou os bloqueios
+#: na sonda; os tres IPs cobrem o resto.
+TENTATIVAS = 3
+#: Largura da pagina que vai para o modelo: densidade normal (decisao de 11/09).
+LARGURA = 1366
+ALVO = ("SIM", "SIM_COM_ANALISE_HUMANA")
+
+#: A CORSAN ABREVIA O TIPO DA RUA em cinco letras ("AVENI GETULIO VARGAS").
+#: Na primeira rodada da sonda o Bing leu "AVENI" como palavra. O tipo vai por
+#: extenso quando o logradouro nao pareia com o IBGE.
+TIPO_DA_VIA = (("AV", "Avenida"), ("TRAV", "Travessa"), ("TV", "Travessa"),
+               ("EST", "Estrada"), ("AL", "Alameda"), ("ROD", "Rodovia"),
+               ("PRA", "Praça"), ("PC", "Praça"), ("BEC", "Beco"),
+               ("LAR", "Largo"), ("R", "Rua"))
+
+PROMPT = """Você recebe a página de resultados de uma busca na web, como imagem e como texto, e uma
+ficha do que o nosso cadastro sabe sobre um imóvel. Extraia da página TODO estabelecimento que
+ela mostra para esta busca, de qualquer fonte, oficial ou não: painel do Google, site próprio, rede
+social, plataforma, guia, diretório de empresas ou de CNPJ. Dado de fonte não oficial é dado obtido,
+e não se descarta: quem julga se ele casa com algum registro da ficha é a etapa seguinte. Diga
+também se a página confirma ou complementa algum dos registros da ficha.
+
+REGRAS
+- Não invente. Campo que a página não mostra fica null.
+- Resultado de outra cidade ou de outro endereço não entra, ou entra com
+  "mesmo_endereco": false.
+- Painel lateral de empresa (com endereço, telefone, horário, nota) vale mais que um link solto.
+- "avaliacao_mais_recente" só se a página mostrar a data ou "há X dias/meses".
+- Se a página for de bloqueio (CAPTCHA, "tráfego incomum", "Verificando sua solicitação"),
+  devolva "bloqueado": true e mais nada.
+- "status": "fechado_permanente" SÓ quando a página disser "Fechado permanentemente",
+  "Fechou definitivamente" ou equivalente. "Fechado · Abre às 09:00" é o HORÁRIO de agora:
+  o negócio está ativo, e o status é "aberto".
+- "tipo_da_prova": de onde vem o dado de cada estabelecimento:
+  "perfil_google" (painel do Google, ficha do Maps), "site_proprio", "rede_social"
+  (Instagram, Facebook), "plataforma" (iFood, Booking, Airbnb, OLX), "cadastro_cnpj"
+  (sites de consulta de CNPJ: Econodata, CNPJ.biz, Casa dos Dados, Solutudo) ou "outro" (guia,
+  diretório, blog, notícia).
+- "dominio": o site de onde saiu o resultado, quando for resultado e não painel.
+- "pois_confirmados": os números dos registros da ficha que a página comprova neste endereço.
+
+Responda SOMENTE um JSON:
+{"bloqueado": false,
+ "estabelecimentos": [{"nome": "", "endereco": "", "bairro": "", "telefone": "", "site": "",
+   "instagram": "", "facebook": "", "horario": "", "nota": null, "avaliacoes": null,
+   "avaliacao_mais_recente": {"quando": "", "texto": ""}, "cnpj": "", "categoria": "",
+   "email": "", "data_abertura": "", "descricao": "<o que a página diz do negócio, até 20 palavras>",
+   "status": "aberto|fechado_permanente|desconhecido", "onde_na_pagina": "painel|resultado|mapa",
+   "tipo_da_prova": "perfil_google|site_proprio|rede_social|plataforma|cadastro_cnpj|outro",
+   "dominio": "", "mesmo_endereco": true}],
+ "pois_confirmados": [],
+ "relacao": "confirma|complementa|nada",
+ "justificativa": "<até 40 palavras>"}
+
+A FICHA E A BUSCA (o que muda a cada chamada vem aqui no fim):
+"""
+
+_trava_log = threading.Lock()
+
+
+def _log(m):
+    with _trava_log:
+        print("%s %s" % (time.strftime("%H:%M:%S"), m), flush=True)
+
+
+def sem_acento(s):
+    return unicodedata.normalize("NFKD", s or "").encode("ascii", "ignore").decode().lower().strip()
+
+
+def tipo_por_extenso(end_ligacao):
+    t = (end_ligacao.split(" ", 1)[0] or "").upper()
+    for pref, nome in TIPO_DA_VIA:
+        if t.startswith(pref):
+            return nome
+    return ""
+
+
+def _na_fatia(ligacao, fatia):
+    """`fatia` = (k, n): a ligacao e deste processo quando crc32 % n == k.
+
+    O MESMO CORTE NAS DUAS MAQUINAS sem tabela de fila: o i9 roda 0/2 e o
+    notebook 1/2, e nenhum dos dois pega a ligacao do outro.
+    """
+    if not fatia:
+        return True
+    k, n = fatia
+    return zlib.crc32(str(ligacao).encode()) % n == k
+
+
+def fila(con, cidade=None, limite=0, ligacoes=None, fatia=None):
+    """As ligacoes do alvo com consulta por fazer, e as consultas de cada uma.
+
+    Alvo: residencial ATIVA, qualificada SIM ou SIM_COM_ANALISE_HUMANA, com
+    vinculo vivo. Uma consulta esta feita quando tem linha com `ia` preenchida;
+    bloqueio e erro nao contam, e voltam na proxima rodada.
+
+    Tudo em conjuntos no Python, e nenhum `exists` por linha: a fila da
+    avaliacao ja ficou minutos parada nisso.
+    """
+    cur = con.cursor()
+    cur.execute("set statement_timeout = '300s'")
+    cur.execute("""select num_ligacao::text, coalesce(end_ligacao,''), coalesce(nom_logradouro,''),
+                          coalesce(nro,''), coalesce(nom_bairro,''), qualificacao, cidade
+                     from resources_root.cadastro_corsan
+                    where qualificacao in ('SIM','SIM_COM_ANALISE_HUMANA')
+                      and upper(categoria)='RESIDENCIAL' and upper(sit_ligacao)='ATIVA'""")
+    quero = sem_acento(cidade) if cidade else None
+    so = {str(x) for x in ligacoes} if ligacoes else None
+    lig = {}
+    for r in cur.fetchall():
+        if so is not None and r[0] not in so:
+            continue
+        if quero and sem_acento(r[6]) != quero:
+            continue
+        if not _na_fatia(r[0], fatia):
+            continue
+        lig[r[0]] = r[1:]
+    cur.execute("select ligacao, poi_id from radar_comercial.ligacao_poi where descartado_em is null")
+    por_lig = {}
+    for l, p in cur.fetchall():
+        l = str(l)
+        if l in lig:
+            por_lig.setdefault(l, []).append(p)
+    ids = sorted({p for ps in por_lig.values() for p in ps})
+    cur.execute("""select id, lower(coalesce(fonte,'')), coalesce(nome,''), coalesce(endereco,''),
+                          coalesce(telefone,'')
+                     from radar_comercial.pois where fundido_em is null and id = any(%s)""", (ids,))
+    poi = {r[0]: {"id": r[0], "fonte": r[1], "nome": r[2], "endereco": r[3], "telefone": r[4]}
+           for r in cur.fetchall()}
+    cur.execute("""select ligacao, tipo, coalesce(poi_id, 0) from radar_comercial.busca_web
+                    where ia is not null""")
+    feitas = {(str(a), b, c) for a, b, c in cur.fetchall()}
+    cod = None
+    municipios = {}
+    saida = []
+    for l in sorted(por_lig):
+        ps = [poi[p] for p in por_lig[l] if p in poi]
+        if not ps:
+            continue
+        end_l, logr, nro, bairro, q, cid = lig[l]
+        tarefas = []
+        if (l, "endereco", 0) not in feitas:
+            tarefas.append(("endereco", None))
+        nomes = set()
+        for p in ps:
+            chave = sem_acento(p["nome"])
+            if not chave or MEI.search(p["nome"]) or chave in nomes:
+                continue
+            nomes.add(chave)
+            if (l, "nome", p["id"]) not in feitas:
+                tarefas.append(("nome", p))
+        if not tarefas:
+            continue
+        # O LOGRADOURO NORMALIZADO, pareado com o cadastro do IBGE do municipio
+        # da ligacao (correcao do dono do produto em 11/09/2026).
+        cid_n = sem_acento(cid)
+        if cid_n not in municipios:
+            municipios[cid_n] = _cadastro_do_municipio(cur, cid)
+        cad = municipios[cid_n]
+        reg = cad.parear(rl.norm(logr)) if cad else None
+        via = reg[0].title() if reg else " ".join(x for x in (tipo_por_extenso(end_l), logr.title()) if x)
+        cidade_uf = "%s RS" % (cid or "").title()
+        consulta_end = " ".join(x for x in (via, nro, bairro.title(), cidade_uf, "empresa") if x)
+        saida.append({"ligacao": l, "qualificacao": q, "endereco": end_l,
+                      "consulta_endereco": consulta_end, "cidade_uf": cidade_uf,
+                      "pois": ps, "tarefas": tarefas})
+        if limite and len(saida) >= limite:
+            break
+    return saida
+
+
+_CODIGOS_RS = {}
+
+
+def _cadastro_do_municipio(cur, cidade):
+    """O cadastro de logradouros do IBGE do municipio, ou None.
+
+    PELO NOME, MAS SO NO RS: a Corsan so atende o RS, e e isso que torna o nome
+    seguro aqui ("Santana" existe em nove estados; ver `area_utils`). A
+    comparacao sem acento e em Python, sobre as ~500 linhas do estado.
+    """
+    if not _CODIGOS_RS:
+        cur.execute("select nome, cod_municipio from resources_root.ibge_malha where upper(uf) = 'RS'")
+        for nome, cod in cur.fetchall():
+            _CODIGOS_RS[sem_acento(nome)] = str(cod)
+    cod = _CODIGOS_RS.get(sem_acento(cidade))
+    if not cod:
+        _log("   municipio sem codigo IBGE: %r — a busca usa o logradouro cru" % cidade)
+        return None
+    cad = rl.Cadastro(cod)
+    cad.carregar(cur)
+    return cad
+
+
+def capturar(consulta, motor, proxy):
+    """(ok, bloqueado, texto, url_final, erro, jpeg)."""
+    from scrapling.fetchers import StealthySession
+    caixa = {}
+
+    def acao(page):
+        # O GOOGLE SEGURA A BUSCA NUMA VERIFICACAO que se resolve sozinha:
+        # "Verificando sua solicitacao". Espera ate 15 s por ela antes de
+        # chamar de bloqueio (na sonda, 5 de 17 buscas eram so isso).
+        corpo = ""
+        for _ in range(15):
+            corpo = (page.evaluate("() => document.body ? document.body.innerText : ''") or "")
+            if "verificando sua solicita" not in corpo.lower() and "checking your request" not in corpo.lower():
+                break
+            page.wait_for_timeout(1000)
+        page.wait_for_timeout(1500)
+        corpo = (page.evaluate("() => document.body ? document.body.innerText : ''") or "")
+        caixa["url"] = page.url
+        baixo = corpo.lower()
+        caixa["bloqueado"] = ("/sorry/" in page.url or "unusual traffic" in baixo
+                              or "tráfego incomum" in baixo or "captcha" in page.url.lower()
+                              or "verificando sua solicita" in baixo
+                              or "checking your request" in baixo)
+        page.set_viewport_size({"width": LARGURA, "height": 900})
+        caixa["img"] = page.screenshot(full_page=True, type="jpeg", quality=82)
+        caixa["texto"] = page.evaluate(bn.JS_TEXTO) or ""
+
+    try:
+        with StealthySession(headless=True, proxy=proxy, locale="pt-BR",
+                             timezone_id="America/Sao_Paulo",
+                             extra_flags=["--disable-http2"], block_webrtc=True) as s:
+            s.fetch(MOTORES[motor] % urllib.parse.quote(consulta), page_action=acao,
+                    timeout=45000)
+    except Exception as e:                                     # noqa: BLE001
+        return False, None, "", "", "%s: %s" % (type(e).__name__, str(e)[:160]), None
+    return (bool(caixa.get("img")), caixa.get("bloqueado"), caixa.get("texto", ""),
+            caixa.get("url", ""), "", caixa.get("img"))
+
+
+def _print_para_modelo(jpeg):
+    """O print em densidade normal, cortado em 7.000 px: (jpeg, base64)."""
+    import base64
+    from PIL import Image
+    im = Image.open(io.BytesIO(jpeg)).convert("RGB")
+    if im.width > LARGURA:
+        im = im.resize((LARGURA, int(im.height * LARGURA / im.width)), Image.LANCZOS)
+    if im.height > 7000:
+        im = im.crop((0, 0, im.width, 7000))
+    b = io.BytesIO()
+    im.save(b, "JPEG", quality=85)
+    return b.getvalue(), base64.b64encode(b.getvalue()).decode()
+
+
+def _print_para_guardar(jpeg):
+    """O print que fica no banco: WEBP q55 do JPEG que o modelo leu.
+
+    Medido em 11/09/2026: WEBP q60 da pagina inteira dava 160 a 370 KB, e
+    Canoas tem ~33 mil consultas. O corte em 7.000 px e o do modelo.
+    """
+    from PIL import Image
+    im = Image.open(io.BytesIO(jpeg)).convert("RGB")
+    b = io.BytesIO()
+    im.save(b, "WEBP", quality=55, method=4)
+    return b.getvalue()
+
+
+def extrair(item, consulta, texto, b64):
+    ficha = {"ligacao": item["ligacao"], "endereco_da_ligacao": item["endereco"],
+             "consulta": consulta,
+             "registros": [{"numero": p["id"], "fonte": p["fonte"], "nome": p["nome"],
+                            "endereco": p["endereco"], "telefone": p["telefone"]} for p in item["pois"]]}
+    import json
+    prompt = PROMPT + json.dumps(ficha, ensure_ascii=False) + "\n\nTEXTO DA PÁGINA:\n" + texto[:9000]
+    t0 = time.time()
+    try:
+        r = di._chat_local(MODELO, prompt, [b64] if b64 else [], max_tokens=2600, timeout=400)
+    except Exception as e:                                     # noqa: BLE001
+        return None, "%s: %s" % (type(e).__name__, str(e)[:200]), time.time() - t0
+    if not isinstance(r, dict):
+        return None, "resposta fora do formato", time.time() - t0
+    return r, "", time.time() - t0
+
+
+class Gravador:
+    """Uma conexao, uma trava: sao ~8 linhas por minuto por processo."""
+
+    def __init__(self, aplicar):
+        self.aplicar = aplicar
+        self.trava = threading.Lock()
+        self.con = bc.conectar() if aplicar else None
+
+    def linha(self, **c):
+        if not self.aplicar:
+            return
+        import json
+        sql = """insert into radar_comercial.busca_web
+                    (id_empresa, ligacao, tipo, poi_id, consulta, motor, bloqueado, erro,
+                     tentativas, url, dados, bytes_tam, chars_texto, ia, modelo,
+                     segundos_captura, segundos_ia)
+                 values ((select core.empresa_atual()), %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"""
+        args = (c["ligacao"], c["tipo"], c.get("poi_id"), c["consulta"], c["motor"],
+                bool(c.get("bloqueado")), c.get("erro") or None, c.get("tentativas"),
+                c.get("url") or None, c.get("dados"), len(c["dados"]) if c.get("dados") else None,
+                c.get("chars_texto"), json.dumps(c["ia"], ensure_ascii=False) if c.get("ia") is not None else None,
+                MODELO if c.get("ia") is not None else None,
+                c.get("segundos_captura"), c.get("segundos_ia"))
+        with self.trava:
+            for tentativa in (1, 2):
+                try:
+                    with self.con.cursor() as cur:
+                        cur.execute(sql, args)
+                    self.con.commit()
+                    return
+                except Exception as e:                         # noqa: BLE001
+                    _log("   gravar falhou (%s): %s" % (tentativa, str(e)[:120]))
+                    try:
+                        self.con.close()
+                    except Exception:                          # noqa: BLE001
+                        pass
+                    self.con = bc.conectar()
+
+
+def rodar(itens, trabalhadores, aplicar):
+    trabalhos = []
+    for it in itens:
+        for tipo, p in it["tarefas"]:
+            q = it["consulta_endereco"] if tipo == "endereco" else "%s %s" % (p["nome"], it["cidade_uf"])
+            trabalhos.append((it, tipo, p, q))
+    _log("▶ busca web · %d ligação(ões) · %d consulta(s) · %d trabalhadores"
+         % (len(itens), len(trabalhos), trabalhadores))
+    if not trabalhos:
+        return {"ligacoes": 0, "consultas": 0}
+    grav = Gravador(aplicar)
+    proximo = bn.rodizio(quantos=16)
+    placar = {"ok_google": 0, "ok_bing": 0, "bloqueado": 0, "falha": 0, "falha_ia": 0}
+    trava = threading.Lock()
+    feitos = [0]
+    t_ini = time.time()
+
+    def um(args):
+        it, tipo, p, q = args
+        t0 = time.time()
+        ok = bloq = False
+        texto = url = erro = ""
+        jpeg = None
+        motor = "google"
+        tentativa = 0
+        for motor in ("google", "bing"):
+            for tentativa in range(1, TENTATIVAS + 1):
+                ok, bloq, texto, url, erro, jpeg = capturar(q, motor, proximo())
+                if ok and not bloq:
+                    break
+            if ok and not bloq:
+                break
+        dt_cap = time.time() - t0
+        reg = {"ligacao": it["ligacao"], "tipo": tipo, "poi_id": p["id"] if p else None,
+               "consulta": q, "motor": motor, "bloqueado": bool(bloq), "erro": erro,
+               "tentativas": tentativa, "url": url, "chars_texto": len(texto or ""),
+               "segundos_captura": round(dt_cap, 1)}
+        chave = "falha"
+        if ok and not bloq and jpeg:
+            lido, b64 = _print_para_modelo(jpeg)
+            r, erro_ia, dt_ia = extrair(it, q, texto, b64)
+            reg["segundos_ia"] = round(dt_ia, 1)
+            # O PRINT GUARDADO E O QUE O MODELO LEU, e nao a pagina inteira.
+            reg["dados"] = _print_para_guardar(lido)
+            if r is not None and r.get("bloqueado"):
+                reg["bloqueado"] = True
+                chave = "bloqueado"
+            elif r is not None:
+                reg["ia"] = r
+                chave = "ok_" + motor
+            else:
+                reg["erro"] = "ia: " + erro_ia
+                chave = "falha_ia"
+        elif bloq:
+            chave = "bloqueado"
+        grav.linha(**reg)
+        with trava:
+            placar[chave] += 1
+            feitos[0] += 1
+            n = feitos[0]
+        if n % 20 == 0 or n == len(trabalhos):
+            ritmo = n / max(1e-6, (time.time() - t_ini) / 60.0)
+            _log("   [%d/%d] %.1f consultas/min · falta ~%.0f min · %s"
+                 % (n, len(trabalhos), ritmo, (len(trabalhos) - n) / max(ritmo, 1e-6), placar))
+
+    with cf.ThreadPoolExecutor(trabalhadores) as ex:
+        list(ex.map(um, trabalhos))
+    _log("■ busca web pronta · %s" % placar)
+    return {"ligacoes": len(itens), "consultas": len(trabalhos), **placar}
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--cidade", default=None)
+    p.add_argument("--ligacao", action="append")
+    p.add_argument("--limite", type=int, default=0)
+    p.add_argument("--trabalhadores", type=int, default=6)
+    p.add_argument("--fatia", default="", help="k/n: so as ligacoes com crc32 %% n == k")
+    p.add_argument("--contar", action="store_true",
+                   help="so conta ligacoes e consultas por fazer, sem buscar nada")
+    p.add_argument("--aplicar", action="store_true")
+    a = p.parse_args(argv)
+    fatia = tuple(int(x) for x in a.fatia.split("/")) if a.fatia else None
+    if not a.cidade and not a.ligacao:
+        p.error("diga --cidade ou --ligacao")
+    con = bc.conectar()
+    itens = fila(con, a.cidade, a.limite, a.ligacao, fatia)
+    con.close()
+    if a.contar:
+        n_end = sum(1 for it in itens for t, _ in it["tarefas"] if t == "endereco")
+        n_nome = sum(1 for it in itens for t, _ in it["tarefas"] if t == "nome")
+        _log("%d ligação(ões) com consulta por fazer · %d pelo endereço · %d pelo nome"
+             % (len(itens), n_end, n_nome))
+        return {"ligacoes": len(itens), "endereco": n_end, "nome": n_nome}
+    return rodar(itens, a.trabalhadores, a.aplicar)
+
+
+if __name__ == "__main__":
+    main()

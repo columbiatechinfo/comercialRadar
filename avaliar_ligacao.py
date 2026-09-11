@@ -170,6 +170,13 @@ O QUE É "FONTES COM DADOS SUFICIENTES". Basta UMA destas linhas:
    dúvidas: são um prédio comercial, uma galeria ou um centro de escritórios.
    Nenhuma casa tem trinta e dois CNPJs. Aprove, e diga quantos são.
 
+   MAS SÓ CONTAM OS REGISTROS DESTA UNIDADE. Quando o dossiê avisa que um
+   registro é candidato também de OUTRAS ligações do mesmo número —
+   condomínio de casas, prédio de apartamentos —, os CNPJs são do prédio, e
+   não desta casa. Eles só contam aqui se algo os prende a esta unidade: o
+   complemento igual ao desta ligação, a foto, ou a busca na web. Sem isso,
+   não os use para aprovar.
+
    ISTO CORRIGE UM ERRO REAL, medido em 08/09/2026: a ligação 2221694 tinha
    32 registros da Receita apontando atividade comercial e administrativa, e
    foi devolvida com a justificativa "não há fotos da fachada para confirmar".
@@ -190,6 +197,9 @@ Se nenhuma dessas linhas fecha, a foto volta a pesar mais — e "reprovado" é
 a resposta honesta, porque o que existe não sustenta a aprovação.
 
 E NÃO INVERTA A REGRA. Isto não é licença para aprovar tudo:
+- SÓ COMÉRCIO E SERVIÇO APROVAM. Templo, igreja, associação, ONG, sindicato e
+  escola sem cobrança não vendem nem prestam serviço: não aprovam, ainda que as
+  fontes os confirmem no endereço. Decisão do dono do produto.
 - CNPJ sozinho, sem mais nada, NÃO é ficha completa. Endereço de contador e
   MEI registrado em casa que nunca operou existem às centenas.
 - ECONOMIA COMERCIAL OU INDUSTRIAL já declarada na própria ligação significa
@@ -220,150 +230,95 @@ DATA da foto que você usou. Quem for à porta precisa saber o que esperar.
 #: agua e de "o imovel que ele abastece" — vocabulario de saneamento. O mesmo
 #: produto serve energia eletrica e gas, onde nao ha hidrometro nenhum. As
 #: palavras agora vem de `setor.palavras()`; ver o modulo e a migracao 0095.
-PROMPT = """Você decide se os registros encontrados pertencem MESMO a esta
-%(ligacao)s, e se o que há neles prova comércio no imóvel.
+PROMPT = """Você confere se um imóvel cobrado como RESIDENCIAL tem atividade de
+COMÉRCIO ou SERVIÇO. Se tiver, a tarifa está errada, e é isso que se procura.
 
-O contexto: %(concessionaria)s cobra este %(medidor)s como RESIDENCIAL. Se
-houver comércio no imóvel que ele %(verbo)s, a tarifa está errada — e é isso
-que se procura.
+Você recebe três coisas sobre UMA instalação: as IMAGENS (fotos de rua do
+endereço e fotos publicadas dos estabelecimentos), os REGISTROS CANDIDATOS
+(estabelecimentos que bases independentes situam neste endereço) e o que a
+BUSCA NA WEB achou. Trabalhe em quatro passos e escreva cada um no JSON, na
+mesma ordem.
 
-AS QUATRO FOTOS DE RUA SÃO DO MESMO PONTO, girando a câmera nas quatro
-direções. Nenhum imóvel vem assinalado nelas: apontar o alvo antes de você
-olhar seria dar a resposta junto com a pergunta. Olhe o que está lá e diga o
-que vê.
+PASSO 1 · DESCREVA O QUE VÊ. Só o que está nas imagens, sem supor. O imóvel do
+número julgado: tipo, andares, portão, vitrine, toldo, letreiro (transcreva o
+texto), placa de serviço, mercadoria, veículo de trabalho, medidores na
+fachada. Os números de porta legíveis. As fachadas comerciais da cena, dizendo
+se são do imóvel julgado ou de vizinhos. As fotos de rua saem do mesmo ponto em
+quatro direções e nenhuma aponta o alvo: localize-o pelo número. Uma foto
+descreve a data em que foi tirada, e não hoje.
 
-%(julgar)s
+PASSO 2 · CONFIRA CADA REGISTRO. Para cada registro candidato, diga se ele
+pertence a ESTE endereço e a ESTA unidade — rua, número, complemento, bairro —,
+qual atividade ele mostra e se ela é comércio ou serviço. Um registro que também
+é candidato de outras instalações do mesmo número só é daqui se algo o prende a
+esta unidade: o complemento igual, a foto ou a busca na web; se nada prende, ele
+é "indeterminado". Templo, igreja, associação, ONG, sindicato, escola sem
+cobrança e nome que é só de pessoa ou de casa não são comércio nem serviço.
 
-O QUE VOCÊ RECEBE, e o peso de cada coisa:
+PASSO 3 · JUNTE O MESMO NEGÓCIO E ENRIQUEÇA. Registros de fontes diferentes que
+são o mesmo estabelecimento — mesmo ramo no mesmo endereço, ou mesmo telefone,
+CNPJ ou dono — formam UM estabelecimento, e os dados de um completam os do
+outro. Negócios diferentes no mesmo imóvel continuam separados. Para cada
+estabelecimento deste imóvel, monte a ficha com tudo o que os registros e a
+busca na web trazem. Dado que se contradiz fica com a sua fonte. "Fechado · Abre
+às 9h" é horário, e não encerramento. Dado de fonte não oficial — site de
+consulta de CNPJ, guia, rede social, plataforma — também é dado obtido: confira
+se ele casa com o de algum registro (nome, CNPJ, telefone, e-mail, endereço,
+ramo) e, se casar, use-o na ficha e na decisão.
 
-- AS FONTES são bases independentes — Receita, IBGE, base estadual, Google
-  Maps, iFood, Airbnb. Cada uma registrou o lugar por conta própria, em épocas
-  diferentes. Quando convergem valem mais do que qualquer uma sozinha.
-- AS DATAS estão no dossiê e nos rótulos das imagens. Use-as: foto de dois
-  anos atrás descreve o que havia HÁ DOIS ANOS. Foto do Google publicada por
-  visitante NÃO tem data no nosso cadastro, e sem data ela não sustenta
-  afirmação sobre o presente — diga o que ela mostra, não quando.
-- A LOJA NO AR é prova DATADA de operação. iFood aceitando pedido e anúncio de
-  hospedagem com avaliação recente dizem que o negócio funcionava quando foi
-  visto, o que a fachada nunca diz.
+PASSO 4 · PESE AS PROVAS E DECIDA. Nenhuma fonte decide sozinha — nem a foto
+de rua, que é uma prova a mais e vale pela sua data.
+- Cada prova vale pela data que tem. Foto de rua anterior à abertura do CNPJ, à
+  avaliação mais recente ou ao anúncio no ar não desmente o negócio. Fachada sem
+  letreiro não prova ausência: muito comércio e serviço funciona numa casa comum.
+- Pesam a favor: foto publicada do estabelecimento; comentário ou avaliação com
+  data; loja ou anúncio no ar; ficha com telefone, site, rede social ou horário;
+  a busca na web situando o negócio aqui; mais de uma fonte independente; o ramo
+  compatível com o que as fotos mostram.
+- Pesam contra: foto recente sem sinal nenhum quando as outras provas são mais
+  antigas que ela; a web dando o negócio como encerrado ou em outro endereço;
+  terreno vago, demolição ou obra no número em foto recente.
+- CNPJ ativo sem outra fonte é o caso mais fraco, e quem decide é você: pese a
+  data de abertura contra a data da foto, o ramo — serviço prestado em casa é
+  comum — e o que a busca na web trouxe.
+- "aprovado" quando o conjunto sustenta comércio ou serviço funcionando NESTE
+  imóvel; "reprovado" quando não sustenta. O status não tem "dúvida": a unidade
+  indeterminada já foi dita no passo 2.
 
-SEPARE QUEM NÃO É DESTE ENDEREÇO. O vínculo nasce de rua e número batendo, mas
-uma base pode ter escrito o número errado. Olhe o número da porta, o logradouro
-e o ramo de cada registro e diga quais claramente NÃO pertencem aqui.
-
-E "CLARAMENTE" MESMO. Nome diferente sozinho não é motivo: uma loja e o CNPJ
-dela costumam ter nomes distintos, e um sobrado tem a casa e o salão.
-
-TROCA DE NOME NÃO É OUTRO ENDEREÇO. Dois registros do MESMO RAMO no MESMO
-endereço com nomes diferentes quase sempre são o mesmo ponto em épocas
-diferentes: no Brasil estabelecimento troca de nome o tempo todo, e o dono
-seguinte herda a porta e o %(medidor)s. Cada fonte olhou numa época e anotou o
-nome que estava na fachada NAQUELE dia.
-
-DOIS STATUS, E SÓ DOIS:
-
-- "aprovado": os dados sustentam que há atividade comercial neste imóvel.
-- "reprovado": não sustentam.
-
-NÃO EXISTE "revisão humana" NESTE JULGAMENTO. Você recebe o que existe sobre o
-endereço; se isso não basta para aprovar, é reprovado. Devolver a dúvida para
-uma pessoa que veria exatamente o mesmo material não acrescenta nada — e foi o
-que fez 82,6%% dos casos pararem numa fila que ninguém tinha como resolver.
-
-E O IMÓVEL QUE JÁ PAGA COMÉRCIO É REPROVADO. Economia comercial ou industrial
-declarada na própria ligação significa que o cliente já cobra parte dela como
-comércio: não há o que reclassificar.
-
-OLHE A RUA, E NÃO SÓ O ALVO. Quatro coisas nas fotos valem para muito além
-deste julgamento, e por isso são perguntadas à parte:
-
-1. O NÚMERO PREGADO NA CASA. Leia todos os números de porta que conseguir nas
-   quatro visadas — no muro, no portão, na placa, na faixa da calçada. A rua
-   você já sabe qual é: está no dossiê. Um número lido aqui diz onde aquele
-   número FICA nesta via, e há milhares de endereços neste cadastro cuja
-   coordenada está errada e que um número lido reposiciona. Não invente:
-   quando não tiver certeza do algarismo, marque a certeza como "media"; se
-   não der para ler, não liste.
-
-2. SE VOCÊ LER O NÚMERO DA CASA JULGADA, JULGUE AQUELA CASA. O dossiê diz qual
-   é o número. Se ele aparece pregado num imóvel da foto, é ESSE o imóvel que
-   está sendo cobrado — descreva o que há NELE, e não no vizinho de fachada
-   mais chamativa. É a única vez em que a foto identifica o alvo sozinha.
-
-3. OS MEDIDORES. Conte os %(medidores)s e os medidores de energia visíveis na
-   fachada ou no muro. Vários medidores num imóvel só significam várias
-   unidades no mesmo endereço — sobrado com salão, vila de fundos, quitinetes.
-   Conte o que vê; zero é uma resposta.
-
-4. AS FACHADAS COMERCIAIS DA CENA, INCLUSIVE AS QUE NÃO SÃO O ALVO. Letreiro,
-   toldo com nome, vitrine, placa de serviço: liste o que estiver legível,
-   marcando se é ou não o estabelecimento buscado. As que não são continuam
-   valendo — são comércio que existe naquela quadra e que nenhuma base
-   registrou.
-
-   SÓ COMÉRCIO. Placa de rua, nome de praça, sinalização de trânsito e prédio
-   público não são fachada comercial — não os liste. A primeira medição desta
-   pergunta devolveu "R. Quintão · logradouro" e "Parque Deputado Possebon ·
-   parque público" entre seis achados, e nenhum dos dois é um negócio.
-
-   E O NÚMERO DE CADA UMA, quando estiver junto do letreiro. Nome mais número
-   é o que permite procurar, no cadastro da concessionária, qual ligação
-   atende aquele comércio — e é assim que um letreiro lido numa foto vira um
-   alvo com endereço em vez de uma anotação solta. Sem o número, o letreiro
-   ainda vale como sinal de que há comércio na quadra, mas não acha dono.
-
-E a tampa de esgoto na calçada, quando houver: ela diz que a via tem coleta.
-
-Responda SOMENTE um JSON:
-{"status": "aprovado|reprovado",
- "pois_coerentes": [<números dos POIs que pertencem a esta ligação>],
- "pois_de_outro_endereco": [{"poi": <número>, "porque": "<até 15 palavras>"}],
- "estabelecimento": "<o nome do negócio que sustenta a aprovação, ou null>",
+Responda SOMENTE um JSON, nesta ordem:
+{"descricao_visual": "<o imóvel julgado em 3 a 6 frases, transcrevendo letreiros>",
+ "numero_na_fachada": "<o número lido no imóvel julgado, ou null>",
+ "numeros_vistos": [{"numero": "<lido>", "onde": "<qual imagem>", "certeza": "alta|media"}],
+ "fachadas_vistas": [{"texto": "<o que está escrito>", "ramo": "<o que aparenta ser>",
+                      "numero": "<número junto do letreiro, ou null>", "e_o_alvo": true|false}],
+ "medidores": [{"tipo": "<o que parece medir, ou 'não sei'>", "quantos": <número>}],
+ "imovel_inexistente_na_foto": true|false,
  "presenca_na_foto": "exata|comercial|nenhuma",
  "fotos_do_google_validam": true|false,
- "numero_na_fachada": "<o número que você LEU no imóvel julgado, ou null>",
- "numeros_vistos": [{"numero": "<lido>", "onde": "<qual visada>",
-                     "certeza": "alta|media"}],
- "medidores": {"agua": <quantos>, "energia": <quantos>},
- "tampa_de_esgoto": true|false,
- "fachadas_vistas": [{"texto": "<o que está escrito>",
-                      "ramo": "<o que aparenta ser>",
-                      "numero": "<o número de porta que aparece COM este
-letreiro, ou null>", "e_o_alvo": true|false}],
- "especie_cnefe": <1-8|null>, "secao_cnae": "<letra|null>",
- "sinal_no_imovel": "instalacao_fixa|so_oficio|nenhum",
- "justificativa": "<DOIS PARÁGRAFOS, de 90 a 160 palavras no total.
+ "registros": [{"poi": <número>, "pertence": "sim|nao|indeterminado",
+                "porque": "<até 15 palavras>", "atividade": "<o ramo>",
+                "comercio_ou_servico": true|false}],
+ "mesmo_estabelecimento": [[<números dos registros que são o mesmo negócio>]],
+ "estabelecimentos": [{"nome": "", "pois": [<números>], "ramo": "", "telefone": "",
+                       "site": "", "redes_sociais": [""], "horario": "", "nota": null,
+                       "avaliacoes": null,
+                       "avaliacao_mais_recente": {"quando": "", "texto": ""},
+                       "cnpj": "", "situacao": "ativo|encerrado|desconhecido",
+                       "fontes": ["<receita|ibge|maps|ifood|airbnb|estadual|cadastur|busca web>"]}],
+ "status": "aprovado|reprovado",
+ "estabelecimento": "<o nome do negócio que sustenta a aprovação, ou null>",
+ "justificativa": "<dois parágrafos curtos: o que viu; e quais fontes sustentam o status, com a data do que usou>"}
 
-O PRIMEIRO diz o que você VIU nas imagens, com detalhe: o que está escrito em
-cada letreiro, placa ou toldo legível — transcreva o texto —, o que aparece na
-vitrine ou no interior, se há medidor, grade, portão comercial, mercadoria,
-veículo de serviço. Se uma fachada estiver ilegível, diga que está e por quê
-(distância, ângulo, árvore, sombra). Descreva o imóvel do número julgado, e
-mencione os vizinhos só quando ajudarem a situá-lo.
-
-O SEGUNDO diz quais fontes sustentam o status, com a data do que usou, e como
-elas conversam ou não com o que a foto mostra.
-
-DESCREVA O QUE LEU, não o que concluiu. 'Fachada comercial' não é descrição;
-'toldo azul com o nome MERCADO SÃO JOSÉ e grade de enrolar' é.>"}
-
-O QUE SIGNIFICA "presenca_na_foto", e ela alimenta a pontuação do vínculo:
-- "exata": as fotos mostram o estabelecimento nomeado — letreiro com o nome,
-  ou ramo inequivocamente o mesmo.
-- "comercial": as fotos mostram atividade comercial no imóvel, mas não dá para
-  dizer que é AQUELE negócio.
-- "nenhuma": as fotos não mostram sinal comercial, ou não há foto.
-
-"fotos_do_google_validam" é verdadeiro quando as fotos publicadas mostram o
-negócio funcionando — balcão, mercadoria, sala de atendimento, produto sendo
-servido. Falso quando não há foto, ou quando o que há não diz nada sobre o
-lugar.
+"presenca_na_foto": "exata" quando as fotos mostram o estabelecimento nomeado;
+"comercial" quando mostram comércio sem dizer qual; "nenhuma" quando não mostram.
+"fotos_do_google_validam": verdadeiro quando as fotos publicadas mostram o
+negócio funcionando.
 
 ────────────────────────────────────────────────────────────────────────
 
 %(dossie)s
 
-AS IMAGENS QUE VOCÊ RECEBEU, nesta ordem:
+AS IMAGENS, nesta ordem:
 
 %(lista)s"""
 
@@ -566,7 +521,8 @@ SEM_VEREDITO = """
 
 
 def fila(con, limite, refazer, ligacoes=None, sem_catalogo=False,
-         desatualizados=False, fonte=None, exceto_fonte=None):
+         desatualizados=False, fonte=None, exceto_fonte=None,
+         exigir_busca=False, fotos_desde=None, fatia=None):
     if ligacoes:
         return [str(x) for x in ligacoes]
     cur = con.cursor()
@@ -647,6 +603,33 @@ def fila(con, limite, refazer, ligacoes=None, sem_catalogo=False,
         saida = [l for l in saida if l in com_imagem]
         _log("   %d com imagem · %d ligação(ões) da fila ficaram de fora "
              "por não ter nenhuma" % (len(com_imagem), antes - len(saida)))
+    if exigir_busca:
+        # JULGAR SO DEPOIS DA BUSCA WEB: julgar antes dela e refazer depois
+        # cobra a Spark duas vezes pela mesma ligacao.
+        cur.execute("""select distinct ligacao from radar_comercial.busca_web
+                        where tipo = 'endereco' and ia is not null""")
+        buscadas = {str(r[0]) for r in cur.fetchall()}
+        antes = len(saida)
+        saida = [l for l in saida if l in buscadas]
+        _log("   %d ligação(ões) ainda sem busca web ficaram para depois"
+             % (antes - len(saida)))
+    if fotos_desde:
+        # JULGAR SO COM A FOTO NOVA: a recaptura em alta resolucao (DENSIDADE 2)
+        # comecou em 11/09/2026; a foto de 934 px de antes nao le numero.
+        cur.execute("""select distinct lp.ligacao
+                         from radar_comercial.ligacao_poi lp
+                         join radar_comercial.poi_evidencia e on e.poi_id = lp.poi_id
+                        where lp.descartado_em is null and e.tipo like 'sv_%%'
+                          and e.capturado_em >= %s""", (fotos_desde,))
+        novas = {str(r[0]) for r in cur.fetchall()}
+        antes = len(saida)
+        saida = [l for l in saida if l in novas]
+        _log("   %d ligação(ões) ainda sem a foto nova ficaram para depois"
+             % (antes - len(saida)))
+    if fatia:
+        import zlib
+        k, n = fatia
+        saida = [l for l in saida if zlib.crc32(str(l).encode()) % n == k]
     return saida[:limite] if limite else saida
 
 
@@ -731,6 +714,20 @@ def gravar_visual(con, ligacao, resposta, resumo):
     logradouro, cidade = (r[0], r[1]) if r else (None, None)
 
     med = resposta.get("medidores") or {}
+    if isinstance(med, list):
+        # O PROMPT NEUTRO nao fala de agua nem de energia: pergunta o que o
+        # medidor parece medir. A tabela, sim, tem uma coluna por tipo.
+        soma = {"agua": 0, "energia": 0}
+        for m in med:
+            if not isinstance(m, dict):
+                continue
+            t = str(m.get("tipo") or "").lower()
+            q = _inteiro(m.get("quantos")) or 0
+            if any(k in t for k in ("água", "agua", "hidr")):
+                soma["agua"] += q
+            elif any(k in t for k in ("energia", "luz", "elétr", "eletr")):
+                soma["energia"] += q
+        med = soma
     if not isinstance(med, dict):
         med = {}
     cur.execute("""
@@ -850,6 +847,128 @@ def marcar_intrusos(con, ligacao, resposta, ids_validos, modelo):
     return len(alvos)
 
 
+#: AS FAMILIAS DE FONTE que contam como independentes entre si. O perfil do
+#: Google achado na busca web e o MESMO Google do POI do Maps; o site de
+#: cadastro de CNPJ e a MESMA Receita. Contar os dois duas vezes era contar a
+#: mesma testemunha em dobro.
+FAMILIA_DA_FONTE = {"receita": "receita", "ibge": "ibge", "maps": "google",
+                    "google": "google", "ifood": "ifood", "airbnb": "airbnb",
+                    "estadual": "estadual", "cadastur": "cadastur",
+                    "busca web": "web", "busca_web": "web"}
+
+
+def compatibilizar(resposta):
+    """Preenche, a partir de `registros`, os campos que o resto do sistema le.
+
+    O PROMPT DE 11/09/2026 pergunta por registro ("pertence: sim|nao|
+    indeterminado") em vez de tres listas soltas. Quem grava intruso, pontua o
+    vinculo e aplica a regra continua lendo `pois_coerentes`,
+    `pois_de_outro_endereco`, `unidade_indeterminada` e `fontes_com_atividade`
+    — esta funcao os deriva, para nenhum leitor precisar mudar.
+    """
+    r = dict(resposta or {})
+    regs = [x for x in (r.get("registros") or []) if isinstance(x, dict)]
+    if not regs:
+        return r
+    r.setdefault("pois_coerentes", [x.get("poi") for x in regs
+                                    if str(x.get("pertence")).lower() == "sim"])
+    r.setdefault("pois_de_outro_endereco", [{"poi": x.get("poi"), "porque": x.get("porque")}
+                                            for x in regs
+                                            if str(x.get("pertence")).lower() in ("nao", "não")])
+    r.setdefault("unidade_indeterminada", [x.get("poi") for x in regs
+                                           if str(x.get("pertence")).lower() == "indeterminado"])
+    r.setdefault("fontes_com_atividade", [{"poi": x.get("poi"), "atividade": x.get("atividade"),
+                                           "comercio_ou_servico": x.get("comercio_ou_servico")}
+                                          for x in regs
+                                          if str(x.get("pertence")).lower() == "sim"])
+    return r
+
+
+def aplicar_regra(resposta, resumo, ano=None):
+    """`(resposta, motivo)`: a regra de 08/09/2026 aplicada aos FATOS da resposta.
+
+    A REGRA, do dono do produto: "se tiver fontes com dados suficientes e a
+    imagem nao for do ano atual, nao pode reprovar". O prompt sempre a disse;
+    em 11/09/2026 o salao Beleza.Com — Maps, IBGE e Receita no mesmo numero,
+    perfil do Google com Instagram, foto de 2025 — saiu reprovado com "falta
+    foto recente de 2026". Por isso o modelo agora escreve os fatos e o codigo
+    decide com eles quando o modelo reprova.
+
+    SO VIRA REPROVADO EM APROVADO, nunca o contrario, e so quando TUDO vale:
+    duas familias de fonte independentes mostram comercio ou servico em POI
+    desta ligacao; a foto nao e do ano corrente, ou nao ha foto; e o imovel
+    existe na foto. A economia comercial ja cobrada NAO conta: decisao do dono
+    do produto em 11/09/2026, "a regra e o SIM, SIM com avaliacao humana ou
+    NAO".
+    """
+    import datetime
+    r = dict(resposta or {})
+    if str(r.get("status") or "").strip().lower().startswith("aprov"):
+        return r, None
+    ano = ano or datetime.date.today().year
+    if r.get("imovel_inexistente_na_foto"):
+        return r, None
+    if resumo.get("ano_das_visadas") == ano and r.get("presenca_na_foto") in (None, "", "nenhuma"):
+        return r, None
+    fora = set()
+    for x in r.get("pois_de_outro_endereco") or []:
+        if isinstance(x, dict):
+            fora.add(str(x.get("poi")))
+    fora |= {str(x) for x in (r.get("unidade_indeterminada") or [])}
+    ids = {str(x) for x in (resumo.get("ids") or [])}
+    fonte_de = {str(k): v for k, v in (resumo.get("fonte_de") or {}).items()}
+    familias = set()
+    for f in r.get("fontes_com_atividade") or []:
+        if not isinstance(f, dict) or f.get("comercio_ou_servico") is not True:
+            continue
+        p = str(f.get("poi"))
+        if p in fora or p not in ids:
+            continue
+        fonte = str(fonte_de.get(p) or f.get("fonte") or "").strip().lower()
+        familias.add(FAMILIA_DA_FONTE.get(fonte, fonte))
+    # A BUSCA WEB NAO ENTRA NESTA CONTA. Quem julga se um dado da web casa com
+    # algum registro e a IA (dono do produto, 11/09/2026); contar a web pelo
+    # dominio e pelo "comprova" da leitura da pagina aprovou tres ligacoes que
+    # a IA tinha reprovado com razao — dois diretorios de CNPJ e, na 357819, um
+    # painel do Google que era so o endereco. A regra conta so as fontes que a
+    # propria IA confirmou neste imovel.
+    familias.discard("")
+    if len(familias) < 2:
+        return r, None
+    motivo = ("aprovado pela regra de 08/09: %d fontes independentes (%s), foto %s"
+              % (len(familias), ", ".join(sorted(familias)),
+                 "de %s" % resumo.get("ano_das_visadas") if resumo.get("ano_das_visadas") else "ausente"))
+    r["status"] = "aprovado"
+    r["_regra"] = motivo
+    return r, motivo
+
+
+def busca_web_da(con, ligacao):
+    """O que a busca web achou para a ligacao, no formato que o dossie le.
+
+    Por consulta: a linha do Google que deu certo, e a do Bing so quando o
+    Google falhou — o mesmo criterio da prova de 11/09/2026. Linha com
+    bloqueio ou erro nao tem `ia`, e nao entra.
+    """
+    cur = con.cursor()
+    cur.execute("""select consulta, motor, ia from radar_comercial.busca_web
+                    where ligacao = %s and ia is not null
+                    order by feito_em desc""", (str(ligacao),))
+    por_q = {}
+    for consulta, motor, r in cur.fetchall():
+        por_q.setdefault(consulta, {}).setdefault(motor, r)
+    saida = []
+    for q, m in por_q.items():
+        for motor in ("google", "bing"):
+            if motor in m:
+                r = m[motor] or {}
+                saida.append({"consulta": q, "motor": motor,
+                              "estabelecimentos": r.get("estabelecimentos") or [],
+                              "pois_confirmados": r.get("pois_confirmados") or []})
+                break
+    return saida
+
+
 def _para_veredito(resposta):
     """O `aprovado|reprovado` do modelo vira o veredito que o sistema guarda.
 
@@ -890,6 +1009,14 @@ def _para_veredito(resposta):
         pres = str(r.get("presenca_na_foto") or "").strip().lower()
         return "aprovado_exato" if pres == "exata" else "aprovado_comercial"
     if s.startswith("reprov"):
+        # A UNIDADE INDETERMINADA VAI PARA REVISAO HUMANA (dono do produto,
+        # 11/09/2026): o negocio e comercio ou servico, mas a IA nao sabe se e
+        # desta unidade ou da vizinha do mesmo numero. Isso uma pessoa resolve
+        # indo a porta; o modelo, com o mesmo material, nao.
+        if any(isinstance(g, dict) and str(g.get("pertence")).strip().lower() == "indeterminado"
+               and g.get("comercio_ou_servico") is True
+               for g in (r.get("registros") or [])):
+            return "revisao_humana"
         return "reprovado"
     return None
 
@@ -899,7 +1026,8 @@ def uma(poco, ligacao, modelo, secoes, placar, trava, aplicar):
     # O BANCO SO ENQUANTO SE MONTA O DOSSIE. Depois a conexao volta ao poco e
     # a espera pela Spark acontece sem segurar nada.
     with poco.pegar() as con:
-        texto, imgs, tipos, resumo = dl.montar(con, ligacao, ia, imagens)
+        texto, imgs, tipos, resumo = dl.montar(con, ligacao, ia, imagens,
+                                               busca_web=busca_web_da(con, ligacao))
     if texto is None:
         with trava:
             placar["sem_poi"] += 1
@@ -937,6 +1065,11 @@ def uma(poco, ligacao, modelo, secoes, placar, trava, aplicar):
             placar["falha"] += 1
             _log("   %-10s FALHOU: %s" % (ligacao, str(e)[:70]))
         return
+    resposta = compatibilizar(resposta)
+    resposta, pela_regra = aplicar_regra(resposta, resumo)
+    if pela_regra:
+        with trava:
+            placar["aprovado_pela_regra"] = placar.get("aprovado_pela_regra", 0) + 1
     v = _para_veredito(resposta)
     if v is None:
         # FORA DA ESCALA CONTINUA SENDO REPROVADO, e nao duvida. O prompt pede
@@ -981,12 +1114,13 @@ def uma(poco, ligacao, modelo, secoes, placar, trava, aplicar):
 
 def rodar(limite, aplicar, trabalhadores, modelo, ligacoes, refazer,
           sem_catalogo=False, desatualizados=False, fonte=None,
-          exceto_fonte=None):
+          exceto_fonte=None, exigir_busca=False, fotos_desde=None, fatia=None):
     con = bc.conectar()
     alvos = fila(con, limite, refazer, ligacoes,
                  sem_catalogo=sem_catalogo,
                  desatualizados=desatualizados, fonte=fonte,
-                 exceto_fonte=exceto_fonte)
+                 exceto_fonte=exceto_fonte, exigir_busca=exigir_busca,
+                 fotos_desde=fotos_desde, fatia=fatia)
     _log("▶ veredito por LIGACAO — o dossiê de todas as fontes numa chamada")
     _log("   %d ligação(ões) na fila" % len(alvos))
     if not alvos:
@@ -1088,12 +1222,19 @@ def main(argv=None):
     p.add_argument("--desatualizados", action="store_true",
                    help="so as ligacoes sem veredito OU cujo veredito e mais "
                         "velho que a foto mais nova dos POIs dela")
+    p.add_argument("--exigir-busca-web", dest="exigir_busca", action="store_true",
+                   help="so ligacoes cuja busca web pelo endereco ja foi feita")
+    p.add_argument("--fotos-desde", dest="fotos_desde", default=None,
+                   help="AAAA-MM-DD: so ligacoes com foto de rua capturada desde a data")
+    p.add_argument("--fatia", default="", help="k/n: so as ligacoes com crc32 %% n == k")
     p.add_argument("--aplicar", action="store_true")
     a = p.parse_args(argv)
     r = rodar(a.limite, a.aplicar, a.trabalhadores, a.modelo, a.ligacao,
               a.refazer, sem_catalogo=a.sem_catalogo,
               desatualizados=a.desatualizados, fonte=a.fonte,
-              exceto_fonte=a.exceto_fonte)
+              exceto_fonte=a.exceto_fonte, exigir_busca=a.exigir_busca,
+              fotos_desde=a.fotos_desde,
+              fatia=tuple(int(x) for x in a.fatia.split("/")) if a.fatia else None)
     return 1 if r.get("erro") else 0
 
 
