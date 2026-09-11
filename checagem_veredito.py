@@ -203,7 +203,8 @@ def revisar(con, aplicar=False, log=print, saida_antes=None):
                           justificativa
                      from radar_comercial.ligacao_veredito
                     where veredito = 'aprovado'
-                       or percepcao::jsonb->'checagem'->>'veredito_ia' = 'aprovado'""")
+                       or percepcao::jsonb->'checagem'->>'veredito_ia' = 'aprovado'
+                    order by ligacao""")
     linhas = cur.fetchall()
     base, info = {}, {}
     todos = set()
@@ -246,6 +247,10 @@ def revisar(con, aplicar=False, log=print, saida_antes=None):
                 duvida.add(l)
                 exclus["poi sem dono entre várias instalações"] += 1
 
+    # A ORDEM NAO PODE VIRAR MUDANCA: o banco devolve as linhas em qualquer
+    # ordem, e sem isto a mesma checagem regravava 19 ligacoes a cada passada.
+    for lig in removidos:
+        removidos[lig] = sorted(removidos[lig], key=lambda r: (str(r.get("poi")), r.get("porque") or ""))
     agora = datetime.datetime.now().isoformat(timespec="seconds")
     placar = collections.Counter()
     mudancas = []
