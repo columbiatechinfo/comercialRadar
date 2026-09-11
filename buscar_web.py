@@ -32,6 +32,7 @@ import concurrent.futures as cf
 import io
 import os
 import re
+import sys
 import threading
 import time
 import unicodedata
@@ -59,7 +60,7 @@ TENTATIVAS = 3
 #: incomum") dura horas por IP; insistir nele queima as tres tentativas e manda
 #: a busca para o Bing, que traz menos (medido na noite de 11/09/2026).
 CASTIGO_S = 3600
-TENTATIVAS_GOOGLE = 2
+TENTATIVAS_GOOGLE = 1
 #: A LEITURA DA PAGINA PELA IA, numa chamada separada: DESLIGADA no processo
 #: enxuto (12/09/2026) — o texto vai direto para a avaliacao. `--ler-com-ia`.
 LER_COM_IA = False
@@ -137,6 +138,67 @@ JS_TEXTO_GOOGLE = r"""() => {
   s += 'RESULTADOS DA BUSCA:\n' + busca;
   return s.replace(/[ \t]+/g, ' ').replace(/\n\s*\n\s*\n+/g, '\n\n').trim().slice(0, 120000);
 }"""
+
+#: O GOOGLE BLOQUEOU O POOL INTEIRO em 12/09/2026: 130 de 130 buscas no /sorry,
+#: nas duas faixas de IP, ate nos nunca usados. O disjuntor para a rodada quando
+#: quase tudo volta bloqueado (o resto fica na fila), o ritmo se ajusta ao que o
+#: Google responde, e a `--sonda` testa uma busca so antes de abrir os navegadores.
+DISJUNTOR_JANELA = 30
+DISJUNTOR_BLOQUEADAS = 27
+RITMO_INICIAL = 20.0
+RITMO_MAX = 60.0
+RITMO_MIN = 4.0
+CONSULTA_SONDA = "Rua Albani 114 Canoas RS empresa"
+
+
+class Ritmo:
+    """Buscas por minuto nesta maquina, somando os navegadores, e o disjuntor."""
+
+    def __init__(self, por_min=RITMO_INICIAL):
+        import collections
+        self.por_min = por_min
+        self.vez = time.time()
+        self.janela = collections.deque(maxlen=DISJUNTOR_JANELA)
+        self.lote = []
+        self.aberto = False
+        self.trava = threading.Lock()
+
+    def esperar(self):
+        with self.trava:
+            agora = time.time()
+            minha = max(agora, self.vez)
+            self.vez = minha + 60.0 / self.por_min
+        time.sleep(max(0.0, minha - agora))
+
+    def resultado(self, bloqueado):
+        with self.trava:
+            self.janela.append(bool(bloqueado))
+            self.lote.append(bool(bloqueado))
+            if len(self.lote) >= 10:
+                b = sum(self.lote)
+                antes = self.por_min
+                if b >= 3:
+                    self.por_min = max(RITMO_MIN, self.por_min / 2)
+                elif b <= 1:
+                    self.por_min = min(RITMO_MAX, self.por_min * 1.2)
+                self.lote = []
+                if self.por_min != antes:
+                    _log("   ritmo %.0f -> %.0f buscas/min (%d de 10 bloqueadas)" % (antes, self.por_min, b))
+            if (not self.aberto and len(self.janela) == DISJUNTOR_JANELA
+                    and sum(self.janela) >= DISJUNTOR_BLOQUEADAS):
+                self.aberto = True
+                _log("   ⛔ disjuntor: %d das últimas %d bloqueadas — a rodada para e o resto fica na fila"
+                     % (sum(self.janela), DISJUNTOR_JANELA))
+
+
+def sonda():
+    """Uma busca so, por um IP do rodizio: 0 se o Google respondeu, 3 se bloqueou."""
+    px = bn.rodizio(quantos=500, pais="", embaralhar=True)()
+    ok, bloq, texto, url, erro, jpeg = capturar(CONSULTA_SONDA, "google", px)
+    _log("   sonda: %s · %s" % ("BLOQUEADA" if bloq else ("ok" if ok and jpeg else "falhou"),
+                                (erro or url or "")[:90]))
+    return 0 if ok and jpeg and not bloq else 3
+
 
 _trava_log = threading.Lock()
 
@@ -530,7 +592,8 @@ def rodar(itens, trabalhadores, aplicar):
         return {"ligacoes": 0, "consultas": 0}
     grav = Gravador(aplicar)
     # MUITOS IPS E CASTIGO PARA O BLOQUEADO. Ver o comentario de `CASTIGO_S`.
-    proximo = bn.rodizio(quantos=min(250, max(16, trabalhadores * 12)))
+    proximo = bn.rodizio(quantos=500, pais="", embaralhar=True)
+    ritmo = Ritmo()
     castigo = {}
     trava_ip = threading.Lock()
 
@@ -558,6 +621,8 @@ def rodar(itens, trabalhadores, aplicar):
 
     def um(args):
         it, tipo, p, q = args
+        if ritmo.aberto:
+            return
         t0 = time.time()
         ok = bloq = False
         texto = url = erro = ""
@@ -573,13 +638,17 @@ def rodar(itens, trabalhadores, aplicar):
                 # humanizada do Google Maps, com outro IP descansado. Medido em
                 # 12/09/2026: o repositorio passou em 23 de 25, a sessao em 2.
                 px = ip_para(motor)
+                ritmo.esperar()
                 ok, bloq, texto, url, erro, jpeg = capturar(q, motor, px)
+                ritmo.resultado(bloq)
                 navegador = "repositorio"
                 if motor == "google" and bloq:
                     castigar(px)
-                if not (ok and not bloq and jpeg):
+                if not (ok and not bloq and jpeg) and not ritmo.aberto:
                     px = ip_para(motor)
+                    ritmo.esperar()
                     ok, bloq, texto, url, erro, jpeg = capturar_humano(q, bn_proxy_dict(px))
+                    ritmo.resultado(bloq)
                     navegador = "sessao_humana"
                     if motor == "google" and bloq:
                         castigar(px)
@@ -629,7 +698,7 @@ def rodar(itens, trabalhadores, aplicar):
 
     with cf.ThreadPoolExecutor(trabalhadores) as ex:
         list(ex.map(um, trabalhos))
-    _log("■ busca web pronta · %s" % placar)
+    _log("■ busca web pronta · %s%s" % (placar, " · DISJUNTOR ABERTO" if ritmo.aberto else ""))
     return {"ligacoes": len(itens), "consultas": len(trabalhos), **placar}
 
 
@@ -648,8 +717,12 @@ def main(argv=None):
                    help="busca de novo, no Google, as consultas que so o Bing respondeu")
     p.add_argument("--contar", action="store_true",
                    help="so conta ligacoes e consultas por fazer, sem buscar nada")
+    p.add_argument("--sonda", action="store_true",
+                   help="uma busca so: sai 0 se o Google respondeu, 3 se bloqueou")
     p.add_argument("--aplicar", action="store_true")
     a = p.parse_args(argv)
+    if a.sonda:
+        sys.exit(sonda())
     fatia = ler_fatia(a.fatia)
     global LER_COM_IA
     LER_COM_IA = bool(a.ler_com_ia)

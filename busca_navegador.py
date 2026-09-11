@@ -204,7 +204,8 @@ def lista_de_proxies(quantos: int = 12) -> list:
     return urls
 
 
-def rodizio(sem_proxy: bool = False, quantos: int = 12):
+def rodizio(sem_proxy: bool = False, quantos: int = 12, pais: str = "BR",
+            embaralhar: bool = False):
     """Uma função que devolve o PRÓXIMO proxy a cada chamada.
 
     Os IPs são tomados de uma vez, num `asyncio.run` só: o `acquire` guarda os
@@ -225,7 +226,7 @@ def rodizio(sem_proxy: bool = False, quantos: int = 12):
         return [await pool.acquire() for _ in range(n)]
 
     try:
-        pool = ProxyPool(pais="BR")
+        pool = ProxyPool(pais=pais)
         pool.start()
         escolhidos = asyncio.run(_pegar(pool, quantos))
     except Exception as e:                                     # noqa: BLE001
@@ -248,6 +249,10 @@ def rodizio(sem_proxy: bool = False, quantos: int = 12):
     if not urls:
         _log("   ⚠️  nenhum proxy no pool — IP direto")
         return lambda: None
+    if embaralhar:
+        # Cada maquina numa ordem: sem isso, todas comecam pelos mesmos IPs.
+        import random
+        random.shuffle(urls)
     _log("   %d IPs no rodízio" % len(urls))
     fila = deque(urls)
 
