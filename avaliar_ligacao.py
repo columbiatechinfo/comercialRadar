@@ -605,9 +605,12 @@ def fila(con, limite, refazer, ligacoes=None, sem_catalogo=False,
              "por não ter nenhuma" % (len(com_imagem), antes - len(saida)))
     if exigir_busca:
         # JULGAR SO DEPOIS DA BUSCA WEB: julgar antes dela e refazer depois
-        # cobra a Spark duas vezes pela mesma ligacao.
+        # cobra a Spark duas vezes pela mesma ligacao. A FOLGA DE 15 MINUTOS e
+        # para as buscas pelo NOME da mesma ligacao, que `buscar_web` faz logo
+        # em seguida a do endereco e podem ainda estar na fila.
         cur.execute("""select distinct ligacao from radar_comercial.busca_web
-                        where tipo = 'endereco' and ia is not null""")
+                        where tipo = 'endereco' and ia is not null
+                          and feito_em < now() - interval '15 minutes'""")
         buscadas = {str(r[0]) for r in cur.fetchall()}
         antes = len(saida)
         saida = [l for l in saida if l in buscadas]
