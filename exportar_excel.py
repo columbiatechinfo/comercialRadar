@@ -30,7 +30,7 @@ FORA = ("airbnb",)
 #: cima do hidrometro sobe. Quem tem so um CNPJ desce.
 ORDEM_APROVADO = """
     order by s.total desc nulls last,
-             (v.veredito = 'aprovado_exato') desc,
+             (v.veredito in ('aprovado', 'aprovado_exato')) desc,
              v.fontes desc nulls last,
              v.pois desc nulls last,
              v.ligacao

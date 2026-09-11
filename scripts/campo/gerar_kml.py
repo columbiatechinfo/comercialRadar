@@ -33,9 +33,12 @@ import re
 import base_comum as bc
 
 SAIDA_DIR = "/app/saida"
-APROVADOS = ("aprovado_exato", "aprovado_comercial")
+APROVADOS = ("aprovado", "aprovado_exato", "aprovado_comercial")
 
 PASTA = {
+    "aprovado": ("Aprovado",
+                 "As fontes mostram que ao menos um POI da lista pertence a esta "
+                 "ligacao (modelo de 12/09/2026)."),
     "aprovado_exato": ("Aprovado - estabelecimento exato",
                        "O negocio do cadastro foi identificado na fachada. "
                        "Ja se sabe por quem perguntar."),
@@ -46,6 +49,7 @@ PASTA = {
 # Pino verde para o exato, ambar para o comercial. Sao os icones que o proprio
 # Google hospeda: nao dependem de arquivo junto do KML.
 ICONE = {
+    "aprovado": "http://maps.google.com/mapfiles/kml/paddle/grn-circle.png",
     "aprovado_exato": "http://maps.google.com/mapfiles/kml/paddle/grn-circle.png",
     "aprovado_comercial": "http://maps.google.com/mapfiles/kml/paddle/ylw-circle.png",
 }

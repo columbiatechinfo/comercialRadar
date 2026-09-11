@@ -4742,7 +4742,9 @@ CAT_LIG = {"RESIDENCIAL": 0, "COMERCIAL": 1, "INDUSTRIAL": 2, "PUBLICA": 3}
 # legenda sem ninguem notar.
 SIT_LIG = {"ATIVA": 0, "INATIVA": 1, "CORTADA": 2, "CORTE PEDIDO": 3,
            "PROVISÓRIA": 4, "DESATIVADA": 5}
-VER_LIG = {"aprovado_exato": 1, "aprovado_comercial": 2,
+# `aprovado` E O APROVADO DO MODELO DE 12/09/2026, sem exato/comercial; os dois
+# antigos seguem aqui para o veredito por POI e para o historico.
+VER_LIG = {"aprovado": 1, "aprovado_exato": 1, "aprovado_comercial": 2,
            "revisao_humana": 3, "reprovado": 4}
 
 # SO NUMERO NESTA RESPOSTA. A primeira versao mandava logradouro, numero e

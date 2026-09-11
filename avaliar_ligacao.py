@@ -255,7 +255,9 @@ pertence a ESTE endereço e a ESTA unidade — rua, número, complemento, bairro
 qual atividade ele mostra e se ela é comércio ou serviço. Um registro que também
 é candidato de outras instalações do mesmo número só é daqui se algo o prende a
 esta unidade: o complemento igual, a foto ou a busca na web; se nada prende, ele
-é "indeterminado". Templo, igreja, associação, ONG, sindicato, escola sem
+é "indeterminado". Vale para qualquer registro: se os dados não permitem garantir
+que ele é ou não desta instalação, ele é "indeterminado", e o "porque" diz o
+motivo concreto da dúvida. Templo, igreja, associação, ONG, sindicato, escola sem
 cobrança e nome que é só de pessoa ou de casa não são comércio nem serviço.
 
 PASSO 3 · JUNTE O MESMO NEGÓCIO E ENRIQUEÇA. Registros de fontes diferentes que
@@ -284,9 +286,10 @@ de rua, que é uma prova a mais e vale pela sua data.
 - CNPJ ativo sem outra fonte é o caso mais fraco, e quem decide é você: pese a
   data de abertura contra a data da foto, o ramo — serviço prestado em casa é
   comum — e o que a busca na web trouxe.
-- "aprovado" quando o conjunto sustenta comércio ou serviço funcionando NESTE
-  imóvel; "reprovado" quando não sustenta. O status não tem "dúvida": a unidade
-  indeterminada já foi dita no passo 2.
+- "aprovado" quando as fontes sustentam que ao menos um registro de comércio ou
+  serviço pertence a esta instalação; "reprovado" quando nenhum pertence. O
+  status não tem "dúvida": a dúvida fundada — não dá para garantir se um
+  registro é ou não desta instalação — já foi dita no passo 2, com o motivo.
 
 Responda SOMENTE um JSON, nesta ordem:
 {"descricao_visual": "<o imóvel julgado em 3 a 6 frases, transcrevendo letreiros>",
@@ -718,7 +721,7 @@ def gravar(con, ligacao, v, resposta, percepcao, resumo, modelo, n_img, dt):
             modelo = excluded.modelo, segundos = excluded.segundos,
             avaliado_em = now()
     """, (ligacao, v, resposta.get("justificativa"),
-          resposta.get("confianca", ia.CONF_VEREDITO.get(v, 0.5)),
+          resposta.get("confianca", ia.CONF_VEREDITO.get(v, {"aprovado": 0.85}.get(v, 0.5))),
           resumo.get("pois", 0), resumo.get("fontes", 0), n_img,
           json.dumps(percepcao, ensure_ascii=False), modelo, round(dt, 2)))
     con.commit()
@@ -1075,15 +1078,21 @@ def _para_veredito(resposta):
         # coluna que o painel pinta e a planilha ordena.
         #
         # A pergunta certa ja esta sendo respondida em `presenca_na_foto`.
-        pres = str(r.get("presenca_na_foto") or "").strip().lower()
-        return "aprovado_exato" if pres == "exata" else "aprovado_comercial"
+        # UM APROVADO SO desde 12/09/2026 (dono do produto): o modelo novo nao
+        # separa "exato" de "comercial" — ou um POI da lista pertence a esta
+        # ligacao, ou e reprovado. A presenca na foto continua na percepcao.
+        return "aprovado"
     if s.startswith("reprov"):
         # A UNIDADE INDETERMINADA VAI PARA REVISAO HUMANA (dono do produto,
         # 11/09/2026): o negocio e comercio ou servico, mas a IA nao sabe se e
         # desta unidade ou da vizinha do mesmo numero. Isso uma pessoa resolve
         # indo a porta; o modelo, com o mesmo material, nao.
+        # A DUVIDA COM MOTIVO VAI PARA REVISAO HUMANA (dono do produto,
+        # 12/09/2026): quando o modelo nao consegue garantir se um POI de
+        # comercio ou servico e ou nao desta ligacao, e diz por que. Registro
+        # indeterminado sem motivo nao conta.
         if any(isinstance(g, dict) and str(g.get("pertence")).strip().lower() == "indeterminado"
-               and g.get("comercio_ou_servico") is True
+               and g.get("comercio_ou_servico") is True and len(str(g.get("porque") or "").strip()) >= 5
                for g in (r.get("registros") or [])):
             return "revisao_humana"
         return "reprovado"

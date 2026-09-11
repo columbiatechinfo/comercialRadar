@@ -154,6 +154,7 @@
   // ponto fica ardósia: "ainda não julgado" não é o mesmo que "reprovado", e
   // pintar de vermelho o que a IA nem viu seria mentir no mapa.
   const COR_IA = {
+    aprovado: "#15803d",
     aprovado_exato: "#15803d",
     aprovado_comercial: "#16a34a",
     revisao_humana: "#f59e0b",
@@ -173,6 +174,7 @@
   // OS QUATRO VEREDITOS SÃO OS DA `analise_ia`, e as cores vêm do desenho.
   // Verde e lima aprovam, âmbar manda para o humano, vermelho reprova.
   const VEREDITOS = [
+    ["aprovado", "Aprovado, um POI da lista pertence à ligação", "bg-green-700"],
     ["aprovado_exato", "Aprovado, estabelecimento exato", "bg-green-700"],
     ["aprovado_comercial", "Aprovado, estabelecimentos comerciais", "bg-lime-600"],
     ["revisao_humana", "Revisão humana, provável atividade comercial", "bg-amber-500"],
