@@ -47,6 +47,9 @@ import imagens
 
 LARGURA_FOTO = 640
 TEXTO_MAX = 7000
+#: NO MAXIMO 16 LIGACOES GRANDES (mais de `al.GRANDE` POIs) na Spark ao mesmo
+#: tempo: sem teto, as 80 vagas viram 80 predios de 4 a 10 min cada (12/09/2026).
+MAX_GRANDES = 16
 VEREDITOS = ("aprovado", "reprovado", "revisao_humana")
 #: `--saida DIR`: grava cada julgamento (e as fotos) numa pasta, para a galeria
 #: de validacao — o lote de conferencia roda sem `--aplicar`.
@@ -230,6 +233,16 @@ def rodar(limite, aplicar, trabalhadores, modelo, ligacoes, cidade, exigir_busca
     poco = al.Poco(al.CONEXOES)
     fila_ = list(alvos)
     trava_fila = threading.Lock()
+    # QUANTOS POIS CADA UMA TEM, de uma vez: e o que separa a grande da pequena.
+    con = bc.conectar()
+    cur = con.cursor()
+    cur.execute("""select lp.ligacao, count(*) from radar_comercial.ligacao_poi lp
+                     join radar_comercial.pois p on p.id = lp.poi_id
+                    where lp.ligacao = any(%s) and lp.descartado_em is null and p.fundido_em is null
+                    group by 1""", ([str(x) for x in fila_],))
+    npoi = {str(l): n for l, n in cur.fetchall()}
+    con.close()
+    grandes = [0]
     t0 = time.time()
 
     def trabalhador():
@@ -237,13 +250,23 @@ def rodar(limite, aplicar, trabalhadores, modelo, ligacoes, cidade, exigir_busca
             with trava_fila:
                 if not fila_:
                     return
-                lig = fila_.pop(0)
+                i = 0
+                if grandes[0] >= MAX_GRANDES:
+                    i = next((k for k, x in enumerate(fila_) if npoi.get(str(x), 0) <= al.GRANDE), 0)
+                lig = fila_.pop(i)
+                grande = npoi.get(str(lig), 0) > al.GRANDE
+                if grande:
+                    grandes[0] += 1
             try:
                 uma(poco, lig, modelo, placar, trava, aplicar)
             except Exception as e:                             # noqa: BLE001
                 with trava:
                     placar["erro"] += 1
                     al._log("   %-10s ERRO: %s: %s" % (lig, type(e).__name__, str(e)[:80]))
+            finally:
+                if grande:
+                    with trava_fila:
+                        grandes[0] -= 1
 
     ts = [threading.Thread(target=trabalhador, daemon=True) for _ in range(max(1, trabalhadores))]
     for t in ts:
