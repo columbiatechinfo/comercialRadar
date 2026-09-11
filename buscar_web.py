@@ -373,7 +373,8 @@ def extrair(item, consulta, texto, b64):
     prompt = PROMPT + json.dumps(ficha, ensure_ascii=False) + "\n\nTEXTO DA PÁGINA:\n" + texto[:9000]
     t0 = time.time()
     try:
-        r = di._chat_local(MODELO, prompt, [b64] if b64 else [], max_tokens=2600, timeout=400)
+        r = di._chat_local(MODELO, prompt, [b64] if b64 else [], max_tokens=2600,
+                           timeout=int(os.environ.get("RADAR_TIMEOUT_IA") or 900))
     except Exception as e:                                     # noqa: BLE001
         return None, "%s: %s" % (type(e).__name__, str(e)[:200]), time.time() - t0
     if not isinstance(r, dict):

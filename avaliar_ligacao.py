@@ -39,7 +39,10 @@ import setor
 import imagens
 
 MODELO_PADRAO = ia.MODELO_PADRAO
-TIMEOUT = ia.TIMEOUT
+#: A ESPERA PELA SPARK. 15 min, e nao os 8 de `avaliar_ia`: na producao a
+#: Spark divide a vez com a leitura da busca web, e a avaliacao chegou a ~5 min
+#: por chamada na noite de 11/09/2026. `RADAR_TIMEOUT_IA` muda sem rebuild.
+TIMEOUT = int(os.environ.get("RADAR_TIMEOUT_IA") or 900)
 VEREDITOS = ia.VEREDITOS
 
 #: A escala e a MESMA do `avaliar_ia`, de proposito. O painel ja pinta por ela,
