@@ -522,7 +522,7 @@ SEM_VEREDITO = """
 
 def fila(con, limite, refazer, ligacoes=None, sem_catalogo=False,
          desatualizados=False, fonte=None, exceto_fonte=None,
-         exigir_busca=False, fotos_desde=None, fatia=None):
+         exigir_busca=False, fotos_desde=None, fatia=None, vinculo_novo=False):
     if ligacoes:
         return [str(x) for x in ligacoes]
     cur = con.cursor()
@@ -548,6 +548,20 @@ def fila(con, limite, refazer, ligacoes=None, sem_catalogo=False,
     cur.execute(SQL_FILA % {"filtro": filtro,
                             "catalogo": "" if sem_catalogo else SQL_CATALOGO})
     saida = [r[0] for r in cur.fetchall()]
+    if vinculo_novo:
+        # A LIGACAO QUE GANHOU POI DEPOIS DO VEREDITO volta a ser julgada: e o
+        # POI que a IA descartou noutra ligacao e o casamento por endereco
+        # religou aqui (dono do produto, 11/09/2026). Um join, e nao `exists`.
+        cur.execute("""select lp.ligacao
+                         from radar_comercial.ligacao_poi lp
+                         join radar_comercial.ligacao_veredito v on v.ligacao = lp.ligacao
+                        where lp.descartado_em is null and lp.gerado_em > v.avaliado_em
+                        group by lp.ligacao""")
+        ja = set(saida)
+        novas = [str(r[0]) for r in cur.fetchall() if str(r[0]) not in ja]
+        saida += novas
+        _log("   %d ligação(ões) ganharam POI depois do veredito e voltam à fila"
+             % len(novas))
 
     if fonte or exceto_fonte:
         # O RECORTE POR FONTE, tambem em memoria e pelo mesmo motivo dos
@@ -633,6 +647,20 @@ def fila(con, limite, refazer, ligacoes=None, sem_catalogo=False,
         import zlib
         k, n = fatia
         saida = [l for l in saida if zlib.crc32(str(l).encode()) % n == k]
+    # A ORDEM DAS FONTES, a mesma da busca web: Maps, iFood, as demais (dono
+    # do produto, 11/09/2026). Estavel: dentro de cada grupo, a ordem da fila.
+    cur.execute("""select distinct lp.ligacao, lower(coalesce(p.fonte,''))
+                     from radar_comercial.ligacao_poi lp
+                     join radar_comercial.pois p on p.id = lp.poi_id
+                    where lp.descartado_em is null and p.fundido_em is null""")
+    fontes_de = {}
+    for l_, f_ in cur.fetchall():
+        fontes_de.setdefault(str(l_), set()).add(f_)
+
+    def _prio(l):
+        fs = fontes_de.get(str(l), set())
+        return 0 if "maps" in fs else (1 if "ifood" in fs else 2)
+    saida.sort(key=_prio)
     return saida[:limite] if limite else saida
 
 
@@ -1117,13 +1145,14 @@ def uma(poco, ligacao, modelo, secoes, placar, trava, aplicar):
 
 def rodar(limite, aplicar, trabalhadores, modelo, ligacoes, refazer,
           sem_catalogo=False, desatualizados=False, fonte=None,
-          exceto_fonte=None, exigir_busca=False, fotos_desde=None, fatia=None):
+          exceto_fonte=None, exigir_busca=False, fotos_desde=None, fatia=None,
+          vinculo_novo=False):
     con = bc.conectar()
     alvos = fila(con, limite, refazer, ligacoes,
                  sem_catalogo=sem_catalogo,
                  desatualizados=desatualizados, fonte=fonte,
                  exceto_fonte=exceto_fonte, exigir_busca=exigir_busca,
-                 fotos_desde=fotos_desde, fatia=fatia)
+                 fotos_desde=fotos_desde, fatia=fatia, vinculo_novo=vinculo_novo)
     _log("▶ veredito por LIGACAO — o dossiê de todas as fontes numa chamada")
     _log("   %d ligação(ões) na fila" % len(alvos))
     if not alvos:
@@ -1230,6 +1259,8 @@ def main(argv=None):
     p.add_argument("--fotos-desde", dest="fotos_desde", default=None,
                    help="AAAA-MM-DD: so ligacoes com foto de rua capturada desde a data")
     p.add_argument("--fatia", default="", help="k/n: so as ligacoes com crc32 %% n == k")
+    p.add_argument("--vinculo-novo", dest="vinculo_novo", action="store_true",
+                   help="tambem as ligacoes que ganharam POI depois do veredito")
     p.add_argument("--aplicar", action="store_true")
     a = p.parse_args(argv)
     r = rodar(a.limite, a.aplicar, a.trabalhadores, a.modelo, a.ligacao,
@@ -1237,7 +1268,8 @@ def main(argv=None):
               desatualizados=a.desatualizados, fonte=a.fonte,
               exceto_fonte=a.exceto_fonte, exigir_busca=a.exigir_busca,
               fotos_desde=a.fotos_desde,
-              fatia=tuple(int(x) for x in a.fatia.split("/")) if a.fatia else None)
+              fatia=tuple(int(x) for x in a.fatia.split("/")) if a.fatia else None,
+              vinculo_novo=a.vinculo_novo)
     return 1 if r.get("erro") else 0
 
 

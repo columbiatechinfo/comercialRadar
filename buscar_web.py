@@ -128,16 +128,55 @@ def tipo_por_extenso(end_ligacao):
     return ""
 
 
-def _na_fatia(ligacao, fatia):
-    """`fatia` = (k, n): a ligacao e deste processo quando crc32 % n == k.
+def ler_fatia(texto):
+    """"0,1/3" -> ({0, 1}, 3). Vazio -> None."""
+    if not texto:
+        return None
+    ks, n = texto.split("/")
+    return {int(k) for k in ks.split(",") if k.strip() != ""}, int(n)
 
-    O MESMO CORTE NAS DUAS MAQUINAS sem tabela de fila: o i9 roda 0/2 e o
-    notebook 1/2, e nenhum dos dois pega a ligacao do outro.
+
+def _na_fatia(ligacao, fatia):
+    """`fatia` = (ks, n): a ligacao e deste processo quando crc32 % n esta em ks.
+
+    O MESMO CORTE NAS DUAS MAQUINAS sem tabela de fila. VARIOS PEDACOS POR
+    PROCESSO porque as maquinas nao sao iguais: 20 navegadores no i9 e 10 no
+    notebook (dono do produto, 11/09/2026) — o i9 roda "0,1/3" e o notebook
+    "2/3", e os dois terminam juntos.
     """
     if not fatia:
         return True
-    k, n = fatia
-    return zlib.crc32(str(ligacao).encode()) % n == k
+    ks, n = fatia
+    return zlib.crc32(str(ligacao).encode()) % n in ks
+
+
+#: A ORDEM DAS FONTES, do dono do produto em 11/09/2026: "google maps poi,
+#: ifood, e as demais em seguida". Ligacao com POI do Maps primeiro.
+ORDEM_DAS_FONTES = ("maps", "ifood")
+
+
+def prioridade(fontes):
+    for i, f in enumerate(ORDEM_DAS_FONTES):
+        if f in fontes:
+            return i
+    return len(ORDEM_DAS_FONTES)
+
+
+def ligacoes_com_imagem(cur):
+    """As ligacoes com vinculo vivo cuja alguma fonte ja tem imagem.
+
+    Foto de rua (`poi_evidencia` sv_*) ou foto publicada do Google
+    (`images_urls` gps-cs-s). Dois conjuntos e um cruzamento em Python —
+    nunca `exists` por linha.
+    """
+    cur.execute("""select distinct poi_id from radar_comercial.poi_evidencia
+                    where tipo like 'sv_%%' and (bytes_tam is not null or storage_path is not null)""")
+    com = {r[0] for r in cur.fetchall()}
+    cur.execute("""select distinct poi_id from radar_comercial.images_urls
+                    where url like '%%gps-cs-s%%' and (dados is not null or storage_path is not null)""")
+    com |= {r[0] for r in cur.fetchall()}
+    cur.execute("select ligacao, poi_id from radar_comercial.ligacao_poi where descartado_em is null")
+    return {str(l) for l, p in cur.fetchall() if p in com}
 
 
 def fila(con, cidade=None, limite=0, ligacoes=None, fatia=None):
@@ -183,10 +222,19 @@ def fila(con, cidade=None, limite=0, ligacoes=None, fatia=None):
     cur.execute("""select ligacao, tipo, coalesce(poi_id, 0) from radar_comercial.busca_web
                     where ia is not null""")
     feitas = {(str(a), b, c) for a, b, c in cur.fetchall()}
+    # SO QUEM JA TEM IMAGEM (dono do produto, 11/09/2026): a busca web e para
+    # as ligacoes que a IA ja pode julgar com foto.
+    com_imagem = ligacoes_com_imagem(cur) if not so else None
     cod = None
     municipios = {}
     saida = []
-    for l in sorted(por_lig):
+
+    def chave(l):
+        return (prioridade({poi[p]["fonte"] for p in por_lig[l] if p in poi}), l)
+
+    for l in sorted(por_lig, key=chave):
+        if com_imagem is not None and l not in com_imagem:
+            continue
         ps = [poi[p] for p in por_lig[l] if p in poi]
         if not ps:
             continue
@@ -444,12 +492,12 @@ def main(argv=None):
     p.add_argument("--ligacao", action="append")
     p.add_argument("--limite", type=int, default=0)
     p.add_argument("--trabalhadores", type=int, default=6)
-    p.add_argument("--fatia", default="", help="k/n: so as ligacoes com crc32 %% n == k")
+    p.add_argument("--fatia", default="", help="k[,k2]/n: so as ligacoes com crc32 %% n num dos k")
     p.add_argument("--contar", action="store_true",
                    help="so conta ligacoes e consultas por fazer, sem buscar nada")
     p.add_argument("--aplicar", action="store_true")
     a = p.parse_args(argv)
-    fatia = tuple(int(x) for x in a.fatia.split("/")) if a.fatia else None
+    fatia = ler_fatia(a.fatia)
     if not a.cidade and not a.ligacao:
         p.error("diga --cidade ou --ligacao")
     con = bc.conectar()

@@ -428,6 +428,13 @@ def montar(con, ligacao, ia, imagens_mod, busca_web=None):
                           "plataforma mostra so um circulo aproximado.")
 
     # ── 3 · os comentarios, de todos os POIs juntos ──────────────────────
+    if busca_web is not None and not busca_web:
+        # A AUSENCIA TAMBEM SE DIZ: a ligacao cuja busca falhou no Google e no
+        # Bing e julgada sem ela (dono do produto, 11/09/2026), e o modelo
+        # precisa saber que nao houve busca, e nao que ela nada achou.
+        linhas.append("")
+        linhas.append("BUSCA NA WEB: não houve resultado para esta instalação — "
+                      "a busca não foi feita ou falhou. Julgue sem ela.")
     if busca_web:
         linhas.append("")
         linhas.append("O QUE A BUSCA NA WEB ACHOU — Google, e o Bing só quando "
