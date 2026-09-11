@@ -7,7 +7,8 @@ entrar aqui (docs/RETOMAR-11-09-2026.md):
 - toda ligacao do alvo e buscada pelo ENDERECO: o logradouro NORMALIZADO (o
   nome canonico do IBGE, e nao o texto cru da Corsan), numero, bairro, cidade,
   UF e "empresa";
-- todo POI com nome de negocio e buscado tambem pelo NOME + cidade + UF;
+- a busca pelo NOME de cada POI esta DESLIGADA (`BUSCAR_NOMES`): uma busca
+  por instalacao, pelo endereco (correcao do dono do produto, 11/09/2026);
 - Google na frente; o Bing so quando o Google falha em tres IPs;
 - navegador: a sessao furtiva do Scrapling (a do iFood), com o pool de
   proxies, um IP por sessao, HTTP/2 desligado;
@@ -57,6 +58,10 @@ TENTATIVAS = 3
 #: Largura da pagina que vai para o modelo: densidade normal (decisao de 11/09).
 LARGURA = 1366
 ALVO = ("SIM", "SIM_COM_ANALISE_HUMANA")
+#: BUSCA PELO NOME DO POI: DESLIGADA. Uma busca por instalacao, pelo endereco
+#: normalizado + "empresa" (dono do produto, 11/09/2026) — a busca por nome
+#: triplicava o tempo e o processamento. O codigo fica para quem o religar.
+BUSCAR_NOMES = False
 
 #: A CORSAN ABREVIA O TIPO DA RUA em cinco letras ("AVENI GETULIO VARGAS").
 #: Na primeira rodada da sonda o Bing leu "AVENI" como palavra. O tipo vai por
@@ -243,7 +248,7 @@ def fila(con, cidade=None, limite=0, ligacoes=None, fatia=None):
         if (l, "endereco", 0) not in feitas:
             tarefas.append(("endereco", None))
         nomes = set()
-        for p in ps:
+        for p in (ps if BUSCAR_NOMES else []):
             chave = sem_acento(p["nome"])
             if not chave or MEI.search(p["nome"]) or chave in nomes:
                 continue
