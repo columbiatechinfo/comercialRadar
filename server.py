@@ -4578,6 +4578,12 @@ def parar_job(body: dict = Body(default=None)):
 # Frontend estático
 # ──────────────────────────────────────────────────────────────────────────
 @app.get("/")
+def index_seek():
+    """A HOME E O SEEK desde 13/09/2026 — decisao do dono do produto. A tela de
+    extracao, que era esta, mudou para `/extrair`."""
+    return _pagina("seek.html", ("sessao.js",))
+
+
 def index():
     """A TELA PRINCIPAL É A NOVA desde 28/08/2026 — decisão do dono do produto.
 
@@ -4687,7 +4693,9 @@ SO_ADMIN = (
 # query. Fica restrito a ESTAS rotas, e só quando não há cabeçalho — token em
 # URL aparece em log de servidor e em histórico, e não é para virar o caminho
 # padrão de autenticação do resto da API.
-TOKEN_NA_QUERY = ("/api/sv/", "/api/eu/foto", "/api/dossie/", "/api/modelos/")
+TOKEN_NA_QUERY = ("/api/sv/", "/api/eu/foto", "/api/dossie/", "/api/modelos/",
+                  # as fotos e o print da busca na ficha do SEEK, pedidos por <img>
+                  "/api/seek/foto/", "/api/seek/busca/")
 
 
 @app.middleware("http")
@@ -6402,6 +6410,19 @@ def bancada_pagina():
         raise HTTPException(404, "bancada.html nao instalada — rode "
                                  "`python instalar_bancada.py`")
     return FileResponse(str(alvo), media_type="text/html")
+
+
+# A TELA SEEK (13/09/2026): a esteira de evidencia por ligacao. As rotas vivem em
+# `seek_api.py`, e nao aqui, para a tela nova nao crescer dentro deste arquivo.
+import seek_api  # noqa: E402
+
+app.include_router(seek_api.router)
+
+
+@app.get("/extrair")
+def extrair():
+    """A tela de extracao — a que era a principal ate a SEEK virar a home."""
+    return _pagina("painel.html", ("painel.js", "camada_gpu.js",))
 
 
 app.mount("/static", _FrontSemCache(directory=str(FRONT)), name="static")

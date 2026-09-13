@@ -1,0 +1,3838 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SEEK · A2L</title>
+<style>
+/* ==== 00-tokens.css ==== */
+/* 00-tokens.css — a marca A2L em variáveis. Nenhuma cor nasce fora daqui. */
+
+:root{
+  /* marca */
+  --navy:#0B2E59; --azul:#006DFF; --azul-t:#0057CC; --laranja:#F28C28; --laranja-t:#C96F16;
+  --ok:#1F9D62; --alerta:#F28C28; --critico:#D64545; --roxo:#6D4AC7; --roxo-t:#5537A8;
+
+  /* superfícies */
+  --fundo:#F2F4F7; --sup:#FFFFFF; --sup2:#F7F9FC; --sup3:#EDF1F7;
+  --linha:#E4E8EE; --linha2:#CFD6E0; --callout:#EAF1FB;
+
+  /* texto */
+  --tit:#12161C; --txt:#2A2E35; --fraco:#6B7684; --tenue:#98A2B3;
+
+  /* fases da conferência */
+  --f1:#8FA0BA; --f3:#006DFF; --f5:#F28C28; --f6:#D64545; --f8:#1F9D62;
+  --f99:#5B6274; --f100:#0B2E59;
+
+  /* tipografia */
+  --face:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,Helvetica,Arial,sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+
+  /* medidas */
+  --r:10px; --r2:7px; --r3:5px;
+  --sombra:0 1px 2px rgba(11,46,89,.06),0 8px 24px rgba(11,46,89,.06);
+  --sombra2:0 2px 6px rgba(11,46,89,.10),0 18px 48px rgba(11,46,89,.14);
+  --filete:3px; --topo:52px; --fila:270px; --cart:250px;
+
+  --t:.16s cubic-bezier(.4,0,.2,1);
+}
+
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  font-family:var(--face); background:var(--fundo); color:var(--txt);
+  font-size:13.5px; line-height:1.45; overflow:hidden;
+  -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
+}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer;background:none;border:0}
+input,select,textarea{background:none;border:0;outline:0}
+a{color:var(--azul);text-decoration:none}
+
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:#C7D0DC;border-radius:9px;border:2px solid transparent;
+  background-clip:content-box}
+::-webkit-scrollbar-thumb:hover{background:#A9B5C5;background-clip:content-box}
+
+:focus-visible{outline:2px solid var(--azul);outline-offset:2px;border-radius:var(--r3)}
+
+.mono{font-family:var(--mono)}
+.cresce{flex:1}
+[hidden]{display:none!important}
+
+/* ---- o filete de marca 22/78: a assinatura da casa no topo da peça ---- */
+#filete{position:fixed;left:0;right:0;top:0;height:var(--filete);display:flex;z-index:60}
+#filete i{width:22%;background:var(--laranja)}
+#filete b{width:78%;background:var(--navy)}
+
+/* ==== 96-seek.css ==== */
+/* 96-seek.css — SEEK · esteira de evidência
+ *
+ * As sete regiões do painel-evidencia-a2l, na vertical: filete, faixa do caso,
+ * corpo em três colunas (fila · árvore · volume), faixa de veredito e rodapé de
+ * decisão. Nada rola fora da árvore — o essencial cabe sem rolagem.
+ */
+
+/* ------------------------------------------------------------ regiões fixas */
+:root{--faixa:46px; --vd:92px; --dec:58px; --fila:292px; --lado:300px}
+
+#topo{
+  position:fixed;left:0;right:0;top:var(--filete);height:var(--topo);z-index:50;
+  background:var(--sup);border-bottom:1px solid var(--linha);
+  display:flex;align-items:center;gap:16px;padding:0 14px 0 16px;
+}
+#topo .marca{display:flex;align-items:center;flex:none;padding-right:14px;
+  border-right:1px solid var(--linha)}
+#topo .marca svg{display:block;height:22px;width:auto}
+#topo .ident{display:flex;flex-direction:column;line-height:1.25;flex:none}
+#topo .ident strong{font-size:14px;font-weight:600;color:var(--tit);letter-spacing:.04em}
+#topo .ident span{font-family:var(--mono);font-size:10px;color:var(--fraco);letter-spacing:.02em}
+#topo .sessao{margin-left:auto;display:flex;align-items:center;gap:9px}
+#topo .quem{display:flex;flex-direction:column;line-height:1.2;padding-left:11px;
+  border-left:1px solid var(--linha);min-width:96px}
+#topo .quem span:first-child{font-size:12px;font-weight:600;color:var(--tit);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px}
+#topo .quem span:last-child{font-family:var(--mono);font-size:9.5px;color:var(--fraco)}
+
+.chip{
+  display:flex;align-items:center;gap:7px;height:29px;padding:0 10px;
+  border:1px solid var(--linha);border-radius:99px;background:var(--sup2);
+  font-family:var(--mono);font-size:10.5px;color:var(--fraco);
+  transition:border-color var(--t),color var(--t);
+}
+.chip:hover{border-color:var(--linha2);color:var(--txt)}
+.chip .pip{width:7px;height:7px;border-radius:50%;background:var(--tenue);flex:none}
+.chip.on .pip{background:var(--ok)}
+.chip.demo .pip{background:var(--laranja)}
+.chip.ruim .pip{background:var(--critico)}
+
+#tarja{
+  display:flex;align-items:center;height:23px;padding:0 11px;border-radius:99px;
+  background:repeating-linear-gradient(135deg,#FDF0DC 0 8px,#FBE4C0 8px 16px);
+  border:1px solid #F0CE9A;color:#8A5410;font-family:var(--mono);font-size:10px;
+  letter-spacing:.06em;text-transform:uppercase;white-space:nowrap;margin-left:14px;
+}
+body.em-homolog #filete i{width:100%;background:repeating-linear-gradient(
+  135deg,var(--laranja) 0 14px,var(--navy) 14px 28px)}
+body.em-homolog #filete b{display:none}
+
+/* ------------------------------------------------- faixa de identidade do caso */
+#faixa{
+  position:fixed;left:0;right:0;top:calc(var(--filete) + var(--topo));height:var(--faixa);
+  z-index:45;background:var(--sup);border-bottom:1px solid var(--linha);
+  display:flex;align-items:center;padding:0 14px;overflow:hidden;
+}
+#faixa .cf{display:flex;align-items:baseline;gap:6px;padding:0 13px;
+  border-right:1px solid var(--linha);white-space:nowrap;flex:0 1 auto;min-width:0}
+#faixa .cf:first-child{padding-left:0}
+#faixa .cf:last-child{border-right:0}
+#faixa .cf i{font-style:normal;font-family:var(--mono);font-size:9px;color:var(--tenue);
+  text-transform:uppercase;letter-spacing:.08em}
+#faixa .cf b{font-size:13px;font-weight:600;color:var(--tit);overflow:hidden;
+  text-overflow:ellipsis}
+#faixa .cf b.mono{font-family:var(--mono);font-size:12.5px}
+#faixa .cf.vazio b{color:var(--tenue);font-weight:400}
+#faixa .cf.coord{gap:8px}
+#faixa .cf.coord .prec{font-family:var(--mono);font-size:9px;color:var(--tenue);
+  border:1px solid var(--linha);border-radius:99px;padding:1px 6px}
+#faixa .ir{
+  font-family:var(--mono);font-size:9.5px;color:var(--azul);border:1px solid var(--linha);
+  border-radius:99px;padding:3px 9px;background:var(--sup2);text-decoration:none;
+  transition:all var(--t);
+}
+#faixa .ir:hover{border-color:var(--azul);background:var(--callout)}
+#faixa .ir.copia{color:var(--fraco)}
+
+/* ------------------------------------------------------------------- corpo */
+#corpo{
+  position:fixed;left:0;right:0;
+  top:calc(var(--filete) + var(--topo) + var(--faixa));
+  bottom:calc(var(--vd) + var(--dec));
+  display:flex;min-height:0;
+}
+
+/* -------------------------------------------------------------- 1 · a fila */
+#fila{width:var(--fila);flex:none;background:var(--sup);border-right:1px solid var(--linha);
+  display:flex;flex-direction:column;min-height:0}
+.fila-topo{padding:10px;border-bottom:1px solid var(--linha);display:flex;
+  flex-direction:column;gap:8px}
+.busca{display:flex;align-items:center;height:31px;padding:0 10px;background:var(--sup2);
+  border:1px solid var(--linha);border-radius:var(--r2);transition:border-color var(--t)}
+.busca:focus-within{border-color:var(--azul);background:var(--sup)}
+.busca input{flex:1;font-size:12.5px;min-width:0;background:none;border:0;outline:0}
+/* os dois recortes, um por linha: rótulo, ponto da cor escolhida e a lista */
+.fila-filtros{display:flex;align-items:center;gap:8px}
+.fila-filtros.dec{margin-top:-2px}
+.fl-rot{font-family:var(--mono);font-size:9px;text-transform:uppercase;letter-spacing:.1em;
+  color:var(--tenue);width:56px;flex:none}
+.fila-filtros .pt{width:8px;height:8px;border-radius:50%;flex:none}
+.fl-sel{
+  flex:1;min-width:0;height:29px;padding:0 26px 0 9px;border-radius:var(--r2);
+  border:1px solid var(--linha);background:var(--sup2);color:var(--txt);font-size:12px;
+  appearance:none;-webkit-appearance:none;cursor:pointer;transition:border-color var(--t);
+  background-image:linear-gradient(45deg,transparent 50%,var(--fraco) 50%),
+                   linear-gradient(135deg,var(--fraco) 50%,transparent 50%);
+  background-position:calc(100% - 14px) 13px, calc(100% - 9px) 13px;
+  background-size:5px 5px, 5px 5px;background-repeat:no-repeat;
+}
+.fl-sel:hover{border-color:var(--linha2)}
+.fl-sel:focus{outline:0;border-color:var(--azul);background-color:var(--sup)}
+.fila-lista{flex:1;overflow-y:auto;min-height:0}
+.fila-pe{padding:7px 11px;border-top:1px solid var(--linha);font-family:var(--mono);
+  font-size:10px;color:var(--fraco);background:var(--sup2)}
+.fi{display:block;width:100%;text-align:left;padding:9px 11px 9px 13px;
+  border-bottom:1px solid var(--linha);position:relative;transition:background var(--t)}
+.fi:hover{background:var(--sup2)}
+.fi.on{background:var(--callout)}
+.fi::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:transparent}
+.fi.on::before{background:var(--azul)}
+.fi .l1{display:flex;align-items:center;gap:7px;margin-bottom:2px}
+.fi .l1 .pt{width:7px;height:7px;border-radius:50%;flex:none}
+.fi .l1 b{font-size:12px;font-weight:600;color:var(--tit)}
+.fi .ec{margin-left:auto;font-family:var(--mono);font-size:9.5px;color:var(--tenue)}
+.fi .decidido{font-family:var(--mono);font-size:9.5px;color:var(--ok);font-weight:700}
+.fi .l2{display:block;font-size:11.5px;color:var(--txt);white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis}
+.fi .l3{display:block;font-size:10.5px;color:var(--fraco);white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;margin-top:1px}
+.vazio{padding:22px 14px;font-size:12px;color:var(--tenue);text-align:center}
+
+/* ------------------------------------------------------------- 2 · a árvore */
+#arvore-caixa{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0;
+  background:var(--fundo)}
+.arv-topo{flex:none;display:flex;align-items:center;gap:14px;padding:9px 14px;
+  background:var(--sup);border-bottom:1px solid var(--linha)}
+.arv-tit{display:flex;flex-direction:column;line-height:1.25}
+.arv-tit strong{font-size:13px;font-weight:600;color:var(--tit)}
+.arv-tit span{font-size:11px;color:var(--fraco)}
+.arv-ferramentas{display:flex;gap:6px}
+.bt{border-radius:var(--r2);font-size:12px;display:inline-flex;align-items:center;
+  justify-content:center;gap:6px;transition:all var(--t);border:1px solid transparent}
+.bt.p{height:28px;padding:0 11px;background:var(--sup2);border-color:var(--linha);color:var(--txt)}
+.bt.p:hover{border-color:var(--linha2);background:var(--sup3)}
+.bt.p.on{background:var(--navy);border-color:var(--navy);color:#fff}
+.bt.pri{height:32px;padding:0 16px;background:var(--navy);color:#fff;font-weight:500}
+.bt.pri:hover{background:#0a2749}
+.bt.g{height:36px;padding:0 18px;font-size:13px}
+.bt.escolhido{box-shadow:0 0 0 2px var(--azul) inset}
+.bt:disabled{opacity:.55;cursor:default}
+
+/* A ÁRVORE ROLA, E A ROLAGEM PRECISA APARECER.
+ * Ela sempre rolou — 4 mil pixels de conteúdo em 350 de janela —, mas a barra
+ * do sistema é sobreposta e some quando parada: dava para jurar que o conteúdo
+ * tinha sido cortado. Agora a barra tem trilho próprio e fica reservada
+ * (scrollbar-gutter), e as sombras de topo e pé aparecem só quando há mais
+ * coisa para aquele lado. */
+.arvore{
+  flex:1;overflow-y:scroll;min-height:0;padding:12px 14px 20px;
+  scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:#B9C4D4 transparent;
+  background:
+    linear-gradient(var(--fundo) 30%, rgba(242,244,247,0)) top    /100% 26px no-repeat local,
+    linear-gradient(rgba(242,244,247,0), var(--fundo) 72%) bottom /100% 26px no-repeat local,
+    radial-gradient(farthest-side at 50% 0,   rgba(11,46,89,.13), transparent) top    /100% 11px no-repeat scroll,
+    radial-gradient(farthest-side at 50% 100%,rgba(11,46,89,.13), transparent) bottom /100% 11px no-repeat scroll;
+}
+.arvore::-webkit-scrollbar{width:11px}
+.arvore::-webkit-scrollbar-track{background:var(--sup2);border-left:1px solid var(--linha)}
+.arvore::-webkit-scrollbar-thumb{
+  background:#B9C4D4;border-radius:9px;border:3px solid var(--sup2);background-clip:content-box;
+}
+.arvore::-webkit-scrollbar-thumb:hover{background:#93A2B8;background-clip:content-box}
+.vazio-g{padding:60px 20px;text-align:center;color:var(--tenue);font-size:13px}
+
+/* CADA PASSAGEM DA CAIXA TEM O SEU TOM.
+ * São três degraus — critério, fonte, campo — e antes os três eram quase da
+ * mesma cor: a pessoa perdia de vista em que nível estava olhando. Agora o
+ * ramo escurece de fora para dentro, o corpo do critério ganha a cor DELE
+ * (bem diluída) e a folha volta ao branco, que é onde se lê valor. */
+.ramo{margin-bottom:10px;background:var(--sup);border:1px solid var(--linha);
+  border-radius:var(--r);box-shadow:var(--sombra);overflow:hidden}
+.ramo.n-campo{--cc:#1F9D62} .ramo.n-documento{--cc:#0B2E59}
+.ramo.n-proximidade{--cc:#006DFF} .ramo.n-social{--cc:#6D4AC7}
+.ramo.n-base{--cc:#5B6274}
+.no-crit{
+  display:flex;align-items:center;gap:9px;width:100%;text-align:left;padding:10px 13px;
+  border-left:3px solid var(--cc);background:var(--sup);transition:background var(--t);
+}
+.no-crit:hover{background:var(--sup2)}
+.no-crit .seta{font-size:10px;color:var(--tenue);width:11px;flex:none}
+.no-crit .nm{font-size:13px;font-weight:600;color:var(--tit);letter-spacing:.01em}
+.no-crit .res{font-family:var(--mono);font-size:10px;color:var(--fraco)}
+.no-crit.tem .res{color:var(--ok)}
+.no-crit .regra{font-size:10.5px;color:var(--tenue);text-align:right;max-width:46%;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ramo-corpo{border-top:1px solid var(--linha);
+  background:color-mix(in srgb, var(--cc) 5%, var(--sup2));
+  border-left:3px solid color-mix(in srgb, var(--cc) 35%, transparent)}
+@supports not (background:color-mix(in srgb, red 5%, white)){
+  .ramo-corpo{background:var(--sup2);border-left-color:var(--linha2)}
+}
+
+.no-fonte{
+  display:flex;align-items:center;gap:9px;width:100%;text-align:left;
+  padding:8px 13px 8px 22px;border-top:1px solid var(--linha);background:transparent;
+  transition:background var(--t);
+}
+.no-fonte .campos{font-size:9.5px;color:var(--tenue)}
+.no-fonte:first-child{border-top:0}
+.no-fonte:hover{background:var(--sup3)}
+.no-fonte.piscou{background:var(--callout)}
+.no-fonte .seta{font-size:10px;color:var(--tenue);width:11px;flex:none}
+.no-fonte .nm{font-family:var(--mono);font-size:11px;font-weight:600;color:var(--tit);
+  letter-spacing:.04em}
+.no-fonte.mudo .nm{color:var(--tenue);font-weight:400}
+.no-fonte .sit{font-family:var(--mono);font-size:9.5px;padding:2px 7px;border-radius:99px;
+  background:var(--sup3);color:var(--fraco);border:1px solid var(--linha)}
+.no-fonte .sit.ok{background:#E8F6EE;border-color:#BFE3CE;color:#14603D}
+.no-fonte .sit.mudo{background:none;border-style:dashed;color:var(--tenue)}
+.no-fonte .curado{font-family:var(--mono);font-size:9.5px;color:var(--azul)}
+.no-fonte .chave{font-size:9.5px;color:var(--tenue)}
+.no-corpo{background:var(--sup);border-top:1px solid var(--linha);padding:0 0 2px;
+  box-shadow:inset 3px 0 0 color-mix(in srgb, var(--cc) 22%, transparent)}
+.base-corpo{box-shadow:none}
+
+/* o rótulo do grupo de campos: casamento · prova · contexto · guarda */
+.grupo-cab{
+  font-family:var(--mono);font-size:8.5px;text-transform:uppercase;letter-spacing:.12em;
+  color:var(--tenue);padding:7px 13px 4px 26px;background:var(--sup2);
+  border-top:1px solid var(--linha);border-bottom:1px solid var(--linha);
+}
+.no-corpo > .grupo-cab:first-child{border-top:0}
+.fonte-nota{padding:7px 14px 7px 26px;font-size:11px;color:var(--fraco);
+  border-bottom:1px solid var(--linha);background:var(--sup2)}
+.sem-dado{padding:12px 14px 12px 26px;font-size:11.5px;color:var(--fraco);line-height:1.5}
+
+/* a folha: o campo, onde mora a aprovação */
+.folha{
+  display:grid;grid-template-columns:minmax(190px,1.15fr) 1fr 1fr 104px 64px;
+  gap:10px;align-items:center;padding:7px 13px 7px 26px;
+  border-bottom:1px solid var(--linha);position:relative;background:var(--sup);
+}
+.folha.g-prova{background:#FCFDFF}
+.folha.g-guarda{background:var(--sup2)}
+.folha.ausente{background:repeating-linear-gradient(135deg,var(--sup2) 0 6px,var(--sup) 6px 12px)}
+.folha.ausente .fo-val b,.folha.ausente .fo-rot b{color:var(--tenue);font-weight:400}
+.folha:last-child{border-bottom:0}
+.folha::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:transparent}
+.folha.m-ok{background:#F4FBF7}
+.folha.m-ok::before{background:var(--ok)}
+.folha.m-nao{background:#FDF6F6}
+.folha.m-nao::before{background:var(--critico)}
+.folha.m-nao .fo-val b{text-decoration:line-through;color:var(--tenue)}
+.folha.m-nota{background:#FEFBF6}
+.folha.m-nota::before{background:var(--laranja)}
+.fo-obs{
+  grid-column:1 / -1;font-size:11px;line-height:1.45;padding:7px 10px;margin-top:2px;
+  border-radius:var(--r3);background:var(--sup2);border:1px solid var(--linha);color:var(--txt);
+}
+.fo-obs b{display:block;font-family:var(--mono);font-size:8.5px;text-transform:uppercase;
+  letter-spacing:.08em;margin-bottom:2px}
+.fo-obs i{display:block;font-style:normal;font-family:var(--mono);font-size:9px;
+  color:var(--tenue);margin-top:3px}
+.fo-obs.nao{background:#FDF2F2;border-color:#F3C9C9}
+.fo-obs.nao b{color:#A82F2F}
+.fo-obs.nota{background:#FEF8F0;border-color:#F7DCBB}
+.fo-obs.nota b{color:#8A5410}
+.fo-rot{display:flex;flex-direction:column;gap:1px;min-width:0}
+.fo-rot b{font-size:12px;font-weight:500;color:var(--tit)}
+.folha.pesa .fo-rot b{font-weight:600}
+.fo-rot .tec{font-size:9px;color:var(--tenue);letter-spacing:.02em;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis}
+.bate.ausente{background:none;border:1px dashed var(--linha2);color:var(--tenue)}
+.fo-val{display:flex;flex-direction:column;min-width:0}
+.fo-val i{font-style:normal;font-family:var(--mono);font-size:8.5px;color:var(--tenue);
+  text-transform:uppercase;letter-spacing:.07em}
+.fo-val b{font-size:12px;font-weight:500;color:var(--txt);white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis}
+.bate{font-family:var(--mono);font-size:9.5px;padding:3px 8px;border-radius:99px;
+  border:1px solid transparent;white-space:nowrap}
+.bate.sim{background:#E8F6EE;border-color:#BFE3CE;color:#14603D}
+.bate.nao{background:#FDECEC;border-color:#F3C9C9;color:#A82F2F}
+.bate.neutro{background:var(--sup3);color:var(--tenue)}
+/* um botão só, e vermelho: ele não aprova nada — abre a caixa onde se contesta
+ * a evidência ou se anexa observação. Aprovar era um clique sem consequência;
+ * contestar sem escrever por quê é o que ninguém audita depois. */
+.fo-acoes{display:flex;justify-content:flex-end}
+.mk{width:27px;height:27px;border-radius:var(--r3);border:1px solid #F0C8C8;
+  background:#FDF6F6;color:var(--critico);font-size:12px;transition:all var(--t)}
+.mk:hover{border-color:var(--critico);background:#FDECEC}
+.mk.on.nao{background:var(--critico);border-color:var(--critico);color:#fff}
+.mk.on.nota{background:var(--laranja);border-color:var(--laranja);color:#fff}
+.fo-nota{grid-column:1 / -1;font-size:10.5px;color:var(--fraco);line-height:1.45;
+  padding-left:2px;margin-top:-2px}
+
+/* ------------------------------------------------------------ 3 · o volume */
+#lado{width:var(--lado);flex:none;background:var(--sup);border-left:1px solid var(--linha);
+  display:flex;flex-direction:column;min-height:0}
+.lado-tela{position:relative;flex:1;min-height:220px;
+  background:radial-gradient(ellipse 70% 60% at 50% 45%,#FFF 0%,#F4F7FB 60%,#E9EFF6 100%)}
+.lado-tela canvas{display:block;width:100%;height:100%;cursor:pointer}
+/* BALÃO INDICADOR: aparece onde o ponteiro está e aponta para a área */
+.cer-leg{
+  position:absolute;z-index:5;max-width:230px;background:var(--sup);
+  border:1px solid var(--linha2);border-radius:var(--r2);padding:8px 11px;
+  box-shadow:var(--sombra2);pointer-events:none;display:flex;flex-direction:column;gap:3px;
+}
+.cer-leg b{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;
+  color:var(--tit);line-height:1.25}
+.cer-leg b i{width:8px;height:8px;border-radius:50%;flex:none}
+.cer-leg span{font-size:10.5px;color:var(--fraco);line-height:1.35}
+.cer-leg em{font-style:normal;font-family:var(--mono);font-size:9.5px;color:var(--fraco);
+  border-top:1px solid var(--linha);padding-top:4px;margin-top:1px}
+.cer-leg em.ok{color:#14603D} .cer-leg em.nada{color:#8A5410} .cer-leg em.mudo{color:var(--tenue)}
+.cer-leg::after{content:"";position:absolute;left:var(--seta,20px);width:9px;height:9px;
+  background:var(--sup);border:1px solid var(--linha2);transform:rotate(45deg)}
+.cer-leg.acima::after{bottom:-6px;border-top:0;border-left:0}
+.cer-leg.abaixo::after{top:-6px;border-bottom:0;border-right:0}
+.tese{flex:none;border-top:1px solid var(--linha);padding:9px 12px;background:var(--sup2);
+  font-size:11.5px;color:var(--txt);line-height:1.45}
+.tese i{display:block;font-style:normal;font-family:var(--mono);font-size:8.5px;
+  color:var(--tenue);text-transform:uppercase;letter-spacing:.08em;margin-bottom:2px}
+.criterios{flex:none;border-top:1px solid var(--linha);padding:10px 12px;display:flex;
+  flex-direction:column;gap:6px}
+.cri{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--fraco);
+  padding:5px 8px;border-radius:var(--r2);background:var(--sup2);border:1px solid var(--linha)}
+.cri i{width:9px;height:9px;border-radius:50%;flex:none}
+.cri span{flex:1}
+.cri b{font-family:var(--mono);font-size:11px;color:var(--tenue)}
+.cri.bate{background:#F4FBF7;border-color:#CDE9DA;color:var(--tit)}
+.cri.bate b{color:var(--ok)}
+.lado-pe{flex:none;border-top:1px solid var(--linha);padding:8px 12px;background:var(--sup2);
+  font-family:var(--mono);font-size:9.5px;color:var(--tenue)}
+.lado-pe .ficticio{color:var(--laranja-t)}
+
+/* ------------------------------------------------- 4 · o parecer da IA */
+#veredito{
+  position:fixed;left:0;right:0;bottom:var(--dec);height:var(--vd);z-index:40;
+  background:var(--sup);border-top:1px solid var(--linha);padding:0 14px;display:flex;
+}
+.par{
+  flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:3px;
+  padding-left:13px;border-left:3px solid var(--pc);
+}
+.par.aprova{--pc:#1F9D62;--pt:#14603D}
+.par.atencao{--pc:#F28C28;--pt:#8A5410}
+.par.nega{--pc:#D64545;--pt:#A82F2F}
+.par.nulo{--pc:#8FA0BA;--pt:#5B6274}
+.par-cab{display:flex;align-items:baseline;gap:9px}
+.par-cab i{font-style:normal;font-family:var(--mono);font-size:8.5px;color:var(--tenue);
+  text-transform:uppercase;letter-spacing:.11em}
+.par-cab b{font-size:14px;font-weight:600;color:var(--pc);letter-spacing:-.01em}
+.par-chip{margin-left:auto;font-family:var(--mono);font-size:9.5px;padding:3px 10px;
+  border-radius:99px;background:var(--sup2);border:1px solid var(--linha);color:var(--fraco)}
+.par.aprova .par-chip{background:#E8F6EE;border-color:#BFE3CE;color:#14603D}
+.par.atencao .par-chip{background:#FEF3E5;border-color:#F7DCBB;color:#8A5410}
+
+/* a cor da FONTE é o desfecho: verde aprova, âmbar não basta, vermelho não
+ * sustenta, cinza não há caso */
+.par-texto{font-size:12.5px;line-height:1.4;color:var(--pt);max-width:none}
+.par-motivos{display:flex;align-items:center;gap:7px;flex-wrap:wrap;overflow:hidden;
+  max-height:20px}
+.pm{display:flex;align-items:center;gap:5px;font-size:10.5px;color:var(--fraco);
+  background:var(--sup2);border:1px solid var(--linha);border-radius:99px;padding:2px 9px}
+.pm i{width:6px;height:6px;border-radius:50%;background:var(--mc)}
+.pm b{color:var(--tit);font-weight:600}
+.pm em{font-style:normal;font-family:var(--mono);font-size:8.5px;color:var(--tenue);
+  border-left:1px solid var(--linha);padding-left:6px;margin-left:2px}
+.pm.vazio{background:none;border-style:dashed;color:var(--tenue)}
+.pr{font-size:10.5px;color:#8A5410;background:#FEF8F0;border:1px solid #F7DCBB;
+  border-radius:99px;padding:2px 10px}
+.pr b{color:#6F420B}
+
+/* ---------------------------------------------------------- 5 · a decisão */
+#decisao{
+  position:fixed;left:0;right:0;bottom:0;height:var(--dec);z-index:40;
+  background:var(--sup2);border-top:1px solid var(--linha);
+  display:flex;align-items:center;gap:16px;padding:0 14px;
+}
+.dec-estado{display:flex;flex-direction:column;line-height:1.25;padding-right:16px;
+  border-right:1px solid var(--linha);min-width:190px}
+.dec-estado b{font-size:13px;font-weight:600;color:var(--tenue)}
+.dec-estado.feito b{color:var(--tit)}
+.dec-estado span{font-size:10.5px;color:var(--fraco)}
+.dec-estado span b{font-size:10.5px;color:var(--tit)}
+.dec-estado .alerta{color:var(--critico)}
+.dec-curadoria{font-size:11.5px;color:var(--fraco)}
+.dec-curadoria b{font-family:var(--mono);color:var(--azul);font-weight:600}
+#decisao .acoes{display:flex;gap:7px;flex:none;align-items:center}
+/* o "sugerido" fica DENTRO do botão: pendurado acima, ele era cortado pela
+ * borda da faixa — e etiqueta cortada parece defeito, não destaque */
+#decisao .bt .sug{
+  font-family:var(--mono);font-size:8px;text-transform:uppercase;letter-spacing:.08em;
+  background:rgba(255,255,255,.22);color:#fff;padding:2px 6px;border-radius:99px;
+  margin-left:8px;white-space:nowrap;
+}
+
+/* ---- território e rua no diálogo ---- */
+.terr-grande{height:340px;border:1px solid var(--linha);border-radius:var(--r2);
+  overflow:hidden;background:#F7F9FC}
+.terr-grande canvas{display:block;width:100%;height:100%}
+.terr-lista{display:flex;flex-direction:column;gap:5px;margin-top:12px}
+.tl{display:flex;align-items:center;gap:9px;font-size:12px;padding:6px 9px;
+  border-radius:var(--r3);background:var(--sup2);border:1px solid var(--linha)}
+.tl i{width:9px;height:9px;border-radius:50%;flex:none}
+.tl span{flex:1;color:var(--txt)}
+.tl b{font-size:11.5px;color:var(--tit)}
+.tl em{font-style:normal;font-family:var(--mono);font-size:9px;color:var(--ok)}
+.tl.fora{background:#FDF2F2;border-color:#F3C9C9}
+.tl.fora em{color:var(--critico)}
+.rua-aviso{background:var(--callout);border:1px solid #CFE0F7;color:var(--navy);
+  font-size:11.5px;line-height:1.5;padding:10px 12px;border-radius:var(--r2);
+  margin-bottom:12px}
+.rua-tela{height:320px;border:1px solid var(--linha);border-radius:var(--r2);
+  overflow:hidden;background:var(--sup3);display:grid;place-items:center}
+.rua-tela iframe{width:100%;height:100%;border:0;display:block}
+
+/* ------------------------------------------------------------- acessórios */
+.cresce{flex:1}
+#torradas{position:fixed;right:14px;bottom:calc(var(--dec) + var(--vd) + 12px);z-index:90;
+  display:flex;flex-direction:column;gap:7px}
+#torradas .t{background:var(--navy);color:#fff;font-size:12px;padding:9px 13px;
+  border-radius:var(--r2);box-shadow:var(--sombra2);transition:opacity .4s,transform .4s}
+#torradas .t.ruim{background:var(--critico)}
+#torradas .t.vai{opacity:0;transform:translateY(6px)}
+
+#modal{position:fixed;inset:0;z-index:95;display:grid;place-items:center}
+.modal-fundo{position:absolute;inset:0;background:rgba(11,46,89,.32)}
+.modal-caixa{position:relative;background:var(--sup);border-radius:var(--r);
+  box-shadow:var(--sombra2);width:min(560px,92vw);max-height:82vh;display:flex;
+  flex-direction:column;overflow:hidden}
+.modal-caixa header{display:flex;align-items:center;padding:13px 15px;
+  border-bottom:1px solid var(--linha)}
+.modal-caixa header strong{font-size:14px;color:var(--tit)}
+.modal-caixa header button{margin-left:auto;color:var(--fraco)}
+#modal-corpo{padding:15px;overflow:auto}
+#modal-pe{padding:12px 15px;border-top:1px solid var(--linha);display:flex;
+  justify-content:flex-end;gap:8px}
+
+/* ---------------------------------------------------------------- entrada */
+#entrada{position:fixed;inset:0;z-index:100;background:var(--fundo);display:grid;
+  place-items:center;padding:20px}
+.ent-caixa{width:min(390px,94vw);background:var(--sup);border:1px solid var(--linha);
+  border-radius:var(--r);box-shadow:var(--sombra2);padding:0 26px 22px;overflow:hidden;
+  display:flex;flex-direction:column}
+.ent-marca{display:flex;height:var(--filete);margin:0 -26px 22px}
+.ent-marca i{width:22%;background:var(--laranja)}
+.ent-marca b{width:78%;background:var(--navy)}
+.ent-logo{display:flex;justify-content:center;margin-bottom:12px}
+.ent-logo svg{height:30px;width:auto}
+.ent-caixa h1{font-size:17px;font-weight:600;color:var(--tit);text-align:center;
+  letter-spacing:.06em}
+.ent-sub{font-family:var(--mono);font-size:10.5px;color:var(--fraco);text-align:center;
+  margin-bottom:18px}
+.ent-caixa label{font-family:var(--mono);font-size:9.5px;text-transform:uppercase;
+  letter-spacing:.1em;color:var(--tenue);margin-bottom:5px}
+.ent-caixa input{height:38px;border:1px solid var(--linha);border-radius:var(--r2);
+  background:var(--sup2);padding:0 12px;font-size:13.5px;margin-bottom:14px;
+  transition:border-color var(--t)}
+.ent-caixa input:focus{border-color:var(--azul);background:var(--sup)}
+.ent-espera{background:var(--callout);border:1px solid #CFE0F7;color:var(--navy);
+  font-size:12px;padding:9px 11px;border-radius:var(--r2);margin-bottom:12px;text-align:center}
+.ent-erro{background:#FDECEC;border:1px solid #F3C9C9;color:#A82F2F;font-size:12px;
+  padding:9px 11px;border-radius:var(--r2);margin-bottom:12px}
+.bt.fantasma{background:none;border:0;color:var(--fraco);height:30px;font-size:12px;
+  margin-top:8px}
+.bt.fantasma:hover{color:var(--txt)}
+.bt.homolog{width:100%;height:36px;margin-top:8px;border-radius:var(--r2);
+  background:repeating-linear-gradient(135deg,#FDF3E6 0 10px,#FAE9D2 10px 20px);
+  border:1px solid #F0CE9A;color:#8A5410;font-size:12.5px;font-weight:500}
+.ent-homolog-pe{margin-top:7px;font-size:10.5px;line-height:1.45;color:var(--fraco);
+  text-align:center}
+.ent-pe{font-size:10.5px;color:var(--fraco);line-height:1.5;margin-top:14px;text-align:center}
+.ent-cred{font-family:var(--mono);font-size:9.5px;color:var(--tenue);text-align:center;
+  margin-top:12px;padding-top:12px;border-top:1px solid var(--linha)}
+
+#dica{position:fixed;z-index:80;width:268px;background:var(--sup);border:1px solid var(--linha);
+  border-radius:var(--r);box-shadow:var(--sombra2);padding:12px 13px;pointer-events:none}
+
+/* ------------------------------------------------------------- responsivo */
+@media (max-width:1220px){
+  :root{--fila:250px;--lado:240px}
+  .no-crit .regra{display:none}
+  .folha{grid-template-columns:minmax(150px,1.2fr) 1fr 1fr 96px 60px}
+}
+@media (max-width:1000px){
+  #lado{display:none}
+  .folha{grid-template-columns:1fr 1fr;gap:6px}
+  .fo-bate,.fo-acoes{grid-column:auto}
+}
+
+/* ------------------------------------------------------------------------
+ * A SEÇÃO DAS IMAGENS — a evidência que se olha
+ * --------------------------------------------------------------------- */
+/* dentro do rolo da árvore: rola junto e some quando a pessoa desce */
+#imagens{background:var(--sup);border:1px solid var(--linha);border-radius:var(--r);
+  box-shadow:var(--sombra);overflow:hidden;margin-bottom:10px}
+.img-cab{display:flex;align-items:center;gap:9px;width:100%;text-align:left;
+  padding:9px 13px;transition:background var(--t);border-left:3px solid var(--laranja)}
+.img-cab:hover{background:var(--sup2)}
+.img-cab .seta{font-size:10px;color:var(--tenue);width:11px;flex:none}
+.img-cab .nm{font-size:12.5px;font-weight:600;color:var(--tit)}
+.img-cab .res{font-family:var(--mono);font-size:10px;color:var(--fraco)}
+.img-cab .lgpd{font-size:10px;color:var(--tenue);white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;max-width:42%}
+.img-vazio{padding:12px 14px 14px 26px;border-top:1px solid var(--linha);background:var(--sup2);font-size:11.5px;color:var(--fraco);line-height:1.5}
+/* a tira preenche a largura quando há poucos cartões e ROLA quando passa:
+ * grade de colunas automáticas com piso de 190 px resolve os dois casos */
+.img-rolo{position:relative;padding:2px 13px 11px 26px;border-top:1px solid var(--linha);
+  background:var(--sup2)}
+.img-tira{
+  display:grid;grid-auto-flow:column;grid-auto-columns:minmax(190px,1fr);gap:10px;
+  overflow-x:auto;scroll-behavior:smooth;padding-bottom:2px;
+}
+.img-tira::-webkit-scrollbar{height:7px}
+.rola{
+  position:absolute;top:34px;width:28px;height:28px;border-radius:50%;z-index:3;
+  background:var(--sup);border:1px solid var(--linha2);color:var(--txt);font-size:15px;
+  box-shadow:var(--sombra);display:none;place-items:center;
+}
+.img-rolo.tem-rolo .rola{display:grid}
+.rola.esq{left:10px} .rola.dir{right:3px}
+.rola:disabled{opacity:.35;cursor:default}
+.img-cart{
+  background:var(--sup);border:1px solid var(--linha);min-width:0;height:176px;
+  border-radius:var(--r2);overflow:hidden;cursor:pointer;transition:all var(--t);
+  display:flex;flex-direction:column;
+}
+.img-cart figcaption{flex:1;min-height:0;overflow:hidden}
+.img-cart.terr .img-tela{background:#F7F9FC}
+.img-cart.terr canvas{display:block;width:100%;height:100%}
+.img-tela.rua-cap{display:grid;place-items:center;
+  background:linear-gradient(160deg,#EAF1FB 0%,#DDE7F5 100%)}
+.rua-icone{font-size:30px;color:#7FA6DC}
+.img-cart:hover{border-color:var(--linha2);box-shadow:var(--sombra)}
+.img-cart:focus-visible{outline:2px solid var(--azul);outline-offset:2px}
+.img-tela{position:relative;height:82px;background:var(--sup3)}
+.img-tela img{display:block;width:100%;height:100%;object-fit:cover}
+.img-sel{position:absolute;left:7px;top:7px;font-family:var(--mono);font-size:8.5px;
+  text-transform:uppercase;letter-spacing:.06em;padding:2px 7px;border-radius:99px}
+.img-sel.ok{background:#E8F6EE;color:#14603D;border:1px solid #BFE3CE}
+.img-sel.nao{background:#FDECEC;color:#A82F2F;border:1px solid #F3C9C9}
+.img-cart.inapta .img-tela img{filter:grayscale(.5) contrast(.85)}
+.img-cart figcaption{padding:7px 9px 8px;display:flex;flex-direction:column;gap:2px}
+.img-cart figcaption b{font-family:var(--mono);font-size:9px;color:var(--fraco);
+  letter-spacing:.04em}
+.img-cart figcaption span{font-size:11px;color:var(--txt);line-height:1.4;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.img-cart figcaption i{font-style:normal;font-size:9px;color:var(--tenue)}
+
+.img-grande{position:relative;border-radius:var(--r2);overflow:hidden;background:var(--sup3)}
+.img-grande img{display:block;width:100%;height:auto}
+.img-tarja{position:absolute;left:0;right:0;bottom:0;background:rgba(168,47,47,.92);
+  color:#fff;font-size:11.5px;padding:8px 12px;line-height:1.4}
+.img-legenda{margin-top:12px;font-size:12.5px;line-height:1.55;color:var(--txt)}
+.img-legenda i{display:block;font-style:normal;font-family:var(--mono);font-size:9px;
+  color:var(--tenue);text-transform:uppercase;letter-spacing:.08em;margin-bottom:3px}
+.img-meta{margin-top:9px;font-size:9.5px;color:var(--tenue)}
+
+/* ------------------------------------------------------------------------
+ * A CAIXA DE OBSERVAÇÃO
+ * --------------------------------------------------------------------- */
+.obs-campo{display:flex;flex-direction:column;gap:6px;background:var(--sup2);
+  border:1px solid var(--linha);border-radius:var(--r2);padding:10px 12px;margin-bottom:14px}
+.oc{display:flex;align-items:baseline;gap:10px;font-size:12.5px}
+.oc i{font-style:normal;font-family:var(--mono);font-size:8.5px;color:var(--tenue);
+  text-transform:uppercase;letter-spacing:.08em;width:86px;flex:none}
+.oc b{color:var(--tit);font-weight:600;min-width:0;word-break:break-word}
+.obs-rot{display:block;font-family:var(--mono);font-size:9px;text-transform:uppercase;
+  letter-spacing:.1em;color:var(--tenue);margin-bottom:6px}
+#modal-corpo textarea{
+  width:100%;border:1px solid var(--linha);border-radius:var(--r2);background:var(--sup2);
+  padding:10px 12px;font:inherit;font-size:13px;line-height:1.5;resize:vertical;
+  transition:border-color var(--t);
+}
+#modal-corpo textarea:focus{outline:0;border-color:var(--azul);background:var(--sup)}
+.obs-ajuda{margin-top:10px;font-size:11px;line-height:1.5;color:var(--fraco)}
+.obs-ajuda b{color:var(--tit)}
+.bt.pri.ruim{background:var(--critico)}
+.bt.pri.ruim:hover{background:#b93a3a}
+#modal-pe{align-items:center}
+
+/* ------------------------------------------------------------------------
+ * ORDENS DE SERVIÇO E IMPACTO FINANCEIRO
+ * --------------------------------------------------------------------- */
+.ramo.n-os{--cc:#5B6274} .ramo.n-impacto{--cc:#0E8C9E}
+.os-texto{padding:10px 13px 6px 26px}
+.os-texto textarea{
+  width:100%;border:1px solid var(--linha);border-radius:var(--r2);background:var(--sup2);
+  padding:9px 11px;font:inherit;font-size:12.5px;line-height:1.5;resize:vertical;
+  transition:border-color var(--t);
+}
+.os-texto textarea:focus{outline:0;border-color:var(--azul);background:var(--sup)}
+.os-ajuda{display:block;margin-top:4px;font-family:var(--mono);font-size:9px;color:var(--tenue)}
+.os-lin{
+  display:grid;grid-template-columns:130px 1fr 88px;gap:10px;align-items:baseline;
+  padding:8px 13px 8px 26px;border-bottom:1px solid var(--linha);font-size:12px;
+}
+.os-lin:last-child{border-bottom:0}
+.os-lin b{font-size:11px;color:var(--navy)}
+.os-lin span{color:var(--txt);line-height:1.45}
+.os-lin i{font-style:normal;font-size:10px;color:var(--tenue);text-align:right}
+
+.imp-premissa{padding:10px 13px 10px 26px;font-size:12px;color:var(--txt);line-height:1.45;
+  background:var(--sup2);border-bottom:1px solid var(--linha)}
+.imp-premissa b{display:block;font-family:var(--mono);font-size:8.5px;color:var(--tenue);
+  text-transform:uppercase;letter-spacing:.08em;margin-bottom:2px}
+.imp-tabela{padding:2px 13px 6px 26px}
+.imp-lin{display:grid;grid-template-columns:1fr 120px 18px 120px;gap:8px;align-items:baseline;
+  padding:7px 0;border-bottom:1px solid var(--linha);font-size:12px}
+.imp-lin:last-child{border-bottom:0}
+.imp-lin span{color:var(--txt)}
+.imp-lin b{color:var(--fraco);font-weight:500}
+.imp-lin i{font-style:normal;color:var(--tenue);text-align:center}
+.imp-lin b.alvo{color:var(--tit);font-weight:600}
+.imp-numeros{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;
+  padding:10px 13px 12px 26px}
+.in{background:var(--sup2);border:1px solid var(--linha);border-radius:var(--r2);
+  padding:9px 11px;display:flex;flex-direction:column;gap:2px}
+.in i{font-style:normal;font-family:var(--mono);font-size:8.5px;color:var(--tenue);
+  text-transform:uppercase;letter-spacing:.08em}
+.in b{font-size:17px;font-weight:600;color:var(--tit);letter-spacing:-.02em}
+.in.forte{background:#F0F8F5;border-color:#CDE9DA}
+.in.forte b{color:#14603D}
+.imp-numeros.vazio .in b{color:var(--tenue)}
+.imp-numeros.vazio .in.forte{background:var(--sup2);border-color:var(--linha)}
+.imp-obs{margin:0 13px 12px 26px;font-size:11px;line-height:1.5;color:#8A5410;
+  background:#FEF8F0;border:1px solid #F7DCBB;border-radius:var(--r2);padding:9px 11px}
+.imp-obs b{display:block;font-family:var(--mono);font-size:8.5px;text-transform:uppercase;
+  letter-spacing:.08em;color:#6F420B;margin-bottom:2px}
+/* ==== 98-seek-radar.css ==== */
+/* 98-seek-radar.css — o que o SEEK precisou a mais para morar no Comercial Radar
+ * (13/09/2026): filtro por fonte, fila de 22 mil linhas, registro por fonte,
+ * parecer da IA como fonte e a decisão em lote. Nada acima foi alterado. */
+
+.hidden{display:none!important}
+/* o sessao.js pendura o botão de perfil no body; aqui a pessoa sai pelo chip
+ * "sair" e edita o perfil na tela de extração */
+#btn-perfil{display:none!important}
+a.chip{text-decoration:none}
+
+/* ---- a fila: três recortes em lista e um por fonte, em pastilha ---- */
+.fila-topo{gap:7px}
+.fila-filtros .fl-sel + .fl-sel{margin-left:0}
+.ffontes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px}
+.fch{
+  display:flex;align-items:center;gap:4px;height:25px;padding:0 6px;min-width:0;
+  border:1px solid var(--linha);border-radius:var(--r3);background:var(--sup2);
+  font-family:var(--mono);font-size:9px;color:var(--fraco);letter-spacing:.02em;
+  transition:border-color var(--t),background var(--t);
+}
+.fch:hover{border-color:var(--linha2)}
+.fch i{font-style:normal;width:9px;flex:none;text-align:center;font-size:9px;color:var(--tenue)}
+.fch span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}
+.fch b{font-weight:600;color:var(--tenue);font-size:9px;font-variant-numeric:tabular-nums}
+.fch[data-estado="sim"]{background:#E8F6EE;border-color:#9FD3B6;color:#14603D}
+.fch[data-estado="sim"] i,.fch[data-estado="sim"] b{color:#14603D}
+.fch[data-estado="nao"]{background:#FDF2F2;border-color:#EBB5B5;border-style:dashed;color:#A82F2F}
+.fch[data-estado="nao"] i,.fch[data-estado="nao"] b{color:#A82F2F}
+.ffontes-rot{display:flex;align-items:center;justify-content:space-between;margin-bottom:-3px}
+.ffontes-rot .fl-rot{width:auto}
+.ffontes-rot button{font-family:var(--mono);font-size:9px;color:var(--azul)}
+.bt.lote{width:100%;height:30px;justify-content:space-between;padding:0 10px}
+.bt.lote b{font-family:var(--mono);font-size:11px;font-variant-numeric:tabular-nums}
+
+/* 22 mil linhas não viram 22 mil botões: a lista desenha só a janela visível */
+.fila-lista{position:relative}
+.vl{position:relative}
+.vl-jan{position:absolute;left:0;right:0;top:0;will-change:transform}
+.fila-lista .fi{height:66px;overflow:hidden}
+.fi .l3{display:flex;gap:6px}
+.fi .l3 span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fi .l3 em{font-style:normal;font-family:var(--mono);font-size:9.5px;color:var(--tenue);flex:none}
+.fi .mini{display:flex;gap:2px;margin-left:auto;flex:none}
+.fi .mini i{width:6px;height:6px;border-radius:2px;background:var(--linha)}
+.fi .mini i.on{background:var(--mc)}
+.dchip{
+  font-family:var(--mono);font-size:8.5px;padding:1px 6px;border-radius:99px;
+  color:var(--dc);border:1px solid color-mix(in srgb,var(--dc) 45%,transparent);
+  background:color-mix(in srgb,var(--dc) 9%,var(--sup));white-space:nowrap;
+}
+.fila-pe{display:flex;align-items:center;gap:8px}
+.fila-pe button{font-family:var(--mono);font-size:10px;color:var(--azul);margin-left:auto}
+
+/* ---- a árvore: grupo · fonte · registro ---- */
+.ramo.n-ia{--cc:#6D4AC7} .ramo.n-plataforma{--cc:#006DFF}
+.ramo.n-oficial{--cc:#1F9D62} .ramo.n-olhar{--cc:#F28C28}
+.reg{padding:9px 13px 10px 26px;border-top:1px solid var(--linha);background:var(--sup)}
+.no-corpo > .reg:first-child{border-top:0}
+.reg-cab{display:flex;align-items:baseline;gap:7px;flex-wrap:wrap}
+.reg-cab b{font-size:12.5px;color:var(--tit);font-weight:600}
+.reg-cab .poi{font-family:var(--mono);font-size:9.5px;color:var(--tenue)}
+.reg.descartado{background:repeating-linear-gradient(135deg,var(--sup2) 0 6px,var(--sup) 6px 12px)}
+.reg.descartado .reg-cab b{color:var(--fraco);font-weight:500}
+.selo{font-family:var(--mono);font-size:9px;padding:1px 7px;border-radius:99px;white-space:nowrap;
+  border:1px solid var(--linha);background:var(--sup3);color:var(--fraco)}
+.selo.ok{background:#E8F6EE;border-color:#BFE3CE;color:#14603D}
+.selo.nao{background:#FDECEC;border-color:#F3C9C9;color:#A82F2F}
+.selo.alerta{background:#FEF3E5;border-color:#F7DCBB;color:#8A5410}
+.selo.cinza{background:none;border-style:dashed;color:var(--tenue)}
+.reg-por{font-size:11px;color:var(--fraco);margin-top:3px;line-height:1.45}
+.reg-por b{font-family:var(--mono);font-size:8.5px;text-transform:uppercase;letter-spacing:.07em;
+  color:var(--tenue);font-weight:500;margin-right:5px}
+.kv{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:5px 14px;margin-top:6px}
+.kv > div{display:flex;flex-direction:column;min-width:0}
+.kv i{font-style:normal;font-family:var(--mono);font-size:8.5px;color:var(--tenue);
+  text-transform:uppercase;letter-spacing:.07em}
+.kv b{font-size:12px;font-weight:500;color:var(--txt);overflow-wrap:anywhere;
+  font-variant-numeric:tabular-nums}
+.kv-caixa{padding:4px 13px 12px 26px}
+.busca-txt{white-space:pre-wrap;font-family:var(--mono);font-size:11px;line-height:1.5;
+  max-height:260px;overflow:auto;background:var(--sup2);border:1px solid var(--linha);
+  border-radius:var(--r3);padding:8px 10px;margin-top:8px;color:var(--txt)}
+.reg .bt.p{margin-top:8px}
+
+/* o parecer da IA dentro da árvore */
+.ia-txt{padding:11px 13px 10px 26px;font-size:12.5px;line-height:1.55;color:var(--tit)}
+.ia-aviso{margin:0 13px 10px 26px;font-size:11.5px;line-height:1.5;color:#8A5410;
+  background:#FEF8F0;border:1px solid #F7DCBB;border-radius:var(--r2);padding:8px 11px}
+.ia-aviso > b:first-child{display:block;font-family:var(--mono);font-size:8.5px;
+  text-transform:uppercase;letter-spacing:.08em;color:#6F420B;margin-bottom:2px}
+.ia-lista{display:flex;flex-direction:column}
+.ia-lin{display:grid;grid-template-columns:78px 1fr;gap:10px;align-items:baseline;
+  padding:6px 13px 6px 26px;border-bottom:1px solid var(--linha);font-size:11.5px}
+.ia-lin:last-child{border-bottom:0}
+.ia-lin b{font-family:var(--mono);font-size:10.5px;color:var(--navy);font-weight:600}
+.ia-lin span{color:var(--txt);line-height:1.45}
+.ia-lin em{font-style:normal;font-weight:600;color:var(--tit)}
+.mais{display:block;width:100%;text-align:left;padding:7px 13px 8px 26px;
+  font-family:var(--mono);font-size:10px;color:var(--azul)}
+
+/* o veredito da IA cabe em duas linhas; o texto inteiro está na árvore */
+.par-texto{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+
+/* ---- a decisão ---- */
+.lk{font-size:11.5px;color:var(--azul);text-decoration:underline;text-underline-offset:2px}
+.acao-opcoes{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:4px 0 14px}
+.acao-op{border:1px solid var(--linha);border-radius:var(--r2);padding:9px 11px;text-align:left;
+  background:var(--sup2);display:flex;flex-direction:column;gap:2px;transition:all var(--t)}
+.acao-op:hover{border-color:var(--linha2)}
+.acao-op.on{border-color:var(--ac);box-shadow:0 0 0 1px var(--ac) inset;background:var(--sup)}
+.acao-op b{font-size:12.5px;color:var(--tit)}
+.acao-op span{font-size:11px;color:var(--fraco);line-height:1.35}
+.lote-resumo{background:var(--callout);border:1px solid #CFE0F7;border-radius:var(--r2);
+  padding:10px 12px;margin-bottom:14px;font-size:12px;color:var(--navy);line-height:1.5}
+.lote-resumo b{font-size:15px;font-variant-numeric:tabular-nums}
+.lote-resumo ul{list-style:none;margin-top:5px;display:flex;flex-wrap:wrap;gap:5px}
+.lote-resumo li{font-family:var(--mono);font-size:10px;background:var(--sup);border:1px solid #CFE0F7;
+  border-radius:99px;padding:1px 8px}
+.hist-lin{display:grid;grid-template-columns:110px 1fr;gap:10px;padding:8px 0;
+  border-bottom:1px solid var(--linha);font-size:12px}
+.hist-lin:last-child{border-bottom:0}
+.hist-lin i{font-style:normal;font-family:var(--mono);font-size:10px;color:var(--tenue)}
+.hist-lin b{color:var(--tit)}
+.hist-lin span{color:var(--fraco);display:block;font-size:11px}
+</style>
+</head>
+<body>
+<!-- glifos da familia A2L (arquitetura-visual-a2l), copiados sem edicao dos
+     assets da skill. A familia inteira entra: glifo referenciado e nao
+     declarado vira icone vazio, e o defeito so aparece na tela. -->
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+<symbol id="g-alvo" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="24" cy="24" r="17"/><circle cx="24" cy="24" r="10"/><circle cx="24" cy="24" r="3" fill="currentColor" stroke="none"/></symbol>
+<symbol id="g-balanca" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M24 12L24 38"/><circle cx="24" cy="9" r="2.6"/><path d="M9 16L39 16"/><path d="M17 40L31 40"/><path d="M20 36l-3 4"/><path d="M28 36l3 4"/><path d="M11 16L11 20"/><path d="M37 16L37 20"/><path d="M4 20a7 7 0 0 0 14 0z"/><path d="M30 20a7 7 0 0 0 14 0z"/></symbol>
+<symbol id="g-bussola" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="24" cy="24" r="17"/><path d="M32 16 27 27l-11 5 5-11z"/></symbol>
+<symbol id="g-calendario" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="10" width="36" height="32" rx="3"/><path d="M6 20L42 20"/><path d="M15 5L15 13"/><path d="M33 5L33 13"/><circle cx="16" cy="29" r="1.35" fill="currentColor" stroke="none"/><circle cx="24" cy="29" r="1.35" fill="currentColor" stroke="none"/><circle cx="32" cy="29" r="1.35" fill="currentColor" stroke="none"/></symbol>
+<symbol id="g-camadas" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M24 6 42 15 24 24 6 15z"/><path d="M6 24l18 9 18-9"/><path d="M6 33l18 9 18-9"/></symbol>
+<symbol id="g-engrenagem" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M41.85 21.67L41.85 26.33L36.55 27.38L35.26 30.49L38.27 34.97L34.97 38.27L30.49 35.26L27.38 36.55L26.33 41.85L21.67 41.85L20.62 36.55L17.51 35.26L13.03 38.27L9.73 34.97L12.74 30.49L11.45 27.38L6.15 26.33L6.15 21.67L11.45 20.62L12.74 17.51L9.73 13.03L13.03 9.73L17.51 12.74L20.62 11.45L21.67 6.15L26.33 6.15L27.38 11.45L30.49 12.74L34.97 9.73L38.27 13.03L35.26 17.51L36.55 20.62Z"/><circle cx="24" cy="24" r="6"/></symbol>
+<symbol id="g-grafico" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 40L42 40"/><path d="M14 40L14 26"/><path d="M24 40L24 15"/><path d="M34 40L34 31"/></symbol>
+<symbol id="g-lampada" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="24" cy="19" r="11"/><path d="M24 30v-4"/><path d="M19 33L29 33"/><path d="M20 38L28 38"/><path d="M20 30h8"/></symbol>
+<symbol id="g-medidor" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 34a16 16 0 1 1 32 0"/><path d="M24 34l9-11"/><circle cx="24" cy="34" r="2.3"/></symbol>
+<symbol id="g-mensagem" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 9h32a3 3 0 0 1 3 3v16a3 3 0 0 1-3 3H23l-9 8v-8H8a3 3 0 0 1-3-3V12a3 3 0 0 1 3-3z"/></symbol>
+<symbol id="g-rede" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="24" cy="10" r="4"/><circle cx="11" cy="36" r="4"/><circle cx="37" cy="36" r="4"/><path d="M22 14L13 32"/><path d="M26 14L35 32"/><path d="M15 36L33 36"/></symbol>
+<symbol id="g-regua" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 30 30 8l10 10-22 22z"/><path d="M14 24L18 28"/><path d="M20 18L24 22"/><path d="M26 12L30 16"/></symbol>
+</svg>
+
+<!-- 1 · filete de marca 22/78 -->
+<div id="filete"><i></i><b></b></div>
+
+<!-- 2 · faixa de identidade do produto -->
+<header id="topo">
+  <div class="marca"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 73.4 28.8" width="56" height="22" role="img" aria-label="A2L Engenharia e Consultoria">
+<g transform="translate(2.40,26.40) scale(0.024000,-0.024000)">
+<path d="M470,1000 L645,1000 L1148,0 L938,0 L557,735 L183,0 L0,0 L0,45 Z" fill="#0B2E59"/>
+<path d="M557,388 L713,80 L402,80 Z" fill="#F28C28"/>
+<path d="M1054,1000 L1725,1000 A284,250 0 0 0 2009,750 A190,341 0 0 0 1819,409 L1436,385 C1400,368 1360,300 1343,237 L1176,233 C1152,380 1240,560 1414,574 L1743,584 A90,112 0 0 1 1723,808 L1150,810 Z" fill="#006DFF"/>
+<path d="M1264,0 L1990,0 L1990,178 L1357,178 Z" fill="#0B2E59"/>
+<path d="M1177,178 L1344,178 L1258,31 Z" fill="#F28C28"/>
+<path d="M2122,1000 L2122,165 A165,165 0 0 1 2287,0 L2858,0 L2858,180 L2315,180 L2315,1000 Z" fill="#0B2E59"/>
+</g></svg></div>
+  <div class="ident">
+    <strong id="id-titulo">SEEK</strong>
+    <span id="id-sub">recuperação de receita · Comercial Radar</span>
+  </div>
+
+  <div class="sessao">
+    <a class="chip" href="/extrair" title="a tela de extração: mapa, captura e mineração">extração ↗</a>
+    <button class="chip" id="chip-rotulo" title="alterna entre o nome interno da fonte e o rótulo que vai ao cliente">
+      <i class="pip"></i><span id="rotulo-txt">rótulo do cliente</span>
+    </button>
+    <button class="chip" id="chip-api" title="estado da fila de ligações">
+      <i class="pip"></i><span id="api-txt">—</span>
+    </button>
+    <div class="quem">
+      <span id="quem-nome">—</span>
+      <span id="quem-sub">—</span>
+    </div>
+    <button class="chip" id="chip-sair" title="encerrar a sessão neste navegador">sair</button>
+  </div>
+</header>
+
+<!-- 3 · faixa de identidade do caso -->
+<div id="faixa"></div>
+
+<main id="corpo">
+
+  <!-- fila de ligações -->
+  <aside id="fila">
+    <div class="fila-topo">
+      <div class="busca"><input id="f-busca" placeholder="ligação, titular, endereço ou bairro" autocomplete="off"></div>
+      <div class="fila-filtros" id="f-ia"></div>
+      <div class="fila-filtros" id="f-qual"></div>
+      <div class="fila-filtros dec" id="f-decisao"></div>
+      <div class="ffontes-rot"><span class="fl-rot">fontes · achou / não achou</span><button id="f-limpa" hidden>limpar</button></div>
+      <div class="ffontes" id="f-fontes"></div>
+      <button class="bt p lote" id="f-lote" title="grava a decisão oficial em todas as ligações do recorte"></button>
+    </div>
+    <div class="fila-lista" id="f-lista" tabindex="0">
+      <div class="vl" id="f-vl"><div class="vl-jan" id="f-jan"></div></div>
+      <div class="vazio" id="f-vazio" hidden></div>
+    </div>
+    <div class="fila-pe" id="f-pe">—</div>
+  </aside>
+
+  <!-- a árvore de evidência -->
+  <section id="arvore-caixa">
+    <div class="arv-topo">
+      <div class="arv-tit">
+        <strong>Árvore de evidência</strong>
+        <span id="arv-sub">grupo · fonte · registro — a decisão oficial fica no rodapé</span>
+      </div>
+      <div class="cresce"></div>
+      <div class="arv-ferramentas">
+        <button class="bt p" id="arv-tudo" title="abrir todos os ramos">expandir</button>
+        <button class="bt p" id="arv-nada" title="fechar todos os ramos">recolher</button>
+        <button class="bt p" id="arv-mudos" title="mostrar também as fontes que não acharam registro">
+          mostrar quem não achou</button>
+      </div>
+    </div>
+    <div class="arvore" id="arvore"></div>
+  </section>
+
+  <!-- o volume e os grupos -->
+  <aside id="lado">
+    <div class="lado-tela">
+      <canvas id="cer-cv" role="img"
+        aria-label="as fontes desta ligação em volume; a mesma leitura está na árvore ao lado"></canvas>
+      <div class="cer-leg" id="cer-leg" hidden></div>
+    </div>
+    <div class="tese" id="tese" hidden></div>
+    <div class="criterios" id="criterios"></div>
+    <div class="lado-pe" id="lado-pe"></div>
+  </aside>
+
+</main>
+
+<!-- 4 · faixa do veredito da IA -->
+<div id="veredito"></div>
+
+<!-- 5 · rodapé da decisão oficial -->
+<div id="decisao"></div>
+
+<!-- diálogo -->
+<div id="modal" hidden>
+  <div class="modal-fundo"></div>
+  <div class="modal-caixa" role="dialog" aria-modal="true">
+    <header><strong id="modal-tit">—</strong><button id="modal-x" aria-label="fechar">✕</button></header>
+    <div id="modal-corpo"></div>
+    <footer id="modal-pe"></footer>
+  </div>
+</div>
+
+<div id="dica" hidden></div>
+<div id="torradas"></div>
+
+<!-- login, token em toda chamada a /api/ e o cracha em window.EU -->
+<script src="/static/sessao.js"></script>
+<script>
+/* ==== 20-cerebro-motor.js ==== */
+/* 20-cerebro-motor.js — MOTOR CÉREBRO
+ * Motor do padrão painel-evidencia-a2l · A2L. Serve o Cérebro do recadastro e
+ * o portal de módulos — por isso não carrega nome de cliente.
+ *
+ * Nuvem de pontos 3D em forma de cérebro, canvas 2D puro, projeção escrita à
+ * mão. Offline, sem CDN, sem biblioteca, sem WebGL. Determinístico: PRNG
+ * mulberry32 com semente fixa — zero Math.random, zero Date.now na geometria
+ * (t só entra como parâmetro de animação).
+ *
+ * RECEITA DO MOTOR
+ *  1. FORMA POR CAMPO ESCALAR — união suave (smax) de elipsoides: dois lobos
+ *     espelhados em x, frontal, occipital, temporal, cerebelo e tronco; menos
+ *     três fissuras subtraídas (inter-hemisférica, lateral/Sylviana e a
+ *     transversa que separa cerebelo de occipital).
+ *  2. RELEVO POR DOMÍNIO DEFORMADO — p' = p + a·ruido(p·f) ANTES de avaliar o
+ *     campo; os sulcos vêm de ruído "ridged" (1-|n|)² em duas oitavas, mais
+ *     fino e mais raso na região do cerebelo (fólios).
+ *  3. MALHA POR GRADE ESPACIAL — hash 3D com célula = raio de busca; K
+ *     vizinhos por ponto varrendo só 27 células. Nunca todos os pares.
+ *  4. DOIS PASSES DE PROFUNDIDADE — counting sort por z em 4 fatias. Passe de
+ *     trás (fatias 0-1): pontos menores, cor misturada com o fundo, sem linha.
+ *     Passe da frente (fatias 2-3): pontos maiores, cor viva, com a malha.
+ *  5. ENQUADRAMENTO MEDIDO — bbox real dos pontos projetados, varrida em 8
+ *     guinadas no passo de inclinação corrente; escala e centro saem daí e
+ *     perseguem o alvo suavemente, para caber sempre sem pular de escala.
+ *  6. MODO MINIATURA — 1/4 dos pontos (os pontos vêm ordenados por um rank
+ *     pseudoaleatório fixo, então o primeiro quarto é uma amostra uniforme) e
+ *     linhas desligadas.
+ *
+ * AS 10 ÁREAS — centros padrão no espaço-modelo (+x = direita, +y = topo,
+ * +z = frente). Centros vindos de fora são normalizados para esta mesma caixa,
+ * então qualquer convenção de escala do chamador funciona:
+ *   ident   Identificação        [-0.42,  0.20,  0.54]  frontal superior esq.
+ *   ender   Endereço             [-0.36, -0.04,  0.70]  frontal orbital esq.
+ *   econ    Economias            [-0.26,  0.30,  0.02]  pré-central esq.
+ *   geo     Georreferenciamento  [ 0.00,  0.26, -0.36]  parietal superior
+ *   medic   Medição              [ 0.42,  0.18,  0.52]  frontal superior dir.
+ *   irreg   Irregularidades      [ 0.38, -0.04,  0.68]  frontal orbital dir.
+ *   foto    Fotografias          [ 0.34, -0.30,  0.22]  temporal anterior dir.
+ *   atend   Atendimento          [-0.34, -0.30,  0.20]  temporal anterior esq.
+ *   visita  Visita               [ 0.00, -0.50, -0.48]  cerebelo / tronco
+ *   gis     Camadas GIS          [ 0.00,  0.08, -0.74]  occipital mediano
+ * Cada ponto pertence à área de centro mais próximo. Área com cobertura null é
+ * SEM REGISTRO: cinza apagado e fora da média — camada que não respondeu fica
+ * anônima.
+ */
+
+(function (raiz) {
+  'use strict';
+
+  /* ======================================================================
+   * 1. CONSTANTES — tudo declarado aqui, antes de qualquer leitura. O
+   *    defeito mais caro desta linhagem foi constante usada antes de existir
+   *    (var iça o nome, não o valor) e a projeção inteira virar NaN.
+   * ==================================================================== */
+
+  var TAU = 6.283185307179586;
+  var SEMENTE = 20260906;
+
+  var COR_FUNDO_CENTRO = '#FFFFFF';
+  var COR_FUNDO_BORDA = '#F2F4F7';
+  var COR_CINZA = '#6B7684';
+  var COR_NAVY = '#0B2E59';
+
+  /* paleta de marca e tintas dela: azul #006DFF, navy #0B2E59, laranja
+   * #F28C28, ok #1F9D62, crítico #D64545 — só usadas se o chamador não
+   * mandar cor. */
+  var AREAS_PADRAO = [
+    {id: 'ident',  nome: 'Identificação',       cor: '#006DFF', centro: [-0.42,  0.20,  0.54]},
+    {id: 'ender',  nome: 'Endereço',            cor: '#2E86FF', centro: [-0.36, -0.04,  0.70]},
+    {id: 'econ',   nome: 'Economias',           cor: '#5AA0FF', centro: [-0.26,  0.30,  0.02]},
+    {id: 'geo',    nome: 'Georreferenciamento', cor: '#1F9D62', centro: [ 0.00,  0.26, -0.36]},
+    {id: 'medic',  nome: 'Medição',             cor: '#F28C28', centro: [ 0.42,  0.18,  0.52]},
+    {id: 'irreg',  nome: 'Irregularidades',     cor: '#D64545', centro: [ 0.38, -0.04,  0.68]},
+    {id: 'foto',   nome: 'Fotografias',         cor: '#0B2E59', centro: [ 0.34, -0.30,  0.22]},
+    {id: 'atend',  nome: 'Atendimento',         cor: '#2A6BB5', centro: [-0.34, -0.30,  0.20]},
+    {id: 'visita', nome: 'Visita',              cor: '#57BE8E', centro: [ 0.00, -0.50, -0.48]},
+    {id: 'gis',    nome: 'Camadas GIS',         cor: '#5B6274', centro: [ 0.00,  0.08, -0.74]}
+  ];
+
+  /* caixa onde os centros de área são normalizados (dentro do volume) */
+  var CX1 = -0.42, CX2 = 0.42;
+  var CY1 = -0.50, CY2 = 0.30;
+  var CZ1 = -0.74, CZ2 = 0.70;
+
+  /* amostragem do volume */
+  var BB_X1 = -0.70, BB_X2 = 0.70;
+  var BB_Y1 = -0.82, BB_Y2 = 0.52;
+  var BB_Z1 = -1.06, BB_Z2 = 1.06;
+  var PASSO_AMOSTRA = 0.0310;
+  var FAIXA_CASCA = 0.0215;
+  var MAX_PONTOS = 10000;
+  var PASSOS_NEWTON = 2;
+  var NEWTON_K = 0.92;
+
+  /* campo escalar */
+  var K_UNIAO = 0.055;
+  var K_CORTE = 0.030;
+  var H_GRAD = 0.006;
+  var INV_2H = 83.33333333333333;   /* 1 / (2 * 0.006) */
+
+  /* elipsoides: [cx, cy, cz, rx, ry, rz]; |cx| > 0.001 é espelhado em x */
+  var FORMAS_MEIAS = [
+    [0.275,  0.020, -0.040, 0.355, 0.375, 0.740],   /* massa do hemisfério */
+    [0.205,  0.155, -0.170, 0.310, 0.330, 0.440],   /* domo parietal (o alto) */
+    [0.235,  0.005,  0.545, 0.280, 0.305, 0.405],   /* lobo frontal */
+    [0.215, -0.070, -0.630, 0.255, 0.280, 0.345],   /* lobo occipital */
+    [0.385, -0.245,  0.135, 0.175, 0.165, 0.425],   /* lobo temporal */
+    [0.205, -0.375, -0.605, 0.265, 0.175, 0.265],   /* cerebelo */
+    [0.000, -0.400, -0.255, 0.108, 0.230, 0.140]    /* tronco */
+  ];
+
+  /* fissura inter-hemisférica (fenda longitudinal no topo) */
+  var FI_INVX = 22.22222222222222;    /* 1 / 0.045 */
+  var FI_Y = -0.040;
+  var FI_INVQ = 3.4482758620689653;   /* 1 / 0.290 — some abaixo do corpo caloso */
+  var FI_Z = 0.780;
+  var FI_INVZ = 4.545454545454546;    /* 1 / 0.220 — fecha perto dos polos */
+
+  /* fissura lateral (Sylviana), nos dois lados via |x| */
+  var FL_X = 0.460, FL_INVX = 6.25;                 /* 1 / 0.160 */
+  var FL_Y = -0.130, FL_INVY = 26.31578947368421;   /* 1 / 0.038 */
+  var FL_Z = 0.080, FL_INVZ = 2.1739130434782608;   /* 1 / 0.460 */
+
+  /* fissura transversa: separa occipital do cerebelo */
+  var FT_Y = -0.270, FT_INVY = 31.25;               /* 1 / 0.032 */
+  var FT_Z = -0.340, FT_INVQZ = 7.142857142857143;  /* 1 / 0.140 */
+  var FT_X = 0.500, FT_INVQX = 7.6923076923076925;  /* 1 / 0.130 */
+
+  /* relevo */
+  var WARP_A = 0.052, WARP_F = 2.35;
+  var F_SULCO = 4.3, PROF_SULCO = 0.086;
+  var F_MEANDRO = 1.55, A_MEANDRO = 2.30;   /* torce o domínio do sulco */
+  var CORTE_SULCO_A = 0.36, CORTE_SULCO_B = 0.44;   /* rarefaz o fundo do sulco */
+  var ANISO_Z = 0.62;                       /* alonga o giro no eixo frente-trás */
+  var CB_Y = -0.360, CB_Z = -0.600;
+  var CB_INVX = 1.7857142857142858;   /* 1 / 0.56 */
+  var CB_INVY = 3.5714285714285716;   /* 1 / 0.28 */
+  var CB_INVZ = 2.6315789473684212;   /* 1 / 0.38 */
+  var CB_INVF = 1.4285714285714286;   /* 1 / 0.70 — largura da transição */
+
+  /* malha */
+  var RAIO_MALHA = 0.042;
+  var VIZ_POR_PONTO = 2;
+  var MAX_ARESTAS = 9000;
+
+  /* câmera e render */
+  var DIST_CAM = 5.4;
+  var FOCO = 1.0;
+  var LIM_Z = 1.12, INV_2LIMZ = 0.44642857142857145;   /* 1 / 2.24 */
+  var LUZ_X = -0.42, LUZ_Y = 0.60, LUZ_Z = 0.68;
+  var NIVEIS = 5;
+  var NFATIAS = 4;
+  var FATIA_FRENTE = 2;
+  var VEL_AUTO = 0.00022;          /* rad/ms — multiplicado por op.velocidade */
+  var PAUSA_MS = 3000;
+  var SENS_ARRASTO = 0.0068;
+  var LIM_RX = 1.20;
+  var ZOOM_MIN = 0.55, ZOOM_MAX = 3.00;
+  var MARGEM = 0.055;
+  var RAIO_PICK = 16;
+
+  /* dois eixos separados, e é isso que dá volume:
+   *  - PROFUNDIDADE (fatia) mistura a cor com o fundo e encolhe o ponto;
+   *  - LUZ (nível) escurece na sombra do sulco e clareia na crista. */
+  var MIST_FATIA = [0.62, 0.44, 0.22, 0.05];
+  var ALFA_FATIA = [0.58, 0.74, 0.92, 1.00];
+  var FAT_FATIA = [0.62, 0.78, 0.95, 1.10];
+  var FAT_NIVEL = [0.80, 0.88, 0.96, 1.05, 1.14];
+  var COR_SOMBRA = '#0F1E30';
+
+  var GRAD3 = [
+    1, 1, 0, -1, 1, 0, 1, -1, 0, -1, -1, 0,
+    1, 0, 1, -1, 0, 1, 1, 0, -1, -1, 0, -1,
+    0, 1, 1, 0, -1, 1, 0, 1, -1, 0, -1, -1
+  ];
+
+  /* ======================================================================
+   * 2. UTILITÁRIOS NUMÉRICOS — toda divisão passa por guarda de denominador
+   * ==================================================================== */
+
+  function divSegura(a, b) {
+    if (!(b > 1e-9) && !(b < -1e-9)) { return 0; }
+    var r = a / b;
+    return (r === r && r !== Infinity && r !== -Infinity) ? r : 0;
+  }
+
+  function trava(v, lo, hi) {
+    if (!(v === v)) { return lo; }          /* NaN cai no piso */
+    return v < lo ? lo : (v > hi ? hi : v);
+  }
+
+  function finito(v) {
+    return v === v && v !== Infinity && v !== -Infinity;
+  }
+
+  /* mulberry32: PRNG semeado. O desenho é idêntico a cada carregamento. */
+  function mulberry32(a) {
+    var s = a | 0;
+    return function () {
+      s = (s + 0x6D2B79F5) | 0;
+      var t = Math.imul(s ^ (s >>> 15), 1 | s);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  /* união e subtração suaves (poligonais, sem exp — não estoura) */
+  function smax(a, b, k) {
+    var kk = k > 1e-6 ? k : 1e-6;
+    var h = 0.5 + 0.5 * divSegura(a - b, kk);
+    h = h < 0 ? 0 : (h > 1 ? 1 : h);
+    return (b + (a - b) * h) + kk * h * (1 - h);
+  }
+
+  function smin(a, b, k) {
+    return -smax(-a, -b, k);
+  }
+
+  /* ======================================================================
+   * 3. RUÍDO DE GRADIENTE 3D — tabela de permutação semeada, sem Math.random
+   * ==================================================================== */
+
+  var PERM = (function () {
+    var rnd = mulberry32(SEMENTE);
+    var base = new Uint8Array(256);
+    var p = new Uint8Array(512);
+    var i, j, tmp;
+    for (i = 0; i < 256; i++) { base[i] = i; }
+    for (i = 255; i > 0; i--) {
+      j = Math.floor(rnd() * (i + 1));
+      if (j > i) { j = i; }
+      tmp = base[i]; base[i] = base[j]; base[j] = tmp;
+    }
+    for (i = 0; i < 512; i++) { p[i] = base[i & 255]; }
+    return p;
+  }());
+
+  function grad(h, x, y, z) {
+    var o = (h % 12) * 3;
+    return GRAD3[o] * x + GRAD3[o + 1] * y + GRAD3[o + 2] * z;
+  }
+
+  function suaviza(t) {
+    return t * t * t * (t * (t * 6 - 15) + 10);
+  }
+
+  function mix(a, b, t) {
+    return a + (b - a) * t;
+  }
+
+  function ruido(x, y, z) {
+    var fx = Math.floor(x), fy = Math.floor(y), fz = Math.floor(z);
+    var X = fx & 255, Y = fy & 255, Z = fz & 255;
+    var dx = x - fx, dy = y - fy, dz = z - fz;
+    var u = suaviza(dx), v = suaviza(dy), w = suaviza(dz);
+    var A = PERM[X] + Y, AA = PERM[A] + Z, AB = PERM[A + 1] + Z;
+    var B = PERM[X + 1] + Y, BA = PERM[B] + Z, BB = PERM[B + 1] + Z;
+    var r = mix(
+      mix(
+        mix(grad(PERM[AA], dx, dy, dz), grad(PERM[BA], dx - 1, dy, dz), u),
+        mix(grad(PERM[AB], dx, dy - 1, dz), grad(PERM[BB], dx - 1, dy - 1, dz), u),
+        v
+      ),
+      mix(
+        mix(grad(PERM[AA + 1], dx, dy, dz - 1), grad(PERM[BA + 1], dx - 1, dy, dz - 1), u),
+        mix(grad(PERM[AB + 1], dx, dy - 1, dz - 1), grad(PERM[BB + 1], dx - 1, dy - 1, dz - 1), u),
+        v
+      ),
+      w
+    );
+    return r * 1.38;   /* aproxima a faixa [-1, 1] */
+  }
+
+  /* ======================================================================
+   * 4. CAMPO ESCALAR DO CÉREBRO — positivo dentro, zero na isosuperfície
+   * ==================================================================== */
+
+  var FORMAS = (function () {
+    var lista = [], i, f;
+    for (i = 0; i < FORMAS_MEIAS.length; i++) {
+      f = FORMAS_MEIAS[i];
+      lista.push([f[0], f[1], f[2], divSegura(1, f[3]), divSegura(1, f[4]), divSegura(1, f[5])]);
+      if (f[0] > 0.001 || f[0] < -0.001) {
+        lista.push([-f[0], f[1], f[2], divSegura(1, f[3]), divSegura(1, f[4]), divSegura(1, f[5])]);
+      }
+    }
+    var buf = new Float64Array(lista.length * 6);
+    for (i = 0; i < lista.length; i++) {
+      buf[i * 6] = lista[i][0]; buf[i * 6 + 1] = lista[i][1]; buf[i * 6 + 2] = lista[i][2];
+      buf[i * 6 + 3] = lista[i][3]; buf[i * 6 + 4] = lista[i][4]; buf[i * 6 + 5] = lista[i][5];
+    }
+    return buf;
+  }());
+  var NFORMAS = FORMAS.length / 6;
+
+  function fissuraInter(x, y, z) {
+    var a = x * FI_INVX;
+    var b = y < FI_Y ? (FI_Y - y) * FI_INVQ : 0;
+    var az = z < 0 ? -z : z;
+    var c = az > FI_Z ? (az - FI_Z) * FI_INVZ : 0;
+    return 1 - a * a - b * b - c * c;
+  }
+
+  function fissuraLateral(x, y, z) {
+    var ax = x < 0 ? -x : x;
+    var a = (ax - FL_X) * FL_INVX;
+    var b = (y - FL_Y) * FL_INVY;
+    var c = (z - FL_Z) * FL_INVZ;
+    return 1 - a * a - b * b - c * c;
+  }
+
+  function fissuraTransversa(x, y, z) {
+    var ax = x < 0 ? -x : x;
+    var a = (y - FT_Y) * FT_INVY;
+    var b = z > FT_Z ? (z - FT_Z) * FT_INVQZ : 0;
+    var c = ax > FT_X ? (ax - FT_X) * FT_INVQX : 0;
+    return 1 - a * a - b * b - c * c;
+  }
+
+  function campo(x, y, z) {
+    var o = 0;
+    var dx = (x - FORMAS[0]) * FORMAS[3];
+    var dy = (y - FORMAS[1]) * FORMAS[4];
+    var dz = (z - FORMAS[2]) * FORMAS[5];
+    var v = 1 - (dx * dx + dy * dy + dz * dz);
+    var i, e;
+    for (i = 1; i < NFORMAS; i++) {
+      o = i * 6;
+      dx = (x - FORMAS[o]) * FORMAS[o + 3];
+      dy = (y - FORMAS[o + 1]) * FORMAS[o + 4];
+      dz = (z - FORMAS[o + 2]) * FORMAS[o + 5];
+      e = 1 - (dx * dx + dy * dy + dz * dz);
+      v = smax(v, e, K_UNIAO);
+    }
+    v = smin(v, -fissuraInter(x, y, z), K_CORTE);
+    v = smin(v, -fissuraLateral(x, y, z), K_CORTE);
+    v = smin(v, -fissuraTransversa(x, y, z), K_CORTE);
+    return v;
+  }
+
+  /* profundidade do sulco no ponto (em unidades de espaço). Ruído "ridged":
+   * (1-|n|)² tem crista onde o ruído cruza zero — é a rede de sulcos. */
+  function sulco(x, y, z) {
+    var dx = x * CB_INVX, dy = (y - CB_Y) * CB_INVY, dz = (z - CB_Z) * CB_INVZ;
+    var dc = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    var m = dc <= 1 ? 1 : (dc >= 1.7 ? 0 : (1.7 - dc) * CB_INVF);
+    var f = F_SULCO * (1 + 1.9 * m);          /* fólios do cerebelo: mais finos */
+    var p = PROF_SULCO * (1 - 0.46 * m);      /* e mais rasos */
+    /* segundo domínio deformado, só para o sulco: é o que faz o sulco
+     * serpentear em vez de virar mancha isotrópica de ruído */
+    var w = ruido(x * F_MEANDRO + 7.7, y * F_MEANDRO - 3.3, z * F_MEANDRO + 11.1) * A_MEANDRO;
+    var a = x * f + w, b = y * f + w * 0.7, c = z * f * ANISO_Z - w * 0.5;
+    var n1 = ruido(a, b, c);
+    var n2 = ruido(a * 2.13 + 19.7, b * 2.13 - 7.3, c * 2.13 + 3.1);
+    var r1 = 1 - (n1 < 0 ? -n1 : n1); if (r1 < 0) { r1 = 0; }
+    var r2 = 1 - (n2 < 0 ? -n2 : n2); if (r2 < 0) { r2 = 0; }
+    return p * (0.80 * r1 * r1 + 0.20 * r2 * r2);
+  }
+
+  /* deformação de domínio: o ponto é torcido ANTES de consultar o campo */
+  var _wx = 0, _wy = 0, _wz = 0;
+  function deforma(x, y, z) {
+    var f = WARP_F;
+    var a = x * f, b = y * f, c = z * f;
+    _wx = x + WARP_A * ruido(a, b, c);
+    _wy = y + WARP_A * ruido(a + 41.3, b - 17.9, c + 5.7);
+    _wz = z + WARP_A * ruido(a - 23.1, b + 63.5, c - 11.2);
+  }
+
+  /* distância assinada aproximada até a superfície com relevo, e normal para
+   * fora. Divide o campo pelo módulo do gradiente: assim a profundidade do
+   * sulco vale em unidades de espaço e a casca tem espessura uniforme. */
+  var _nx = 0, _ny = 1, _nz = 0, _ao = 0;
+  function mede(x, y, z) {
+    var h = H_GRAD, i2h = INV_2H;
+    var c = campo(x, y, z);
+    var gx = (campo(x + h, y, z) - campo(x - h, y, z)) * i2h;
+    var gy = (campo(x, y + h, z) - campo(x, y - h, z)) * i2h;
+    var gz = (campo(x, y, z + h) - campo(x, y, z - h)) * i2h;
+    var g = Math.sqrt(gx * gx + gy * gy + gz * gz);
+    if (!(g > 1e-6)) { _nx = 0; _ny = 1; _nz = 0; _ao = 0; return c > 0 ? 9 : -9; }
+    var s = sulco(x, y, z);
+    var sx = (sulco(x + h, y, z) - sulco(x - h, y, z)) * i2h;
+    var sy = (sulco(x, y + h, z) - sulco(x, y - h, z)) * i2h;
+    var sz = (sulco(x, y, z + h) - sulco(x, y, z - h)) * i2h;
+    _ao = trava(divSegura(s, PROF_SULCO), 0, 1);
+    var Gx = gx - g * sx, Gy = gy - g * sy, Gz = gz - g * sz;
+    var G = c - g * s;
+    var gm = Math.sqrt(Gx * Gx + Gy * Gy + Gz * Gz);
+    if (!(gm > 1e-6)) {
+      _nx = -divSegura(gx, g); _ny = -divSegura(gy, g); _nz = -divSegura(gz, g);
+      return divSegura(G, g);
+    }
+    _nx = -divSegura(Gx, gm); _ny = -divSegura(Gy, gm); _nz = -divSegura(Gz, gm);
+    return divSegura(G, gm);
+  }
+
+  /* ======================================================================
+   * 5. GEOMETRIA — gerada uma única vez e compartilhada por todas as
+   *    instâncias (mesma semente = mesmos pontos; a aba abre duas telas).
+   * ==================================================================== */
+
+  var GEO = null;
+
+  function geraGeometria() {
+    if (GEO) { return GEO; }
+
+    var rnd = mulberry32(SEMENTE ^ 0x9E3779B9);
+    var passo = PASSO_AMOSTRA;
+    var nX = Math.max(1, Math.ceil(divSegura(BB_X2 - BB_X1, passo)));
+    var nY = Math.max(1, Math.ceil(divSegura(BB_Y2 - BB_Y1, passo)));
+    var nZ = Math.max(1, Math.ceil(divSegura(BB_Z2 - BB_Z1, passo)));
+
+    var brutos = [];
+    var ix, iy, iz, k, x, y, z, v0, d, corte;
+
+    for (iz = 0; iz < nZ; iz++) {
+      for (iy = 0; iy < nY; iy++) {
+        for (ix = 0; ix < nX; ix++) {
+          x = BB_X1 + (ix + rnd()) * passo;
+          y = BB_Y1 + (iy + rnd()) * passo;
+          z = BB_Z1 + (iz + rnd()) * passo;
+
+          /* 1º corte, barato: campo sem ruído. Descarta a maioria. */
+          v0 = campo(x, y, z);
+          if (v0 > 0.48 || v0 < -0.48) { continue; }
+
+          /* 2º corte: já com domínio deformado e relevo */
+          deforma(x, y, z);
+          d = mede(_wx, _wy, _wz);
+          if (d > FAIXA_CASCA || d < -FAIXA_CASCA) { continue; }
+
+          /* Newton: joga o candidato sobre a superfície do relevo. A normal
+           * aponta para fora e d > 0 é dentro, então anda +d na normal. */
+          for (k = 0; k < PASSOS_NEWTON; k++) {
+            x += d * _nx * NEWTON_K;
+            y += d * _ny * NEWTON_K;
+            z += d * _nz * NEWTON_K;
+            deforma(x, y, z);
+            d = mede(_wx, _wy, _wz);
+            if (!finito(d)) { break; }
+          }
+          if (!finito(d) || !finito(x) || !finito(y) || !finito(z)) { continue; }
+          if (!finito(_nx) || !finito(_ny) || !finito(_nz)) { continue; }
+
+          /* fundo de sulco fica rarefeito: numa nuvem esparsa o giro só é
+           * legível se o sulco virar canal vazio, não só ponto escuro */
+          corte = trava(divSegura(_ao - CORTE_SULCO_A, CORTE_SULCO_B), 0, 1);
+          if (rnd() < corte * corte * (3 - 2 * corte) * 0.92) { continue; }
+
+          brutos.push([x, y, z, _nx, _ny, _nz, _ao, rnd()]);
+        }
+      }
+    }
+
+    /* rank fixo: ordenar por ele torna o primeiro quarto uma amostra
+     * uniforme — é o que a miniatura usa. */
+    brutos.sort(function (a, b) { return a[7] - b[7]; });
+    var n = Math.min(brutos.length, MAX_PONTOS);
+
+    var px = new Float32Array(n), py = new Float32Array(n), pz = new Float32Array(n);
+    var nx = new Float32Array(n), ny = new Float32Array(n), nz = new Float32Array(n);
+    var ao = new Float32Array(n);
+    var i, b;
+    for (i = 0; i < n; i++) {
+      b = brutos[i];
+      px[i] = b[0]; py[i] = b[1]; pz[i] = b[2];
+      nx[i] = b[3]; ny[i] = b[4]; nz[i] = b[5];
+      ao[i] = b[6];
+    }
+
+    GEO = {n: n, px: px, py: py, pz: pz, nx: nx, ny: ny, nz: nz, ao: ao};
+    construirMalha(GEO);
+    return GEO;
+  }
+
+  /* malha por grade espacial: célula = raio de busca, varre 27 células.
+   * Nunca guarda todos os pares — isso passaria no terminal e travaria o
+   * navegador. */
+  function construirMalha(g) {
+    var n = g.n, raio = RAIO_MALHA, r2 = raio * raio;
+    var i, j, k, c;
+
+    var x1 = 1e9, y1 = 1e9, z1 = 1e9, x2 = -1e9, y2 = -1e9, z2 = -1e9;
+    for (i = 0; i < n; i++) {
+      if (g.px[i] < x1) { x1 = g.px[i]; } if (g.px[i] > x2) { x2 = g.px[i]; }
+      if (g.py[i] < y1) { y1 = g.py[i]; } if (g.py[i] > y2) { y2 = g.py[i]; }
+      if (g.pz[i] < z1) { z1 = g.pz[i]; } if (g.pz[i] > z2) { z2 = g.pz[i]; }
+    }
+    if (n === 0) { x1 = y1 = z1 = 0; x2 = y2 = z2 = 1; }
+
+    var gx = Math.max(1, Math.ceil(divSegura(x2 - x1, raio)) + 1);
+    var gy = Math.max(1, Math.ceil(divSegura(y2 - y1, raio)) + 1);
+    var gz = Math.max(1, Math.ceil(divSegura(z2 - z1, raio)) + 1);
+    var invR = divSegura(1, raio);
+
+    var cabeca = new Int32Array(gx * gy * gz);
+    var prox = new Int32Array(n);
+    for (i = 0; i < cabeca.length; i++) { cabeca[i] = -1; }
+
+    var cx = new Int32Array(n), cy = new Int32Array(n), cz = new Int32Array(n);
+    for (i = 0; i < n; i++) {
+      cx[i] = trava(Math.floor((g.px[i] - x1) * invR), 0, gx - 1);
+      cy[i] = trava(Math.floor((g.py[i] - y1) * invR), 0, gy - 1);
+      cz[i] = trava(Math.floor((g.pz[i] - z1) * invR), 0, gz - 1);
+      c = (cz[i] * gy + cy[i]) * gx + cx[i];
+      prox[i] = cabeca[c];
+      cabeca[c] = i;
+    }
+
+    var K = VIZ_POR_PONTO;
+    var viz = new Int32Array(n * K);
+    var dist = new Float64Array(K);
+    var ax, ay, az, bx, by, bz, dd, p, q, t, ci, cj, ck, i0, j0, k0;
+    for (i = 0; i < n * K; i++) { viz[i] = -1; }
+
+    for (i = 0; i < n; i++) {
+      for (q = 0; q < K; q++) { dist[q] = 1e9; }
+      ax = g.px[i]; ay = g.py[i]; az = g.pz[i];
+      for (k0 = cz[i] - 1; k0 <= cz[i] + 1; k0++) {
+        if (k0 < 0 || k0 >= gz) { continue; }
+        for (j0 = cy[i] - 1; j0 <= cy[i] + 1; j0++) {
+          if (j0 < 0 || j0 >= gy) { continue; }
+          for (i0 = cx[i] - 1; i0 <= cx[i] + 1; i0++) {
+            if (i0 < 0 || i0 >= gx) { continue; }
+            j = cabeca[(k0 * gy + j0) * gx + i0];
+            while (j !== -1) {
+              if (j !== i) {
+                bx = g.px[j] - ax; by = g.py[j] - ay; bz = g.pz[j] - az;
+                dd = bx * bx + by * by + bz * bz;
+                if (dd < r2) {
+                  /* insere ordenado nos K melhores */
+                  for (q = 0; q < K; q++) {
+                    if (dd < dist[q]) {
+                      for (t = K - 1; t > q; t--) {
+                        dist[t] = dist[t - 1]; viz[i * K + t] = viz[i * K + t - 1];
+                      }
+                      dist[q] = dd; viz[i * K + q] = j;
+                      break;
+                    }
+                  }
+                }
+              }
+              j = prox[j];
+            }
+          }
+        }
+      }
+    }
+
+    /* deduplica sem Set: só aceita (i,j) com j > i, ou j < i quando i não
+     * está na lista de j */
+    var ar = [];
+    var repetido;
+    for (i = 0; i < n && ar.length < MAX_ARESTAS * 2; i++) {
+      for (q = 0; q < K; q++) {
+        j = viz[i * K + q];
+        if (j < 0) { continue; }
+        if (j < i) {
+          repetido = false;
+          for (t = 0; t < K; t++) { if (viz[j * K + t] === i) { repetido = true; } }
+          if (repetido) { continue; }
+        }
+        ar.push(i); ar.push(j);
+      }
+    }
+
+    var arestas = new Int32Array(ar.length);
+    for (i = 0; i < ar.length; i++) { arestas[i] = ar[i]; }
+    g.arestas = arestas;
+    g.nArestas = arestas.length >> 1;
+  }
+
+  /* ======================================================================
+   * 6. COR
+   * ==================================================================== */
+
+  function hexRgb(h) {
+    var s = (typeof h === 'string' ? h : '').replace('#', '');
+    if (s.length === 3) { s = s[0] + s[0] + s[1] + s[1] + s[2] + s[2]; }
+    if (s.length !== 6) { return [107, 118, 132]; }
+    var v = parseInt(s, 16);
+    if (!finito(v)) { return [107, 118, 132]; }
+    return [(v >> 16) & 255, (v >> 8) & 255, v & 255];
+  }
+
+  function misturaRgb(a, b, t) {
+    var k = trava(t, 0, 1);
+    return [
+      Math.round(a[0] + (b[0] - a[0]) * k),
+      Math.round(a[1] + (b[1] - a[1]) * k),
+      Math.round(a[2] + (b[2] - a[2]) * k)
+    ];
+  }
+
+  function rgbTexto(c) {
+    return 'rgb(' + c[0] + ',' + c[1] + ',' + c[2] + ')';
+  }
+
+  function rgbaTexto(c, a) {
+    return 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + trava(a, 0, 1).toFixed(3) + ')';
+  }
+
+  /* ======================================================================
+   * 7. INSTÂNCIA
+   * ==================================================================== */
+
+  function apiInerte() {
+    return {
+      quadro: function () {},
+      cobertura: function () {},
+      destaca: function () {},
+      miniatura: function () {},
+      redimensiona: function () {},
+      estatisticas: function () { return {pontos: 0, linhas: 0, arestasDesenhadas: 0, nan: 0}; },
+      destroi: function () {}
+    };
+  }
+
+  function cria(canvas, opcoes) {
+    var op = opcoes || {};
+    var ctx = (canvas && canvas.getContext) ? canvas.getContext('2d') : null;
+    if (!ctx) { return apiInerte(); }
+
+    var g = geraGeometria();
+    var n = g.n;
+    if (!n) { return apiInerte(); }
+
+    /* ------------------------------------------------ áreas e centros -- */
+    var areas = [];
+    var fonte = (op.areas && op.areas.length) ? op.areas : AREAS_PADRAO;
+    var i, j, k, a, c;
+    for (i = 0; i < fonte.length; i++) {
+      a = fonte[i] || {};
+      c = a.centro;
+      if (!(c && c.length === 3 && finito(+c[0]) && finito(+c[1]) && finito(+c[2]))) {
+        c = (AREAS_PADRAO[i % AREAS_PADRAO.length]).centro;
+      }
+      areas.push({
+        id: (a.id === undefined || a.id === null) ? ('area' + i) : a.id,
+        nome: a.nome || '',
+        rgb: hexRgb(a.cor || AREAS_PADRAO[i % AREAS_PADRAO.length].cor),
+        cx: +c[0], cy: +c[1], cz: +c[2]
+      });
+    }
+    var nAreas = areas.length;
+
+    /* centros vindos de fora chegam em qualquer escala: normaliza a caixa
+     * deles para a caixa interna do cérebro, eixo a eixo. */
+    (function () {
+      var x1 = 1e9, y1 = 1e9, z1 = 1e9, x2 = -1e9, y2 = -1e9, z2 = -1e9, q;
+      for (q = 0; q < nAreas; q++) {
+        if (areas[q].cx < x1) { x1 = areas[q].cx; } if (areas[q].cx > x2) { x2 = areas[q].cx; }
+        if (areas[q].cy < y1) { y1 = areas[q].cy; } if (areas[q].cy > y2) { y2 = areas[q].cy; }
+        if (areas[q].cz < z1) { z1 = areas[q].cz; } if (areas[q].cz > z2) { z2 = areas[q].cz; }
+      }
+      var ex = x2 - x1, ey = y2 - y1, ez = z2 - z1;
+      for (q = 0; q < nAreas; q++) {
+        areas[q].cx = ex > 1e-6 ? CX1 + divSegura(areas[q].cx - x1, ex) * (CX2 - CX1) : (CX1 + CX2) * 0.5;
+        areas[q].cy = ey > 1e-6 ? CY1 + divSegura(areas[q].cy - y1, ey) * (CY2 - CY1) : (CY1 + CY2) * 0.5;
+        areas[q].cz = ez > 1e-6 ? CZ1 + divSegura(areas[q].cz - z1, ez) * (CZ2 - CZ1) : (CZ1 + CZ2) * 0.5;
+      }
+    }());
+
+    /* cada ponto pertence à área de centro mais próximo */
+    var pArea = new Uint8Array(n);
+    var melhor, dmin, dx, dy, dz, dd;
+    for (i = 0; i < n; i++) {
+      melhor = 0; dmin = 1e9;
+      for (j = 0; j < nAreas; j++) {
+        dx = g.px[i] - areas[j].cx; dy = g.py[i] - areas[j].cy; dz = g.pz[i] - areas[j].cz;
+        dd = dx * dx + dy * dy + dz * dz;
+        if (dd < dmin) { dmin = dd; melhor = j; }
+      }
+      pArea[i] = melhor;
+    }
+
+    var nArestas = g.nArestas;
+    var arCor = new Int16Array(nArestas);   /* -1 = aresta neutra (entre áreas) */
+    for (i = 0; i < nArestas; i++) {
+      j = g.arestas[i * 2]; k = g.arestas[i * 2 + 1];
+      arCor[i] = (pArea[j] === pArea[k]) ? pArea[j] : -1;
+    }
+
+    /* ------------------------------------------------------- estado --- */
+    var IDX_SEM = nAreas;            /* sem registro */
+    var IDX_APAGADO = nAreas + 1;    /* apagado por causa de um destaque */
+    var NCORES = nAreas + 2;
+    var NBALDES = NFATIAS * NCORES * NIVEIS;
+
+    var coberturas = [];
+    for (i = 0; i < nAreas; i++) { coberturas.push(null); }
+    var media = 0;
+
+    var areaParaCor = new Int32Array(nAreas);
+    var paleta = new Array(NFATIAS * NCORES * NIVEIS);
+    var raios = new Float64Array(NFATIAS * NCORES * NIVEIS);
+    var paletaLinha = new Array(NCORES + 1);
+
+    /* `velocidade` multiplica o giro automático (1 = o de sempre; 0 = parado);
+     * `rotulos` desenha a identificação de cada área em cima do volume, e ela
+     * fica — sem depender de o ponteiro estar em cima. */
+    var velGiro = (typeof op.velocidade === 'number' && finito(op.velocidade))
+      ? trava(op.velocidade, 0, 4) : 1;
+    var comRotulos = !!op.rotulos;
+    var rotX = new Float64Array(nAreas), rotY = new Float64Array(nAreas);
+    var rotN = new Int32Array(nAreas);
+
+    var largura = 1, altura = 1, dpr = 1;
+    var anguloX = 0.15, anguloY = 0.70;   /* obliquo: mostra volume e giros; medido no banco de testes */
+    var zoom = 1;
+    var escalaBase = 100, escalaFinal = 100;
+    var projCx = 0, projCy = 0, centroX = 0, centroY = 0;
+    var alvoEsc = 100, alvoCx = 0, alvoCy = 0, pitchMedido = 9;
+    var ultimoT = 0, pausaAte = 0;
+    var mini = false, destaque = -1, nDesenho = n;
+    var pontoPx = 1.4;
+
+    var sxA = new Float32Array(n), syA = new Float32Array(n);
+    var pTz = new Float32Array(n), pFat = new Uint8Array(n);
+    var pNiv = new Uint8Array(n), pVis = new Uint8Array(n);
+
+    var baldes = new Array(NBALDES);
+    for (i = 0; i < NBALDES; i++) { baldes[i] = []; }
+    var baldesLinha = new Array(NCORES + 1);
+    for (i = 0; i <= NCORES; i++) { baldesLinha[i] = []; }
+
+    var estat = {pontos: 0, linhas: nArestas, arestasDesenhadas: 0, nan: 0};
+
+    var RGB_FUNDO = hexRgb(COR_FUNDO_BORDA);
+    var RGB_CINZA = hexRgb(COR_CINZA);
+    var RGB_NAVY = hexRgb(COR_NAVY);
+    var RGB_SOMBRA = hexRgb(COR_SOMBRA);
+    var RGB_BRANCO = [255, 255, 255];
+
+    /* ------------------------------------------------- paleta e raios -- */
+    function atualizaVisual() {
+      var q, nv, fa, cov, base, escuro, claro, luz, forca, fatCor, alvo;
+      var soma = 0, conta = 0;
+
+      for (q = 0; q < nAreas; q++) {
+        cov = coberturas[q];
+        if (cov === null) { areaParaCor[q] = IDX_SEM; }
+        else {
+          soma += cov; conta++;
+          areaParaCor[q] = (destaque >= 0 && destaque !== q) ? IDX_APAGADO : q;
+        }
+      }
+      media = conta > 0 ? divSegura(soma, conta) : 0;
+
+      for (q = 0; q < NCORES; q++) {
+        if (q < nAreas) {
+          cov = coberturas[q];
+          forca = (cov === null) ? 0 : 0.16 + 0.84 * trava(cov, 0, 1);
+          base = misturaRgb(RGB_CINZA, areas[q].rgb, forca);
+          if (destaque === q) { base = misturaRgb(base, areas[q].rgb, 0.5); }
+          /* Camada sem registro fica CINZA — a cor já diz que não há dado.
+           * O tamanho não precisa dizer de novo: encolher o ponto apagava um
+           * quarto da silhueta (cerebelo e temporal saíam da forma) e a peça
+           * parecia quebrada em vez de incompleta. Cinza, mas presente. */
+          fatCor = (cov === null) ? 0.94 : (0.62 + 0.58 * trava(cov, 0, 1));
+          if (destaque === q) { fatCor *= 1.30; }
+        } else if (q === IDX_SEM) {
+          base = misturaRgb(RGB_CINZA, RGB_FUNDO, 0.40);
+          fatCor = 0.54;
+        } else {
+          base = misturaRgb(RGB_CINZA, RGB_FUNDO, 0.66);
+          fatCor = 0.52;
+        }
+
+        escuro = misturaRgb(base, RGB_SOMBRA, 0.40);
+        claro = misturaRgb(base, RGB_BRANCO, 0.32);
+        for (nv = 0; nv < NIVEIS; nv++) {
+          luz = nv === 0 ? escuro
+              : nv === 1 ? misturaRgb(base, escuro, 0.55)
+              : nv === 2 ? base
+              : nv === 3 ? misturaRgb(base, claro, 0.50)
+              : claro;
+          for (fa = 0; fa < NFATIAS; fa++) {
+            paleta[(fa * NCORES + q) * NIVEIS + nv] =
+              rgbTexto(misturaRgb(luz, RGB_FUNDO, MIST_FATIA[fa]));
+            alvo = pontoPx * fatCor * FAT_NIVEL[nv] * FAT_FATIA[fa];
+            raios[(fa * NCORES + q) * NIVEIS + nv] = Math.max(0.4, alvo);
+          }
+        }
+
+        /* linha da malha: herda a cor da área, bem discreta */
+        if (q < nAreas) {
+          cov = coberturas[q];
+          paletaLinha[q] = rgbaTexto(areas[q].rgb,
+            (cov === null) ? 0.06 : (0.14 + 0.30 * trava(cov, 0, 1)) * (destaque >= 0 && destaque !== q ? 0.25 : 1));
+        } else if (q === IDX_SEM) {
+          paletaLinha[q] = rgbaTexto(RGB_CINZA, 0.05);
+        } else {
+          paletaLinha[q] = rgbaTexto(RGB_CINZA, 0.04);
+        }
+      }
+      paletaLinha[NCORES] = rgbaTexto(RGB_NAVY, destaque >= 0 ? 0.05 : 0.105);
+    }
+
+    function atualizaPonto() {
+      var util = largura * altura * 0.42;
+      pontoPx = trava(Math.sqrt(divSegura(util, Math.max(1, nDesenho))) * 0.58, 0.6, 4.6);
+    }
+
+    /* --------------------------------------------- enquadramento medido -
+     * Projeta uma amostra dos pontos em 8 guinadas, na inclinação pedida, e
+     * usa a bbox REAL do resultado. A guinada inteira entra porque o cérebro
+     * gira sozinho — assim a escala não pula de quadro em quadro. A
+     * inclinação muda só quando o usuário arrasta, e aí o alvo é perseguido
+     * suavemente. Nenhuma escala chutada.
+     */
+    function enquadra(pitch, imediato) {
+      var passo = Math.max(1, Math.floor(n / 900));
+      var x1 = 1e9, y1 = 1e9, x2 = -1e9, y2 = -1e9;
+      var q, ia, ay, cy0, sy0, cx0, sx0, xx, yy, zz, x1r, z1r, y2r, z2r, den, f;
+
+      cx0 = Math.cos(pitch); sx0 = Math.sin(pitch);
+      for (ia = 0; ia < 8; ia++) {
+        ay = ia * TAU / 8;
+        cy0 = Math.cos(ay); sy0 = Math.sin(ay);
+        for (q = 0; q < n; q += passo) {
+          xx = g.px[q]; yy = g.py[q]; zz = g.pz[q];
+          x1r = xx * cy0 + zz * sy0;
+          z1r = -xx * sy0 + zz * cy0;
+          y2r = yy * cx0 - z1r * sx0;
+          z2r = yy * sx0 + z1r * cx0;
+          den = DIST_CAM - z2r;
+          if (den < 0.35) { den = 0.35; }
+          f = divSegura(FOCO, den);
+          xx = x1r * f; yy = y2r * f;
+          if (xx < x1) { x1 = xx; } if (xx > x2) { x2 = xx; }
+          if (yy < y1) { y1 = yy; } if (yy > y2) { y2 = yy; }
+        }
+      }
+      if (!(x2 > x1)) { x1 = -0.1; x2 = 0.1; }
+      if (!(y2 > y1)) { y1 = -0.1; y2 = 0.1; }
+
+      var ex = divSegura(largura * (1 - 2 * MARGEM), x2 - x1);
+      var ey = divSegura(altura * (1 - 2 * MARGEM), y2 - y1);
+      alvoEsc = Math.min(ex, ey);
+      if (!(alvoEsc > 0)) { alvoEsc = Math.min(largura, altura) * 0.35; }
+      alvoCx = (x1 + x2) * 0.5;
+      alvoCy = (y1 + y2) * 0.5;
+      pitchMedido = pitch;
+      if (imediato) { escalaBase = alvoEsc; projCx = alvoCx; projCy = alvoCy; }
+    }
+
+    function redimensiona() {
+      var cw = canvas.clientWidth || canvas.width || 320;
+      var ch = canvas.clientHeight || canvas.height || 240;
+      largura = Math.max(1, Math.round(cw));
+      altura = Math.max(1, Math.round(ch));
+      dpr = 1;
+      if (typeof raiz !== 'undefined' && raiz && finito(raiz.devicePixelRatio)) {
+        dpr = trava(raiz.devicePixelRatio, 1, 3);
+      }
+      canvas.width = Math.max(1, Math.round(largura * dpr));
+      canvas.height = Math.max(1, Math.round(altura * dpr));
+      atualizaPonto();
+      enquadra(anguloX, true);
+      atualizaVisual();
+    }
+
+    /* ------------------------------------------------------- desenho --- */
+    function fundo() {
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, largura, altura);
+      var r = Math.max(largura, altura) * 0.72;
+      var gr = ctx.createRadialGradient(largura * 0.5, altura * 0.44, 0,
+                                        largura * 0.5, altura * 0.44, r > 0 ? r : 1);
+      gr.addColorStop(0, COR_FUNDO_CENTRO);
+      gr.addColorStop(1, COR_FUNDO_BORDA);
+      ctx.fillStyle = gr;
+      ctx.fillRect(0, 0, largura, altura);
+
+      /* halo: intensidade = média das camadas COM registro (null não conta) */
+      if (media > 0.02) {
+        var raioH = Math.min(largura, altura) * (0.30 + 0.16 * media);
+        var gh = ctx.createRadialGradient(centroX, centroY, 0, centroX, centroY,
+                                          raioH > 0 ? raioH : 1);
+        gh.addColorStop(0, rgbaTexto(hexRgb('#006DFF'), 0.10 * media));
+        gh.addColorStop(1, rgbaTexto(hexRgb('#006DFF'), 0));
+        ctx.fillStyle = gh;
+        ctx.fillRect(0, 0, largura, altura);
+      }
+    }
+
+    function desenhaPasse(f0, f1) {
+      var fa, nv, co, b, idx, r, q, ch;
+      for (fa = f0; fa < f1; fa++) {
+        ctx.globalAlpha = ALFA_FATIA[fa];
+        for (nv = 0; nv < NIVEIS; nv++) {
+          for (co = 0; co < NCORES; co++) {
+            ch = (fa * NCORES + co) * NIVEIS + nv;
+            b = baldes[ch];
+            if (!b.length) { continue; }
+            r = raios[ch];
+            ctx.fillStyle = paleta[ch];
+            ctx.beginPath();
+            for (q = 0; q < b.length; q++) {
+              idx = b[q];
+              ctx.moveTo(sxA[idx] + r, syA[idx]);
+              ctx.arc(sxA[idx], syA[idx], r, 0, TAU);
+            }
+            ctx.fill();
+            estat.pontos += b.length;
+          }
+        }
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    /* A caixa de identificação de cada área, permanente.
+     *
+     * Ela acompanha o giro porque mora no centro de massa VISÍVEL da área: some
+     * junto com a área quando ela passa para trás, e volta quando ela reaparece.
+     * Etiqueta fixa na tela mentiria sobre o que está na frente. Área sem
+     * registro entra apagada, como o resto dela. */
+    function desenhaRotulos() {
+      var ordem = [], q;
+      for (q = 0; q < nAreas; q++) {
+        if (rotN[q] >= 12 && areas[q].nome) { ordem.push(q); }
+      }
+      /* quem tem mais massa visível rotula primeiro: numa tela estreita nem
+       * todos cabem, e é melhor perder a etiqueta da área que quase não
+       * aparece do que empilhar oito caixas ilegíveis */
+      ordem.sort(function (a, b) { return rotN[b] - rotN[a]; });
+
+      var postos = [], maxL = Math.max(70, largura * 0.52);
+      ctx.font = '600 10px -apple-system, "Segoe UI", Roboto, sans-serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+
+      for (var k = 0; k < ordem.length; k++) {
+        q = ordem[k];
+        var nome = corta(areas[q].nome, maxL);
+        var L = ctx.measureText(nome).width + 20;
+        var cxp = rotX[q] / rotN[q], cyp = rotY[q] / rotN[q];
+        if (!finito(cxp) || !finito(cyp)) { continue; }
+
+        /* quatro tentativas em volta do centro de massa, e desiste */
+        var lados = [[9, 0], [-L - 9, 0], [9, -20], [-L - 9, 20]];
+        var px = null, py = null, tentativa, cand, cy2;
+        for (tentativa = 0; tentativa < lados.length; tentativa++) {
+          cand = trava(cxp + lados[tentativa][0], 3, largura - L - 3);
+          cy2 = trava(cyp + lados[tentativa][1], 11, altura - 11);
+          if (!colide(postos, cand, cy2 - 9, L, 18)) { px = cand; py = cy2; break; }
+        }
+        if (px === null) { continue; }
+        postos.push([px, py - 9, L, 18]);
+
+        var semReg = coberturas[q] === null || coberturas[q] === undefined;
+        var apagado = destaque >= 0 && destaque !== q;
+        ctx.globalAlpha = apagado ? 0.20 : (semReg ? 0.55 : 1);
+
+        ctx.fillStyle = 'rgba(255,255,255,.92)';
+        arredondado(px, py - 9, L, 18, 9); ctx.fill();
+        ctx.strokeStyle = 'rgba(11,46,89,.14)'; ctx.lineWidth = 1;
+        arredondado(px, py - 9, L, 18, 9); ctx.stroke();
+
+        ctx.fillStyle = semReg ? COR_CINZA : rgbaTexto(areas[q].rgb, 1);
+        ctx.beginPath(); ctx.arc(px + 8, py, 3.2, 0, TAU); ctx.fill();
+        ctx.fillStyle = semReg ? COR_CINZA : COR_NAVY;
+        ctx.fillText(nome, px + 15, py + 0.5);
+        ctx.globalAlpha = 1;
+      }
+    }
+
+    function colide(postos, x, y, L, A) {
+      for (var i = 0; i < postos.length; i++) {
+        var p = postos[i];
+        if (x < p[0] + p[2] + 4 && x + L + 4 > p[0] && y < p[1] + p[3] + 3 && y + A + 3 > p[1]) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    /* nome que não cabe é cortado com reticência: melhor meia palavra legível
+     * que a etiqueta inteira por cima da vizinha */
+    function corta(nome, maxL) {
+      if (ctx.measureText(nome).width <= maxL) { return nome; }
+      var s = nome;
+      while (s.length > 4 && ctx.measureText(s + '…').width > maxL) {
+        s = s.slice(0, -1);
+      }
+      return s + '…';
+    }
+
+    function arredondado(x, y, L, A, r) {
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.lineTo(x + L - r, y); ctx.quadraticCurveTo(x + L, y, x + L, y + r);
+      ctx.lineTo(x + L, y + A - r); ctx.quadraticCurveTo(x + L, y + A, x + L - r, y + A);
+      ctx.lineTo(x + r, y + A); ctx.quadraticCurveTo(x, y + A, x, y + A - r);
+      ctx.lineTo(x, y + r); ctx.quadraticCurveTo(x, y, x + r, y);
+      ctx.closePath();
+    }
+
+    function desenhaMalha() {
+      var i2, a2, b2, co, bl, q, desenhadas = 0;
+      for (i2 = 0; i2 <= NCORES; i2++) { baldesLinha[i2].length = 0; }
+      for (i2 = 0; i2 < nArestas; i2++) {
+        a2 = g.arestas[i2 * 2]; b2 = g.arestas[i2 * 2 + 1];
+        if (a2 >= nDesenho || b2 >= nDesenho) { continue; }
+        if (!pVis[a2] || !pVis[b2]) { continue; }
+        if (pFat[a2] < FATIA_FRENTE || pFat[b2] < FATIA_FRENTE) { continue; }
+        co = arCor[i2] < 0 ? NCORES : areaParaCor[arCor[i2]];
+        baldesLinha[co].push(i2);
+      }
+      ctx.lineWidth = trava(pontoPx * 0.42, 0.4, 1.1);
+      ctx.lineCap = 'round';
+      for (co = 0; co <= NCORES; co++) {
+        bl = baldesLinha[co];
+        if (!bl.length) { continue; }
+        ctx.strokeStyle = paletaLinha[co];
+        ctx.beginPath();
+        for (q = 0; q < bl.length; q++) {
+          a2 = g.arestas[bl[q] * 2]; b2 = g.arestas[bl[q] * 2 + 1];
+          ctx.moveTo(sxA[a2], syA[a2]);
+          ctx.lineTo(sxA[b2], syA[b2]);
+        }
+        ctx.stroke();
+        desenhadas += bl.length;
+      }
+      estat.arestasDesenhadas = desenhadas;
+    }
+
+    function quadro(t) {
+      var tempo = (typeof t === 'number' && finito(t)) ? t : ultimoT;
+      var dt = tempo - ultimoT;
+      /* Relógio que anda para trás significa que NÃO passou tempo — e não que
+       * passou um quadro inteiro. A guarda antiga devolvia 16 ms para qualquer
+       * dt inválido, inclusive negativo, e com isso um segundo laço fora de
+       * fase acelerava o giro em vez de não fazer nada. Salto grande para a
+       * frente (aba escondida, aparelho lento) continua valendo um quadro:
+       * ali passou tempo de verdade, só não dá para animar o buraco todo. */
+      if (!(dt >= 0)) { dt = 0; }
+      else if (dt > 120) { dt = 16; }
+      ultimoT = tempo;
+
+      /* volta a girar sozinho 3 s depois da última interação */
+      if (tempo >= pausaAte) {
+        anguloY += VEL_AUTO * velGiro * dt;
+        if (anguloY > TAU) { anguloY -= TAU; }
+      }
+
+      /* a inclinação mudou o bastante: remede o enquadramento e persegue */
+      if (anguloX - pitchMedido > 0.04 || pitchMedido - anguloX > 0.04) {
+        enquadra(anguloX, false);
+      }
+      escalaBase += (alvoEsc - escalaBase) * 0.14;
+      projCx += (alvoCx - projCx) * 0.14;
+      projCy += (alvoCy - projCy) * 0.14;
+
+      escalaFinal = escalaBase * zoom;
+      centroX = largura * 0.5 - projCx * escalaFinal;
+      centroY = altura * 0.5 + projCy * escalaFinal;
+
+      estat.pontos = 0;
+      estat.arestasDesenhadas = 0;
+      estat.nan = 0;
+
+      fundo();
+
+      var cy0 = Math.cos(anguloY), sy0 = Math.sin(anguloY);
+      var cx0 = Math.cos(anguloX), sx0 = Math.sin(anguloX);
+      var i2, xx, yy, zz, x1r, z1r, y2r, z2r, den, f, sx, sy, ux, uy;
+      var mx, my, mz, mx1, mz1, my2, mz2, lam, tz, bril, nv, fa;
+      var vx1 = 1e9, vx2 = -1e9, vy1 = 1e9, vy2 = -1e9;
+
+      for (i2 = 0; i2 < NBALDES; i2++) { baldes[i2].length = 0; }
+      if (comRotulos) {
+        for (i2 = 0; i2 < nAreas; i2++) { rotX[i2] = 0; rotY[i2] = 0; rotN[i2] = 0; }
+      }
+
+      for (i2 = 0; i2 < nDesenho; i2++) {
+        xx = g.px[i2]; yy = g.py[i2]; zz = g.pz[i2];
+        x1r = xx * cy0 + zz * sy0;
+        z1r = -xx * sy0 + zz * cy0;
+        y2r = yy * cx0 - z1r * sx0;
+        z2r = yy * sx0 + z1r * cx0;
+
+        den = DIST_CAM - z2r;
+        if (den < 0.35) { den = 0.35; }
+        f = divSegura(FOCO, den);
+        ux = x1r * f; uy = y2r * f;
+        if (ux < vx1) { vx1 = ux; } if (ux > vx2) { vx2 = ux; }
+        if (uy < vy1) { vy1 = uy; } if (uy > vy2) { vy2 = uy; }
+        sx = centroX + ux * escalaFinal;
+        sy = centroY - uy * escalaFinal;
+
+        if (!finito(sx) || !finito(sy)) {
+          estat.nan++;
+          pVis[i2] = 0; sxA[i2] = 0; syA[i2] = 0; pFat[i2] = 0; pTz[i2] = 0;
+          continue;
+        }
+        sxA[i2] = sx; syA[i2] = sy;
+
+        tz = trava((z2r + LIM_Z) * INV_2LIMZ, 0, 1);
+        pTz[i2] = tz;
+
+        if (sx < -6 || sy < -6 || sx > largura + 6 || sy > altura + 6) {
+          pVis[i2] = 0; pFat[i2] = 0;
+          continue;
+        }
+        pVis[i2] = 1;
+
+        /* normal girada junto: é o que faz os sulcos aparecerem */
+        mx = g.nx[i2]; my = g.ny[i2]; mz = g.nz[i2];
+        mx1 = mx * cy0 + mz * sy0;
+        mz1 = -mx * sy0 + mz * cy0;
+        my2 = my * cx0 - mz1 * sx0;
+        mz2 = my * sx0 + mz1 * cx0;
+        lam = mx1 * LUZ_X + my2 * LUZ_Y + mz2 * LUZ_Z;
+        lam = 0.5 + 0.5 * lam;
+        lam = lam * lam * (3 - 2 * lam);          /* contraste */
+
+        /* oclusão multiplicativa: fundo de sulco recebe menos luz */
+        bril = lam * (1 - 0.45 * g.ao[i2]);
+        nv = Math.floor(trava(bril, 0, 0.9999) * NIVEIS);
+        if (nv < 0) { nv = 0; } if (nv >= NIVEIS) { nv = NIVEIS - 1; }
+
+        fa = Math.floor(tz * NFATIAS);
+        if (fa < 0) { fa = 0; } if (fa >= NFATIAS) { fa = NFATIAS - 1; }
+        pFat[i2] = fa;
+        /* no passe de trás o ponto nunca chega ao nível de crista */
+        if (fa < FATIA_FRENTE && nv > 3) { nv = 3; }
+        pNiv[i2] = nv;
+
+        baldes[(fa * NCORES + areaParaCor[pArea[i2]]) * NIVEIS + nv].push(i2);
+
+        /* centro de massa VISÍVEL da área, para pendurar o rótulo nele: usar o
+         * centro declarado colocaria a etiqueta no meio do volume, inclusive
+         * quando a área está do outro lado e não aparece */
+        if (comRotulos && fa >= FATIA_FRENTE) {
+          var ia = pArea[i2];
+          rotX[ia] += sx; rotY[ia] += sy; rotN[ia]++;
+        }
+      }
+
+      desenhaPasse(0, FATIA_FRENTE);          /* passe de trás: sem linhas */
+      if (!mini) { desenhaMalha(); }
+      desenhaPasse(FATIA_FRENTE, NFATIAS);    /* passe da frente: com malha */
+      ctx.globalAlpha = 1;
+      if (comRotulos && !mini) { desenhaRotulos(); }
+
+      /* centro do quadro seguinte = centro medido DESTA vista */
+      if (vx2 > vx1 && vy2 > vy1) {
+        alvoCx = (vx1 + vx2) * 0.5;
+        alvoCy = (vy1 + vy2) * 0.5;
+      }
+    }
+
+    /* -------------------------------------------------------- eventos -- */
+    var arrastando = false, px0 = 0, py0 = 0, andou = 0, hoverAtual = null;
+    var ouvintes = [];
+
+    function liga(tipo, fn, opt) {
+      if (!canvas.addEventListener) { return; }
+      canvas.addEventListener(tipo, fn, opt);
+      ouvintes.push([tipo, fn, opt]);
+    }
+
+    function local(ev) {
+      var r = canvas.getBoundingClientRect ? canvas.getBoundingClientRect() : null;
+      var rx = r ? r.left : 0, ry = r ? r.top : 0;
+      var rw = (r && r.width > 0) ? r.width : largura;
+      var rh = (r && r.height > 0) ? r.height : altura;
+      var ex = finito(ev.clientX) ? ev.clientX : 0;
+      var ey = finito(ev.clientY) ? ev.clientY : 0;
+      return [(ex - rx) * divSegura(largura, rw), (ey - ry) * divSegura(altura, rh)];
+    }
+
+    function pausa() { pausaAte = ultimoT + PAUSA_MS; }
+
+    function acha(x, y) {
+      var q, dx2, dy2, d2, r2 = RAIO_PICK * RAIO_PICK, melhorQ = -1, melhorZ = -1;
+      for (q = 0; q < nDesenho; q += 2) {
+        if (!pVis[q]) { continue; }
+        dx2 = sxA[q] - x; dy2 = syA[q] - y;
+        d2 = dx2 * dx2 + dy2 * dy2;
+        if (d2 < r2 && pTz[q] > melhorZ) { melhorZ = pTz[q]; melhorQ = q; }
+      }
+      return melhorQ < 0 ? null : areas[pArea[melhorQ]].id;
+    }
+
+    function aoBaixar(ev) {
+      var p = local(ev);
+      arrastando = true; px0 = p[0]; py0 = p[1]; andou = 0;
+      pausa();
+    }
+
+    function aoMover(ev) {
+      var p = local(ev), dx2, dy2, id;
+      if (arrastando) {
+        dx2 = p[0] - px0; dy2 = p[1] - py0;
+        px0 = p[0]; py0 = p[1];
+        andou += Math.abs(dx2) + Math.abs(dy2);
+        anguloY += dx2 * SENS_ARRASTO;
+        anguloX = trava(anguloX + dy2 * SENS_ARRASTO, -LIM_RX, LIM_RX);
+        pausa();
+        return;
+      }
+      if (typeof op.aoPassarArea === 'function') {
+        id = acha(p[0], p[1]);
+        if (id !== hoverAtual) { hoverAtual = id; op.aoPassarArea(id); }
+      }
+    }
+
+    function aoSoltar() {
+      arrastando = false;
+      pausa();
+    }
+
+    function aoSair() {
+      arrastando = false;
+      if (hoverAtual !== null && typeof op.aoPassarArea === 'function') {
+        hoverAtual = null; op.aoPassarArea(null);
+      }
+    }
+
+    function aoClicar(ev) {
+      if (andou > 6) { return; }
+      if (typeof op.aoClicarArea !== 'function') { return; }
+      var p = local(ev);
+      var id = acha(p[0], p[1]);
+      if (id !== null) { op.aoClicarArea(id); }
+    }
+
+    function aoRodar(ev) {
+      if (ev.preventDefault) { ev.preventDefault(); }
+      var d = finito(ev.deltaY) ? ev.deltaY : 0;
+      zoom = trava(zoom * Math.exp(-d * 0.0012), ZOOM_MIN, ZOOM_MAX);
+      pausa();
+    }
+
+    function aoTocar(ev) {
+      if (!ev.touches || !ev.touches.length) { return; }
+      if (ev.preventDefault) { ev.preventDefault(); }
+      var p = local(ev.touches[0]);
+      if (ev.type === 'touchstart') { arrastando = true; px0 = p[0]; py0 = p[1]; andou = 0; }
+      else if (arrastando) {
+        var dx2 = p[0] - px0, dy2 = p[1] - py0;
+        px0 = p[0]; py0 = p[1];
+        andou += Math.abs(dx2) + Math.abs(dy2);
+        anguloY += dx2 * SENS_ARRASTO;
+        anguloX = trava(anguloX + dy2 * SENS_ARRASTO, -LIM_RX, LIM_RX);
+      }
+      pausa();
+    }
+
+    liga('mousedown', aoBaixar);
+    liga('mousemove', aoMover);
+    liga('mouseup', aoSoltar);
+    liga('mouseleave', aoSair);
+    liga('click', aoClicar);
+    liga('wheel', aoRodar, {passive: false});
+    liga('touchstart', aoTocar, {passive: false});
+    liga('touchmove', aoTocar, {passive: false});
+    liga('touchend', function () { arrastando = false; pausa(); });
+
+    /* ---------------------------------------------------------- API ---- */
+    redimensiona();
+
+    return {
+      quadro: quadro,
+
+      cobertura: function (mapa) {
+        var m = mapa || {}, q, v;
+        for (q = 0; q < nAreas; q++) {
+          if (!Object.prototype.hasOwnProperty.call(m, areas[q].id)) { continue; }
+          v = m[areas[q].id];
+          coberturas[q] = (typeof v === 'number' && finito(v)) ? trava(v, 0, 1) : null;
+        }
+        atualizaVisual();
+      },
+
+      destaca: function (id) {
+        var q, novo = -1;
+        if (id !== null && id !== undefined) {
+          for (q = 0; q < nAreas; q++) { if (areas[q].id === id) { novo = q; } }
+        }
+        destaque = novo;
+        atualizaVisual();
+      },
+
+      miniatura: function (b) {
+        mini = !!b;
+        nDesenho = mini ? Math.max(1, Math.floor(n * 0.25)) : n;
+        atualizaPonto();
+        atualizaVisual();
+      },
+
+      /* Ângulo da câmera. Existe para o banco de testes poder comparar vistas
+       * lado a lado — foi assim que se escolheu o ângulo padrão. */
+      angulo: function (ay, ax) {
+        if (typeof ay === 'number' && finito(ay)) { anguloY = ay; }
+        if (typeof ax === 'number' && finito(ax)) { anguloX = ax; }
+        pausaAte = 1e15;                 /* trava o giro automático no teste */
+        enquadra(anguloX, true);
+      },
+
+      redimensiona: redimensiona,
+
+      estatisticas: function () {
+        return {
+          pontos: estat.pontos,
+          linhas: nArestas,
+          arestasDesenhadas: estat.arestasDesenhadas,
+          nan: estat.nan
+        };
+      },
+
+      destroi: function () {
+        var q;
+        if (canvas.removeEventListener) {
+          for (q = 0; q < ouvintes.length; q++) {
+            canvas.removeEventListener(ouvintes[q][0], ouvintes[q][1], ouvintes[q][2]);
+          }
+        }
+        ouvintes.length = 0;
+        for (q = 0; q < NBALDES; q++) { baldes[q].length = 0; }
+        for (q = 0; q <= NCORES; q++) { baldesLinha[q].length = 0; }
+        ctx = null;
+      }
+    };
+  }
+
+  raiz.MotorCerebro = {cria: cria};
+
+}(typeof window !== 'undefined' ? window : this));
+
+/* ==== 97-seek-radar.js ==== */
+/* 97-seek-radar.js — SEEK da A2L sobre o Comercial Radar
+ *
+ * A HOME DO SISTEMA desde 13/09/2026. A tela de extração mudou para /extrair.
+ * O eixo continua sendo a LIGAÇÃO do cadastro; cada fonte é hipótese sobre ela.
+ *
+ * TRÊS TIPOS DE VEREDITO, E SÓ UM É OFICIAL (decisão do dono do produto):
+ *   fonte   cada uma diz "achou" ou "não achou" registro para a ligação;
+ *   IA      aprovado, revisão humana ou reprovado — uma fonte como as outras,
+ *           filtrável como as outras;
+ *   pessoa  a decisão OFICIAL, gravada à parte em `seek_decisao`. Ela nunca
+ *           altera o veredito da IA nem o das fontes, e pode ser aplicada a um
+ *           caso ou a todos os filtrados de uma vez.
+ *
+ * DUAS CHAMADAS: a fila leve (/api/seek/fila, uma linha por ligação, tudo o que
+ * filtra) chega inteira ao abrir; a ficha (/api/seek/caso) só quando alguém
+ * escolhe a ligação. Ordens de serviço e impacto financeiro não existem no
+ * Comercial Radar — a tela mostra "sem dado", e não número inventado.
+ *
+ * A SESSÃO É A DO SISTEMA: `sessao.js` faz o login, põe o token em toda
+ * chamada a /api/ e avisa com o evento `cr:sessao` quando o crachá chegou.
+ */
+var SEEK = (function () {
+  'use strict';
+
+  /* ===================================================================
+   * 1 · CONTRATO — grupos, fontes, vereditos e ações
+   * =================================================================== */
+  var GRUPOS = [
+    {id: 'ia', rot: 'Julgamento da IA', cor: '#6D4AC7',
+     diz: 'o parecer da IA sobre os registros e as imagens — uma fonte como as outras'},
+    {id: 'documento', rot: 'Documento', cor: '#0B2E59',
+     diz: 'registro com CNPJ vinculado ao endereço da ligação'},
+    {id: 'plataforma', rot: 'Plataformas', cor: '#006DFF',
+     diz: 'estabelecimento publicado em diretório ou aplicativo'},
+    {id: 'oficial', rot: 'Bases públicas', cor: '#1F9D62',
+     diz: 'endereço declarado em base censitária ou estadual'},
+    {id: 'olhar', rot: 'Web e imagem', cor: '#F28C28',
+     diz: 'o que a busca pelo endereço e a foto de rua mostram'}
+  ];
+
+  /* os centros são as dez áreas do motor, uma por fonte */
+  var FONTES = [
+    {id: 'ia', grupo: 'ia', curto: 'IA', interno: 'IA · julgamento',
+     cliente: 'ANÁLISE AUTOMÁTICA', centro: [0.00, 0.26, -0.36]},
+    {id: 'receita', grupo: 'documento', curto: 'FISCAL', interno: 'Receita Federal',
+     cliente: 'CADASTRO FISCAL', centro: [-0.42, 0.20, 0.54]},
+    {id: 'cadastur', grupo: 'documento', curto: 'TURISMO', interno: 'Cadastur',
+     cliente: 'CADASTRO DE TURISMO', centro: [-0.36, -0.04, 0.70]},
+    {id: 'maps', grupo: 'plataforma', curto: 'DIRETÓRIO', interno: 'Google Maps',
+     cliente: 'DIRETÓRIO DE ESTABELECIMENTOS', centro: [0.38, -0.04, 0.68]},
+    {id: 'ifood', grupo: 'plataforma', curto: 'DELIVERY', interno: 'iFood',
+     cliente: 'PLATAFORMA DE DELIVERY', centro: [0.42, 0.18, 0.52]},
+    {id: 'airbnb', grupo: 'plataforma', curto: 'HOSPEDAGEM', interno: 'Airbnb',
+     cliente: 'PLATAFORMA DE HOSPEDAGEM', centro: [-0.26, 0.30, 0.02]},
+    {id: 'ibge', grupo: 'oficial', curto: 'CENSO', interno: 'IBGE · CNEFE',
+     cliente: 'BASE CENSITÁRIA', centro: [0.00, 0.08, -0.74]},
+    {id: 'estadual', grupo: 'oficial', curto: 'ESTADUAL', interno: 'Base estadual',
+     cliente: 'CADASTRO ESTADUAL', centro: [-0.34, -0.30, 0.20]},
+    {id: 'busca', grupo: 'olhar', curto: 'BUSCA', interno: 'Busca web · Google Maps',
+     cliente: 'BUSCA NA WEB', centro: [0.00, -0.50, -0.48]},
+    {id: 'foto', grupo: 'olhar', curto: 'FACHADA', interno: 'Foto de rua',
+     cliente: 'LEITURA DE FACHADA', centro: [0.34, -0.30, 0.22]}
+  ];
+  var FONTES_DADO = FONTES.slice(1);   /* as que dizem achou/não achou */
+
+  var VEREDITOS = {
+    aprovado:       {rot: 'aprovado', cor: '#1F9D62', tom: 'aprova'},
+    revisao_humana: {rot: 'revisão humana', cor: '#F28C28', tom: 'atencao'},
+    reprovado:      {rot: 'reprovado', cor: '#D64545', tom: 'nega'}
+  };
+
+  var ACOES = {
+    aprovar:  {rot: 'aprovar', curto: 'aprovada', cor: '#14603D',
+               diz: 'a evidência sustenta a cobrança como comercial'},
+    campo:    {rot: 'mandar a campo', curto: 'campo', cor: '#006DFF',
+               diz: 'só uma visita resolve'},
+    revisar:  {rot: 'deixar em revisão', curto: 'revisão', cor: '#C96F16',
+               diz: 'fica na fila, sem decidir agora'},
+    rejeitar: {rot: 'rejeitar', curto: 'rejeitada', cor: '#D64545',
+               diz: 'não há caso aqui — exige o motivo escrito'}
+  };
+
+  var DECISOES = [
+    {id: 'todos', rot: 'todas'},
+    {id: 'sem', rot: 'sem decisão oficial', cor: '#98A2B3'},
+    {id: 'aprovar', rot: 'aprovadas', cor: ACOES.aprovar.cor},
+    {id: 'campo', rot: 'mandadas a campo', cor: ACOES.campo.cor},
+    {id: 'revisar', rot: 'em revisão', cor: ACOES.revisar.cor},
+    {id: 'rejeitar', rot: 'rejeitadas', cor: ACOES.rejeitar.cor}
+  ];
+
+  /* quem pode gravar decisão — o servidor confere de novo (403) */
+  var DECIDEM = ['editor', 'supervisor', 'admin', 'root'];
+  var ALT_FI = 66;          /* altura fixa da linha da fila: é o que deixa virtualizar */
+  var MAX_FICHAS = 150;     /* fichas guardadas em memória */
+  var MAX_LOTE = 50000;     /* o mesmo teto do servidor */
+
+  var CAMPOS_BASE = [
+    ['ligacao', 'ligação', 1], ['titular', 'titular'], ['documento', 'documento', 1],
+    ['telefone', 'telefone', 1], ['endereco', 'endereço'], ['logradouro', 'logradouro'],
+    ['numero', 'número', 1], ['bairro', 'bairro'], ['cidade', 'cidade'], ['cep', 'CEP', 1],
+    ['categoria', 'categoria'], ['subcategoria', 'subcategoria'], ['situacao', 'situação'],
+    ['qualificacao', 'qualificação'], ['qualificacao_motivo', 'motivo da qualificação'],
+    ['eco_res', 'economias residenciais', 1], ['eco_com', 'economias comerciais', 1],
+    ['eco_ind', 'economias industriais', 1], ['eco_pub', 'economias públicas', 1],
+    ['tipo_faturamento', 'tipo de faturamento'], ['medidor', 'hidrômetro', 1],
+    ['lat', 'latitude', 1], ['lng', 'longitude', 1]
+  ];
+
+  var CAMPOS_REG = [
+    ['razao_social', 'razão social'], ['cnpj', 'CNPJ'], ['situacao_cadastral', 'situação cadastral'],
+    ['cnae', 'CNAE'], ['complemento', 'complemento'], ['abertura', 'abertura'],
+    ['categoria', 'categoria'], ['endereco', 'endereço'], ['telefone', 'telefone'],
+    ['site', 'site'], ['instagram', 'instagram'], ['metros', 'distância do hidrômetro'],
+    ['mesmo_endereco', 'mesmo endereço'], ['mesmo_numero', 'mesmo número'],
+    ['criterios_ok', 'critérios do vínculo'], ['confianca', 'confiança do vínculo'],
+    ['origem', 'origem do vínculo'], ['aceito_por', 'aceito por'],
+    ['avaliacao', 'nota no Maps'], ['horario', 'horário'], ['estado_ifood', 'estado no iFood']
+  ];
+
+  var VISADAS = {sv_frente: 'frente', sv_fundo: 'fundo', sv_lado_a: 'lado A', sv_lado_b: 'lado B'};
+
+  /* ===================================================================
+   * 2 · ESTADO
+   * =================================================================== */
+  var S = {
+    casos: [], porLig: {}, vistos: [], quals: [], gerado: null, erro: null,
+    fichas: {}, ordemFichas: [], carregando: {},
+    sel: null, abertos: {}, mudos: false, rotuloCliente: true, tira: true,
+    busca: '', termo: '', fIA: 'todos', fDec: 'todos', fQual: 'todos', fFonte: {},
+    imgs: [], pendente: null
+  };
+
+  function $(s) { return document.querySelector(s); }
+  function esc(t) {
+    return String(t === null || t === undefined ? '' : t)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+  function fonte(id) {
+    for (var i = 0; i < FONTES.length; i++) { if (FONTES[i].id === id) { return FONTES[i]; } }
+    return null;
+  }
+  function grupo(id) {
+    for (var i = 0; i < GRUPOS.length; i++) { if (GRUPOS[i].id === id) { return GRUPOS[i]; } }
+    return GRUPOS[0];
+  }
+  function corFonte(f) { return grupo(f.grupo).cor; }
+  function rotuloFonte(f) { return S.rotuloCliente ? f.cliente : f.interno; }
+  function outroNome(f) { return S.rotuloCliente ? f.interno : f.cliente; }
+  function caso(lig) { return S.porLig[lig] || null; }
+  function ficha(lig) {
+    var f = S.fichas[lig === undefined ? S.sel : lig];
+    return f && !f.erro ? f : null;
+  }
+  function num(n) { return (+n || 0).toLocaleString('pt-BR'); }
+  function veredito(v) {
+    return VEREDITOS[v] || {rot: v ? String(v) : 'sem julgamento', cor: '#8FA0BA', tom: 'nulo'};
+  }
+  function podeDecidir() { return !!(window.EU && DECIDEM.indexOf(window.EU.nivel) >= 0); }
+
+  /* data do servidor → "11/09/26 21:50", no fuso de quem olha */
+  function quando(iso) {
+    if (!iso) { return ''; }
+    var s = String(iso);
+    if (/T\d{2}:\d{2}/.test(s) && /([zZ]|[+-]\d{2}:?\d{2})$/.test(s)) {
+      var d = new Date(s);
+      if (!isNaN(d.getTime())) {
+        var p = function (n) { return (n < 10 ? '0' : '') + n; };
+        return p(d.getDate()) + '/' + p(d.getMonth() + 1) + '/' + String(d.getFullYear()).slice(2)
+          + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+      }
+    }
+    var m = /^(\d{4})-(\d{2})(?:-(\d{2}))?(?:[T ](\d{2}):(\d{2}))?/.exec(s);
+    if (!m) { return s; }
+    return (m[3] ? m[3] + '/' : '') + m[2] + '/' + m[1].slice(2) + (m[4] ? ' ' + m[4] + ':' + m[5] : '');
+  }
+  function agoraIso() {
+    return new Date().toISOString();
+  }
+  function metrosTxt(m) {
+    if (m === null || m === undefined || !isFinite(+m)) { return ''; }
+    m = +m;
+    return m >= 1000 ? (m / 1000).toFixed(1).replace('.', ',') + ' km' : Math.round(m) + ' m';
+  }
+  function valorTxt(v) {
+    if (v === null || v === undefined || v === '') { return ''; }
+    if (v === true) { return 'sim'; }
+    if (v === false) { return 'não'; }
+    if (Array.isArray(v)) { return v.join(', '); }
+    if (typeof v === 'object') { return JSON.stringify(v); }
+    return String(v);
+  }
+
+  function torrada(msg, ruim) {
+    var d = document.createElement('div');
+    d.className = 't' + (ruim ? ' ruim' : '');
+    d.textContent = msg;
+    $('#torradas').appendChild(d);
+    window.setTimeout(function () { d.classList.add('vai'); }, ruim ? 6000 : 3400);
+    window.setTimeout(function () { if (d.parentNode) { d.parentNode.removeChild(d); } }, ruim ? 6500 : 3900);
+  }
+  function chipApi(txt, estado) {
+    $('#api-txt').textContent = txt;
+    $('#chip-api').className = 'chip' + (estado ? ' ' + estado : '');
+  }
+  function lerJson(r) {
+    return r.json().catch(function () { return {}; }).then(function (b) {
+      if (!r.ok) { throw new Error(b.detail || ('HTTP ' + r.status)); }
+      return b;
+    });
+  }
+
+  /* ===================================================================
+   * 3 · A FILA — carga, filtros e a lista virtual
+   * =================================================================== */
+  function carregaFila() {
+    chipApi('carregando a fila…', '');
+    var t0 = Date.now();
+    return fetch('/api/seek/fila').then(lerJson).then(function (d) {
+      var ix = {};
+      d.colunas.forEach(function (nome, i) { ix[nome] = i; });
+      var quals = {};
+      S.casos = d.linhas.map(function (l) {
+        var c = {
+          ligacao: String(l[ix.ligacao]), titular: l[ix.titular] || '', endereco: l[ix.endereco] || '',
+          bairro: l[ix.bairro] || '', cidade: l[ix.cidade] || '', qualificacao: l[ix.qualificacao] || '',
+          economias: l[ix.economias] || 0, ia: l[ix.ia], checagem: l[ix.checagem],
+          avaliado_em: l[ix.avaliado_em], decisao: l[ix.decisao], decidido_em: l[ix.decidido_em],
+          decidido_por: l[ix.decidido_por], f: {}
+        };
+        FONTES_DADO.forEach(function (f) { c.f[f.id] = !!l[ix['f_' + f.id]]; });
+        c.txt = (c.ligacao + ' ' + c.titular + ' ' + c.endereco + ' ' + c.bairro).toLowerCase();
+        if (c.qualificacao) { quals[c.qualificacao] = 1; }
+        return c;
+      });
+      S.porLig = {};
+      S.casos.forEach(function (c) { S.porLig[c.ligacao] = c; });
+      S.quals = Object.keys(quals).sort();
+      S.gerado = d.gerado_em;
+      S.erro = null;
+      chipApi(num(S.casos.length) + ' ligações · ' + ((Date.now() - t0) / 1000).toFixed(1) + ' s', 'on');
+    }).catch(function (e) {
+      S.erro = e.message;
+      chipApi('a fila não carregou', 'ruim');
+      torrada('A fila não carregou: ' + e.message, true);
+    });
+  }
+
+  /* `sem` diz qual recorte ignorar: é assim que cada lista mostra quantas
+   * ligações ela traria com os OUTROS recortes valendo */
+  function passa(c, sem) {
+    if (sem !== '#ia' && S.fIA !== 'todos' && c.ia !== S.fIA) { return false; }
+    if (sem !== '#dec' && S.fDec !== 'todos' && (c.decisao || 'sem') !== S.fDec) { return false; }
+    if (sem !== '#qual' && S.fQual !== 'todos' && c.qualificacao !== S.fQual) { return false; }
+    for (var k in S.fFonte) {
+      if (k === sem || !S.fFonte.hasOwnProperty(k)) { continue; }
+      if (S.fFonte[k] === 'sim' && !c.f[k]) { return false; }
+      if (S.fFonte[k] === 'nao' && c.f[k]) { return false; }
+    }
+    if (sem !== '#texto' && S.termo && c.txt.indexOf(S.termo) < 0) { return false; }
+    return true;
+  }
+
+  function filtra() {
+    S.termo = S.busca.trim().toLowerCase();
+    var r = {vistos: [], ia: {}, dec: {}, qual: {}, fs: {}, ft: {}, tIA: 0, tDec: 0, tQual: 0};
+    FONTES_DADO.forEach(function (f) { r.fs[f.id] = 0; r.ft[f.id] = 0; });
+    for (var i = 0; i < S.casos.length; i++) {
+      var c = S.casos[i];
+      if (passa(c, null)) { r.vistos.push(c); }
+      if (passa(c, '#ia')) { r.ia[c.ia] = (r.ia[c.ia] || 0) + 1; r.tIA++; }
+      if (passa(c, '#dec')) { var d = c.decisao || 'sem'; r.dec[d] = (r.dec[d] || 0) + 1; r.tDec++; }
+      if (passa(c, '#qual')) { r.qual[c.qualificacao] = (r.qual[c.qualificacao] || 0) + 1; r.tQual++; }
+      for (var j = 0; j < FONTES_DADO.length; j++) {
+        var id = FONTES_DADO[j].id;
+        if (passa(c, id)) { r.ft[id]++; if (c.f[id]) { r.fs[id]++; } }
+      }
+    }
+    return r;
+  }
+
+  function seletor(id, rot, cor, valor, opcoes) {
+    return '<span class="fl-rot">' + esc(rot) + '</span>'
+      + '<span class="pt" style="background:' + (cor || '#8FA0BA') + '"></span>'
+      + '<select id="' + id + '" class="fl-sel" aria-label="filtrar por ' + esc(rot) + '">'
+      + opcoes.map(function (o) {
+          return '<option value="' + esc(o.id) + '"' + (valor === o.id ? ' selected' : '') + '>'
+            + esc(o.rot) + ' · ' + num(o.n) + '</option>';
+        }).join('') + '</select>';
+  }
+
+  function pintaFila() {
+    var r = filtra();
+    S.vistos = r.vistos;
+
+    var opIA = [{id: 'todos', rot: 'todos', n: r.tIA}];
+    Object.keys(VEREDITOS).forEach(function (v) {
+      opIA.push({id: v, rot: VEREDITOS[v].rot, n: r.ia[v] || 0});
+    });
+    $('#f-ia').innerHTML = seletor('f-sel-ia', 'IA', S.fIA === 'todos' ? null : VEREDITOS[S.fIA].cor,
+                                   S.fIA, opIA);
+
+    var opQ = [{id: 'todos', rot: 'todas', n: r.tQual}].concat(S.quals.map(function (q) {
+      return {id: q, rot: q.replace(/_/g, ' ').toLowerCase(), n: r.qual[q] || 0};
+    }));
+    $('#f-qual').innerHTML = seletor('f-sel-qual', 'cadastro', null, S.fQual, opQ);
+
+    var opD = DECISOES.map(function (d) {
+      return {id: d.id, rot: d.rot, n: d.id === 'todos' ? r.tDec : (r.dec[d.id] || 0)};
+    });
+    var corD = (DECISOES.filter(function (d) { return d.id === S.fDec; })[0] || {}).cor;
+    $('#f-decisao').innerHTML = seletor('f-sel-dec', 'decisão', corD, S.fDec, opD);
+
+    $('#f-fontes').innerHTML = FONTES_DADO.map(function (f) {
+      var e = S.fFonte[f.id] || 'todos';
+      var n = e === 'nao' ? r.ft[f.id] - r.fs[f.id] : r.fs[f.id];
+      var dica = rotuloFonte(f) + ' — ' + (e === 'sim' ? 'só as que ACHARAM registro'
+               : e === 'nao' ? 'só as que NÃO acharam' : 'sem recorte')
+               + ' · clique para alternar (todas → achou → não achou)';
+      return '<button class="fch" data-ff="' + f.id + '" data-estado="' + e + '" title="' + esc(dica) + '">'
+        + '<i>' + (e === 'sim' ? '✓' : e === 'nao' ? '✕' : '·') + '</i>'
+        + '<span>' + esc(f.curto) + '</span><b>' + num(n) + '</b></button>';
+    }).join('');
+    $('#f-limpa').hidden = !Object.keys(S.fFonte).length;
+
+    var lote = $('#f-lote');
+    lote.innerHTML = '<span>decidir as filtradas</span><b>' + num(S.vistos.length) + '</b>';
+    lote.disabled = !S.vistos.length || !podeDecidir();
+    lote.title = podeDecidir()
+      ? 'grava a decisão oficial em todas as ' + num(S.vistos.length) + ' ligações do recorte'
+      : 'decidir exige nível editor ou acima';
+
+    pintaLista();
+    $('#f-pe').innerHTML = '<span>' + num(S.vistos.length) + ' de ' + num(S.casos.length)
+      + ' ligações</span>' + (S.gerado ? '<span>· fila de ' + esc(quando(S.gerado)) + '</span>' : '')
+      + '<button data-recarrega="1" title="buscar a fila de novo no servidor">atualizar</button>';
+  }
+
+  function linhaFila(c) {
+    var V = veredito(c.ia);
+    var A = c.decisao ? ACOES[c.decisao] : null;
+    var mini = FONTES_DADO.map(function (f) {
+      return c.f[f.id] ? '<i class="on" style="--mc:' + corFonte(f) + '"></i>' : '<i></i>';
+    }).join('');
+    var achou = FONTES_DADO.filter(function (f) { return c.f[f.id]; })
+      .map(function (f) { return f.curto; }).join(', ');
+    return '<button class="fi' + (S.sel === c.ligacao ? ' on' : '') + '" data-caso="'
+      + esc(c.ligacao) + '">'
+      + '<span class="l1"><span class="pt" style="background:' + V.cor + '" title="IA: '
+      + esc(V.rot) + '"></span><b class="mono">' + esc(c.ligacao) + '</b>'
+      + (A ? '<span class="dchip" style="--dc:' + A.cor + '" title="decisão oficial: '
+             + esc(A.rot) + (c.decidido_por ? ' · ' + esc(c.decidido_por) : '') + '">'
+             + esc(A.curto) + '</span>' : '')
+      + '<span class="mini" title="' + esc(achou ? 'acharam: ' + achou : 'nenhuma fonte achou') + '">'
+      + mini + '</span></span>'
+      + '<span class="l2">' + esc(c.titular || '—') + '</span>'
+      + '<span class="l3"><span>' + esc(c.endereco) + (c.bairro ? ' · ' + esc(c.bairro) : '')
+      + '</span><em>' + esc(c.economias) + ' ec.</em></span>'
+      + '</button>';
+  }
+
+  var pedidoLista = 0;
+  function pintaLista() {
+    var lista = $('#f-lista'), vl = $('#f-vl'), jan = $('#f-jan'), vazio = $('#f-vazio');
+    var n = S.vistos.length;
+    if (!n) {
+      vl.style.height = '0px'; jan.innerHTML = '';
+      vazio.hidden = false;
+      vazio.innerHTML = S.casos.length ? 'nenhuma ligação com este recorte'
+        : S.erro ? 'A fila não carregou: ' + esc(S.erro) : 'carregando a fila…';
+      return;
+    }
+    vazio.hidden = true;
+    vl.style.height = (n * ALT_FI) + 'px';
+    var topo = lista.scrollTop, alt = lista.clientHeight || 600;
+    var i0 = Math.max(0, Math.floor(topo / ALT_FI) - 6);
+    var i1 = Math.min(n, Math.ceil((topo + alt) / ALT_FI) + 6);
+    var h = '';
+    for (var i = i0; i < i1; i++) { h += linhaFila(S.vistos[i]); }
+    jan.style.transform = 'translateY(' + (i0 * ALT_FI) + 'px)';
+    jan.innerHTML = h;
+  }
+  function agendaLista() {
+    if (pedidoLista) { return; }
+    pedidoLista = window.requestAnimationFrame(function () { pedidoLista = 0; pintaLista(); });
+  }
+  function indiceNaFila(lig) {
+    for (var i = 0; i < S.vistos.length; i++) { if (S.vistos[i].ligacao === lig) { return i; } }
+    return -1;
+  }
+  function mostraNaFila(lig) {
+    var i = indiceNaFila(lig), lista = $('#f-lista');
+    if (i < 0) { return; }
+    var y = i * ALT_FI;
+    if (y < lista.scrollTop) { lista.scrollTop = y; }
+    else if (y + ALT_FI > lista.scrollTop + lista.clientHeight) {
+      lista.scrollTop = y + ALT_FI - lista.clientHeight;
+    }
+    pintaLista();
+  }
+  function refiltra() {
+    $('#f-lista').scrollTop = 0;
+    pintaFila();
+  }
+
+  /* ===================================================================
+   * 4 · A FICHA — carregada no clique, guardada em memória
+   * =================================================================== */
+  function carregaFicha(lig, silenciosa) {
+    if (S.fichas[lig] && !S.fichas[lig].erro) { return Promise.resolve(S.fichas[lig]); }
+    if (S.carregando[lig]) { return S.carregando[lig]; }
+    var p = fetch('/api/seek/caso/' + encodeURIComponent(lig)).then(lerJson).then(function (d) {
+      S.fichas[lig] = d;
+      S.ordemFichas.push(lig);
+      while (S.ordemFichas.length > MAX_FICHAS) {
+        var velha = S.ordemFichas.shift();
+        if (velha !== S.sel) { delete S.fichas[velha]; }
+      }
+      return d;
+    }).catch(function (e) {
+      if (!silenciosa) { S.fichas[lig] = {erro: e.message}; }
+      return null;
+    }).then(function (d) {
+      delete S.carregando[lig];
+      if (S.sel === lig && !silenciosa) { pintaCaso(); }
+      return d;
+    });
+    S.carregando[lig] = p;
+    return p;
+  }
+
+  function seleciona(lig, rolar) {
+    if (!caso(lig)) { return; }
+    var mudou = S.sel !== lig;
+    S.sel = lig;
+    try { window.history.replaceState(null, '', '#' + lig); } catch (e) { /* sem histórico */ }
+    if (rolar) { mostraNaFila(lig); } else { pintaLista(); }
+    if (mudou) { $('#arvore').scrollTop = 0; }
+    pintaCaso();
+    if (CER.motor) { CER.motor.cobertura(coberturaDoCaso()); }
+    carregaFicha(lig).then(function () {
+      /* a próxima da fila já vem de carona: quem confere anda para baixo */
+      var i = indiceNaFila(lig);
+      if (i >= 0 && S.vistos[i + 1] && S.sel === lig) {
+        carregaFicha(S.vistos[i + 1].ligacao, true);
+      }
+    });
+  }
+
+  function pintaCaso() { pintaFaixa(); pintaArvore(); pintaVeredito(); pintaLado(); }
+
+  /* ===================================================================
+   * 5 · FAIXA DO CASO
+   * =================================================================== */
+  function coordenada(fi) {
+    var b = fi && fi.base;
+    if (!b || !isFinite(+b.lat) || !isFinite(+b.lng) || b.lat === null || b.lng === null) { return null; }
+    return {lat: +b.lat, lon: +b.lng, origem: 'hidrômetro no cadastro da concessionária'};
+  }
+
+  function blocoCoordenada(fi) {
+    var k = coordenada(fi);
+    if (!k) {
+      return '<div class="cf vazio"><i>coordenada</i><b>'
+        + (fi ? 'sem coordenada no cadastro' : '…') + '</b></div>';
+    }
+    var par = k.lat.toFixed(6) + ', ' + k.lon.toFixed(6);
+    var rota = 'https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(k.lat + ',' + k.lon);
+    var rua = 'https://www.google.com/maps/@?api=1&map_action=pano&viewpoint='
+      + encodeURIComponent(k.lat + ',' + k.lon);
+    return '<div class="cf coord"><i>coordenada</i>'
+      + '<b class="mono">' + esc(par) + '</b>'
+      + '<span class="prec" title="' + esc(k.origem) + '">cadastro</span>'
+      + '<a class="ir" href="' + rota + '" target="_blank" rel="noopener noreferrer"'
+      + ' title="abrir rota até esta ligação no mapa">rota ↗</a>'
+      + '<a class="ir" href="' + rua + '" target="_blank" rel="noopener noreferrer"'
+      + ' title="abrir a vista de rua neste ponto">rua ↗</a>'
+      + '<button class="ir copia" data-copia="' + esc(par) + '" title="copiar a coordenada">copiar</button>'
+      + '</div>';
+  }
+
+  function economiasTxt(c, fi) {
+    var b = fi && fi.base;
+    if (!b) { return String(c.economias); }
+    var partes = [];
+    if (+b.eco_res) { partes.push(b.eco_res + ' res'); }
+    if (+b.eco_com) { partes.push(b.eco_com + ' com'); }
+    if (+b.eco_ind) { partes.push(b.eco_ind + ' ind'); }
+    if (+b.eco_pub) { partes.push(b.eco_pub + ' púb'); }
+    return b.economias + (partes.length ? ' (' + partes.join(' · ') + ')' : '');
+  }
+
+  function pintaFaixa() {
+    var c = caso(S.sel);
+    if (!c) { $('#faixa').innerHTML = ''; return; }
+    var fi = ficha();
+    function cf(rot, val, mono, vazio) {
+      return '<div class="cf' + (vazio ? ' vazio' : '') + '"><i>' + esc(rot) + '</i>'
+        + '<b' + (mono ? ' class="mono"' : '') + '>' + esc(val || '—') + '</b></div>';
+    }
+    var doc = fi && fi.base ? fi.base.documento : '';
+    $('#faixa').innerHTML = cf('ligação', c.ligacao, true)
+      + cf('titular', c.titular)
+      + cf('endereço', c.endereco + (c.bairro ? ' · ' + c.bairro : ''))
+      + blocoCoordenada(fi)
+      + cf('economias', economiasTxt(c, fi), true)
+      + cf('cadastro', (c.qualificacao || '').replace(/_/g, ' '))
+      + cf('documento', doc, true, !doc);
+  }
+
+  /* ===================================================================
+   * 6 · A ÁRVORE — grupo · fonte · registro
+   * =================================================================== */
+  function aberto(lig, chave, padrao) {
+    var m = S.abertos[lig] || {};
+    return m[chave] === undefined ? padrao : m[chave];
+  }
+  function seta(ab) { return '<span class="seta">' + (ab ? '▾' : '▸') + '</span>'; }
+
+  /* o que a IA e a checagem disseram de cada POI, para marcar os registros */
+  function contexto(fi) {
+    var ia = fi.ia || {}, ch = ia.checagem || {};
+    var ctx = {ader: {}, nao: {}, rem: {}, val: {}, nome: {}};
+    function poi(a) { return typeof a === 'number' || typeof a === 'string' ? {poi: a} : (a || {}); }
+    (ia.aderentes || []).forEach(function (a) { a = poi(a); if (a.poi !== undefined) { ctx.ader[a.poi] = a; } });
+    (ia.nao_combinam || []).forEach(function (a) { a = poi(a); if (a.poi !== undefined) { ctx.nao[a.poi] = a; } });
+    (ch.removidos || []).forEach(function (a) { a = poi(a); if (a.poi !== undefined) { ctx.rem[a.poi] = a.porque || ''; } });
+    (ch.validos || []).forEach(function (p) { ctx.val[p] = 1; });
+    Object.keys(fi.fontes || {}).forEach(function (k) {
+      ((fi.fontes[k] || {}).registros || []).forEach(function (r) { ctx.nome[r.poi_id] = r.nome; });
+    });
+    return ctx;
+  }
+
+  function achouNa(c, fi, id) {
+    var d = fi && fi.fontes && fi.fontes[id];
+    return d ? !!d.achou : !!(c && c.f[id]);
+  }
+
+  function kv(pares) {
+    var h = pares.filter(function (p) { return p[1] !== '' && p[1] !== null && p[1] !== undefined; })
+      .map(function (p) {
+        return '<div><i>' + esc(p[0]) + '</i><b' + (p[2] ? ' class="mono"' : '') + '>'
+          + esc(p[1]) + '</b></div>';
+      }).join('');
+    return h ? '<div class="kv">' + h + '</div>' : '';
+  }
+
+  function ramoBase(c, fi) {
+    var chave = 'c:base', ab = aberto(c.ligacao, chave, false), b = fi.base || {};
+    var cab = '<button class="no-crit base" data-abre="' + chave + '" data-aberto="' + (ab ? '1' : '0')
+      + '" style="--cc:#5B6274">' + seta(ab)
+      + '<span class="nm">Cadastro</span>'
+      + '<span class="res">' + esc(b.categoria || '') + (b.situacao ? ' · ' + esc(b.situacao) : '') + '</span>'
+      + '<span class="cresce"></span>'
+      + '<span class="regra">a linha da concessionária: toda fonte é hipótese sobre ela</span></button>';
+    if (!ab) { return '<section class="ramo n-base">' + cab + '</section>'; }
+    return '<section class="ramo n-base">' + cab + '<div class="ramo-corpo"><div class="no-corpo base-corpo">'
+      + '<div class="kv-caixa">' + kv(CAMPOS_BASE.map(function (x) {
+          return [x[1], valorTxt(b[x[0]]), x[2]];
+        })) + '</div></div></div></section>';
+  }
+
+  function linhasPoi(lista, ctx, limite) {
+    return lista.slice(0, limite || lista.length).map(function (a) {
+      var id = a.poi !== undefined ? a.poi : a;
+      return '<div class="ia-lin"><b>#' + esc(id) + '</b><span>'
+        + (ctx.nome[id] ? '<em>' + esc(ctx.nome[id]) + '</em>' + (a.por || a.porque ? ' — ' : '') : '')
+        + esc(a.por || a.porque || '') + '</span></div>';
+    }).join('');
+  }
+
+  function ramoIA(c, fi, ctx) {
+    var g = grupo('ia'), chave = 'g:ia', ab = aberto(c.ligacao, chave, true);
+    var ia = fi.ia, V = veredito(ia ? ia.veredito : c.ia);
+    var ch = ia && ia.checagem;
+    var mudou = !!(ch && ch.veredito_ia && ia && ch.veredito_ia !== ia.veredito);
+    var cab = '<button class="no-crit' + (ia && ia.veredito === 'aprovado' ? ' tem' : '') + '" data-abre="'
+      + chave + '" data-aberto="' + (ab ? '1' : '0') + '" style="--cc:' + g.cor + '">' + seta(ab)
+      + '<span class="nm">' + esc(g.rot) + '</span>'
+      + '<span class="res" style="color:' + V.cor + '">' + esc(V.rot)
+      + (mudou ? ' · mudado pela checagem' : '') + '</span>'
+      + '<span class="cresce"></span><span class="regra">' + esc(g.diz) + '</span></button>';
+    if (!ab) { return '<section class="ramo n-ia">' + cab + '</section>'; }
+    if (!ia) {
+      return '<section class="ramo n-ia">' + cab + '<div class="ramo-corpo"><div class="no-corpo">'
+        + '<div class="sem-dado">A IA ainda não julgou esta ligação.</div></div></div></section>';
+    }
+    var nao = ia.nao_combinam || [], rem = (ch && ch.removidos) || [], ader = ia.aderentes || [];
+    var todosNao = aberto(c.ligacao, 'ia:nao', false);
+    var corpo = '<div class="ia-txt">' + esc(ia.motivo || ia.justificativa || 'A IA não deixou motivo.') + '</div>'
+      + (mudou ? '<div class="ia-aviso"><b>checagem do código</b>A IA disse <b>'
+                 + esc(veredito(ch.veredito_ia).rot) + '</b>; a checagem mudou para <b>' + esc(V.rot) + '</b>'
+                 + (ch.porque ? ': ' + esc(ch.porque) : '.') + '</div>' : '')
+      + '<div class="grupo-cab">aderentes para a IA · ' + ader.length + '</div>'
+      + (ader.length ? '<div class="ia-lista">' + linhasPoi(ader, ctx) + '</div>'
+                     : '<div class="sem-dado">A IA não apontou nenhum registro aderente.</div>')
+      + (rem.length ? '<div class="grupo-cab">tirados pela checagem do código · ' + rem.length + '</div>'
+                      + '<div class="ia-lista">' + linhasPoi(rem, ctx) + '</div>' : '')
+      + (nao.length ? '<div class="grupo-cab">não combinam · ' + nao.length + '</div>'
+                      + '<div class="ia-lista">' + linhasPoi(nao, ctx, todosNao ? 0 : 6) + '</div>'
+                      + (nao.length > 6 ? '<button class="mais" data-abre="ia:nao" data-aberto="'
+                          + (todosNao ? '1' : '0') + '">' + (todosNao ? 'mostrar só os 6 primeiros'
+                          : 'mostrar os ' + nao.length) + '</button>' : '') : '')
+      + '<div class="grupo-cab">como foi julgada</div><div class="kv-caixa">'
+      + kv([['julgada em', quando(ia.avaliado_em)], ['modelo', ia.modelo || '', 1],
+            ['processo', ia.processo || ''],
+            ['fotos que a IA viu', (ia.fotos_vistas || []).length
+               ? (ia.fotos_vistas || []).join(' · ') : 'nenhuma']])
+      + '</div>';
+    return '<section class="ramo n-ia">' + cab + '<div class="ramo-corpo"><div class="no-corpo">'
+      + corpo + '</div></div></section>';
+  }
+
+  function cartaoRegistro(r, ctx) {
+    var selos = [];
+    if (r.descartado_em) {
+      selos.push(['cinza', 'vínculo descartado' + (r.descartado_motivo ? ': ' + r.descartado_motivo : '')]);
+    }
+    if (ctx.rem[r.poi_id] !== undefined) { selos.push(['nao', 'tirado pela checagem']); }
+    if (ctx.ader[r.poi_id]) { selos.push(['ok', 'aderente para a IA']); }
+    else if (ctx.nao[r.poi_id]) { selos.push(['alerta', 'não combina para a IA']); }
+    var por = ctx.rem[r.poi_id] ? ['checagem', ctx.rem[r.poi_id]]
+            : ctx.ader[r.poi_id] && ctx.ader[r.poi_id].por ? ['IA', ctx.ader[r.poi_id].por]
+            : ctx.nao[r.poi_id] && ctx.nao[r.poi_id].por ? ['IA', ctx.nao[r.poi_id].por] : null;
+    var valores = CAMPOS_REG.map(function (x) {
+      var v = r[x[0]];
+      if (x[0] === 'metros') { v = metrosTxt(v); }
+      else if (x[0] === 'avaliacao' && v !== null && v !== undefined) {
+        v = String(v).replace('.', ',') + (r.total_avaliacoes ? ' (' + num(r.total_avaliacoes) + ' avaliações)' : '');
+      } else if (x[0] === 'confianca' && v !== null && v !== undefined) {
+        v = (+v).toFixed(2).replace('.', ',');
+      } else { v = valorTxt(v); }
+      return [x[1], v, x[0] === 'cnpj' || x[0] === 'cnae' || x[0] === 'telefone'];
+    });
+    return '<div class="reg' + (r.descartado_em ? ' descartado' : '') + '">'
+      + '<div class="reg-cab"><b>' + esc(r.nome || r.razao_social || '(sem nome)') + '</b>'
+      + '<span class="poi">POI #' + esc(r.poi_id) + '</span>'
+      + selos.map(function (s) { return '<span class="selo ' + s[0] + '">' + esc(s[1]) + '</span>'; }).join('')
+      + '</div>'
+      + (por ? '<div class="reg-por"><b>' + esc(por[0]) + '</b>' + esc(por[1]) + '</div>' : '')
+      + kv(valores) + '</div>';
+  }
+
+  function corpoBusca(b) {
+    if (!b) {
+      return '<div class="sem-dado">Nenhuma busca web válida para esta ligação.</div>';
+    }
+    var texto = b.texto || '';
+    var corte = texto.length > 8000;
+    return '<div class="reg">'
+      + kv([['consulta', b.consulta || ''], ['motor', b.motor || '', 1], ['navegador', b.navegador || '', 1],
+            ['feita em', quando(b.feito_em)]])
+      + (b.print ? '<button class="bt p" data-print="' + esc(b.print) + '">ver o print da busca</button>' : '')
+      + (texto ? '<pre class="busca-txt">' + esc(corte ? texto.slice(0, 8000) : texto)
+                 + (corte ? '\n\n[… mais ' + num(texto.length - 8000) + ' caracteres]' : '') + '</pre>' : '')
+      + '</div>';
+  }
+
+  function corpoFoto(fi, ctx) {
+    var porPoi = {}, ordem = [];
+    (fi.imagens || []).forEach(function (x) {
+      var k = x.fonte + ':' + x.poi_id;
+      if (!porPoi[k]) { porPoi[k] = {poi: x.poi_id, fonte: x.fonte, tipos: [], quando: x.quando}; ordem.push(k); }
+      porPoi[k].tipos.push(VISADAS[x.tipo] || x.tipo);
+    });
+    if (!ordem.length) {
+      return '<div class="sem-dado">Nenhuma foto de rua nem foto publicada dos POIs desta ligação.</div>';
+    }
+    return '<div class="ia-lista">' + ordem.map(function (k) {
+      var p = porPoi[k];
+      return '<div class="ia-lin"><b>#' + esc(p.poi) + '</b><span>'
+        + (ctx.nome[p.poi] ? '<em>' + esc(ctx.nome[p.poi]) + '</em> — ' : '')
+        + (p.fonte === 'maps' ? p.tipos.length + ' foto(s) publicada(s) no Google Maps'
+                              : 'foto de rua: ' + p.tipos.join(', '))
+        + (p.quando ? ' · ' + esc(p.quando) : '') + '</span></div>';
+    }).join('') + '</div>'
+      + '<div class="fonte-nota">As imagens estão na seção do topo da árvore.</div>';
+  }
+
+  function noFonte(c, fi, f, ctx) {
+    var d = (fi.fontes && fi.fontes[f.id]) || {achou: false};
+    var regs = d.registros || [];
+    var vivos = regs.filter(function (r) { return !r.descartado_em; });
+    var nAder = vivos.filter(function (r) { return ctx.ader[r.poi_id]; }).length;
+    var chave = 'f:' + f.id, ab = aberto(c.ligacao, chave, !!d.achou);
+    var sit = d.achou
+      ? (f.id === 'busca' ? 'achou a busca' : f.id === 'foto' ? 'achou ' + (fi.imagens || []).length + ' imagem(ns)'
+         : 'achou · ' + vivos.length + ' registro(s)')
+      : (regs.length ? 'só vínculos descartados' : 'não achou');
+    var cab = '<button class="no-fonte' + (d.achou ? '' : ' mudo') + '" data-abre="' + chave
+      + '" data-aberto="' + (ab ? '1' : '0') + '">' + seta(ab)
+      + '<span class="nm">' + esc(rotuloFonte(f)) + '</span>'
+      + '<span class="sit ' + (d.achou ? 'ok' : 'mudo') + '">' + esc(sit) + '</span>'
+      + (nAder ? '<span class="curado">' + nAder + ' aderente(s) para a IA</span>' : '')
+      + '<span class="cresce"></span>'
+      + '<span class="chave mono">' + esc(outroNome(f)) + '</span></button>';
+    if (!ab) { return cab; }
+    var corpo;
+    if (f.id === 'busca') { corpo = corpoBusca(d.busca); }
+    else if (f.id === 'foto') { corpo = corpoFoto(fi, ctx); }
+    else if (regs.length) {
+      corpo = regs.map(function (r) { return cartaoRegistro(r, ctx); }).join('');
+    } else {
+      corpo = '<div class="sem-dado">A fonte não tem registro vinculado a esta ligação. Não achar '
+        + 'não é negativa: é ausência de dado.</div>';
+    }
+    return cab + '<div class="no-corpo">' + corpo + '</div>';
+  }
+
+  function ramoGrupo(c, fi, g, ctx) {
+    var fs = FONTES.filter(function (f) { return f.grupo === g.id; });
+    var achou = fs.filter(function (f) { return achouNa(c, fi, f.id); });
+    var mostrar = S.mudos ? fs : achou;
+    var chave = 'g:' + g.id, ab = aberto(c.ligacao, chave, achou.length > 0);
+    var cab = '<button class="no-crit' + (achou.length ? ' tem' : '') + '" data-abre="' + chave
+      + '" data-aberto="' + (ab ? '1' : '0') + '" style="--cc:' + g.cor + '">' + seta(ab)
+      + '<span class="nm">' + esc(g.rot) + '</span>'
+      + '<span class="res">' + (achou.length ? achou.length + ' de ' + fs.length + ' fonte(s) acharam'
+                                              : 'nenhuma fonte achou') + '</span>'
+      + '<span class="cresce"></span><span class="regra">' + esc(g.diz) + '</span></button>';
+    if (!ab) { return '<section class="ramo n-' + g.id + '">' + cab + '</section>'; }
+    var dentro = mostrar.length
+      ? mostrar.map(function (f) { return noFonte(c, fi, f, ctx); }).join('')
+      : '<div class="sem-dado">Nenhuma fonte deste grupo achou registro. Use “mostrar quem não '
+        + 'achou” para ver quais eram.</div>';
+    return '<section class="ramo n-' + g.id + '">' + cab + '<div class="ramo-corpo">' + dentro
+      + '</div></section>';
+  }
+
+  function ramoOS(c) {
+    var chave = 'c:os', ab = aberto(c.ligacao, chave, false);
+    var cab = '<button class="no-crit os" data-abre="' + chave + '" data-aberto="' + (ab ? '1' : '0')
+      + '" style="--cc:#5B6274">' + seta(ab) + '<span class="nm">Ordens de serviço</span>'
+      + '<span class="res">sem dado</span><span class="cresce"></span>'
+      + '<span class="regra">o que a operação já sabia sobre este imóvel</span></button>';
+    if (!ab) { return '<section class="ramo n-os">' + cab + '</section>'; }
+    return '<section class="ramo n-os">' + cab + '<div class="ramo-corpo"><div class="no-corpo">'
+      + '<div class="sem-dado">Sem dado: o Comercial Radar ainda não recebe as ordens de serviço da '
+      + 'concessionária. Isto não quer dizer que não houve OS — quer dizer que não sabemos.</div>'
+      + '</div></div></section>';
+  }
+
+  function ramoImpacto(c) {
+    var chave = 'c:impacto', ab = aberto(c.ligacao, chave, false);
+    var cab = '<button class="no-crit impacto" data-abre="' + chave + '" data-aberto="' + (ab ? '1' : '0')
+      + '" style="--cc:#0E8C9E">' + seta(ab) + '<span class="nm">Impacto financeiro</span>'
+      + '<span class="res">sem dado</span><span class="cresce"></span>'
+      + '<span class="regra">o que a retificação faria com a conta</span></button>';
+    if (!ab) { return '<section class="ramo n-impacto">' + cab + '</section>'; }
+    return '<section class="ramo n-impacto">' + cab + '<div class="ramo-corpo"><div class="no-corpo">'
+      + '<div class="sem-dado">Sem dado: o Comercial Radar não recebe consumo nem valor faturado. '
+      + 'Sem os dois, qualquer número aqui seria estimativa nossa — e estimativa não vira valor a '
+      + 'cobrar.</div></div></div></section>';
+  }
+
+  function pintaArvore() {
+    var c = caso(S.sel), alvo = $('#arvore');
+    if (!c) {
+      alvo.innerHTML = '<div class="vazio-g">' + (S.casos.length ? 'Escolha uma ligação na fila à esquerda.'
+        : S.erro ? 'A fila não carregou: ' + esc(S.erro) : 'Carregando a fila…') + '</div>';
+      return;
+    }
+    var fi = S.fichas[c.ligacao];
+    if (!fi) {
+      alvo.innerHTML = '<div class="vazio-g">carregando a ficha da ligação ' + esc(c.ligacao) + '…</div>';
+      return;
+    }
+    if (fi.erro) {
+      alvo.innerHTML = '<div class="vazio-g">A ficha não carregou: ' + esc(fi.erro)
+        + '<br><br><button class="bt p" data-refaz="' + esc(c.ligacao) + '">tentar de novo</button></div>';
+      return;
+    }
+    var ctx = contexto(fi);
+    alvo.innerHTML = secaoImagens(c, fi) + ramoIA(c, fi, ctx) + ramoBase(c, fi)
+      + GRUPOS.slice(1).map(function (g) { return ramoGrupo(c, fi, g, ctx); }).join('')
+      + ramoOS(c) + ramoImpacto(c);
+    alvo.setAttribute('data-ligacao', c.ligacao);
+    var mini = alvo.querySelector('.terr-mini');
+    if (mini) { window.setTimeout(function () { desenhaTerritorio(mini, fi, true); }, 20); }
+    ajustaRolo();
+  }
+
+  /* ===================================================================
+   * 6a · TERRITÓRIO, RUA E IMAGENS
+   * =================================================================== */
+  function anguloDe(id) {
+    var h = 0, i, s = String(id);
+    for (i = 0; i < s.length; i++) { h = (h * 31 + s.charCodeAt(i)) % 3600; }
+    return (h / 3600) * Math.PI * 2;
+  }
+
+  function pontosDoTerritorio(fi) {
+    var pts = [];
+    if (!fi || !fi.fontes) { return pts; }
+    FONTES_DADO.forEach(function (f) {
+      var d = fi.fontes[f.id];
+      ((d && d.registros) || []).forEach(function (r) {
+        if (r.descartado_em || r.metros === null || r.metros === undefined) { return; }
+        pts.push({id: 'p' + r.poi_id, rot: f.curto + ' #' + r.poi_id, nome: r.nome || '', m: +r.metros,
+                  cor: corFonte(f)});
+      });
+    });
+    pts.sort(function (a, b) { return a.m - b.m; });
+    return pts.slice(0, 40);
+  }
+
+  function desenhaTerritorio(cv, fi, mini) {
+    if (!cv || !cv.getContext) { return; }
+    var ctx = cv.getContext('2d');
+    var dpr = Math.min(window.devicePixelRatio || 1, 3);
+    var L = cv.clientWidth || 300, A = cv.clientHeight || 200;
+    cv.width = Math.round(L * dpr); cv.height = Math.round(A * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, L, A);
+    var pts = pontosDoTerritorio(fi);
+    var maior = 120;
+    pts.forEach(function (p) { if (p.m > maior) { maior = p.m; } });
+    var raio = Math.min(L, A) * 0.40, cx = L / 2, cy = A / 2, escala = raio / (maior * 1.12);
+    ctx.fillStyle = '#F7F9FC'; ctx.fillRect(0, 0, L, A);
+    [[30, '30 m'], [100, '100 m']].forEach(function (par) {
+      var r = par[0] * escala;
+      if (r < 4) { return; }
+      ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.strokeStyle = '#CFD6E0'; ctx.setLineDash([4, 5]); ctx.lineWidth = 1;
+      ctx.stroke(); ctx.setLineDash([]);
+      if (!mini) {
+        ctx.fillStyle = '#98A2B3'; ctx.font = '9px ui-monospace, Menlo, monospace';
+        ctx.textAlign = 'left'; ctx.fillText(par[1], cx + r + 4, cy - 3);
+      }
+    });
+    var rotula = !mini && pts.length <= 12;
+    pts.forEach(function (p) {
+      var a = anguloDe(p.id), r = Math.min(p.m * escala, raio * 1.06);
+      var x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r;
+      ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(x, y);
+      ctx.strokeStyle = p.m <= 100 ? 'rgba(11,46,89,.22)' : 'rgba(214,69,69,.30)';
+      ctx.lineWidth = 1; ctx.stroke();
+      ctx.beginPath(); ctx.arc(x, y, mini ? 3.5 : 5, 0, Math.PI * 2);
+      ctx.fillStyle = p.cor; ctx.fill();
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
+      if (rotula) {
+        ctx.fillStyle = '#2A2E35'; ctx.font = '10px -apple-system, Segoe UI, sans-serif';
+        ctx.textAlign = x < cx ? 'right' : 'left';
+        ctx.fillText(p.rot + '  ' + metrosTxt(p.m), x + (x < cx ? -9 : 9), y + 3);
+      }
+    });
+    ctx.beginPath(); ctx.arc(cx, cy, mini ? 5 : 7, 0, Math.PI * 2);
+    ctx.fillStyle = '#F28C28'; ctx.fill();
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
+    if (!mini) {
+      ctx.fillStyle = '#0B2E59'; ctx.font = '600 11px -apple-system, Segoe UI, sans-serif';
+      ctx.textAlign = 'center'; ctx.fillText('ligação ' + S.sel, cx, cy - 14);
+      if (!pts.length) {
+        ctx.fillStyle = '#98A2B3'; ctx.font = '11px -apple-system, Segoe UI, sans-serif';
+        ctx.fillText('nenhum registro com distância medida', cx, cy + 34);
+      }
+    }
+  }
+
+  function abreTerritorio() {
+    var fi = ficha();
+    if (!fi) { return; }
+    var pts = pontosDoTerritorio(fi);
+    $('#modal-tit').textContent = 'Território · ligação ' + S.sel;
+    $('#modal-corpo').innerHTML = '<div class="terr-grande"><canvas id="terr-cv"></canvas></div>'
+      + '<p class="img-legenda"><i>o que este mapa mostra</i>'
+      + 'O hidrômetro da ligação no centro e cada registro vinculado na distância medida até ele. '
+      + 'Os anéis de 30 m e 100 m são só régua de leitura.</p>'
+      + '<div class="terr-lista">' + (pts.length
+          ? pts.map(function (p) {
+              return '<div class="tl' + (p.m > 100 ? ' fora' : '') + '">'
+                + '<i style="background:' + p.cor + '"></i>'
+                + '<span>' + esc(p.rot) + (p.nome ? ' · ' + esc(p.nome) : '') + '</span>'
+                + '<b class="mono">' + metrosTxt(p.m) + '</b>'
+                + '<em>' + (p.m > 100 ? 'além de 100 m' : 'até 100 m') + '</em></div>';
+            }).join('')
+          : '<div class="sem-dado">Nenhum registro com distância medida.</div>')
+      + '</div>';
+    $('#modal-pe').innerHTML = '<button class="bt p" data-fecha="1">fechar</button>';
+    $('#modal').hidden = false;
+    window.setTimeout(function () { desenhaTerritorio($('#terr-cv'), fi, false); }, 30);
+  }
+
+  function abreRua() {
+    var k = coordenada(ficha());
+    $('#modal-tit').textContent = 'Vista de rua · ligação ' + S.sel;
+    if (!k) {
+      $('#modal-corpo').innerHTML = '<div class="sem-dado">Esta ligação não tem coordenada no '
+        + 'cadastro — sem ponto, não há vista de rua.</div>';
+    } else {
+      $('#modal-corpo').innerHTML = '<div class="rua-aviso">A vista de rua vem de um provedor '
+        + 'externo. Carregar significa <b>enviar a coordenada desta ligação para ele</b> — por isso '
+        + 'nada foi carregado até aqui.</div>'
+        + '<div class="rua-tela" id="rua-tela"><button class="bt pri" data-rua="'
+        + esc(k.lat + ',' + k.lon) + '">carregar vista de rua</button></div>'
+        + '<p class="img-meta mono">' + esc(k.lat.toFixed(6) + ', ' + k.lon.toFixed(6)) + ' · '
+        + esc(k.origem) + '</p>';
+    }
+    $('#modal-pe').innerHTML = '<button class="bt p" data-fecha="1">fechar</button>';
+    $('#modal').hidden = false;
+  }
+
+  function carregaRua(par) {
+    var tela = $('#rua-tela');
+    if (!tela) { return; }
+    var src = 'https://maps.google.com/maps?q=&layer=c&cbll=' + encodeURIComponent(par)
+      + '&cbp=11,0,0,0,0&output=svembed';
+    tela.innerHTML = '<iframe src="' + src + '" loading="lazy" referrerpolicy="no-referrer"'
+      + ' allowfullscreen title="vista de rua"></iframe>';
+  }
+
+  /* as imagens da ficha, com a legenda dizendo de onde vêm e de quem são */
+  function imagensDaFicha(fi, ctx) {
+    var lista = (fi.imagens || []).map(function (x) {
+      var nome = ctx.nome[x.poi_id] ? ' (' + ctx.nome[x.poi_id] + ')' : '';
+      return {
+        id: x.id, url: x.url, fonte: x.fonte === 'maps' ? fonte('maps') : fonte('foto'),
+        rot: x.fonte === 'maps' ? 'foto publicada' : 'rua · ' + (VISADAS[x.tipo] || x.tipo),
+        legenda: x.fonte === 'maps'
+          ? 'Foto publicada no Google Maps do POI #' + x.poi_id + nome + '.'
+          : 'Foto de rua, visada ' + (VISADAS[x.tipo] || x.tipo) + ', tirada do ponto do POI #'
+            + x.poi_id + nome + '.',
+        quando: x.quando || 'sem data'
+      };
+    });
+    var b = fi.fontes && fi.fontes.busca && fi.fontes.busca.busca;
+    if (b && b.print) {
+      lista.unshift({id: 'busca' + b.id, url: b.print, fonte: fonte('busca'), rot: 'print da busca',
+                     legenda: 'A página que a busca pelo endereço mostrou: ' + (b.consulta || '') + '.',
+                     quando: quando(b.feito_em)});
+    }
+    return lista;
+  }
+
+  function secaoImagens(c, fi) {
+    var ctx = contexto(fi);
+    var imgs = imagensDaFicha(fi, ctx);
+    S.imgs = imgs;
+    var ab = S.tira;
+    var pts = pontosDoTerritorio(fi);
+    var k = coordenada(fi);
+    var cab = '<button class="img-cab" data-abre="sec:imagens" data-aberto="' + (ab ? '1' : '0') + '">'
+      + seta(ab) + '<span class="nm">Território, rua e imagens</span>'
+      + '<span class="res">' + pts.length + ' registro(s) no mapa · ' + imgs.length + ' imagem(ns)</span>'
+      + '<span class="cresce"></span>'
+      + '<span class="lgpd">a vista de rua só carrega no clique · a legenda diz de onde a imagem vem</span>'
+      + '</button>';
+    if (!ab) { return '<section id="imagens">' + cab + '</section>'; }
+    var cartoes = [
+      '<figure class="img-cart terr" data-terr="1" tabindex="0" role="button">'
+      + '<div class="img-tela"><canvas class="terr-mini"></canvas><span class="img-sel ok">local</span></div>'
+      + '<figcaption><b>TERRITÓRIO</b><span>O hidrômetro no centro e cada registro na distância '
+      + 'medida até ele.</span><i class="mono">' + pts.length + ' ponto(s) · desenhado aqui</i>'
+      + '</figcaption></figure>',
+      '<figure class="img-cart rua" data-rua-abre="1" tabindex="0" role="button">'
+      + '<div class="img-tela rua-cap"><span class="rua-icone">◉</span><span class="img-sel '
+      + (k ? 'ok' : 'nao') + '">' + (k ? 'sob clique' : 'sem coord') + '</span></div>'
+      + '<figcaption><b>VISTA DE RUA</b><span>' + (k
+          ? 'Acervo do provedor no ponto do hidrômetro. Carrega só quando alguém pede.'
+          : 'Sem coordenada no cadastro: não há vista de rua.')
+      + '</span><i class="mono">provedor externo</i></figcaption></figure>'
+    ].concat(imgs.map(function (x) {
+      return '<figure class="img-cart" data-img="' + esc(x.id) + '" tabindex="0" role="button">'
+        + '<div class="img-tela"><img loading="lazy" src="' + esc(window.comToken(x.url)) + '" alt="'
+        + esc(x.legenda) + '"><span class="img-sel ok">' + esc(x.rot) + '</span></div>'
+        + '<figcaption><b>' + esc(rotuloFonte(x.fonte)) + '</b><span>' + esc(x.legenda) + '</span>'
+        + '<i class="mono">' + esc(x.quando) + '</i></figcaption></figure>';
+    }));
+    return '<section id="imagens">' + cab + '<div class="img-rolo">'
+      + '<button class="rola esq" data-rola="-1" aria-label="rolar para a esquerda">‹</button>'
+      + '<div class="img-tira" id="img-tira">' + cartoes.join('') + '</div>'
+      + '<button class="rola dir" data-rola="1" aria-label="rolar para a direita">›</button>'
+      + '</div></section>';
+  }
+
+  function ajustaRolo() {
+    var tira = $('#img-tira');
+    if (!tira) { return; }
+    var rolo = tira.parentNode;
+    var passa = tira.scrollWidth > tira.clientWidth + 4;
+    rolo.classList.toggle('tem-rolo', passa);
+    if (!passa) { return; }
+    rolo.querySelector('.rola.esq').disabled = tira.scrollLeft <= 2;
+    rolo.querySelector('.rola.dir').disabled = tira.scrollLeft + tira.clientWidth >= tira.scrollWidth - 2;
+  }
+
+  function abreImagem(id) {
+    var x = S.imgs.filter(function (i) { return i.id === id; })[0];
+    if (!x) { return; }
+    mostraImagem(rotuloFonte(x.fonte) + ' · ' + x.rot, x.url, x.legenda, x.quando);
+  }
+  function mostraImagem(titulo, url, legenda, data) {
+    $('#modal-tit').textContent = titulo;
+    $('#modal-corpo').innerHTML = '<div class="img-grande"><img src="' + esc(window.comToken(url))
+      + '" alt="' + esc(legenda) + '"></div>'
+      + '<p class="img-legenda"><i>de onde vem esta imagem</i>' + esc(legenda) + '</p>'
+      + '<p class="img-meta mono">' + esc(data || '') + ' · ligação ' + esc(S.sel) + '</p>';
+    $('#modal-pe').innerHTML = '<button class="bt p" data-fecha="1">fechar</button>';
+    $('#modal').hidden = false;
+  }
+
+  /* ===================================================================
+   * 7 · VEREDITO DA IA E DECISÃO OFICIAL
+   * =================================================================== */
+  function decisaoAtual(c, fi) {
+    if (fi && fi.decisao) { return fi.decisao; }
+    if (c.decisao) { return {acao: c.decisao, em: c.decidido_em, quem: c.decidido_por}; }
+    return null;
+  }
+
+  function pintaVeredito() {
+    var c = caso(S.sel);
+    if (!c) { $('#veredito').innerHTML = ''; $('#decisao').innerHTML = ''; return; }
+    var fi = ficha(), ia = fi && fi.ia;
+    var V = veredito(c.ia);
+    var texto = ia ? (ia.motivo || ia.justificativa || 'A IA não deixou motivo.')
+                   : (S.fichas[S.sel] && S.fichas[S.sel].erro ? 'a ficha não carregou' : 'carregando o parecer…');
+    var fontesAchou = FONTES_DADO.filter(function (f) { return c.f[f.id]; });
+    var motivos = fontesAchou.length
+      ? fontesAchou.map(function (f) {
+          return '<span class="pm" style="--mc:' + corFonte(f) + '"><i></i><b>' + esc(rotuloFonte(f))
+            + '</b><em>achou</em></span>';
+        }).join('')
+      : '<span class="pm vazio">nenhuma fonte achou registro</span>';
+    var ressalvas = [];
+    var ch = ia && ia.checagem;
+    if (ch && ch.veredito_ia && ch.veredito_ia !== ia.veredito) {
+      ressalvas.push('a IA disse <b>' + esc(veredito(ch.veredito_ia).rot) + '</b>; a checagem do código mudou');
+    }
+    var dec = decisaoAtual(c, fi);
+    if (dec && ((dec.acao === 'aprovar') !== (c.ia === 'aprovado'))) {
+      ressalvas.push('a decisão oficial (<b>' + esc(ACOES[dec.acao].rot) + '</b>) diverge da IA');
+    }
+    $('#veredito').innerHTML = '<div class="par ' + V.tom + '">'
+      + '<div class="par-cab"><i>veredito da IA · uma das fontes</i><b>' + esc(V.rot) + '</b>'
+      + '<span class="par-chip">' + (c.avaliado_em ? 'julgada em ' + esc(quando(c.avaliado_em))
+                                                  : 'sem data de julgamento') + '</span></div>'
+      + '<p class="par-texto" title="' + esc(texto) + '">' + esc(texto) + '</p>'
+      + '<div class="par-motivos">' + motivos
+      + ressalvas.map(function (r) { return '<span class="pr">⚠ ' + r + '</span>'; }).join('')
+      + '</div></div>';
+
+    var sug = c.ia === 'aprovado' ? 'aprovar' : c.ia === 'reprovado' ? 'rejeitar' : null;
+    var pode = podeDecidir();
+    var botoes = Object.keys(ACOES).map(function (a) {
+      return '<button class="bt ' + (a === sug ? 'pri' : 'p') + (dec && dec.acao === a ? ' escolhido' : '')
+        + '" data-decide="' + a + '"' + (pode ? '' : ' disabled')
+        + ' title="' + esc(pode ? ACOES[a].diz : 'decidir exige nível editor ou acima') + '">'
+        + esc(ACOES[a].rot) + (a === sug ? '<span class="sug">IA</span>' : '') + '</button>';
+    }).join('');
+    var hist = fi && fi.decisoes ? fi.decisoes.length : 0;
+    $('#decisao').innerHTML = '<div class="dec-estado' + (dec ? ' feito' : '') + '">'
+      + (dec
+          ? '<b>' + esc(ACOES[dec.acao] ? ACOES[dec.acao].rot : dec.acao) + '</b><span>'
+            + esc(dec.quem || '') + (dec.em ? ' · ' + esc(quando(dec.em)) : '')
+            + (dec.motivo ? ' · ' + esc(dec.motivo) : '') + '</span>'
+          : '<b>sem decisão oficial</b><span>a IA diz <b>' + esc(V.rot) + '</b></span>')
+      + '</div>'
+      + '<div class="dec-curadoria">'
+      + (hist > 1 ? '<button class="lk" data-historico="1">' + hist + ' decisões registradas</button> · ' : '')
+      + 'a decisão oficial não altera o veredito da IA nem o das fontes</div>'
+      + '<div class="cresce"></div><div class="acoes">' + botoes + '</div>';
+  }
+
+  function decide(acao) {
+    var c = caso(S.sel);
+    if (!c) { return; }
+    if (!podeDecidir()) { torrada('decidir exige nível editor ou acima', true); return; }
+    if (acao === 'rejeitar') { abreDecisao([c.ligacao], acao); return; }
+    grava([c.ligacao], acao, '');
+  }
+
+  function descreveFiltros() {
+    var f = [];
+    if (S.fIA !== 'todos') { f.push('IA: ' + veredito(S.fIA).rot); }
+    if (S.fQual !== 'todos') { f.push('cadastro: ' + S.fQual.replace(/_/g, ' ').toLowerCase()); }
+    if (S.fDec !== 'todos') {
+      f.push('decisão: ' + (DECISOES.filter(function (d) { return d.id === S.fDec; })[0] || {}).rot);
+    }
+    Object.keys(S.fFonte).forEach(function (k) {
+      f.push(fonte(k).curto + ': ' + (S.fFonte[k] === 'sim' ? 'achou' : 'não achou'));
+    });
+    if (S.termo) { f.push('busca: “' + S.termo + '”'); }
+    return f;
+  }
+
+  function abreDecisao(ligs, acao) {
+    S.pendente = {ligs: ligs, acao: acao || null};
+    var lote = ligs.length > 1;
+    var filtros = descreveFiltros();
+    $('#modal-tit').textContent = lote ? 'Decisão oficial em lote' : 'Decisão oficial · ligação ' + ligs[0];
+    $('#modal-corpo').innerHTML = (lote
+        ? '<div class="lote-resumo"><b>' + num(ligs.length) + '</b> ligações do recorte atual recebem '
+          + 'a mesma decisão.' + (filtros.length
+            ? '<ul>' + filtros.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>'
+            : ' Nenhum recorte está ativo: é a fila inteira.') + '</div>'
+        : '')
+      + '<div class="acao-opcoes">' + Object.keys(ACOES).map(function (a) {
+          return '<button class="acao-op' + (S.pendente.acao === a ? ' on' : '') + '" data-escolhe="' + a
+            + '" style="--ac:' + ACOES[a].cor + '"><b>' + esc(ACOES[a].rot) + '</b><span>'
+            + esc(ACOES[a].diz) + '</span></button>';
+        }).join('') + '</div>'
+      + '<label class="obs-rot" for="dec-motivo" id="dec-motivo-rot">motivo</label>'
+      + '<textarea id="dec-motivo" rows="3" placeholder="por que esta decisão — obrigatório para rejeitar"></textarea>'
+      + '<p class="obs-ajuda">A decisão oficial é gravada à parte: o veredito da IA e o das fontes '
+      + 'continuam como estão. Fica registrado quem decidiu, quando e por quê'
+      + (lote ? ', e as ' + num(ligs.length) + ' linhas ficam marcadas como um mesmo lote.' : '.') + '</p>';
+    pintaPeDecisao();
+    $('#modal').hidden = false;
+    window.setTimeout(function () { $('#dec-motivo').focus(); }, 40);
+  }
+
+  function pintaPeDecisao() {
+    var p = S.pendente;
+    if (!p) { return; }
+    var rot = $('#dec-motivo-rot');
+    if (rot) { rot.textContent = p.acao === 'rejeitar' ? 'motivo · obrigatório' : 'motivo · opcional'; }
+    $('#modal-pe').innerHTML = '<button class="bt p" data-fecha="1">cancelar</button>'
+      + '<span class="cresce"></span>'
+      + '<button class="bt pri' + (p.acao === 'rejeitar' ? ' ruim' : '') + '" data-grava="1"'
+      + (p.acao ? '' : ' disabled') + '>'
+      + (p.acao ? esc(ACOES[p.acao].rot) : 'escolha a decisão')
+      + (p.ligs.length > 1 ? ' · ' + num(p.ligs.length) + ' ligações' : '') + '</button>';
+  }
+
+  function confirmaDecisao() {
+    var p = S.pendente;
+    if (!p || !p.acao) { return; }
+    var motivo = ($('#dec-motivo') && $('#dec-motivo').value || '').trim();
+    if (p.acao === 'rejeitar' && !motivo) { torrada('rejeitar exige o motivo escrito', true); return; }
+    var bt = document.querySelector('[data-grava]');
+    if (bt) { bt.disabled = true; bt.textContent = 'gravando…'; }
+    grava(p.ligs, p.acao, motivo).then(function (ok) {
+      if (ok) { $('#modal').hidden = true; S.pendente = null; }
+      else if (bt) { pintaPeDecisao(); }
+    });
+  }
+
+  /* grava, e só mexe na tela com a resposta do servidor na mão */
+  function grava(ligs, acao, motivo) {
+    var antes = indiceNaFila(S.sel);
+    return fetch('/api/seek/decidir', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ligacoes: ligs, acao: acao, motivo: motivo || null})
+    }).then(lerJson).then(function (b) {
+      var agora = agoraIso();
+      var quem = (window.EU && (window.EU.nome || window.EU.email)) || '';
+      var sem = {};
+      (b.sem_veredito || []).forEach(function (l) { sem[l] = 1; });
+      ligs.forEach(function (l) {
+        if (sem[l]) { return; }
+        var c = S.porLig[l];
+        if (c) { c.decisao = acao; c.decidido_em = agora; c.decidido_por = quem; }
+        var fi = S.fichas[l];
+        if (fi && !fi.erro) {
+          var d = {acao: acao, motivo: motivo || null, quem: quem, em: agora, lote: b.lote};
+          fi.decisoes = [d].concat(fi.decisoes || []);
+          fi.decisao = d;
+        }
+      });
+      var tudo = b.gravadas >= b.pedidas;
+      torrada(ligs.length === 1 ? (tudo ? 'decisão gravada: ' + ACOES[acao].rot : 'o servidor não gravou a decisão')
+              : num(b.gravadas) + ' de ' + num(b.pedidas) + ' decisões gravadas', !tudo);
+      pintaFila();
+      /* a ligação saiu do recorte (ex.: "sem decisão oficial"): a próxima assume */
+      if (S.sel && indiceNaFila(S.sel) < 0 && S.vistos.length) {
+        seleciona(S.vistos[Math.min(Math.max(antes, 0), S.vistos.length - 1)].ligacao, true);
+      } else {
+        pintaVeredito(); pintaLado();
+      }
+      return true;
+    }).catch(function (e) {
+      torrada('não gravou: ' + e.message, true);
+      return false;
+    });
+  }
+
+  function abreHistorico() {
+    var fi = ficha();
+    if (!fi) { return; }
+    $('#modal-tit').textContent = 'Decisões · ligação ' + S.sel;
+    $('#modal-corpo').innerHTML = (fi.decisoes || []).map(function (d) {
+      return '<div class="hist-lin"><i>' + esc(quando(d.em)) + '</i><div><b>'
+        + esc(ACOES[d.acao] ? ACOES[d.acao].rot : d.acao) + '</b> · ' + esc(d.quem || '')
+        + (d.motivo ? '<span>' + esc(d.motivo) + '</span>' : '')
+        + (d.lote ? '<span class="mono">lote ' + esc(String(d.lote).slice(0, 8)) + '</span>' : '')
+        + '</div></div>';
+    }).join('') || '<div class="sem-dado">Nenhuma decisão registrada.</div>';
+    $('#modal-pe').innerHTML = '<button class="bt p" data-fecha="1">fechar</button>';
+    $('#modal').hidden = false;
+  }
+
+  /* ===================================================================
+   * 8 · O VOLUME — as dez fontes desta ligação
+   * =================================================================== */
+  var CER = {motor: null, laco: 0, olho: null};
+  var MOV_REDUZIDO = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  var PONTEIRO = {x: 0, y: 0};
+
+  function coberturaDoCaso() {
+    var c = caso(S.sel), m = {};
+    FONTES.forEach(function (f) {
+      if (!c) { m[f.id] = null; return; }
+      if (f.id === 'ia') {
+        m.ia = c.ia === 'aprovado' ? 1 : c.ia === 'revisao_humana' ? 0.55 : c.ia ? 0.2 : null;
+        return;
+      }
+      m[f.id] = c.f[f.id] ? 1 : null;   /* não achou fica anônima, como camada sem registro */
+    });
+    return m;
+  }
+
+  function paraCerebro() {
+    if (CER.laco) { window.cancelAnimationFrame(CER.laco); CER.laco = 0; }
+    if (CER.olho) { CER.olho.disconnect(); CER.olho = null; }
+    if (CER.motor) { CER.motor.destroi(); CER.motor = null; }
+  }
+
+  function dizArea(id) {
+    var el = $('#cer-leg'), c = caso(S.sel), tela = $('#lado .lado-tela');
+    if (!el || !tela) { return; }
+    var f = id ? fonte(id) : null;
+    if (!f || !c) { el.hidden = true; return; }
+    var fi = ficha(), estado, classe;
+    if (f.id === 'ia') {
+      estado = 'veredito: ' + veredito(c.ia).rot;
+      classe = c.ia === 'aprovado' ? 'ok' : 'nada';
+    } else if (c.f[f.id]) {
+      var d = fi && fi.fontes && fi.fontes[f.id];
+      var n = d && d.registros ? d.registros.filter(function (r) { return !r.descartado_em; }).length : null;
+      estado = 'achou' + (n ? ' · ' + n + ' registro(s)' : '');
+      classe = 'ok';
+    } else { estado = 'não achou registro para esta ligação'; classe = 'mudo'; }
+    el.innerHTML = '<b><i style="background:' + corFonte(f) + '"></i>' + esc(rotuloFonte(f)) + '</b>'
+      + '<span>' + esc(grupo(f.grupo).rot) + ' · <span class="mono">' + esc(outroNome(f)) + '</span></span>'
+      + '<em class="' + classe + '">' + esc(estado) + '</em>';
+    el.hidden = false;
+    var cx = tela.clientWidth, cy = tela.clientHeight, L = el.offsetWidth, A = el.offsetHeight;
+    var x = Math.min(Math.max(10, PONTEIRO.x - L / 2), Math.max(10, cx - L - 10));
+    var acima = PONTEIRO.y > A + 26;
+    var y = acima ? PONTEIRO.y - A - 14 : Math.min(PONTEIRO.y + 16, cy - A - 8);
+    el.style.left = x + 'px';
+    el.style.top = y + 'px';
+    el.className = 'cer-leg' + (acima ? ' acima' : ' abaixo');
+    el.style.setProperty('--seta', Math.min(Math.max(14, PONTEIRO.x - x), L - 14) + 'px');
+  }
+
+  function ligaCerebro() {
+    var cv = document.getElementById('cer-cv');
+    paraCerebro();
+    if (!cv || !window.MotorCerebro) { return; }
+    var meu = window.MotorCerebro.cria(cv, {
+      areas: FONTES.map(function (f) {
+        return {id: f.id, nome: f.curto, cor: corFonte(f), centro: f.centro};
+      }),
+      velocidade: 0.4,
+      rotulos: true,
+      aoPassarArea: dizArea,
+      aoClicarArea: function (id) {
+        var f = fonte(id), c = caso(S.sel);
+        if (!f || !c) { return; }
+        if (!S.abertos[S.sel]) { S.abertos[S.sel] = {}; }
+        S.abertos[S.sel]['g:' + f.grupo] = true;
+        S.abertos[S.sel]['f:' + f.id] = true;
+        if (f.id !== 'ia' && !c.f[f.id]) { S.mudos = true; sincronizaMudos(); }
+        pintaArvore();
+        var no = document.querySelector('[data-abre="' + (f.id === 'ia' ? 'g:ia' : 'f:' + f.id) + '"]');
+        if (no) {
+          no.scrollIntoView({block: 'center'});
+          no.classList.add('piscou');
+          window.setTimeout(function () { no.classList.remove('piscou'); }, 1200);
+        }
+      }
+    });
+    CER.motor = meu;
+    cv.addEventListener('mousemove', function (ev) {
+      var r = cv.getBoundingClientRect();
+      PONTEIRO.x = ev.clientX - r.left;
+      PONTEIRO.y = ev.clientY - r.top;
+    });
+    cv.addEventListener('mouseleave', function () { dizArea(null); });
+    meu.cobertura(coberturaDoCaso());
+    meu.redimensiona();
+    if (window.ResizeObserver) {
+      CER.olho = new window.ResizeObserver(function () {
+        if (!CER.motor || cv.clientWidth < 8 || cv.clientHeight < 8) { return; }
+        CER.motor.redimensiona();
+        if (MOV_REDUZIDO) { CER.motor.quadro(0); }
+      });
+      CER.olho.observe(cv);
+    }
+    if (MOV_REDUZIDO) { meu.quadro(0); return; }
+    function quadro(t) {
+      if (CER.motor !== meu) { return; }
+      meu.quadro(t);
+      CER.laco = window.requestAnimationFrame(quadro);
+    }
+    CER.laco = window.requestAnimationFrame(quadro);
+  }
+
+  function pintaLado() {
+    var c = caso(S.sel);
+    if (!c) { $('#criterios').innerHTML = ''; $('#lado-pe').innerHTML = ''; $('#tese').hidden = true; return; }
+    var fi = ficha(), b = fi && fi.base;
+    var tese = $('#tese');
+    tese.innerHTML = '<i>qualificação no cadastro</i>' + esc((c.qualificacao || '—').replace(/_/g, ' '))
+      + (b && b.qualificacao_motivo ? ' — ' + esc(b.qualificacao_motivo) : '');
+    tese.hidden = false;
+    var V = veredito(c.ia);
+    $('#criterios').innerHTML = '<div class="cri' + (c.ia === 'aprovado' ? ' bate' : '') + '" title="'
+      + esc(grupo('ia').diz) + '"><i style="background:' + grupo('ia').cor + '"></i><span>IA</span>'
+      + '<b style="color:' + V.cor + '">' + esc(V.rot) + '</b></div>'
+      + GRUPOS.slice(1).map(function (g) {
+          var fs = FONTES.filter(function (f) { return f.grupo === g.id; });
+          var n = fs.filter(function (f) { return c.f[f.id]; }).length;
+          return '<div class="cri' + (n ? ' bate' : '') + '" title="' + esc(g.diz) + '">'
+            + '<i style="background:' + g.cor + '"></i><span>' + esc(g.rot) + '</span>'
+            + '<b>' + n + '/' + fs.length + '</b></div>';
+        }).join('');
+    var n = FONTES_DADO.filter(function (f) { return c.f[f.id]; }).length;
+    $('#lado-pe').textContent = n + ' de ' + FONTES_DADO.length + ' fontes acharam registro · IA: ' + V.rot;
+  }
+
+  /* ===================================================================
+   * 9 · EVENTOS E PARTIDA
+   * =================================================================== */
+  function sincronizaMudos() {
+    var bt = $('#arv-mudos');
+    bt.classList.toggle('on', S.mudos);
+    bt.textContent = S.mudos ? 'esconder quem não achou' : 'mostrar quem não achou';
+  }
+
+  function abreTudo(v) {
+    if (!S.sel) { return; }
+    var m = {'g:ia': v, 'c:base': v, 'c:os': v, 'c:impacto': v};
+    GRUPOS.forEach(function (g) { m['g:' + g.id] = v; });
+    FONTES.forEach(function (f) { m['f:' + f.id] = v; });
+    S.abertos[S.sel] = m;
+    pintaArvore();
+  }
+
+  function digitando(ev) {
+    var t = ev.target;
+    return t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT'
+                 || t.isContentEditable);
+  }
+
+  function liga() {
+    $('#chip-sair').addEventListener('click', function () {
+      ['cr_token', 'cr_refresh', 'cr_expira'].forEach(function (k) {
+        try { window.sessionStorage.removeItem(k); } catch (e) { /* aba sem armazenamento */ }
+      });
+      window.EU = null;
+      window.location.reload();
+    });
+
+    $('#chip-rotulo').addEventListener('click', function () {
+      S.rotuloCliente = !S.rotuloCliente;
+      $('#rotulo-txt').textContent = S.rotuloCliente ? 'rótulo do cliente' : 'nome interno';
+      $('#chip-rotulo').className = 'chip' + (S.rotuloCliente ? '' : ' demo');
+      pintaFila(); pintaCaso();
+    });
+
+    var espera = 0;
+    $('#f-busca').addEventListener('input', function () {
+      S.busca = this.value;
+      window.clearTimeout(espera);
+      espera = window.setTimeout(refiltra, 140);
+    });
+    $('#f-lista').addEventListener('scroll', agendaLista, {passive: true});
+    $('#f-lote').addEventListener('click', function () {
+      if (!S.vistos.length) { return; }
+      if (S.vistos.length > MAX_LOTE) {
+        torrada('no máximo ' + num(MAX_LOTE) + ' ligações por vez — refine o recorte', true);
+        return;
+      }
+      abreDecisao(S.vistos.map(function (c) { return c.ligacao; }), null);
+    });
+    $('#f-limpa').addEventListener('click', function () { S.fFonte = {}; refiltra(); });
+
+    document.addEventListener('change', function (ev) {
+      var id = ev.target.id;
+      if (id === 'f-sel-ia') { S.fIA = ev.target.value; refiltra(); }
+      if (id === 'f-sel-qual') { S.fQual = ev.target.value; refiltra(); }
+      if (id === 'f-sel-dec') { S.fDec = ev.target.value; refiltra(); }
+    });
+
+    $('#arv-tudo').addEventListener('click', function () { abreTudo(true); });
+    $('#arv-nada').addEventListener('click', function () { abreTudo(false); });
+    $('#arv-mudos').addEventListener('click', function () {
+      S.mudos = !S.mudos; sincronizaMudos(); pintaArvore();
+    });
+
+    document.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Escape' && !$('#modal').hidden) { $('#modal').hidden = true; S.pendente = null; return; }
+      if (!$('#modal').hidden || digitando(ev)) { return; }
+      if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+        var i = indiceNaFila(S.sel) + (ev.key === 'ArrowDown' ? 1 : -1);
+        if (i >= 0 && i < S.vistos.length) { ev.preventDefault(); seleciona(S.vistos[i].ligacao, true); }
+        return;
+      }
+      if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.closest && ev.target.closest('[data-img]')) {
+        ev.preventDefault();
+        abreImagem(ev.target.closest('[data-img]').getAttribute('data-img'));
+      }
+    });
+
+    document.addEventListener('click', function (ev) {
+      var t = ev.target.closest ? ev.target : null;
+      if (!t) { return; }
+
+      var ff = t.closest('[data-ff]');
+      if (ff) {
+        var id = ff.getAttribute('data-ff'), e = S.fFonte[id];
+        if (!e) { S.fFonte[id] = 'sim'; } else if (e === 'sim') { S.fFonte[id] = 'nao'; } else { delete S.fFonte[id]; }
+        refiltra();
+        return;
+      }
+      var k = t.closest('[data-caso]');
+      if (k) { seleciona(k.getAttribute('data-caso'), false); return; }
+
+      if (t.closest('[data-recarrega]')) {
+        carregaFila().then(function () {
+          pintaFila();
+          if (S.sel && caso(S.sel)) { pintaCaso(); } else if (S.vistos.length) { seleciona(S.vistos[0].ligacao, true); }
+        });
+        return;
+      }
+      var rf = t.closest('[data-refaz]');
+      if (rf) { delete S.fichas[rf.getAttribute('data-refaz')]; seleciona(rf.getAttribute('data-refaz')); return; }
+
+      var rl = t.closest('[data-rola]');
+      if (rl) {
+        var tira = $('#img-tira');
+        if (tira) {
+          tira.scrollBy({left: (+rl.getAttribute('data-rola')) * 210, behavior: 'smooth'});
+          window.setTimeout(ajustaRolo, 400);
+        }
+        return;
+      }
+      if (t.closest('[data-terr]')) { abreTerritorio(); return; }
+      if (t.closest('[data-rua-abre]')) { abreRua(); return; }
+      var ru = t.closest('[data-rua]');
+      if (ru) { carregaRua(ru.getAttribute('data-rua')); return; }
+      var im = t.closest('[data-img]');
+      if (im) { abreImagem(im.getAttribute('data-img')); return; }
+      var pr = t.closest('[data-print]');
+      if (pr) {
+        mostraImagem('Busca web · print', pr.getAttribute('data-print'),
+                     'A página que a busca pelo endereço mostrou.', '');
+        return;
+      }
+
+      var es = t.closest('[data-escolhe]');
+      if (es && S.pendente) {
+        S.pendente.acao = es.getAttribute('data-escolhe');
+        Array.prototype.forEach.call(document.querySelectorAll('.acao-op'), function (b) {
+          b.classList.toggle('on', b.getAttribute('data-escolhe') === S.pendente.acao);
+        });
+        pintaPeDecisao();
+        return;
+      }
+      if (t.closest('[data-grava]')) { confirmaDecisao(); return; }
+      if (t.closest('[data-historico]')) { abreHistorico(); return; }
+
+      if (t.closest('[data-fecha]') || t.closest('#modal-x') || t.closest('.modal-fundo')) {
+        $('#modal').hidden = true;
+        S.pendente = null;
+        return;
+      }
+
+      var ab = t.closest('[data-abre]');
+      if (ab) {
+        var chave = ab.getAttribute('data-abre');
+        var estava = ab.getAttribute('data-aberto') === '1';
+        if (chave === 'sec:imagens') { S.tira = !estava; pintaArvore(); return; }
+        if (!S.abertos[S.sel]) { S.abertos[S.sel] = {}; }
+        S.abertos[S.sel][chave] = !estava;
+        pintaArvore();
+        return;
+      }
+
+      var cp = t.closest('[data-copia]');
+      if (cp) {
+        var txt = cp.getAttribute('data-copia');
+        if (navigator.clipboard) {
+          navigator.clipboard.writeText(txt).then(function () { torrada('coordenada copiada: ' + txt); })
+            .catch(function () { torrada('não deu para copiar', true); });
+        }
+        return;
+      }
+
+      var dc = t.closest('[data-decide]');
+      if (dc && !dc.disabled) { decide(dc.getAttribute('data-decide')); }
+    });
+
+    window.addEventListener('resize', function () {
+      if (CER.motor && !CER.olho) { CER.motor.redimensiona(); }
+      ajustaRolo();
+      pintaLista();
+    });
+  }
+
+  function mostraTela(eu) {
+    $('#quem-nome').textContent = eu.nome || eu.email || '—';
+    $('#quem-sub').textContent = (eu.nivel || '—') + (eu.empresa ? ' · ' + eu.empresa : '');
+    pintaFila(); pintaArvore();
+    ligaCerebro();
+    carregaFila().then(function () {
+      pintaFila();
+      var pedida = (window.location.hash || '').replace('#', '');
+      var alvo = caso(pedida) ? pedida : (S.vistos[0] && S.vistos[0].ligacao);
+      if (alvo) { seleciona(alvo, true); } else { pintaCaso(); }
+    });
+  }
+
+  function inicia() {
+    liga();
+    var foi = false;
+    function vai(eu) {
+      if (foi || !eu) { return; }
+      foi = true;
+      mostraTela(eu);
+    }
+    /* o sessao.js avisa quando o crachá chegou; sem sessão ele mesmo abre o
+     * login, e depois de entrar recarrega a página */
+    document.addEventListener('cr:sessao', function (ev) { vai(ev.detail); });
+    if (window.EU) { vai(window.EU); }
+    pintaFila(); pintaArvore();
+  }
+
+  return {inicia: inicia, FONTES: FONTES, GRUPOS: GRUPOS,
+          estado: function () { return S; },
+          cerebro: function () { return CER.motor; }};
+}());
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', SEEK.inicia);
+} else { SEEK.inicia(); }
+</script>
+</body>
+</html>
