@@ -552,9 +552,14 @@ def fila(con, limite, refazer, ligacoes=None, sem_catalogo=False,
         filtro = ""
     else:
         filtro = SEM_VEREDITO
+    # SEM LACO ANINHADO (13/09/2026): o planejador estima 1 linha no anti-join
+    # com os vereditos (sao 35 mil) e percorria o cadastro inteiro por linha —
+    # 13 minutos contra 0,1 s com a juncao por hash.
+    cur.execute("set enable_nestloop = off")
     cur.execute(SQL_FILA % {"filtro": filtro,
                             "catalogo": "" if sem_catalogo else SQL_CATALOGO})
     saida = [r[0] for r in cur.fetchall()]
+    cur.execute("reset enable_nestloop")
     if vinculo_novo:
         # A LIGACAO QUE GANHOU POI DEPOIS DO VEREDITO volta a ser julgada: e o
         # POI que a IA descartou noutra ligacao e o casamento por endereco
