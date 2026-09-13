@@ -176,7 +176,7 @@ def uma(poco, ligacao, modelo, placar, trava, aplicar):
         return
     # O TETO CRESCE COM OS REGISTROS: a lista de aderentes de um predio grande
     # passa dos 900 tokens.
-    teto = min(3000, 900 + 25 * len(ids))
+    teto = min(12000, 900 + 80 * len(ids))  # predio de 140 POIs cortava o JSON em 3.000 (12/09/2026)
     try:
         r = di._chat_local(modelo, PROMPT + dados, [base64.b64encode(b).decode() for b in fotos],
                            max_tokens=teto, timeout=max(al.TIMEOUT, min(3600, 40 * len(ids))))
