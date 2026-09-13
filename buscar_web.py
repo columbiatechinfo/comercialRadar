@@ -1,6 +1,24 @@
 # -*- coding: utf-8 -*-
 """Busca web do enriquecimento, por LIGACAO. Producao desde 11/09/2026.
 
+DESDE 13/09/2026: DUCKDUCKGO E YAHOO, E O GOOGLE SO NA RESERVA.
+Decisao do dono do produto. De 12 a 13/09 a busca pesquisou DENTRO DO GOOGLE
+MAPS — erro meu, contra o desenho: o Maps devolve os lugares da regiao do mapa,
+de outras ruas e numeros, e a IA aprovou a ligacao 293187 (Sao Pedro, 54) por
+uma empresa do nº 64b. Medido nos mesmos 20 enderecos:
+
+    DuckDuckGo   20 paginas · 0 bloqueios · 11 com empresa na mesma rua e numero
+    Yahoo        20 paginas · 0 bloqueios · 10
+    Google       12 paginas · 8 bloqueios mesmo com 3 tentativas · 11
+    Bing         20 paginas vazias
+
+- cada ligacao e buscada no DuckDuckGo E no Yahoo (uma linha por motor);
+- `--reserva-google`: o Google so para a ligacao em que os dois falharam
+  (bloqueio, erro ou nenhum resultado no endereco);
+- SO O RESULTADO NO ENDERECO VAI PARA A IA: o que cita a rua e o numero da
+  instalacao, e ainda a cidade, o bairro ou o CEP. O resto fica em
+  `resultados`, para conferir, e nunca no texto do dossie (`no_endereco`).
+
 O DESENHO, do dono do produto, provado em 22 + 15 ligacoes de Canoas antes de
 entrar aqui (docs/RETOMAR-11-09-2026.md):
 
@@ -52,6 +70,8 @@ MOTORES = {
     "google": "https://www.google.com/search?q=%s&hl=pt-BR&gl=br&num=10",
     "google_maps": "https://www.google.com/maps/search/%s?hl=pt-BR&gl=br",
     "bing": "https://www.bing.com/search?q=%s&setlang=pt-BR&cc=BR",
+    "duckduckgo": "https://html.duckduckgo.com/html/?q=%s&kl=br-pt",
+    "yahoo": "https://search.yahoo.com/search?p=%s&vl=lang_pt",
 }
 #: Quantas vezes a mesma consulta tenta, cada vez por um IP, antes de passar ao
 #: Bing. Esperar ate 15 s em "Verificando sua solicitacao" zerou os bloqueios
@@ -65,9 +85,11 @@ TENTATIVAS_GOOGLE = 1
 #: A LEITURA DA PAGINA PELA IA, numa chamada separada: DESLIGADA no processo
 #: enxuto (12/09/2026) — o texto vai direto para a avaliacao. `--ler-com-ia`.
 LER_COM_IA = False
-#: SO O GOOGLE desde 12/09/2026: o Bing devolvia pagina generica para 99,8% das
-#: buscas. O codigo do Bing fica em `MOTORES` para quem quiser testar de novo.
-MOTORES_EM_USO = ("google_maps",)
+#: OS DOIS PRINCIPAIS desde 13/09/2026 (ver o cabecalho). O Bing continua fora:
+#: pagina vazia em 20 de 20. O Maps saiu de vez: nao e busca web.
+MOTORES_EM_USO = ("duckduckgo", "yahoo")
+#: O GOOGLE SO QUANDO OS DOIS PRINCIPAIS FALHAM (dono do produto, 13/09/2026).
+RESERVA = "google"
 #: O GOOGLE DE QUE SE FALA: a pagina de busca e o Maps. Os dois tem castigo de IP.
 GOOGLES = ("google", "google_maps")
 #: Largura da pagina que vai para o modelo: densidade normal (decisao de 11/09).
@@ -188,6 +210,94 @@ def _js_texto(motor):
     return globals().get(JS_POR_MOTOR.get(motor, ""), None) or bn.JS_TEXTO
 
 
+#: OS RESULTADOS UM A UM, e nao a pagina corrida: e o que deixa filtrar pelo
+#: endereco. Seletores conferidos em 13/09/2026 numa pagina real de cada motor
+#: (10 resultados no DuckDuckGo, 7 no Yahoo, "Rua Lacador 162 Canoas").
+JS_RESULTADOS = {
+    "duckduckgo": r"""() => Array.from(document.querySelectorAll('.result')).map(r => ({
+        titulo: ((r.querySelector('.result__a') || {}).innerText || '').trim(),
+        url: ((r.querySelector('.result__url') || {}).innerText || '').trim(),
+        trecho: ((r.querySelector('.result__snippet') || {}).innerText || '').trim()}))
+        .filter(x => x.titulo || x.trecho)""",
+    "yahoo": r"""() => Array.from(document.querySelectorAll('#web ol > li')).map(r => ({
+        titulo: ((r.querySelector('h3') || {}).innerText || '').trim(),
+        url: ((r.querySelector('a') || {}).href || ''),
+        trecho: ((r.querySelector('.compText, p') || {}).innerText || '').trim()}))
+        .filter(x => x.titulo || x.trecho)""",
+}
+#: Pagina de bloqueio dos motores sem Google (a do Google e tratada em `capturar`).
+BLOQUEIO_WEB = ("captcha", "unusual traffic", "are you a robot", "verify you are human", "not a robot",
+                "bots use duckduckgo", "anomaly", "too many requests", "access denied")
+
+
+def _norm_end(s):
+    s = unicodedata.normalize("NFKD", s or "").encode("ascii", "ignore").decode().upper()
+    return re.sub(r"[^A-Z0-9]+", " ", s).strip()
+
+
+def no_endereco(texto, rua, nro, cidade, bairro, cep):
+    """O trecho cita a MESMA RUA com o MESMO NUMERO, e ainda a cidade, o bairro
+    ou o CEP da instalacao? E a regra que separa "achou" de "a busca trouxe coisa
+    de outro endereco" — a falha que o Maps expos em 13/09/2026."""
+    t = " %s " % _norm_end(texto)
+    n = re.sub(r"\D", "", nro or "")
+    palavras = [p for p in _norm_end(rua).split() if len(p) > 2 and p not in ("RUA", "AVENIDA", "TRAVESSA")]
+    if not n or not palavras:
+        return False
+    chave = palavras[-1]
+    perto = any(re.search(r"\b%s\b" % n, t[m.end():m.end() + 25])
+                for m in re.finditer(r"\b%s\b" % re.escape(chave), t))
+    if not perto:
+        return False
+    lugar = [x for x in (_norm_end(cidade), _norm_end(bairro)) if len(x) > 2]
+    c = re.sub(r"\D", "", cep or "")
+    return (any(" %s " % x in t for x in lugar)
+            or (len(c) == 8 and (c in re.sub(r"\D", "", texto or "") or "%s %s" % (c[:5], c[5:]) in t)))
+
+
+def texto_para_dossie(motor, resultados):
+    """O que vai para a IA: SO os resultados no endereco, numerados."""
+    bons = [r for r in resultados if r.get("no_endereco")]
+    nome = {"duckduckgo": "DuckDuckGo", "yahoo": "Yahoo", "google": "Google"}.get(motor, motor)
+    if not bons:
+        return "%s: nenhum resultado no endereço da instalação (%d resultado(s) de outros endereços ficaram fora)." % (
+            nome, len(resultados))
+    linhas = ["%s: %d resultado(s) no endereço da instalação (de %d):" % (nome, len(bons), len(resultados))]
+    for i, r in enumerate(bons, 1):
+        linhas.append("%d. %s — %s\n   %s" % (i, r.get("titulo") or "", r.get("url") or "", r.get("trecho") or ""))
+    return "\n".join(linhas)
+
+
+def capturar_resultados(consulta, motor, proxy):
+    """(ok, bloqueado, resultados, url_final, erro, jpeg) no DuckDuckGo ou no Yahoo."""
+    from scrapling.fetchers import StealthySession
+    caixa = {}
+
+    def acao(page):
+        page.wait_for_timeout(2000)
+        caixa["url"] = page.url
+        caixa["resultados"] = page.evaluate(JS_RESULTADOS[motor]) or []
+        corpo = (page.evaluate("() => document.body ? document.body.innerText : ''") or "")
+        caixa["bloqueado"] = not caixa["resultados"] and any(b in corpo.lower() for b in BLOQUEIO_WEB)
+        page.set_viewport_size({"width": LARGURA, "height": 900})
+        caixa["img"] = page.screenshot(full_page=True, type="jpeg", quality=80)
+
+    try:
+        with StealthySession(headless=True, proxy=proxy, locale="pt-BR", timezone_id="America/Sao_Paulo",
+                             extra_flags=["--disable-http2"], block_webrtc=True) as s:
+            s.fetch(MOTORES[motor] % urllib.parse.quote(consulta), page_action=acao, timeout=45000)
+    except Exception as e:                                     # noqa: BLE001
+        return False, None, [], "", "%s: %s" % (type(e).__name__, str(e)[:160]), None
+    return (bool(caixa.get("img")), caixa.get("bloqueado"), caixa.get("resultados") or [],
+            caixa.get("url", ""), "", caixa.get("img"))
+
+
+def resultados_do_google(texto):
+    """A pagina do Google em blocos (ficha e resultados), para o mesmo filtro."""
+    blocos = [b.strip() for b in re.split(r"\n\s*\n", texto or "") if b.strip()]
+    return [{"titulo": b.split("\n", 1)[0][:200], "url": "", "trecho": b[:1500]} for b in blocos]
+
+
 class Ritmo:
     """Buscas por minuto nesta maquina, somando os navegadores, e o disjuntor."""
 
@@ -216,7 +326,9 @@ class Ritmo:
                 antes = self.por_min
                 if b >= 3:
                     self.por_min = max(RITMO_MIN, self.por_min / 2)
-                elif b <= 1:
+                elif b <= 1 and self.por_min <= RITMO_MAX:
+                    # acima do teto e o ritmo ABERTO dos motores sem Google: nao
+                    # e para puxar para baixo quando nada bloqueia
                     self.por_min = min(RITMO_MAX, self.por_min * 1.2)
                 self.lote = []
                 if self.por_min != antes:
@@ -229,9 +341,12 @@ class Ritmo:
 
 
 def sonda():
-    """Uma busca so, por um IP do rodizio: 0 se o Google respondeu, 3 se bloqueou."""
+    """Uma busca so, por um IP do rodizio: 0 se o motor respondeu, 3 se bloqueou."""
     px = bn.rodizio(quantos=500, pais="", embaralhar=True)()
-    ok, bloq, texto, url, erro, jpeg = capturar(CONSULTA_SONDA, MOTORES_EM_USO[0], px)
+    if MOTORES_EM_USO[0] in JS_RESULTADOS:
+        ok, bloq, _res, url, erro, jpeg = capturar_resultados(CONSULTA_SONDA, MOTORES_EM_USO[0], px)
+    else:
+        ok, bloq, texto, url, erro, jpeg = capturar(CONSULTA_SONDA, MOTORES_EM_USO[0], px)
     _log("   sonda: %s · %s" % ("BLOQUEADA" if bloq else ("ok" if ok and jpeg else "falhou"),
                                 (erro or url or "")[:90]))
     return 0 if ok and jpeg and not bloq else 3
@@ -308,12 +423,18 @@ def ligacoes_com_imagem(cur):
     return {str(l) for l, p in cur.fetchall() if p in com}
 
 
-def fila(con, cidade=None, limite=0, ligacoes=None, fatia=None, refazer_bing=False, refazer=False):
+def fila(con, cidade=None, limite=0, ligacoes=None, fatia=None, refazer_bing=False, refazer=False,
+         reserva_google=False):
     """As ligacoes do alvo com consulta por fazer, e as consultas de cada uma.
 
     Alvo: residencial ATIVA, qualificada SIM ou SIM_COM_ANALISE_HUMANA, com
-    vinculo vivo. Uma consulta esta feita quando tem linha com `ia` preenchida;
-    bloqueio e erro nao contam, e voltam na proxima rodada.
+    vinculo vivo. Uma consulta esta feita, POR MOTOR, quando tem linha com texto
+    ou leitura; bloqueio e erro nao contam, e voltam na proxima rodada.
+
+    `reserva_google`: so o Google, e so para a ligacao em que os dois motores
+    principais ja tentaram e nenhum trouxe resultado no endereco (dono do
+    produto, 13/09/2026: "aplica a busca google apenas com os dois principais
+    falharem").
 
     Tudo em conjuntos no Python, e nenhum `exists` por linha: a fila da
     avaliacao ja ficou minutos parada nisso.
@@ -321,7 +442,7 @@ def fila(con, cidade=None, limite=0, ligacoes=None, fatia=None, refazer_bing=Fal
     cur = con.cursor()
     cur.execute("set statement_timeout = '300s'")
     cur.execute("""select num_ligacao::text, coalesce(end_ligacao,''), coalesce(nom_logradouro,''),
-                          coalesce(nro,''), coalesce(nom_bairro,''), qualificacao, cidade
+                          coalesce(nro,''), coalesce(nom_bairro,''), qualificacao, cidade, coalesce(cod_cep,'')
                      from resources_root.cadastro_corsan
                     where qualificacao in ('SIM','SIM_COM_ANALISE_HUMANA')
                       and upper(categoria)='RESIDENCIAL' and upper(sit_ligacao)='ATIVA'""")
@@ -348,15 +469,21 @@ def fila(con, cidade=None, limite=0, ligacoes=None, fatia=None, refazer_bing=Fal
                      from radar_comercial.pois where fundido_em is null and id = any(%s)""", (ids,))
     poi = {r[0]: {"id": r[0], "fonte": r[1], "nome": r[2], "endereco": r[3], "telefone": r[4]}
            for r in cur.fetchall()}
-    cur.execute("""select ligacao, tipo, coalesce(poi_id, 0), motor from radar_comercial.busca_web
-                    where (ia is not null or texto is not null) and not bloqueado""")
+    cur.execute("""select ligacao, tipo, coalesce(poi_id, 0), motor,
+                          (ia is not null or texto is not null) and not bloqueado, coalesce(no_endereco, 0)
+                     from radar_comercial.busca_web""")
     por_motor = {}
-    for a_, b_, c_, m_ in cur.fetchall():
-        por_motor.setdefault((str(a_), b_, c_), set()).add(m_)
-    # REBUSCAR NO GOOGLE o que so o Bing respondeu, quando o bloqueio passar.
-    feitas = {k for k, ms in por_motor.items() if not refazer_bing or "google" in ms}
+    tentou, achou = {}, set()
+    for a_, b_, c_, m_, feita, n_end in cur.fetchall():
+        k = (str(a_), b_, c_)
+        tentou.setdefault(k, set()).add(m_)
+        if feita:
+            por_motor.setdefault(k, set()).add(m_)
+            if n_end and m_ in MOTORES_EM_USO:
+                achou.add(k)
     if refazer:
-        feitas = set()
+        por_motor = {}
+    motores = (RESERVA,) if reserva_google else MOTORES_EM_USO
     # SO QUEM JA TEM IMAGEM (dono do produto, 11/09/2026): a busca web e para
     # as ligacoes que a IA ja pode julgar com foto.
     com_imagem = ligacoes_com_imagem(cur) if not so else None
@@ -377,18 +504,15 @@ def fila(con, cidade=None, limite=0, ligacoes=None, fatia=None, refazer_bing=Fal
         ps = [poi[p] for p in por_lig[l] if p in poi]
         if not ps:
             continue
-        end_l, logr, nro, bairro, q, cid = lig[l]
+        end_l, logr, nro, bairro, q, cid, cep = lig[l]
+        k = (l, "endereco", 0)
         tarefas = []
-        if (l, "endereco", 0) not in feitas:
-            tarefas.append(("endereco", None))
-        nomes = set()
-        for p in (ps if BUSCAR_NOMES else []):
-            chave = sem_acento(p["nome"])
-            if not chave or MEI.search(p["nome"]) or chave in nomes:
+        for motor in motores:
+            if motor in por_motor.get(k, set()):
                 continue
-            nomes.add(chave)
-            if (l, "nome", p["id"]) not in feitas:
-                tarefas.append(("nome", p))
+            if reserva_google and (k in achou or not all(m in tentou.get(k, set()) for m in MOTORES_EM_USO)):
+                continue
+            tarefas.append(("endereco", None, motor))
         if not tarefas:
             continue
         # O LOGRADOURO NORMALIZADO, pareado com o cadastro do IBGE do municipio
@@ -403,6 +527,7 @@ def fila(con, cidade=None, limite=0, ligacoes=None, fatia=None, refazer_bing=Fal
         consulta_end = " ".join(x for x in (via, nro, bairro.title(), cidade_uf, "empresa") if x)
         saida.append({"ligacao": l, "qualificacao": q, "endereco": end_l,
                       "consulta_endereco": consulta_end, "cidade_uf": cidade_uf,
+                      "rua": reg[0] if reg else logr, "nro": nro, "bairro": bairro, "cidade": cid, "cep": cep,
                       "pois": ps, "tarefas": tarefas})
         if limite and len(saida) >= limite:
             break
@@ -606,14 +731,16 @@ class Gravador:
         sql = """insert into radar_comercial.busca_web
                     (id_empresa, ligacao, tipo, poi_id, consulta, motor, bloqueado, erro,
                      tentativas, url, dados, bytes_tam, chars_texto, ia, modelo,
-                     segundos_captura, segundos_ia, texto, navegador)
-                 values ((select core.empresa_atual()), %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"""
+                     segundos_captura, segundos_ia, texto, navegador, resultados, no_endereco)
+                 values ((select core.empresa_atual()), %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"""
         args = (c["ligacao"], c["tipo"], c.get("poi_id"), c["consulta"], c["motor"],
                 bool(c.get("bloqueado")), c.get("erro") or None, c.get("tentativas"),
                 c.get("url") or None, c.get("dados"), len(c["dados"]) if c.get("dados") else None,
                 c.get("chars_texto"), json.dumps(c["ia"], ensure_ascii=False) if c.get("ia") is not None else None,
                 MODELO if c.get("ia") is not None else None,
-                c.get("segundos_captura"), c.get("segundos_ia"), c.get("texto"), c.get("navegador"))
+                c.get("segundos_captura"), c.get("segundos_ia"), c.get("texto"), c.get("navegador"),
+                json.dumps(c["resultados"], ensure_ascii=False) if c.get("resultados") is not None else None,
+                c.get("no_endereco"))
         with self.trava:
             for tentativa in (1, 2):
                 try:
@@ -633,9 +760,9 @@ class Gravador:
 def rodar(itens, trabalhadores, aplicar):
     trabalhos = []
     for it in itens:
-        for tipo, p in it["tarefas"]:
+        for tipo, p, motor in it["tarefas"]:
             q = it["consulta_endereco"] if tipo == "endereco" else "%s %s" % (p["nome"], it["cidade_uf"])
-            trabalhos.append((it, tipo, p, q))
+            trabalhos.append((it, tipo, p, q, motor))
     _log("▶ busca web · %d ligação(ões) · %d consulta(s) · %d trabalhadores"
          % (len(itens), len(trabalhos), trabalhadores))
     if not trabalhos:
@@ -643,7 +770,11 @@ def rodar(itens, trabalhadores, aplicar):
     grav = Gravador(aplicar)
     # MUITOS IPS E CASTIGO PARA O BLOQUEADO. Ver o comentario de `CASTIGO_S`.
     proximo = bn.rodizio(quantos=500, pais="", embaralhar=True)
-    ritmo = Ritmo()
+    # O RITMO SO SEGURA O GOOGLE. DuckDuckGo e Yahoo nao bloquearam nenhuma das
+    # 40 buscas medidas; para eles o ritmo comeca aberto e so freia se o bloqueio
+    # aparecer (3 em 10), e o disjuntor continua valendo para todos.
+    so_google = all(m in GOOGLES for it in itens for _t, _p, m in it["tarefas"])
+    ritmo = Ritmo() if so_google else Ritmo(por_min=100000.0)
     castigo = {}
     trava_ip = threading.Lock()
 
@@ -664,81 +795,63 @@ def rodar(itens, trabalhadores, aplicar):
     def castigar(px):
         with trava_ip:
             castigo[px] = time.time() + CASTIGO_S
-    placar = {"ok_google_maps": 0, "ok_google": 0, "ok_bing": 0, "bloqueado": 0, "falha": 0, "falha_ia": 0}
+    placar = {"ok_duckduckgo": 0, "ok_yahoo": 0, "ok_google": 0, "com_resultado_no_endereco": 0,
+              "bloqueado": 0, "falha": 0}
     trava = threading.Lock()
     feitos = [0]
     t_ini = time.time()
 
     def um(args):
-        it, tipo, p, q = args
+        it, tipo, p, q, motor = args
         if ritmo.aberto:
             return
         t0 = time.time()
         ok = bloq = False
-        texto = url = erro = ""
+        texto_pagina = url = erro = ""
         jpeg = None
-        motor = "google"
+        resultados = []
         tentativa = 0
-        navegador = None
-        for motor in MOTORES_EM_USO:
-            # UMA TENTATIVA NO GOOGLE: na noite de 11/09/2026 ele bloqueou ate
-            # IP novo do pool; insistir tres vezes so queimava mais IPs.
-            for tentativa in range(1, (TENTATIVAS_GOOGLE if motor in GOOGLES else TENTATIVAS) + 1):
-                # PRIMEIRO O NAVEGADOR DO REPOSITORIO; se ele nao passar, a sessao
-                # humanizada do Google Maps, com outro IP descansado. Medido em
-                # 12/09/2026: o repositorio passou em 23 de 25, a sessao em 2.
-                px = ip_para(motor)
-                ritmo.esperar()
-                ok, bloq, texto, url, erro, jpeg = capturar(q, motor, px)
-                ritmo.resultado(bloq)
-                navegador = "repositorio"
-                if motor in GOOGLES and bloq:
-                    castigar(px)
-                if not (ok and not bloq and jpeg) and not ritmo.aberto:
-                    px = ip_para(motor)
-                    ritmo.esperar()
-                    ok, bloq, texto, url, erro, jpeg = capturar_humano(q, bn_proxy_dict(px), motor)
-                    ritmo.resultado(bloq)
-                    navegador = "sessao_humana"
-                    if motor in GOOGLES and bloq:
-                        castigar(px)
-                if ok and not bloq:
-                    break
-            if ok and not bloq:
+        # TRES TENTATIVAS, cada uma por um IP. No Google o IP bloqueado fica de
+        # castigo uma hora (ver `CASTIGO_S`).
+        for tentativa in range(1, TENTATIVAS + 1):
+            px = ip_para(motor)
+            ritmo.esperar()
+            if motor in JS_RESULTADOS:
+                ok, bloq, resultados, url, erro, jpeg = capturar_resultados(q, motor, px)
+            else:
+                ok, bloq, texto_pagina, url, erro, jpeg = capturar(q, motor, px)
+                resultados = resultados_do_google(texto_pagina) if ok and not bloq else []
+            ritmo.resultado(bloq)
+            if motor in GOOGLES and bloq:
+                castigar(px)
+            if ok and not bloq and jpeg:
                 break
-        dt_cap = time.time() - t0
+        passou = bool(ok and not bloq and jpeg)
+        for r in resultados:
+            r["no_endereco"] = no_endereco("%s %s" % (r.get("titulo") or "", r.get("trecho") or ""),
+                                           it.get("rua"), it.get("nro"), it.get("cidade"), it.get("bairro"),
+                                           it.get("cep"))
+        n_end = sum(1 for r in resultados if r.get("no_endereco"))
         reg = {"ligacao": it["ligacao"], "tipo": tipo, "poi_id": p["id"] if p else None,
                "consulta": q, "motor": motor, "bloqueado": bool(bloq), "erro": erro,
-               "texto": (texto or None) if ok and not bloq else None, "navegador": navegador,
-               "tentativas": tentativa, "url": url, "chars_texto": len(texto or ""),
-               "segundos_captura": round(dt_cap, 1)}
-        chave = "falha"
-        if ok and not bloq and jpeg and not LER_COM_IA:
-            # O PROCESSO ENXUTO: o texto vai direto para a avaliacao; guarda-se
-            # o print (o que o modelo leria) e o texto, sem chamar a Spark.
+               "texto": texto_para_dossie(motor, resultados) if passou else None,
+               "resultados": resultados if passou else None, "no_endereco": n_end if passou else None,
+               "navegador": "repositorio", "tentativas": tentativa, "url": url,
+               "chars_texto": len(texto_pagina) or sum(len(r.get("trecho") or "") for r in resultados),
+               "segundos_captura": round(time.time() - t0, 1)}
+        if passou:
             lido, _b64 = _print_para_modelo(jpeg)
             reg["dados"] = _print_para_guardar(lido)
             chave = "ok_" + motor
-        elif ok and not bloq and jpeg:
-            lido, b64 = _print_para_modelo(jpeg)
-            r, erro_ia, dt_ia = extrair(it, q, texto, b64)
-            reg["segundos_ia"] = round(dt_ia, 1)
-            # O PRINT GUARDADO E O QUE O MODELO LEU, e nao a pagina inteira.
-            reg["dados"] = _print_para_guardar(lido)
-            if r is not None and r.get("bloqueado"):
-                reg["bloqueado"] = True
-                chave = "bloqueado"
-            elif r is not None:
-                reg["ia"] = r
-                chave = "ok_" + motor
-            else:
-                reg["erro"] = "ia: " + erro_ia
-                chave = "falha_ia"
         elif bloq:
             chave = "bloqueado"
+        else:
+            chave = "falha"
         grav.linha(**reg)
         with trava:
-            placar[chave] += 1
+            placar[chave] = placar.get(chave, 0) + 1
+            if passou and n_end:
+                placar["com_resultado_no_endereco"] += 1
             feitos[0] += 1
             n = feitos[0]
         if n % 20 == 0 or n == len(trabalhos):
@@ -768,7 +881,11 @@ def main(argv=None):
     p.add_argument("--contar", action="store_true",
                    help="so conta ligacoes e consultas por fazer, sem buscar nada")
     p.add_argument("--sonda", action="store_true",
-                   help="uma busca so: sai 0 se o Google respondeu, 3 se bloqueou")
+                   help="uma busca so: sai 0 se o motor principal respondeu, 3 se bloqueou")
+    p.add_argument("--reserva-google", dest="reserva_google", action="store_true",
+                   help="so o Google, para as ligacoes em que DuckDuckGo e Yahoo falharam")
+    p.add_argument("--ligacoes-arquivo", dest="ligacoes_arquivo", default=None,
+                   help="arquivo com uma ligacao por linha")
     p.add_argument("--aplicar", action="store_true")
     a = p.parse_args(argv)
     if a.sonda:
@@ -776,17 +893,22 @@ def main(argv=None):
     fatia = ler_fatia(a.fatia)
     global LER_COM_IA
     LER_COM_IA = bool(a.ler_com_ia)
-    if not a.cidade and not a.ligacao:
-        p.error("diga --cidade ou --ligacao")
+    ligs = list(a.ligacao or [])
+    if a.ligacoes_arquivo:
+        ligs += [x.strip() for x in open(a.ligacoes_arquivo) if x.strip()]
+    if not a.cidade and not ligs:
+        p.error("diga --cidade, --ligacao ou --ligacoes-arquivo")
     con = bc.conectar()
-    itens = fila(con, a.cidade, a.limite, a.ligacao, fatia, refazer_bing=a.refazer_bing, refazer=a.refazer)
+    itens = fila(con, a.cidade, a.limite, ligs or None, fatia, refazer_bing=a.refazer_bing, refazer=a.refazer,
+                 reserva_google=a.reserva_google)
     con.close()
     if a.contar:
-        n_end = sum(1 for it in itens for t, _ in it["tarefas"] if t == "endereco")
-        n_nome = sum(1 for it in itens for t, _ in it["tarefas"] if t == "nome")
-        _log("%d ligação(ões) com consulta por fazer · %d pelo endereço · %d pelo nome"
-             % (len(itens), n_end, n_nome))
-        return {"ligacoes": len(itens), "endereco": n_end, "nome": n_nome}
+        por_motor = {}
+        for it in itens:
+            for _t, _p, m in it["tarefas"]:
+                por_motor[m] = por_motor.get(m, 0) + 1
+        _log("%d ligação(ões) com consulta por fazer · %s" % (len(itens), por_motor))
+        return {"ligacoes": len(itens), **por_motor}
     return rodar(itens, a.trabalhadores, a.aplicar)
 
 

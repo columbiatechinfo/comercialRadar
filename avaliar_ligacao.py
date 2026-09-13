@@ -577,17 +577,19 @@ def fila(con, limite, refazer, ligacoes=None, sem_catalogo=False,
         # E A REPROVADA QUE GANHOU A BUSCA DO GOOGLE DEPOIS DO VEREDITO: julgada
         # quando so havia a pagina generica do Bing (12/09/2026), ela volta. SO A
         # REPROVADA (dono do produto): aprovada e revisao humana ficam.
+        # Desde 13/09/2026 a busca web e DuckDuckGo e Yahoo, com o Google na
+        # reserva, e so conta a linha no formato novo (`resultados`).
         cur.execute("""select b.ligacao
                          from radar_comercial.busca_web b
                          join radar_comercial.ligacao_veredito v on v.ligacao = b.ligacao
-                        where b.tipo = 'endereco' and b.motor in ('google', 'google_maps')
-                          and (b.ia is not null or b.texto is not null)
+                        where b.tipo = 'endereco' and b.motor in ('duckduckgo', 'yahoo', 'google')
+                          and b.resultados is not null and b.texto is not null
                           and b.feito_em > v.avaliado_em and v.veredito = 'reprovado'
                         group by b.ligacao""")
         ja = set(saida)
         novas = [str(r[0]) for r in cur.fetchall() if str(r[0]) not in ja]
         saida += novas
-        _log("   %d ligação(ões) ganharam a busca do Google depois do veredito e voltam à fila"
+        _log("   %d ligação(ões) ganharam a busca web nova depois do veredito e voltam à fila"
              % len(novas))
     if cidade:
         # A CIDADE PELO NOME, sem acento, como o casamento por endereco faz.
@@ -665,9 +667,13 @@ def fila(con, limite, refazer, ligacoes=None, sem_catalogo=False,
         # em seguida a do endereco e podem ainda estar na fila.
         # A BUSCA FEITA TEM LEITURA (processo anterior) OU TEXTO (o enxuto de
         # 12/09/2026). Sem a folga de 15 min: a busca pelo nome foi desligada.
-        cur.execute("""select distinct ligacao from radar_comercial.busca_web
-                        where tipo = 'endereco' and not bloqueado
-                          and (ia is not null or texto is not null)""")
+        # DESDE 13/09/2026: feita e a busca web NOVA nos DOIS motores principais,
+        # DuckDuckGo e Yahoo. A do Google Maps (12 a 13/09) nao conta mais: ela
+        # devolvia os lugares da regiao, e foi o que contaminou os vereditos.
+        cur.execute("""select ligacao from radar_comercial.busca_web
+                        where tipo = 'endereco' and not bloqueado and resultados is not null
+                          and motor in ('duckduckgo', 'yahoo')
+                        group by ligacao having count(distinct motor) = 2""")
         buscadas = {str(r[0]) for r in cur.fetchall()}
         antes = len(saida)
         saida = [l for l in saida if l in buscadas]

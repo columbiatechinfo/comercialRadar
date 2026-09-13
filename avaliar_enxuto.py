@@ -58,7 +58,7 @@ SAIDA = None
 
 PROMPT = """Você confere se um imóvel cobrado como RESIDENCIAL tem comércio ou serviço funcionando nele.
 
-Você recebe: os dados do cadastro da instalação; os registros candidatos (estabelecimentos que bases independentes situam neste endereço); até 5 fotos (quatro de rua, do mesmo ponto em quatro direções, e uma publicada por outra fonte); e o texto da página de resultados de uma busca na web pelo endereço.
+Você recebe: os dados do cadastro da instalação; os registros candidatos (estabelecimentos que bases independentes situam neste endereço); até 5 fotos (quatro de rua, do mesmo ponto em quatro direções — a mira verde marca a direção da coordenada do registro, que pode ter alguns metros de erro —, e uma publicada por outra fonte); e os resultados de buscas na web pelo endereço, só os que citam a rua e o número desta instalação.
 
 Olhe todos os dados e responda, nesta ordem:
 1. Quais registros são aderentes ao endereço do cadastro — rua, número, complemento, bairro — e, destes, quais se confirmam pelas fotos, pela busca ou por outro registro. Em endereço com várias unidades (o cadastro traz complemento, como CASA 02 ou APTO 3): o registro com o mesmo complemento é desta instalação; o registro sem complemento, com rua e número iguais, também conta como desta instalação; o registro com complemento diferente é de outra unidade e não combina. Só é dúvida fundada o registro que também é candidato de outras instalações e que nada — complemento, foto ou busca — prende a esta.
@@ -88,30 +88,25 @@ def _jpeg_leve(b, largura=LARGURA_FOTO, q=70):
     return s.getvalue()
 
 
+#: OS MOTORES DA BUSCA WEB desde 13/09/2026: DuckDuckGo e Yahoo, e o Google so
+#: na reserva (`buscar_web.py`). As buscas feitas DENTRO DO GOOGLE MAPS, de 12 a
+#: 13/09, NAO ENTRAM: o Maps devolvia os lugares da regiao, de outras ruas e
+#: numeros, e a IA chegou a aprovar por empresa do vizinho. So conta linha com
+#: `resultados` (o formato novo, ja filtrado pelo endereco da instalacao).
+MOTORES_DA_BUSCA = ("duckduckgo", "yahoo", "google")
+
+
 def _texto_da_busca(cur, ligacao):
-    """(consulta, texto) da busca pelo endereco: o texto do navegador; na pagina
-    antiga, que so tem a leitura da IA, a lista do que ela achou."""
-    cur.execute("""select consulta, texto, ia from radar_comercial.busca_web
-                    where ligacao = %s and tipo = 'endereco' and motor in ('google', 'google_maps') and not bloqueado
-                      and (texto is not null or ia is not null)
-                    order by (texto is not null) desc, feito_em desc limit 1""", (str(ligacao),))
-    r = cur.fetchone()
-    if not r:
+    """(consulta, texto): o que cada motor achou NO ENDERECO da instalacao. O texto
+    ja vem filtrado de `buscar_web` — resultado de outro endereco nunca chega aqui."""
+    cur.execute("""select distinct on (motor) motor, consulta, texto from radar_comercial.busca_web
+                    where ligacao = %s and tipo = 'endereco' and motor = any(%s) and not bloqueado
+                      and resultados is not null and texto is not null
+                    order by motor, feito_em desc""", (str(ligacao), list(MOTORES_DA_BUSCA)))
+    linhas = sorted(cur.fetchall(), key=lambda r: MOTORES_DA_BUSCA.index(r[0]))
+    if not linhas:
         return None, None
-    consulta, texto, lido = r
-    if texto:
-        return consulta, texto[:TEXTO_MAX]
-    linhas = []
-    for x in ((lido or {}).get("estabelecimentos") or []):
-        if not isinstance(x, dict) or x.get("mesmo_endereco") is False:
-            continue
-        linhas.append(" · ".join(str(v) for v in (x.get("nome"), x.get("endereco"), x.get("categoria"),
-                                                   x.get("telefone"), x.get("site"), x.get("horario"),
-                                                   ("nota %s (%s avaliações)" % (x.get("nota"), x.get("avaliacoes")))
-                                                   if x.get("nota") else None, x.get("status"), x.get("dominio"))
-                                 if v))
-    return consulta, ("Estabelecimentos que a página mostrou neste endereço:\n" + "\n".join(linhas)
-                      if linhas else "(a página não mostrou estabelecimento neste endereço)")
+    return linhas[0][1], "\n\n".join(t for _m, _c, t in linhas)[:TEXTO_MAX]
 
 
 def montar(con, ligacao):
@@ -157,7 +152,7 @@ def montar(con, ligacao):
     dados = ("INSTALAÇÃO: %s · categoria %s · bairro %s\n\nREGISTROS CANDIDATOS:\n%s\n\nFOTOS, nesta ordem:\n%s\n\n"
              "TEXTO DA BUSCA NA WEB%s:\n%s"
              % (end_l, cat, bairro, "\n".join(regs), "\n".join("%d. %s" % (i + 1, r) for i, r in enumerate(rot))
-                or "(nenhuma foto)", (" (Google, \"%s\")" % consulta) if consulta else "",
+                or "(nenhuma foto)", (" (consulta \"%s\", DuckDuckGo e Yahoo)" % consulta) if consulta else "",
                 texto or "(não houve busca na web para esta instalação)"))
     return dados, fotos, rot, ids, len(fontes)
 
@@ -334,14 +329,19 @@ def main(argv=None):
                    help="a fila tira as ligacoes com mais de N POIs (elas vao para o laco dos predios)")
     p.add_argument("--so-grandes", dest="so_grandes", type=int, default=0,
                    help="o laco dos predios: so as ligacoes com mais de N POIs")
+    p.add_argument("--ligacoes-arquivo", dest="ligacoes_arquivo", default=None,
+                   help="arquivo com uma ligacao por linha (a reavaliacao das 22 mil nao cabe na linha de comando)")
     p.add_argument("--aplicar", action="store_true")
     a = p.parse_args(argv)
     global SAIDA
     if a.saida:
         os.makedirs(a.saida, exist_ok=True)
         SAIDA = a.saida
-    r = rodar(a.limite, a.aplicar, a.trabalhadores, a.modelo, a.ligacao, a.cidade, a.exigir_busca, a.vinculo_novo,
-              a.adiar_grandes, a.so_grandes)
+    ligs = list(a.ligacao or [])
+    if a.ligacoes_arquivo:
+        ligs += [x.strip() for x in open(a.ligacoes_arquivo) if x.strip()]
+    r = rodar(a.limite, a.aplicar, a.trabalhadores, a.modelo, ligs or None, a.cidade, a.exigir_busca,
+              a.vinculo_novo, a.adiar_grandes, a.so_grandes)
     return 1 if r.get("erro") else 0
 
 

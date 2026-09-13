@@ -2385,7 +2385,7 @@ var SEEK = (function () {
      cliente: 'BASE CENSITÁRIA', centro: [0.00, 0.08, -0.74]},
     {id: 'estadual', grupo: 'oficial', curto: 'ESTADUAL', interno: 'Base estadual',
      cliente: 'CADASTRO ESTADUAL', centro: [-0.34, -0.30, 0.20]},
-    {id: 'busca', grupo: 'olhar', curto: 'BUSCA', interno: 'Busca web · Google Maps',
+    {id: 'busca', grupo: 'olhar', curto: 'BUSCA', interno: 'Busca web · DuckDuckGo e Yahoo',
      cliente: 'BUSCA NA WEB', centro: [0.00, -0.50, -0.48]},
     {id: 'foto', grupo: 'olhar', curto: 'FACHADA', interno: 'Foto de rua',
      cliente: 'LEITURA DE FACHADA', centro: [0.34, -0.30, 0.22]}
@@ -2975,19 +2975,30 @@ var SEEK = (function () {
       + kv(valores) + '</div>';
   }
 
-  function corpoBusca(b) {
-    if (!b) {
-      return '<div class="sem-dado">Nenhuma busca web válida para esta ligação.</div>';
+  /* A BUSCA WEB, UMA POR MOTOR (13/09/2026): DuckDuckGo, Yahoo e o Google da
+   * reserva. Só o resultado que cita a rua e o número da instalação aparece —
+   * é o mesmo que foi para a IA. O resto fica contado, não mostrado. */
+  var NOME_MOTOR = {duckduckgo: 'DuckDuckGo', yahoo: 'Yahoo', google: 'Google (reserva)'};
+
+  function corpoBusca(buscas) {
+    if (!buscas || !buscas.length) {
+      return '<div class="sem-dado">A busca web nova (DuckDuckGo e Yahoo) ainda não rodou para esta ligação.</div>';
     }
-    var texto = b.texto || '';
-    var corte = texto.length > 8000;
-    return '<div class="reg">'
-      + kv([['consulta', b.consulta || ''], ['motor', b.motor || '', 1], ['navegador', b.navegador || '', 1],
-            ['feita em', quando(b.feito_em)]])
-      + (b.print ? '<button class="bt p" data-print="' + esc(b.print) + '">ver o print da busca</button>' : '')
-      + (texto ? '<pre class="busca-txt">' + esc(corte ? texto.slice(0, 8000) : texto)
-                 + (corte ? '\n\n[… mais ' + num(texto.length - 8000) + ' caracteres]' : '') + '</pre>' : '')
-      + '</div>';
+    return buscas.map(function (b) {
+      var res = b.resultados || [];
+      return '<div class="reg">'
+        + '<div class="reg-cab"><b>' + esc(NOME_MOTOR[b.motor] || b.motor) + '</b>'
+        + '<span class="selo ' + (b.no_endereco ? 'ok' : 'cinza') + '">'
+        + (b.no_endereco ? b.no_endereco + ' no endereço' : 'nada no endereço') + '</span>'
+        + '<span class="poi">' + num(b.total) + ' resultado(s) na página · ' + esc(quando(b.feito_em)) + '</span></div>'
+        + kv([['consulta', b.consulta || '']])
+        + res.map(function (r) {
+            return '<div class="reg-por"><b>resultado</b>' + esc(r.titulo || '') + ' — <span class="mono">'
+              + esc(r.url || '') + '</span><br>' + esc(r.trecho || '') + '</div>';
+          }).join('')
+        + (b.print ? '<button class="bt p" data-print="' + esc(b.print) + '">ver o print da página</button>' : '')
+        + '</div>';
+    }).join('');
   }
 
   function corpoFoto(fi, ctx) {
@@ -3018,7 +3029,7 @@ var SEEK = (function () {
     var nAder = vivos.filter(function (r) { return ctx.ader[r.poi_id]; }).length;
     var chave = 'f:' + f.id, ab = aberto(c.ligacao, chave, !!d.achou);
     var sit = d.achou
-      ? (f.id === 'busca' ? 'achou a busca' : f.id === 'foto' ? 'achou ' + (fi.imagens || []).length + ' imagem(ns)'
+      ? (f.id === 'busca' ? 'achou no endereço' : f.id === 'foto' ? 'achou ' + (fi.imagens || []).length + ' imagem(ns)'
          : 'achou · ' + vivos.length + ' registro(s)')
       : (regs.length ? 'só vínculos descartados' : 'não achou');
     var cab = '<button class="no-fonte' + (d.achou ? '' : ' mudo') + '" data-abre="' + chave
@@ -3030,7 +3041,7 @@ var SEEK = (function () {
       + '<span class="chave mono">' + esc(outroNome(f)) + '</span></button>';
     if (!ab) { return cab; }
     var corpo;
-    if (f.id === 'busca') { corpo = corpoBusca(d.busca); }
+    if (f.id === 'busca') { corpo = corpoBusca(d.buscas); }
     else if (f.id === 'foto') { corpo = corpoFoto(fi, ctx); }
     else if (regs.length) {
       corpo = regs.map(function (r) { return cartaoRegistro(r, ctx); }).join('');
@@ -3253,16 +3264,21 @@ var SEEK = (function () {
         legenda: x.fonte === 'maps'
           ? 'Foto publicada no Google Maps do POI #' + x.poi_id + nome + '.'
           : 'Foto de rua, visada ' + (VISADAS[x.tipo] || x.tipo) + ', tirada do ponto do POI #'
-            + x.poi_id + nome + '.',
+            + x.poi_id + nome + '.'
+            + (x.mira ? ' A mira verde marca a direção da coordenada do POI.' : ''),
         quando: x.quando || 'sem data'
       };
     });
-    var b = fi.fontes && fi.fontes.busca && fi.fontes.busca.busca;
-    if (b && b.print) {
-      lista.unshift({id: 'busca' + b.id, url: b.print, fonte: fonte('busca'), rot: 'print da busca',
-                     legenda: 'A página que a busca pelo endereço mostrou: ' + (b.consulta || '') + '.',
+    var bs = (fi.fontes && fi.fontes.busca && fi.fontes.busca.buscas) || [];
+    bs.slice().reverse().forEach(function (b) {
+      if (!b.print) { return; }
+      lista.unshift({id: 'busca' + b.id, url: b.print, fonte: fonte('busca'),
+                     rot: 'print · ' + (NOME_MOTOR[b.motor] || b.motor),
+                     legenda: 'A página que ' + (NOME_MOTOR[b.motor] || b.motor) + ' mostrou para a busca pelo endereço: '
+                       + (b.consulta || '') + '. ' + (b.no_endereco ? b.no_endereco + ' resultado(s) no endereço.'
+                                                                    : 'Nenhum resultado no endereço.'),
                      quando: quando(b.feito_em)});
-    }
+    });
     return lista;
   }
 

@@ -41,6 +41,8 @@ router = APIRouter()
 #: e a busca no Google Maps pelo endereco; `foto` e a foto de rua.
 FONTES = ("ia", "receita", "ifood", "maps", "ibge", "estadual", "cadastur", "airbnb", "busca", "foto")
 ACOES = ("aprovar", "campo", "revisar", "rejeitar")
+#: Os motores da busca web desde 13/09/2026 (ver `buscar_web.py`).
+MOTORES_DA_BUSCA = ("duckduckgo", "yahoo", "google")
 
 #: A FILA FICA 60 s EM MEMORIA, por empresa. Montar custa segundos (conjuntos de
 #: 100 mil vinculos e 300 mil POIs); a tela a pede ao abrir e a cada filtro nao.
@@ -113,9 +115,13 @@ def _montar_fila(u, cidade: str | None):
                         where poi_id = any(%s) and url like '%%gps-cs-s%%'
                           and (bytes_tam is not null or storage_path is not null)""", (todos,))
         com_foto |= {r[0] for r in cur.fetchall()}
+        # A BUSCA "ACHOU" SO COM RESULTADO NO ENDERECO (13/09/2026). Antes bastava
+        # existir busca — e a do Google Maps, que devolvia lugares da regiao,
+        # marcava "achou" em todas as 22 mil ligacoes.
         cur.execute("""select distinct ligacao from radar_comercial.busca_web
                         where ligacao = any(%s) and tipo = 'endereco' and not bloqueado
-                          and (texto is not null or ia is not null)""", (list(cad),))
+                          and motor = any(%s) and resultados is not null and no_endereco > 0""",
+                    (list(cad), list(MOTORES_DA_BUSCA)))
         com_busca = {str(r[0]) for r in cur.fetchall()}
         cur.execute("""select distinct on (ligacao) ligacao, acao, em, quem_nome
                          from radar_comercial.seek_decisao
@@ -241,31 +247,34 @@ def seek_caso(ligacao: str, u: _auth.Usuario = Depends(_quem)):
                   "avaliado_em": v[4].isoformat(timespec="minutes") if v[4] else None,
                   "texto_busca": dados.split("TEXTO DA BUSCA NA WEB", 1)[1].split(":", 1)[-1].strip()
                   if "TEXTO DA BUSCA NA WEB" in dados else None}
-        cur.execute("""select id, poi_id, tipo, data_imagem, capturado_em from radar_comercial.poi_evidencia
+        cur.execute("""select id, poi_id, tipo, data_imagem, capturado_em, mira_x is not null
+                         from radar_comercial.poi_evidencia
                         where poi_id = any(%s) and tipo like 'sv_%%'
                           and (bytes_tam is not null or storage_path is not null)
                         order by poi_id, tipo""", (ids,))
         imagens = [{"id": "sv%s" % i, "poi_id": pid, "fonte": "foto", "tipo": t,
-                    "quando": d or (cap.strftime("%Y-%m") if cap else None),
-                    "url": "/api/sv/%s/%s" % (pid, t)} for i, pid, t, d, cap in cur.fetchall()]
+                    "quando": d or (cap.strftime("%Y-%m") if cap else None), "mira": bool(mira),
+                    "url": "/api/sv/%s/%s" % (pid, t)} for i, pid, t, d, cap, mira in cur.fetchall()]
         cur.execute("""select id, poi_id, data_imagem from radar_comercial.images_urls
                         where poi_id = any(%s) and url like '%%gps-cs-s%%'
                           and (bytes_tam is not null or storage_path is not null)
                         order by poi_id, ordem nulls last, id limit 12""", (ids,))
         imagens += [{"id": "mp%s" % i, "poi_id": pid, "fonte": "maps", "tipo": "foto publicada",
                      "quando": d, "url": "/api/seek/foto/%s" % i} for i, pid, d in cur.fetchall()]
-        cur.execute("""select id, consulta, motor, navegador, feito_em, texto is not null, dados is not null
+        # A BUSCA WEB NOVA, uma por motor: DuckDuckGo, Yahoo e o Google da reserva.
+        # A do Google Maps (12 a 13/09/2026) nao aparece mais.
+        cur.execute("""select distinct on (motor) id, consulta, motor, feito_em, no_endereco,
+                              jsonb_array_length(resultados), resultados, dados is not null
                          from radar_comercial.busca_web
                         where ligacao = %s and tipo = 'endereco' and not bloqueado
-                          and (texto is not null or ia is not null)
-                        order by (motor = 'google_maps') desc, feito_em desc limit 1""", (ligacao,))
-        b = cur.fetchone()
-        busca = None
-        if b:
-            cur.execute("select coalesce(texto, ia::text) from radar_comercial.busca_web where id = %s", (b[0],))
-            busca = {"id": b[0], "consulta": b[1], "motor": b[2], "navegador": b[3],
-                     "feito_em": b[4].isoformat(timespec="minutes") if b[4] else None,
-                     "texto": (cur.fetchone() or [None])[0], "print": "/api/seek/busca/%s" % b[0] if b[6] else None}
+                          and motor = any(%s) and resultados is not null
+                        order by motor, feito_em desc""", (ligacao, list(MOTORES_DA_BUSCA)))
+        buscas = [{"id": i, "consulta": q, "motor": m, "feito_em": t.isoformat(timespec="minutes") if t else None,
+                   "no_endereco": n or 0, "total": tot or 0,
+                   "resultados": [r for r in (res or []) if r.get("no_endereco")],
+                   "print": "/api/seek/busca/%s" % i if tem_print else None}
+                  for i, q, m, t, n, tot, res, tem_print in cur.fetchall()]
+        buscas.sort(key=lambda b: MOTORES_DA_BUSCA.index(b["motor"]))
         cur.execute("""select acao, motivo, observacoes, quem_nome, em, lote from radar_comercial.seek_decisao
                         where ligacao = %s order by em desc limit 50""", (ligacao,))
         decisoes = [{"acao": a, "motivo": m, "observacoes": o, "quem": q,
@@ -277,7 +286,7 @@ def seek_caso(ligacao: str, u: _auth.Usuario = Depends(_quem)):
     for f in FONTES[1:-2]:
         vivos = [r for r in regs if r["fonte"] == f and not r["descartado_em"]]
         fontes[f] = {"achou": bool(vivos), "registros": [r for r in regs if r["fonte"] == f]}
-    fontes["busca"] = {"achou": bool(busca), "busca": busca}
+    fontes["busca"] = {"achou": any(b["no_endereco"] for b in buscas), "buscas": buscas}
     fontes["foto"] = {"achou": any(i["fonte"] == "foto" for i in imagens) or any(i["fonte"] == "maps" for i in imagens)}
     return {"ligacao": ligacao, "base": base, "fontes": fontes, "ia": ia, "imagens": imagens,
             "decisoes": decisoes, "decisao": decisoes[0] if decisoes else None,

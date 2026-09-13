@@ -773,6 +773,16 @@ async def um_poi(page, poco, alvo, placar) -> None:
                     await page.wait_for_timeout(1200)
                     bruto = await page.screenshot()
                     limpo = _cortar_interface(bruto)
+                    # A MIRA VOLTOU EM 13/09/2026, NA COORDENADA DO POI. Regra do
+                    # dono do produto: "a mira deve ser colocada na coordenada do
+                    # POI, simples assim". O pixel sai de `frente_da_rua`, com a
+                    # projecao medida (o fov do Maps e vertical) e o corte da
+                    # interface, que e assimetrico: o rumo cai em x = 0,479, e nao
+                    # no meio. As visadas antigas foram corrigidas sem recaptura
+                    # (`corrigir_frente.py`).
+                    #
+                    # O HISTORICO, abaixo, fica: a mira tinha saido em 09/09/2026.
+                    #
                     # A MIRA SAIU. Regra do dono do produto em 09/09/2026: "o
                     # prompt da IA passa a receber as 4 visadas nas 4 direcoes
                     # SEM O MARCADOR DE ONDE ESTA O LOCAL BUSCADO, para nao
@@ -798,6 +808,18 @@ async def um_poi(page, poco, alvo, placar) -> None:
                     # achado. Se um dia esse caminho quiser reaproveitar este
                     # codigo, ele esta aqui e documentado.
                     img = limpo
+                    mira_x = mira_rumo = None
+                    if giro == 0:
+                        import cv2
+                        import numpy as np
+                        import frente_da_rua as fr
+                        x = fr.x_na_visada(frente, heading, fov_aqui)
+                        arr = cv2.imdecode(np.frombuffer(img, np.uint8), cv2.IMREAD_COLOR)
+                        if x is not None and 0 <= x <= 1 and arr is not None:
+                            ok_png, buf = cv2.imencode(".png", fr.desenhar_mira(arr, x))
+                            if ok_png:
+                                img = buf.tobytes()
+                                mira_x, mira_rumo = float(x), float(frente)
                     # O WEBP E O ULTIMO PASSO, depois do corte e da mira: as
                     # duas etapas usam cv2 e falam PNG entre si.
                     img = _para_webp(img)
@@ -805,7 +827,8 @@ async def um_poi(page, poco, alvo, placar) -> None:
                            pano_id=m["pano_id"], cam_lat=m["lat"], cam_lng=m["lng"],
                            heading=heading, pitch=5.0, fov=float(fov_aqui),
                            distancia_m=d, largura_px=LARG, altura_px=ALT,
-                           data_imagem=_data_do_pano(m["pano_id"]))
+                           data_imagem=_data_do_pano(m["pano_id"]),
+                           mira_x=mira_x, mira_rumo=mira_rumo)
                     placar[tipo] += 1
                 except Exception as e:                         # noqa: BLE001
                     gravar(poco, alvo["id"], tipo, None,
