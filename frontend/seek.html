@@ -712,16 +712,20 @@ a.chip{text-decoration:none}
 .fila-topo{gap:7px}
 .fila-filtros .fl-sel + .fl-sel{margin-left:0}
 .ffontes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px}
+/* nome em cima, contagem embaixo: lado a lado, "DIRETÓRIO 3.123" não cabia
+ * em um terço da fila e virava "DI…" */
 .fch{
-  display:flex;align-items:center;gap:4px;height:25px;padding:0 6px;min-width:0;
+  display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;column-gap:4px;
+  padding:3px 6px 3px 7px;min-width:0;text-align:left;
   border:1px solid var(--linha);border-radius:var(--r3);background:var(--sup2);
-  font-family:var(--mono);font-size:9px;color:var(--fraco);letter-spacing:.02em;
+  font-family:var(--mono);font-size:9px;color:var(--fraco);letter-spacing:.02em;line-height:1.3;
   transition:border-color var(--t),background var(--t);
 }
 .fch:hover{border-color:var(--linha2)}
-.fch i{font-style:normal;width:9px;flex:none;text-align:center;font-size:9px;color:var(--tenue)}
-.fch span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}
-.fch b{font-weight:600;color:var(--tenue);font-size:9px;font-variant-numeric:tabular-nums}
+.fch span{grid-column:1;grid-row:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fch i{grid-column:2;grid-row:1;font-style:normal;font-size:9px;color:var(--tenue)}
+.fch b{grid-column:1 / -1;grid-row:2;font-weight:600;color:var(--tenue);font-size:10px;
+  font-variant-numeric:tabular-nums}
 .fch[data-estado="sim"]{background:#E8F6EE;border-color:#9FD3B6;color:#14603D}
 .fch[data-estado="sim"] i,.fch[data-estado="sim"] b{color:#14603D}
 .fch[data-estado="nao"]{background:#FDF2F2;border-color:#EBB5B5;border-style:dashed;color:#A82F2F}
@@ -822,6 +826,37 @@ a.chip{text-decoration:none}
 .hist-lin i{font-style:normal;font-family:var(--mono);font-size:10px;color:var(--tenue)}
 .hist-lin b{color:var(--tit)}
 .hist-lin span{color:var(--fraco);display:block;font-size:11px}
+
+/* ---- tela estreita (notebook, painel lateral) ----
+ * Visto em 800 px no dia da estreia: os campos da faixa encolhiam até sumir
+ * (o número da ligação não aparecia), chips e títulos quebravam em três linhas
+ * e o texto do rodapé subia por cima do veredito. A regra: nada encolhe abaixo
+ * do próprio conteúdo — o que não cabe rola ou sai de cena. */
+.chip,.bt{white-space:nowrap;flex:none}
+.no-crit .nm,.img-cab .nm,.arv-tit strong{white-space:nowrap}
+.img-cab .res{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+#faixa{overflow-x:auto;scrollbar-width:none}
+#faixa::-webkit-scrollbar{display:none}
+#faixa .cf{flex:none}
+#faixa .cf b{max-width:34ch}
+.dec-curadoria{flex:0 1 auto;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+#decisao .acoes{min-width:0;overflow-x:auto}
+.fila-pe span{white-space:nowrap}
+.dec-estado b,.dec-estado span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.arv-topo{gap:10px}
+.arv-ferramentas{min-width:0;overflow-x:auto;scrollbar-width:none}
+.arv-ferramentas::-webkit-scrollbar{display:none}
+@media (max-width:1220px){
+  #id-sub,#chip-rotulo,#arv-sub{display:none}
+  #faixa .cf b{max-width:24ch}
+}
+@media (max-width:1000px){
+  .dec-curadoria,#topo .quem span:last-child{display:none}
+  .dec-estado{min-width:0;flex:0 1 auto}
+  .dec-estado span{display:none}
+  .arv-tit strong{display:none}
+  #decisao{gap:10px}
+}
 </style>
 </head>
 <body>
@@ -2531,7 +2566,9 @@ var SEEK = (function () {
       S.porLig = {};
       S.casos.forEach(function (c) { S.porLig[c.ligacao] = c; });
       S.quals = Object.keys(quals).sort();
-      S.gerado = d.gerado_em;
+      /* a hora é a da chegada aqui: `gerado_em` sai do contêiner em UTC, sem
+       * fuso, e aparecia três horas adiantada */
+      S.gerado = agoraIso();
       S.erro = null;
       chipApi(num(S.casos.length) + ' ligações · ' + ((Date.now() - t0) / 1000).toFixed(1) + ' s', 'on');
     }).catch(function (e) {
@@ -2627,7 +2664,8 @@ var SEEK = (function () {
 
     pintaLista();
     $('#f-pe').innerHTML = '<span>' + num(S.vistos.length) + ' de ' + num(S.casos.length)
-      + ' ligações</span>' + (S.gerado ? '<span>· fila de ' + esc(quando(S.gerado)) + '</span>' : '')
+      + '</span>' + (S.gerado ? '<span title="hora em que a fila chegou">· ' + esc(quando(S.gerado).slice(-5))
+      + '</span>' : '')
       + '<button data-recarrega="1" title="buscar a fila de novo no servidor">atualizar</button>';
   }
 
