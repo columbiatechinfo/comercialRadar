@@ -1,0 +1,345 @@
+<title>Esteira do Radar Comercial</title>
+<meta name="description" content="Como uma ligação de Canoas vira veredito: cadastro, vínculo, fotos, busca web, IA, checagem e a decisão na SEEK — com os números de 14/09/2026.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --chao:#F4F6F8; --sup:#FFFFFF; --linha:#D9DFE7; --tenue:#6B7684; --texto:#233040; --tit:#0B2E59;
+  --navy:#0B2E59; --laranja:#C46A12; --laranja-f:#FDF1E4; --teal:#10798B; --teal-f:#E4F4F6;
+  --roxo:#6D4AC7; --roxo-f:#EFEBFA; --verde:#1B7F52; --verde-f:#E6F4EC; --cinza:#5B6274; --cinza-f:#ECEEF2;
+  --vermelho:#B43A3A; --ambar:#8A5410; --ambar-f:#FDF3E3;
+  --display:"Archivo","Arial Narrow",system-ui,sans-serif;
+  --corpo:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --chao:#0E1620; --sup:#15202C; --linha:#2A3747; --tenue:#93A0B0; --texto:#D5DDE6; --tit:#EAF0F7;
+    --navy:#9CC2F0; --laranja:#F2A55A; --laranja-f:#2E2213; --teal:#5CC6D6; --teal-f:#112A30;
+    --roxo:#B5A0F2; --roxo-f:#221C38; --verde:#5BCB92; --verde-f:#12291E; --cinza:#A7B0BF; --cinza-f:#1E2835;
+    --vermelho:#F08A8A; --ambar:#F2C27A; --ambar-f:#2D2414;
+  }
+}
+:root[data-theme="dark"]{
+  --chao:#0E1620; --sup:#15202C; --linha:#2A3747; --tenue:#93A0B0; --texto:#D5DDE6; --tit:#EAF0F7;
+  --navy:#9CC2F0; --laranja:#F2A55A; --laranja-f:#2E2213; --teal:#5CC6D6; --teal-f:#112A30;
+  --roxo:#B5A0F2; --roxo-f:#221C38; --verde:#5BCB92; --verde-f:#12291E; --cinza:#A7B0BF; --cinza-f:#1E2835;
+  --vermelho:#F08A8A; --ambar:#F2C27A; --ambar-f:#2D2414;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--chao);color:var(--texto);font:15px/1.6 var(--corpo)}
+.pagina{max-width:1080px;margin:0 auto;padding:40px 20px 64px;display:flex;flex-direction:column;gap:48px}
+h1,h2,h3{font-family:var(--display);color:var(--tit);margin:0;text-wrap:balance}
+h1{font-size:clamp(30px,4.6vw,46px);font-weight:800;line-height:1.08;letter-spacing:-.01em}
+h2{font-size:24px;font-weight:800;line-height:1.2}
+h3{font-size:17px;font-weight:600;line-height:1.3}
+p{margin:0}
+.eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--tenue)}
+.cabeca{display:flex;flex-direction:column;gap:12px;max-width:760px}
+.lede{font-size:17px;color:var(--texto);max-width:66ch}
+.placar{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;background:var(--linha);border:1px solid var(--linha);border-radius:10px;overflow:hidden}
+.placar div{background:var(--sup);padding:16px 18px;display:flex;flex-direction:column;gap:2px}
+.placar b{font-family:var(--display);font-size:32px;font-weight:800;line-height:1.1;font-variant-numeric:tabular-nums;color:var(--tit)}
+.placar span{font-size:13px;color:var(--tenue)}
+.placar .ok b{color:var(--verde)} .placar .rev b{color:var(--laranja)} .placar .nao b{color:var(--vermelho)}
+figure{margin:0;display:flex;flex-direction:column;gap:10px}
+.rolo{overflow-x:auto;background:var(--sup);border:1px solid var(--linha);border-radius:10px;padding:18px 12px}
+.rolo svg{display:block;min-width:900px;width:100%;height:auto;color:var(--texto)}
+figcaption{font-size:13px;color:var(--tenue);max-width:80ch}
+.secao{display:flex;flex-direction:column;gap:18px}
+.secao > p{max-width:70ch}
+ol.passos{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;border-top:1px solid var(--linha)}
+.passo{display:grid;grid-template-columns:44px minmax(0,1.1fr) minmax(0,1fr);gap:8px 24px;padding:20px 0;border-bottom:1px solid var(--linha)}
+.num{font-family:var(--display);font-weight:800;font-size:22px;color:var(--c,var(--tit));line-height:1.2}
+.passo .o-que{display:flex;flex-direction:column;gap:6px}
+.passo .o-que p{max-width:52ch}
+.fio{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:13.5px;align-content:start}
+.fio dt{font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--tenue);padding-top:2px}
+.fio dd{margin:0}
+code,.m{font-family:var(--mono);font-size:12.5px}
+.chip{display:inline-block;font-family:var(--mono);font-size:11px;padding:1px 8px;border-radius:99px;white-space:nowrap;vertical-align:1px}
+.chip.gratis{background:var(--verde-f);color:var(--verde)}
+.chip.pago{background:var(--ambar-f);color:var(--ambar)}
+.medido{font-variant-numeric:tabular-nums}
+.medido b{color:var(--tit);font-weight:600}
+.mudou{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.mudou article{background:var(--sup);border:1px solid var(--linha);border-radius:10px;padding:16px 18px;display:flex;flex-direction:column;gap:8px}
+.antes-depois{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;font-size:13.5px;font-variant-numeric:tabular-nums}
+.antes-depois dt{font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--tenue);padding-top:2px}
+.antes-depois dd{margin:0}
+.tabela{overflow-x:auto;border:1px solid var(--linha);border-radius:10px;background:var(--sup)}
+table{border-collapse:collapse;width:100%;min-width:620px;font-size:14px}
+th,td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--linha);vertical-align:top}
+th{font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--tenue);font-weight:500}
+tr:last-child td{border-bottom:0}
+td.num-col{font-variant-numeric:tabular-nums;white-space:nowrap}
+.rodape{font-size:13px;color:var(--tenue);border-top:1px solid var(--linha);padding-top:16px;max-width:80ch}
+@media (max-width:760px){
+  .placar{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .passo{grid-template-columns:36px minmax(0,1fr)}
+  .passo .fio{grid-column:2}
+  .mudou{grid-template-columns:1fr}
+}
+</style>
+
+<main class="pagina">
+  <header class="cabeca">
+    <span class="eyebrow">Comercial Radar · Canoas · 14/09/2026</span>
+    <h1>Como uma ligação residencial vira veredito</h1>
+    <p class="lede">Cada ligação que a Corsan cobra como residencial passa por uma esteira: juntamos os estabelecimentos que as bases situam no endereço, fotografamos a rua, buscamos o endereço na web, a IA julga com essas provas, o código confere as regras, e uma pessoa dá a decisão oficial na SEEK.</p>
+  </header>
+
+  <section class="placar" aria-label="Resultado do ciclo">
+    <div><b>23.959</b><span>ligações julgadas no prompt novo</span></div>
+    <div class="ok"><b>3.252</b><span>aprovadas — comércio ou serviço confirmado</span></div>
+    <div class="rev"><b>7.929</b><span>para revisão humana</span></div>
+    <div class="nao"><b>12.778</b><span>reprovadas</span></div>
+  </section>
+
+  <figure>
+    <div class="rolo">
+      <svg viewBox="0 0 1060 380" role="img" aria-label="Fluxo: o cadastro alimenta o vínculo de registros; do vínculo saem as fotos de rua e a busca web; registros, fotos e busca entram na IA; a checagem do código confere o veredito; a SEEK mostra para uma pessoa decidir. A reserva do Google devolve reprovadas com resultado novo para a IA.">
+        <defs>
+          <marker id="seta" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+          </marker>
+          <marker id="seta-l" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" style="fill:var(--laranja)"/>
+          </marker>
+        </defs>
+
+        <!-- nós -->
+        <g font-family="IBM Plex Sans, system-ui, sans-serif">
+          <rect x="10" y="150" width="130" height="76" rx="8" stroke-width="1.5" style="fill:var(--cinza-f);stroke:var(--navy)"/>
+          <text x="75" y="182" text-anchor="middle" font-size="14" font-weight="600" style="fill:var(--tit)">Cadastro</text>
+          <text x="75" y="202" text-anchor="middle" font-size="11.5" style="fill:var(--tenue)">da Corsan</text>
+
+          <rect x="190" y="150" width="140" height="76" rx="8" stroke-width="1.5" style="fill:var(--verde-f);stroke:var(--verde)"/>
+          <text x="260" y="182" text-anchor="middle" font-size="14" font-weight="600" style="fill:var(--tit)">Vínculo</text>
+          <text x="260" y="202" text-anchor="middle" font-size="11.5" style="fill:var(--tenue)">registros no endereço</text>
+
+          <rect x="400" y="40" width="150" height="76" rx="8" stroke-width="1.5" style="fill:var(--teal-f);stroke:var(--teal)"/>
+          <text x="475" y="72" text-anchor="middle" font-size="14" font-weight="600" style="fill:var(--tit)">Fotos de rua</text>
+          <text x="475" y="92" text-anchor="middle" font-size="11.5" style="fill:var(--tenue)">4 visadas por POI</text>
+
+          <rect x="400" y="260" width="150" height="76" rx="8" stroke-width="1.5" style="fill:var(--laranja-f);stroke:var(--laranja)"/>
+          <text x="475" y="292" text-anchor="middle" font-size="14" font-weight="600" style="fill:var(--tit)">Busca web</text>
+          <text x="475" y="312" text-anchor="middle" font-size="11.5" style="fill:var(--tenue)">DuckDuckGo · Yahoo</text>
+
+          <rect x="620" y="150" width="130" height="76" rx="8" stroke-width="1.5" style="fill:var(--roxo-f);stroke:var(--roxo)"/>
+          <text x="685" y="182" text-anchor="middle" font-size="14" font-weight="600" style="fill:var(--tit)">IA julga</text>
+          <text x="685" y="202" text-anchor="middle" font-size="11.5" style="fill:var(--tenue)">na Spark</text>
+
+          <rect x="790" y="150" width="120" height="76" rx="8" stroke-width="1.5" style="fill:var(--cinza-f);stroke:var(--cinza)"/>
+          <text x="850" y="182" text-anchor="middle" font-size="14" font-weight="600" style="fill:var(--tit)">Checagem</text>
+          <text x="850" y="202" text-anchor="middle" font-size="11.5" style="fill:var(--tenue)">regras no código</text>
+
+          <rect x="950" y="150" width="100" height="76" rx="8" stroke-width="2" style="fill:var(--sup);stroke:var(--navy)"/>
+          <text x="1000" y="182" text-anchor="middle" font-size="14" font-weight="600" style="fill:var(--tit)">SEEK</text>
+          <text x="1000" y="202" text-anchor="middle" font-size="11.5" style="fill:var(--tenue)">pessoa decide</text>
+        </g>
+
+        <!-- arestas -->
+        <g stroke="currentColor" stroke-width="1.4" fill="none" marker-end="url(#seta)" opacity=".75">
+          <line x1="140" y1="188" x2="188" y2="188"/>
+          <polyline points="330,172 365,172 365,78 398,78"/>
+          <polyline points="330,204 365,204 365,298 398,298"/>
+          <polyline points="550,78 585,78 585,172 618,172"/>
+          <polyline points="550,298 585,298 585,204 618,204"/>
+          <line x1="330" y1="188" x2="618" y2="188"/>
+          <line x1="750" y1="188" x2="788" y2="188"/>
+          <line x1="910" y1="188" x2="948" y2="188"/>
+        </g>
+        <!-- volta: reprovada com Google novo -->
+        <path d="M475,336 C475,372 685,372 685,228" stroke-width="1.4" stroke-dasharray="5 4" fill="none" marker-end="url(#seta-l)" style="stroke:var(--laranja)"/>
+
+        <!-- rótulos das arestas -->
+        <g font-family="IBM Plex Mono, ui-monospace, monospace" font-size="11" style="fill:var(--tenue)">
+          <text x="164" y="176" text-anchor="middle">endereço</text>
+          <text x="372" y="62" text-anchor="start">POI mais perto, até 60 m</text>
+          <text x="372" y="352" text-anchor="start">rua + número + "empresa"</text>
+          <text x="474" y="182" text-anchor="middle">registros candidatos</text>
+          <text x="600" y="132" text-anchor="middle">até 5 fotos</text>
+          <text x="600" y="250" text-anchor="middle">só o que cita rua e nº</text>
+          <text x="770" y="140" text-anchor="middle">veredito</text>
+          <text x="770" y="154" text-anchor="middle">+ provas</text>
+          <text x="930" y="140" text-anchor="middle">oficial</text>
+          <text x="930" y="154" text-anchor="middle">à parte</text>
+        </g>
+        <text x="580" y="376" text-anchor="middle" font-family="IBM Plex Mono, ui-monospace, monospace" font-size="11" style="fill:var(--laranja)">reprovada que ganha resultado do Google no endereço volta para a IA</text>
+      </svg>
+    </div>
+    <figcaption>Da esquerda para a direita, o caminho de uma ligação. Fotos e busca correm em paralelo a partir do vínculo; a IA recebe as três provas juntas. A linha tracejada é a volta automática: quando a reserva do Google acha algo no endereço de uma ligação reprovada, ela é julgada de novo no lote seguinte.</figcaption>
+  </figure>
+
+  <section class="secao" aria-labelledby="t-passos">
+    <h2 id="t-passos">Os passos, na ordem</h2>
+    <ol class="passos">
+      <li class="passo">
+        <span class="num" style="--c:var(--navy)">1</span>
+        <div class="o-que">
+          <h3>O cadastro do cliente define quem entra</h3>
+          <p>Só as ligações residenciais que a Corsan qualificou como <b>SIM</b> ou <b>SIM com análise humana</b> passam para a esteira. A qualificação decide o teto: a de análise humana nunca sai aprovada direto.</p>
+        </div>
+        <dl class="fio">
+          <dt>Entra</dt><dd>arquivo do cadastro da Corsan</dd>
+          <dt>Sai</dt><dd>ligação com endereço, coordenada e qualificação</dd>
+          <dt>Tabela</dt><dd><code>resources_root.cadastro_corsan</code> · escrita pela carga do cadastro</dd>
+          <dt>Custo</dt><dd><span class="chip gratis">grátis</span> dado do cliente</dd>
+          <dt>Medido</dt><dd class="medido"><b>87.273</b> ligações SIM ou SIM com análise em Canoas</dd>
+        </dl>
+      </li>
+      <li class="passo">
+        <span class="num" style="--c:var(--verde)">2</span>
+        <div class="o-que">
+          <h3>O vínculo junta os estabelecimentos do endereço</h3>
+          <p>Registros de Receita Federal, Google Maps, iFood, IBGE, base estadual, Cadastur e Airbnb são casados com a ligação pela rua e pelo número. Cada um vira um candidato; nenhum decide sozinho.</p>
+        </div>
+        <dl class="fio">
+          <dt>Entra</dt><dd>endereço da ligação e as bases extraídas</dd>
+          <dt>Sai</dt><dd>lista de registros candidatos por ligação</dd>
+          <dt>Tabelas</dt><dd><code>pois</code>, <code>receita_data</code>, <code>maps_data</code> (extração) · <code>ligacao_poi</code> (casamento; o descarte vem da IA)</dd>
+          <dt>Custo</dt><dd><span class="chip gratis">grátis</span> bases públicas · <span class="chip pago">pago</span> proxies da extração, assinatura fixa</dd>
+          <dt>Medido</dt><dd class="medido"><b>8.348</b> vínculos descartados neste ciclo por "não combina", como combinado</dd>
+        </dl>
+      </li>
+      <li class="passo">
+        <span class="num" style="--c:var(--teal)">3</span>
+        <div class="o-que">
+          <h3>A foto de rua mostra o imóvel</h3>
+          <p>Para o registro mais próximo do hidrômetro — até 60 m — tiramos quatro visadas do Street View, com uma mira verde na coordenada do registro. Registro mais longe que isso não entra com foto, porque a foto seria de outro imóvel.</p>
+        </div>
+        <dl class="fio">
+          <dt>Entra</dt><dd>coordenada do POI</dd>
+          <dt>Sai</dt><dd>frente, lado A, lado B e fundo</dd>
+          <dt>Tabela</dt><dd><code>poi_evidencia</code> · escrita pela captura</dd>
+          <dt>Custo</dt><dd><span class="chip gratis">grátis</span> saber se há panorama · <span class="chip pago">pago</span> abrir o panorama, pela chave do Google Maps</dd>
+          <dt>Medido</dt><dd class="medido"><b>964 de 965</b> POIs fotografados hoje, ~5 s cada com 8 navegadores</dd>
+        </dl>
+      </li>
+      <li class="passo">
+        <span class="num" style="--c:var(--laranja)">4</span>
+        <div class="o-que">
+          <h3>A busca web procura o endereço</h3>
+          <p>Buscamos "rua + número + bairro + cidade + empresa" no DuckDuckGo e no Yahoo; o Google só entra de reserva, onde os dois não acharam nada. Só conta o resultado que cita a mesma rua e o mesmo número.</p>
+        </div>
+        <dl class="fio">
+          <dt>Entra</dt><dd>endereço normalizado da ligação</dd>
+          <dt>Sai</dt><dd>resultados no endereço, e o print da página</dd>
+          <dt>Tabela</dt><dd><code>busca_web</code> · escrita pela busca</dd>
+          <dt>Custo</dt><dd><span class="chip gratis">grátis</span> por busca · <span class="chip pago">pago</span> proxies, assinatura fixa</dd>
+          <dt>Medido</dt><dd class="medido"><b>23.963</b> ligações buscadas · <b>12.448</b> com resultado no endereço (DuckDuckGo 8.506 · Yahoo 6.529 · Google 3.181)</dd>
+        </dl>
+      </li>
+      <li class="passo">
+        <span class="num" style="--c:var(--roxo)">5</span>
+        <div class="o-que">
+          <h3>A IA julga com as três provas juntas</h3>
+          <p>Registros, fotos e resultados da busca vão numa só pergunta. A IA diz quais registros são desta instalação, se alguma foto mostra o comércio, quais resultados da busca confirmam um registro, e explica o veredito prova por prova.</p>
+        </div>
+        <dl class="fio">
+          <dt>Entra</dt><dd>registros, até 5 fotos, busca no endereço</dd>
+          <dt>Sai</dt><dd>aprovado, revisão ou reprovado, com o motivo</dd>
+          <dt>Tabela</dt><dd><code>ligacao_veredito</code> · escrita pelo julgamento</dd>
+          <dt>Custo</dt><dd><span class="chip gratis">sem custo por julgamento</span> modelo local na Spark</dd>
+          <dt>Medido</dt><dd class="medido"><b>9.404</b> aprovadas pela IA · foto confirmou em <b>2.933</b> · busca confirmou em <b>8.524</b> · 25 a 44 julgamentos/min com 120 simultâneos</dd>
+        </dl>
+      </li>
+      <li class="passo">
+        <span class="num" style="--c:var(--cinza)">6</span>
+        <div class="o-que">
+          <h3>A checagem confere as regras que a IA não pode furar</h3>
+          <p>Toda aprovação da IA passa por quatro regras escritas em código: registro que não é comércio (igreja, associação, clube de mães) não aprova; um estabelecimento vale para uma instalação só; aprovada só por MEI vai para revisão; e SIM com análise humana vai para revisão.</p>
+        </div>
+        <dl class="fio">
+          <dt>Entra</dt><dd>o veredito da IA, que fica guardado</dd>
+          <dt>Sai</dt><dd>o veredito final e o porquê da mudança</dd>
+          <dt>Tabela</dt><dd><code>ligacao_veredito</code> · a checagem regrava, e sempre recomeça do que a IA disse</dd>
+          <dt>Custo</dt><dd><span class="chip gratis">grátis</span></dd>
+          <dt>Medido</dt><dd class="medido">das <b>9.404</b> aprovações da IA, ficaram <b>3.252</b>; as demais foram para revisão ou reprovadas</dd>
+        </dl>
+      </li>
+      <li class="passo">
+        <span class="num" style="--c:var(--navy)">7</span>
+        <div class="o-que">
+          <h3>Uma pessoa decide na SEEK</h3>
+          <p>A tela mostra a árvore de evidências — só em verde o que confirmou — e o parecer da IA como mais uma fonte. A decisão oficial (aprovar, mandar a campo, deixar em revisão, rejeitar) é gravada à parte e nunca altera o veredito da IA.</p>
+        </div>
+        <dl class="fio">
+          <dt>Entra</dt><dd>vereditos, provas e imagens</dd>
+          <dt>Sai</dt><dd>decisão oficial, uma a uma ou em lote</dd>
+          <dt>Tabela</dt><dd><code>seek_decisao</code> · escrita pela tela, por quem tem nível editor</dd>
+          <dt>Custo</dt><dd><span class="chip gratis">sem custo novo</span> VPS que já existia</dd>
+          <dt>Medido</dt><dd class="medido">no ar em <code>a2lsolucoes.com/seek</code> · <b>3</b> decisões oficiais até agora</dd>
+        </dl>
+      </li>
+    </ol>
+  </section>
+
+  <section class="secao" aria-labelledby="t-mudou">
+    <h2 id="t-mudou">O que mudou neste ciclo</h2>
+    <div class="mudou">
+      <article>
+        <h3>Busca pelo Camoufox, com navegador aquecido</h3>
+        <dl class="antes-depois">
+          <dt>Antes</dt><dd>navegador novo a cada busca · ~100 buscas/min · metade do Yahoo falhando</dd>
+          <dt>Depois</dt><dd>um navegador por trabalhador, reaproveitado · <b>357 buscas/min</b> · 1 falha em 30.530</dd>
+        </dl>
+      </article>
+      <article>
+        <h3>IA diz qual prova confirmou</h3>
+        <dl class="antes-depois">
+          <dt>Antes</dt><dd>a tela pintava de verde toda foto coletada e toda busca com resultado</dd>
+          <dt>Depois</dt><dd>verde só quando a IA viu o comércio na foto ou usou o resultado · motivo sem limite de frases</dd>
+        </dl>
+      </article>
+      <article>
+        <h3>Regras novas na checagem</h3>
+        <dl class="antes-depois">
+          <dt>Antes</dt><dd>1.745 SIM com análise humana saíam aprovadas · clube de mães aprovava como "serviço"</dd>
+          <dt>Depois</dt><dd>nenhuma SIM com análise humana aprovada · associação e serviço social não aprovam</dd>
+        </dl>
+      </article>
+      <article>
+        <h3>SEEK no domínio da A2L</h3>
+        <dl class="antes-depois">
+          <dt>Antes</dt><dd>só pelo endereço interno do Tailscale</dd>
+          <dt>Depois</dt><dd><code>a2lsolucoes.com/seek</code> · túnel próprio do i9 até a VPS · login limitado a 10 tentativas por minuto</dd>
+        </dl>
+      </article>
+    </div>
+  </section>
+
+  <section class="secao" aria-labelledby="t-custo">
+    <h2 id="t-custo">O que custa dinheiro</h2>
+    <div class="tabela">
+      <table>
+        <thead><tr><th>Etapa</th><th>Custo</th><th>Por quê</th></tr></thead>
+        <tbody>
+          <tr><td>Cadastro e bases públicas</td><td><span class="chip gratis">grátis</span></td><td>dado do cliente, Receita, IBGE, base estadual, Cadastur</td></tr>
+          <tr><td>Extração e busca web</td><td><span class="chip pago">pago, fixo</span></td><td>assinatura dos proxies; a busca em si não é cobrada</td></tr>
+          <tr><td>Fotos de rua</td><td><span class="chip pago">pago por uso</span></td><td>abrir o panorama usa a chave do Google Maps; saber se ele existe é grátis</td></tr>
+          <tr><td>Julgamento da IA</td><td><span class="chip gratis">sem custo por uso</span></td><td>modelo rodando na Spark, na empresa</td></tr>
+          <tr><td>Checagem e SEEK</td><td><span class="chip gratis">sem custo novo</span></td><td>código próprio e a VPS que já publica o site e o Hippo</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="secao" aria-labelledby="t-aberto">
+    <h2 id="t-aberto">Ainda em aberto</h2>
+    <div class="tabela">
+      <table>
+        <thead><tr><th>Item</th><th>Situação</th></tr></thead>
+        <tbody>
+          <tr><td>Reserva do Google</td><td class="num-col">~5.800 buscas na fila · o Google aguenta ~45 min a 16 buscas/min e depois bloqueia por mais de 1 h</td></tr>
+          <tr><td>Prédio de 162 registros (ligação 2563698)</td><td>não cabe numa chamada da IA; sugestão: revisão humana direta</td></tr>
+          <tr><td>Política de conteúdo (CSP) e monitor da VPS para a SEEK</td><td>pendentes, registrados em <code>docs/PRODUCAO-SEEK.md</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <p class="rodape">Números lidos do banco em 14/09/2026, por volta das 14h20, e dos registros de execução da noite de 13 para 14/09. Os de Canoas se referem às ligações qualificadas SIM ou SIM com análise humana; "julgadas" são as que já têm veredito no prompt novo.</p>
+</main>
