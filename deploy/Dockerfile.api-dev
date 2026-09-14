@@ -1,0 +1,25 @@
+# A API de DESENVOLVIMENTO (14/09/2026) — docs/DESENVOLVIMENTO.md
+#
+# A MESMA IMAGEM DA PRODUCAO ATE AS DEPENDENCIAS, E SEM O CODIGO. O `Dockerfile.api`
+# embute o repositorio inteiro (`COPY . .`, ~27 GB de imagem); aqui o codigo entra
+# montado pelo compose, e as primeiras instrucoes sao identicas as do
+# `Dockerfile.api` de proposito: o Docker reaproveita a camada dos 214 pacotes que
+# a producao ja tem, e a imagem de desenvolvimento nao ocupa disco novo.
+#
+# Sem o cliente do Docker: o desenvolvimento nao despacha run.
+FROM python:3.10-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONUTF8=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+EXPOSE 7720
+
+CMD ["python", "-m", "uvicorn", "server:app", \
+     "--host", "0.0.0.0", "--port", "7720", \
+     "--proxy-headers", "--forwarded-allow-ips", "*"]

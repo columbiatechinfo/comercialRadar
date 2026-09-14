@@ -23,17 +23,21 @@ services:
   radar-comercial-api-dev:
     build:
       context: ..
-      dockerfile: deploy/Dockerfile.api
+      dockerfile: deploy/Dockerfile.api-dev
     image: radar-comercial-api-dev
     container_name: radar-comercial-api-dev
     restart: unless-stopped
+    # O MESMO USUÁRIO DA PRODUÇÃO (10001), dono do volume de uploads. O `.env` do
+    # diretório é chmod 600 do a2l e o `config.py` o lê no import: ele é tapado por
+    # um arquivo vazio (volumes abaixo) e as variáveis chegam pelo `env_file`.
+    user: "10001:10001"
     env_file:
       - ../.env
     environment:
       PORTA_API: 7741
       PYTHONUNBUFFERED: "1"
       PYTHONDONTWRITEBYTECODE: "1"
-      ANEXOS_DIR: /app/anexos
+      ANEXOS_DIR: /anexos
       A2L_DB_HOST: "192.168.3.10"
       RADAR_JOB_DOCKER: ""
       RADAR_AMBIENTE: "desenvolvimento"
@@ -42,10 +46,11 @@ services:
     volumes:
       # o código do diretório de desenvolvimento, ao vivo e só leitura
       - ..:/app:ro
+      - /dev/null:/app/.env:ro
       # os mesmos dados da produção
       - radar-crops:/app/crops:ro
       - radar-capturas:/app/capturas:ro
-      - radar-anexos:/app/anexos
+      - radar-anexos:/anexos        # fora de /app: o diretório de desenvolvimento não tem a pasta, e a montagem é só leitura
       - radar-uploads:/app/uploads
     mem_limit: 1g
     read_only: true
