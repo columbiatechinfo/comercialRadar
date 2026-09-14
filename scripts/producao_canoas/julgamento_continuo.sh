@@ -11,7 +11,10 @@ J=$D/julgamento_continuo
 REPO=$HOME/producao/radarComercial
 mkdir -p $J
 cd $REPO || exit 1
-AVALIA="-v $REPO/avaliar_enxuto.py:/app/avaliar_enxuto.py:ro -v $REPO/avaliar_ligacao.py:/app/avaliar_ligacao.py:ro -v $REPO/checagem_veredito.py:/app/checagem_veredito.py:ro"
+# 14/09/2026: as regras de numero e prova datada moram em `provas_datadas.py`, e a
+# foto do proprio lugar em `avaliar_ia.py`/`dossie_ligacao.py` — a imagem do
+# minerador traz a versao velha deles, entao entram montados tambem.
+AVALIA="-v $REPO/avaliar_enxuto.py:/app/avaliar_enxuto.py:ro -v $REPO/avaliar_ligacao.py:/app/avaliar_ligacao.py:ro -v $REPO/checagem_veredito.py:/app/checagem_veredito.py:ro -v $REPO/provas_datadas.py:/app/provas_datadas.py:ro -v $REPO/avaliar_ia.py:/app/avaliar_ia.py:ro -v $REPO/dossie_ligacao.py:/app/dossie_ligacao.py:ro"
 # a numeracao continua de onde parou: religar o laco nao sobrescreve lote_1.log
 n=$(ls $J/lote_*.log 2>/dev/null | sed 's/.*lote_\([0-9]*\)\.log/\1/' | sort -n | tail -1)
 n=${n:-0}
