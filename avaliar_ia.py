@@ -1008,19 +1008,36 @@ def _fotos_do_maps(cur, poi_id):
     melhor representa o lugar. Pegar as primeiras e mais barato e mais certeiro
     do que escolher por tamanho ou por acaso.
     """
+    return [b for b, _d in _fotos_do_maps_datadas(cur, poi_id)]
+
+
+def _fotos_do_maps_datadas(cur, poi_id):
+    """[(bytes, "AAAA-MM" | None)]: as fotos DO PROPRIO LUGAR, a mais recente primeiro.
+
+    14/09/2026, dono do produto. Duas mudancas, pelo mesmo defeito:
+
+    - SO A FOTO DO LUGAR. A coleta antiga gravava toda imagem da ficha, inclusive
+      a de "Lugares tambem pesquisados"; sem foto propria, a primeira `gps-cs-s`
+      era a do vizinho de categoria. Vale a foto com `secao` (coleta desde
+      14/09/2026) ou, na coleta antiga, so a CAPA (`ordem = 0`): a primeira
+      imagem da ficha e sempre a capa do proprio lugar.
+    - A MAIS RECENTE PRIMEIRO. A data da foto pesa no veredito; sem data, a ordem
+      do Google.
+    """
     cur.execute("""
-        select storage_path, dados
+        select storage_path, dados, data_imagem
           from radar_comercial.images_urls
          where poi_id = %s
            and url like '%%gps-cs-s%%'
+           and (secao is not null or ordem = 0)
            and (storage_path is not null or dados is not null)
-         order by ordem
+         order by data_imagem desc nulls last, ordem
          limit %s""", (poi_id, FOTOS_DO_MAPS))
     saida = []
-    for sp, d in cur.fetchall():
+    for sp, d, data in cur.fetchall():
         b = imagens._de_linha(sp, d)
         if b:
-            saida.append(b)
+            saida.append((b, str(data)[:7] if data else None))
     return saida
 
 

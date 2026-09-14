@@ -522,9 +522,13 @@ def montar(con, ligacao, ia, imagens_mod, busca_web=None):
     if alvo_foto:
         try:
             with con.cursor() as k:
-                for n, b in enumerate(ia._fotos_do_maps(k, alvo_foto)[:FOTOS_MAPS]):
+                # A DATA DA FOTO PUBLICADA vai no rotulo, como a da visada
+                # (14/09/2026): so a coleta nova a tem; sem ela, o rotulo nao diz.
+                for n, (b, data) in enumerate(ia._fotos_do_maps_datadas(k, alvo_foto)[:FOTOS_MAPS]):
                     imgs.append(b)
                     tipos.append("foto_maps_%d" % (n + 1))
+                    if data:
+                        datas["foto_maps_%d" % (n + 1)] = data
         except Exception:                                      # noqa: BLE001
             pass
 

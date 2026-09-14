@@ -24,6 +24,15 @@ Pedido do dono do produto em 12/09/2026, depois da analise dos aprovados:
    cuja qualificacao no cadastro e SIM_COM_ANALISE_HUMANA e que sairia aprovada
    vai para revisao humana — "cabendo ao usuario gerar o status atual". A
    reprovada continua reprovada.
+5. NUMERO DIFERENTE NAO E DESTA INSTALACAO (dono do produto, 14/09/2026): sai da
+   base o registro que publica outro numero (e o que a IA disse ter visto com
+   numero diferente). "Se na imagem nao for possivel achar o numero exato buscado
+   nao tem problema, mas se identificar o diferente ai sim."
+6. SEM PROVA RECENTE NAO APROVA (dono do produto, 14/09/2026): a aprovada precisa
+   de ao menos um registro valido com prova de ate 2 anos (`provas_datadas`) —
+   CNPJ ativo na base atual da Receita, avaliacao de cliente, foto que mostra o
+   comercio, loja vista no iFood, atualizacao no Overture/Foursquare. A busca
+   web nunca conta. Sem isso, vai para revisao humana, com a idade das provas.
 
 O VEREDITO DA IA FICA GUARDADO em `percepcao.checagem.veredito_ia`, e a
 revisao recomeca sempre dele: rodar de novo nao acumula efeito.
@@ -42,8 +51,9 @@ import re
 import sys
 
 import base_comum as bc
+import provas_datadas as pdat
 
-REGRA = "checagem do codigo de 12/09/2026"
+REGRA = "checagem do codigo de 14/09/2026 (número e prova recente)"
 
 #: Natureza juridica que nao e comercio nem servico: administracao publica (1xxx)
 #: e entidade sem fins lucrativos (3xxx), menos o cartorio (3034), que cobra.
@@ -118,12 +128,15 @@ class Contexto:
         ligs = sorted({str(x) for x in ligacoes})
         ids = sorted({int(x) for x in pois if str(x).isdigit()})
         cur.execute("""select num_ligacao::text, coalesce(end_ligacao,''), coalesce(nom_bairro,''),
-                              coalesce(qualificacao,'')
+                              coalesce(qualificacao,''), coalesce(nro::text,'')
                          from resources_root.cadastro_corsan where num_ligacao::text = any(%s)""", (ligs,))
-        self.compl_inst, self.qualificacao = {}, {}
-        for l, e, b, q in cur.fetchall():
+        self.compl_inst, self.qualificacao, self.nro_inst = {}, {}, {}
+        for l, e, b, q, nro in cur.fetchall():
             self.compl_inst[l] = complemento_da_instalacao(e, b)
             self.qualificacao[l] = q.upper()
+            self.nro_inst[l] = nro
+        # REGRAS 5 E 6: o numero e as provas datadas de cada POI, as mesmas que o prompt mostrou
+        self.provas = pdat.carregar(con, ids)
         cur.execute("""select p.id, lower(coalesce(p.fonte,'')), coalesce(p.nome,''), coalesce(p.categoria,''),
                               rd.cnpj, coalesce(rd.complemento,'')
                          from radar_comercial.pois p
@@ -181,9 +194,21 @@ def _pid(x):
         return None
 
 
-def validar(ctx, lig, base, ids):
-    """(validos, removidos): a regra 1, por ligacao."""
+def _numero_visto_diferente(resposta):
+    """Os POIs que a IA disse ter visto com numero diferente (campo `numero` do aderente)."""
+    saida = set()
+    for a in (resposta or {}).get("aderentes") or []:
+        if isinstance(a, dict) and str(a.get("numero") or "").strip().lower() == "diferente":
+            pid = _pid(a.get("poi"))
+            if pid is not None:
+                saida.add(pid)
+    return saida
+
+
+def validar(ctx, lig, base, ids, resposta=None):
+    """(validos, removidos): as regras 1 e 5, por ligacao."""
     ids = {int(i) for i in (ids or []) if str(i).isdigit()}
+    visto_diferente = _numero_visto_diferente(resposta)
     validos, removidos = [], []
     for x in base:
         pid = _pid(x)
@@ -198,18 +223,57 @@ def validar(ctx, lig, base, ids):
         if complemento_diverge(ci, cr):
             removidos.append({"poi": pid, "porque": "complemento diferente (instalação %s, registro %s)" % (ci, cr)})
             continue
+        # REGRA 5: numero diferente e outro imovel — o publicado, ou o que a IA viu
+        num_reg = (ctx.provas.get(pid) or {}).get("numero")
+        if pdat.numero_confere(num_reg, ctx.nro_inst.get(str(lig))) == "diferente":
+            removidos.append({"poi": pid, "porque": "número diferente (instalação %s, registro %s)"
+                              % (ctx.nro_inst.get(str(lig)), num_reg)})
+            continue
+        if pid in visto_diferente:
+            removidos.append({"poi": pid, "porque": "a IA viu número diferente na foto ou no resultado"})
+            continue
         if pid not in validos:
             validos.append(pid)
     return validos, removidos
 
 
-def decidir(ctx, validos, perdeu_por_duvida, lig=None):
-    """O veredito final de uma ligacao que a IA aprovou: regras 1, 3 e 4."""
+def prova_recente(ctx, validos, resposta=None, fotos=None):
+    """(tem, texto): a regra 6. Alguma prova de ate 2 anos sustenta a aprovacao?
+
+    Conta a prova datada de qualquer registro valido e a foto que a IA disse
+    mostrar o comercio, pela data do rotulo dela. A busca web nunca conta.
+    """
+    achadas, antigas = [], []
+    for pid in validos:
+        for p in (ctx.provas.get(pid) or {}).get("provas") or []:
+            (achadas if p["recente"] else antigas).append("#%s %s" % (pid, p["o_que"]))
+    f = (resposta or {}).get("fotos") or {}
+    if isinstance(f, dict) and f.get("confirmam") and fotos:
+        for n in f.get("quais") or []:
+            try:
+                rot = fotos[int(n) - 1]
+            except (TypeError, ValueError, IndexError):
+                continue
+            dt = pdat.data_do_rotulo(rot)
+            texto = "foto %s de %s mostra o comércio" % (n, pdat.mes_ano(dt) if dt else "data desconhecida")
+            (achadas if dt and pdat.recente(dt) else antigas).append(texto)
+    if achadas:
+        return True, "; ".join(achadas)
+    return False, ("sem prova de até 2 anos" + (": só " + "; ".join(antigas) if antigas
+                                                 else ": só a busca na web ou nenhuma prova datada"))
+
+
+def decidir(ctx, validos, perdeu_por_duvida, lig=None, resposta=None, fotos=None):
+    """O veredito final de uma ligacao que a IA aprovou: regras 1, 3, 4 e 6."""
     if not validos:
         if perdeu_por_duvida:
             return "revisao_humana", ("o registro que aprovava também é candidato de outra(s) instalação(ões) "
                                       "e não dá para dizer de qual é")
         return "reprovado", "nenhum registro válido sustenta a aprovação"
+    # REGRA 6: sem prova recente a pessoa decide
+    tem, texto = prova_recente(ctx, validos, resposta, fotos)
+    if not tem:
+        return "revisao_humana", texto
     if all(ctx.e_mei(p) for p in validos):
         return "revisao_humana", "aprovada só por MEI (%s)" % ", ".join("#%s" % p for p in validos)
     # REGRA 4: a qualificacao SIM com analise humana nao aprova sozinha.
@@ -228,25 +292,26 @@ def revisar(con, aplicar=False, log=print, saida_antes=None):
     cur.execute("set statement_timeout = '600s'")
     cur.execute("""select ligacao, veredito, percepcao::jsonb->'resposta', percepcao::jsonb->'ids',
                           coalesce(percepcao::jsonb->>'processo','antigo'), percepcao::jsonb->'checagem',
-                          justificativa
+                          justificativa, percepcao::jsonb->'fotos'
                      from radar_comercial.ligacao_veredito
                     where veredito = 'aprovado'
                        or percepcao::jsonb->'checagem'->>'veredito_ia' = 'aprovado'
                     order by ligacao""")
     linhas = cur.fetchall()
-    base, info = {}, {}
+    base, info, resposta_de, fotos_de = {}, {}, {}, {}
     todos = set()
-    for lig, v, resp, ids, proc, chk, just in linhas:
+    for lig, v, resp, ids, proc, chk, just, fotos in linhas:
         lig = str(lig)
         b = base_da_aprovacao(resp, proc)
         base[lig] = (b, ids or [])
         info[lig] = (v, chk or {}, just, proc)
+        resposta_de[lig], fotos_de[lig] = resp or {}, fotos or []
         todos.update(_pid(x) for x in b if _pid(x) is not None)
         todos.update(int(i) for i in (ids or []) if str(i).isdigit())
     ctx = Contexto(con, base.keys(), todos)
     validos, removidos = {}, {}
     for lig, (b, ids) in base.items():
-        validos[lig], removidos[lig] = validar(ctx, lig, b, ids)
+        validos[lig], removidos[lig] = validar(ctx, lig, b, ids, resposta_de[lig])
 
     # REGRA 2: UM POI, UMA INSTALACAO
     por_poi = collections.defaultdict(list)
@@ -287,7 +352,8 @@ def revisar(con, aplicar=False, log=print, saida_antes=None):
         v_ia = chk.get("veredito_ia") or v_atual
         if v_ia != "aprovado":
             continue
-        v_novo, porque = decidir(ctx, validos[lig], lig in duvida and not validos[lig], lig)
+        v_novo, porque = decidir(ctx, validos[lig], lig in duvida and not validos[lig], lig,
+                                 resposta_de[lig], fotos_de[lig])
         placar["%s -> %s" % (v_ia, v_novo)] += 1
         novo_chk = {"regra": REGRA, "veredito_ia": v_ia, "veredito": v_novo, "porque": porque,
                     "validos": validos[lig], "removidos": removidos[lig], "em": agora}
@@ -322,15 +388,16 @@ def revisar(con, aplicar=False, log=print, saida_antes=None):
     return placar
 
 
-def checar_uma(con, lig, v, resposta, ids, processo="enxuto de 12/09/2026"):
-    """As regras 1 e 3 para UMA ligacao, na hora do veredito. A regra 2 (um POI,
-    uma instalacao) precisa das outras aprovadas: roda no fim da rodada."""
+def checar_uma(con, lig, v, resposta, ids, processo="enxuto de 12/09/2026", fotos=None):
+    """As regras 1, 3, 4, 5 e 6 para UMA ligacao, na hora do veredito. A regra 2
+    (um POI, uma instalacao) precisa das outras aprovadas: roda no fim da rodada.
+    `fotos`: os rotulos das fotos que a IA viu, na ordem — a regra 6 le a data neles."""
     if v != "aprovado":
         return v, None
     b = base_da_aprovacao(resposta, processo)
     ctx = Contexto(con, [lig], [_pid(x) for x in b if _pid(x) is not None] + list(ids or []))
-    validos, removidos = validar(ctx, lig, b, ids)
-    v_novo, porque = decidir(ctx, validos, False, lig)
+    validos, removidos = validar(ctx, lig, b, ids, resposta)
+    v_novo, porque = decidir(ctx, validos, False, lig, resposta, fotos)
     return v_novo, {"regra": REGRA, "veredito_ia": v, "veredito": v_novo, "porque": porque,
                     "validos": validos, "removidos": removidos,
                     "em": datetime.datetime.now().isoformat(timespec="seconds")}

@@ -45,6 +45,7 @@ import checagem_veredito as cv
 import descrever_imagens as di
 import dossie_ligacao as dl
 import imagens
+import provas_datadas as pdat
 
 LARGURA_FOTO = 640
 TEXTO_MAX = 7000
@@ -57,28 +58,32 @@ VEREDITOS = ("aprovado", "reprovado", "revisao_humana")
 #: busca usou (`busca`), e o motivo nao tem mais limite de frases — pedido do dono
 #: do produto para a tela SEEK so pintar de verde a imagem e a busca que
 #: confirmaram. O julgamento anterior a isso e rejulgado (`--prompt-antigo`).
-PROCESSO = "enxuto de 13/09/2026 (fotos e busca em campo próprio)"
+#: 14/09/2026 (dono do produto): numero diferente nao e desta instalacao, a busca
+#: web so soma, e a data da prova entra — ate 2 anos vale (`provas_datadas`).
+#: O NOME COMECA COM "enxuto de ": a checagem reconhece o processo por esse
+#: comeco, e um nome fora dele reprovou 6.883 aprovadas em 14/09/2026.
+PROCESSO = "enxuto de 14/09/2026 (número, provas datadas, busca complementar)"
 #: `--saida DIR`: grava cada julgamento (e as fotos) numa pasta, para a galeria
 #: de validacao — o lote de conferencia roda sem `--aplicar`.
 SAIDA = None
 
 PROMPT = """Você confere se um imóvel cobrado como RESIDENCIAL tem comércio ou serviço funcionando nele.
 
-Você recebe: os dados do cadastro da instalação; os registros candidatos (estabelecimentos que bases independentes situam neste endereço); até 5 fotos (quatro de rua, do mesmo ponto em quatro direções — a mira verde marca a direção da coordenada do registro, que pode ter alguns metros de erro —, e uma publicada por outra fonte); e os resultados de buscas na web pelo endereço, só os que citam a rua e o número desta instalação.
+Você recebe: a data de hoje; os dados do cadastro da instalação; os registros candidatos (estabelecimentos que bases independentes situam neste endereço), cada um com o número que publica e as provas DATADAS que tem; até 5 fotos (quatro de rua, do mesmo ponto em quatro direções — a mira verde marca a direção da coordenada do registro, que pode ter alguns metros de erro —, e uma publicada no Google), cada uma com a data em que foi tirada quando se sabe; e os resultados de buscas na web pelo endereço, só os que citam a rua e o número desta instalação.
 
 Olhe todos os dados e responda, nesta ordem:
-1. Quais registros são aderentes ao endereço do cadastro — rua, número, complemento, bairro — e, destes, quais se confirmam pelas fotos, pela busca ou por outro registro. Em endereço com várias unidades (o cadastro traz complemento, como CASA 02 ou APTO 3): o registro com o mesmo complemento é desta instalação; o registro sem complemento, com rua e número iguais, também conta como desta instalação; o registro com complemento diferente é de outra unidade e não combina. Só é dúvida fundada o registro que também é candidato de outras instalações e que nada — complemento, foto ou busca — prende a esta.
+1. Quais registros são aderentes ao endereço do cadastro — rua, número, complemento, bairro — e, destes, quais se confirmam. NÚMERO DIFERENTE NÃO É DESTA INSTALAÇÃO: o registro que publica outro número é de outro imóvel, mesmo vizinho ou na mesma rua, e não é aderente. Se uma foto ou um resultado mostra com clareza um número diferente na fachada ou no endereço do registro, ele também não é desta instalação. Número que não aparece na foto não atrapalha. Em endereço com várias unidades (o cadastro traz complemento, como CASA 02 ou APTO 3): o registro com o mesmo complemento é desta instalação; o registro sem complemento, com rua e número iguais, também conta como desta instalação; o registro com complemento diferente é de outra unidade e não combina. Só é dúvida fundada o registro que também é candidato de outras instalações e que nada — complemento, foto ou busca — prende a esta.
 2. Quais registros não combinam com a maioria dos registros e com os dados desta instalação.
 3. O motivo do veredito e o veredito:
-   - "aprovado" se ao menos um registro de comércio ou serviço pertence a esta instalação;
-   - "reprovado" se nenhum pertence;
-   - "revisao_humana" só quando a dúvida é a qual instalação o registro pertence — a unidade do número —, e o motivo diz qual é. Dúvida sobre se o negócio funciona não é revisão: decida pelas provas.
-4. As fotos: "confirmam" é true só se alguma foto MOSTRA o comércio ou serviço — placa, letreiro, vitrine, porta de loja, fachada com o nome ou a atividade do registro. Casa, portão ou muro sem sinal de comércio é false. "quais" são os números, na lista de fotos, das que mostram; "o_que_mostram" diz o que se vê nelas, ou por que as fotos não provam.
+   - "aprovado" só quando um registro de comércio ou serviço, no MESMO NÚMERO, pertence a esta instalação e tem PROVA RECENTE — de até 2 anos antes de hoje: CNPJ ativo na base atual da Receita, avaliação de cliente, foto (de rua ou publicada) que mostra o comércio, loja vista no iFood, atualização no Overture ou no Foursquare;
+   - "revisao_humana" quando o registro é desta instalação mas nenhuma prova é recente (só provas com mais de 2 anos, ou só a busca na web), e o motivo diz qual prova faltou e a idade das que existem; e também quando a dúvida é a qual instalação o registro pertence — a unidade do número —, e o motivo diz qual é;
+   - "reprovado" se nenhum registro pertence a esta instalação.
+4. As fotos: "confirmam" é true só se alguma foto MOSTRA o comércio ou serviço — placa, letreiro, vitrine, porta de loja, fachada com o nome ou a atividade do registro. Casa, portão ou muro sem sinal de comércio é false. "quais" são os números, na lista de fotos, das que mostram; "o_que_mostram" diz o que se vê nelas e de quando são, ou por que as fotos não provam.
 5. A busca: liste os resultados que você usou. "confirma" é true só quando o resultado traz o nome, o telefone, o CNPJ ou a atividade DO REGISTRO junto do endereço desta instalação; resultado de outro negócio no mesmo endereço é false. Resultado que você não usou fica fora; sem nenhum, a lista é vazia.
-Templo, igreja, associação e escola não são comércio nem serviço. CNPJ ou MEI com atividade de comércio ou serviço registrada é negócio, mesmo com nome de pessoa. A foto de rua mostra a data em que foi tirada, e não hoje. A ficha do lugar no painel do Google, ou um resultado da busca, com o nome, o endereço desta instalação e horário ou telefone, confirma o registro. Foto de rua sem sinal de comércio NÃO desmente uma confirmação: muito comércio e serviço funciona em casa comum, e a foto não pesa mais que as outras provas. Resultado da busca que fala de outro endereço não conta.
+A DATA DE CADA PROVA PESA. A foto mostra o dia em que foi tirada, e não hoje; entre as fotos, a mais recente vale mais, e a de mais de 1 ano vale menos que uma fonte recente. Prova com mais de 2 anos não aprova sozinha. A BUSCA NA WEB SÓ SOMA: um resultado com o nome e o endereço desta instalação reforça o registro, mas nunca aprova sem outra prova. Templo, igreja, associação e escola não são comércio nem serviço. CNPJ ou MEI com atividade de comércio ou serviço registrada é negócio, mesmo com nome de pessoa. Foto de rua sem sinal de comércio NÃO desmente uma prova recente: muito comércio e serviço funciona em casa comum. Resultado da busca que fala de outro endereço não conta.
 
 Responda SOMENTE um JSON:
-{"aderentes": [{"poi": <número>, "confirmado": true|false, "por": "<o que confirma o registro, ou o que falta>"}],
+{"aderentes": [{"poi": <número>, "confirmado": true|false, "numero": "igual|diferente|nao_visto", "prova_recente": "<a prova de até 2 anos e a data dela, ou nenhuma>", "por": "<o que confirma o registro, ou o que falta>"}],
  "nao_combinam": [{"poi": <número>, "por": "<até 12 palavras>"}],
  "fotos": {"confirmam": true|false, "quais": [<número da foto>], "o_que_mostram": "<o que se vê>"},
  "busca": [{"motor": "DuckDuckGo|Yahoo|Google", "resultado": <número do resultado>, "poi": <número do registro>, "confirma": true|false, "casa": "<o que casa com o registro, ou o que não casa>"}],
@@ -119,6 +124,27 @@ def _texto_da_busca(cur, ligacao):
     return linhas[0][1], "\n\n".join(t for _m, _c, t in linhas)[:TEXTO_MAX]
 
 
+def _resultados_web_da_ficha(cur, poi_ids):
+    """{poi: "instagram.com › _pancacheia — PANÇA CHEIA LANCHES; ..."}: os "Resultados
+    da Web" da ficha do Maps (migracao 0111). Texto curto: e reforco, nao prova."""
+    if not poi_ids:
+        return {}
+    try:
+        cur.execute("""select poi_id, resultados_web from radar_comercial.maps_data
+                        where poi_id = any(%s) and jsonb_array_length(coalesce(resultados_web,'[]')) > 0""",
+                    (list(poi_ids),))
+    except Exception:                                          # noqa: BLE001
+        cur.connection.rollback()                              # antes da migracao 0111
+        return {}
+    saida = {}
+    for pid, cartoes in cur.fetchall():
+        itens = ["%s — %s" % ((c.get("migalha") or c.get("url") or "")[:80], (c.get("titulo") or "")[:80])
+                 for c in (cartoes or [])[:4] if isinstance(c, dict)]
+        if itens:
+            saida[pid] = "; ".join(itens)
+    return saida
+
+
 def montar(con, ligacao):
     """(dados_do_prompt, fotos_jpeg, rotulos, ids, n_fontes) ou (None, ...) sem POI."""
     return montar_com_refs(con, ligacao)[:5]
@@ -129,12 +155,13 @@ def montar_com_refs(con, ligacao):
     em que foram para a IA. A tela SEEK marca no carrossel a foto que a IA disse
     que mostra o comercio (dono do produto, 13/09/2026)."""
     cur = con.cursor()
-    cur.execute("""select coalesce(end_ligacao,''), coalesce(categoria,''), coalesce(nom_bairro,'')
+    cur.execute("""select coalesce(end_ligacao,''), coalesce(categoria,''), coalesce(nom_bairro,''),
+                          coalesce(nro::text,'')
                      from resources_root.cadastro_corsan where num_ligacao::text = %s""", (str(ligacao),))
     cad = cur.fetchone()
     if not cad:
         return None, [], [], [], 0, []
-    end_l, cat, bairro = cad
+    end_l, cat, bairro, nro_inst = cad
     cur.execute("""select p.id, lower(coalesce(p.fonte,'')), coalesce(p.nome,''), coalesce(p.categoria,''),
                           coalesce(p.endereco,''), coalesce(p.telefone,''), coalesce(p.cnpj,''),
                           m.total_avaliacoes, rd.bruto->>'data_inicio', rd.complemento,
@@ -146,14 +173,26 @@ def montar_com_refs(con, ligacao):
                      left join radar_comercial.receita_data rd on rd.poi_id = p.id
                     where lp.ligacao = %s and lp.descartado_em is null and p.fundido_em is null""",
                 (str(ligacao), str(ligacao)))
+    linhas_reg = cur.fetchall()
+    # O NUMERO E AS PROVAS DATADAS DE CADA REGISTRO (14/09/2026): as mesmas que a
+    # checagem confere depois — calculadas num lugar so (`provas_datadas`).
+    provas = pdat.carregar(con, [r[0] for r in linhas_reg])
+    web = _resultados_web_da_ficha(cur, [r[0] for r in linhas_reg])
     regs, ids, fontes = [], [], set()
-    for pid, fonte, nome, catp, endp, tel, cnpj, aval, abertura, compl, outras in cur.fetchall():
+    for pid, fonte, nome, catp, endp, tel, cnpj, aval, abertura, compl, outras in linhas_reg:
         ids.append(pid)
         fontes.add(fonte)
-        partes = [x for x in (catp, endp, ("complemento " + compl) if compl else "sem complemento",
+        info = provas.get(pid) or {}
+        conf = pdat.numero_confere(info.get("numero"), nro_inst)
+        numero = ("nº %s — mesmo número da instalação" % info.get("numero") if conf == "igual" else
+                  "nº %s — NÚMERO DIFERENTE do da instalação (%s)" % (info.get("numero"), nro_inst)
+                  if conf == "diferente" else "sem número publicado")
+        partes = [x for x in (catp, endp, numero, ("complemento " + compl) if compl else "sem complemento",
                               ("tel " + tel) if tel else "", ("CNPJ " + cnpj) if cnpj else "",
                               ("aberto em %s/%s" % (abertura[4:6], abertura[:4])) if abertura and len(abertura) >= 6 else "",
                               ("%s avaliações no Google" % aval) if aval else "",
+                              ("provas datadas: " + pdat.resumo(info)) if info.get("provas") else "sem prova datada",
+                              ("na web (ficha do Google): " + web[pid]) if web.get(pid) else "",
                               ("candidato também de %d outra(s) instalação(ões)" % outras) if outras else "") if x]
         regs.append("#%s [%s] %s · %s" % (pid, fonte, nome, " · ".join(partes)))
     if not ids:
@@ -164,14 +203,19 @@ def montar_com_refs(con, ligacao):
     sv = [(b, t) for b, t in zip(imgs, tipos) if t.startswith("sv_")][:4]
     pub = [(b, t) for b, t in zip(imgs, tipos) if not t.startswith("sv_")][:1]
     fotos = [_jpeg_leve(b) for b, t in sv + pub]
-    rot = [t if t.startswith("sv_") else "foto publicada no Google (sem data)" for b, t in sv + pub]
+    # A DATA DA FOTO PUBLICADA vai no rotulo (14/09/2026): `foto_maps_1 (2025-08)`
+    # vira "foto publicada no Google (ago/2025)"; sem data, o rotulo diz que nao ha.
+    rot = [t if t.startswith("sv_") else
+           ("foto publicada no Google (%s)" % pdat.mes_ano(pdat.data_do_rotulo(t)) if pdat.data_do_rotulo(t)
+            else "foto publicada no Google (sem data)") for b, t in sv + pub]
     _r = _r or {}
     refs = [{"poi": _r.get("fonte_das_visadas"), "tipo": t.split(" ")[0]} for _b, t in sv] \
         + [{"poi": _r.get("fonte_das_fotos"), "tipo": "foto publicada"} for _b, _t2 in pub]
     consulta, texto = _texto_da_busca(cur, ligacao)
-    dados = ("INSTALAÇÃO: %s · categoria %s · bairro %s\n\nREGISTROS CANDIDATOS:\n%s\n\nFOTOS, nesta ordem:\n%s\n\n"
-             "TEXTO DA BUSCA NA WEB%s:\n%s"
-             % (end_l, cat, bairro, "\n".join(regs), "\n".join("%d. %s" % (i + 1, r) for i, r in enumerate(rot))
+    dados = ("HOJE: %s\n\nINSTALAÇÃO: %s · número %s · categoria %s · bairro %s\n\nREGISTROS CANDIDATOS:\n%s\n\n"
+             "FOTOS, nesta ordem:\n%s\n\nTEXTO DA BUSCA NA WEB%s:\n%s"
+             % (pdat.hoje().strftime("%d/%m/%Y"), end_l, nro_inst or "sem número", cat, bairro, "\n".join(regs),
+                "\n".join("%d. %s" % (i + 1, r) for i, r in enumerate(rot))
                 or "(nenhuma foto)", (" (consulta \"%s\", DuckDuckGo e Yahoo)" % consulta) if consulta else "",
                 texto or "(não houve busca na web para esta instalação)"))
     return dados, fotos, rot, ids, len(fontes), refs
@@ -229,7 +273,7 @@ def uma(poco, ligacao, modelo, placar, trava, aplicar):
     checagem = None
     if v == "aprovado":
         with poco.pegar() as con:
-            v, checagem = cv.checar_uma(con, ligacao, v, r, ids)
+            v, checagem = cv.checar_uma(con, ligacao, v, r, ids, fotos=rot)
         if checagem:
             checagem["justificativa_ia"] = r.get("justificativa")
             if v != "aprovado":
