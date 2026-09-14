@@ -53,7 +53,9 @@ services:
       # `RADAR_JOB_REPO` e o caminho NO HOST porque quem monta o volume e o
       # daemon do Docker, nao este processo.
       RADAR_JOB_DOCKER: "radar-minerador:latest"
-      RADAR_JOB_REPO: "/home/a2l/Documentos/sistemas/radarComercial"
+      # Desde 14/09/2026 a produção roda da cópia ~/producao/radarComercial, parada numa
+      # tag (docs/DESENVOLVIMENTO.md); o scripts/publicar.sh exporta o valor.
+      RADAR_JOB_REPO: "${RADAR_JOB_REPO:-/home/a2l/producao/radarComercial}"
       # As chaves do host, para a etapa 4 acordar o Predator.
       RADAR_JOB_SSH: "/home/a2l/.ssh"
       # O daemon por TCP, atraves do proxy abaixo — o socket NAO entra neste

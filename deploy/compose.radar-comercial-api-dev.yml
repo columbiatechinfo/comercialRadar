@@ -1,0 +1,79 @@
+# =============================================================================
+# API de DESENVOLVIMENTO do Comercial Radar (14/09/2026) — docs/DESENVOLVIMENTO.md
+#
+#   cd ~/Documentos/sistemas/radarComercial/deploy
+#   docker compose -f compose.radar-comercial-api-dev.yml --env-file ../.env up -d --build
+#
+# Endereço: https://a2l-server-main-i914hx-pc-1.tail7e301b.ts.net:8446/ (só tailnet)
+#
+# O QUE SEPARA DA PRODUÇÃO É O CÓDIGO, NÃO O BANCO. Decisão do dono do produto: o
+# desenvolvimento lê e grava no banco de produção (`a2l`), porque as mudanças são de
+# API e de tela. O que não pode acontecer é editar aqui e mudar o que está no ar — e
+# por isso a produção roda de outra cópia (`~/producao/radarComercial`, numa tag).
+#
+# O CÓDIGO ENTRA MONTADO, e não copiado na imagem: tela editada aparece no próximo F5;
+# mudança no Python vale depois de `docker restart radar-comercial-api-dev`.
+#
+# SEM DESPACHO DE JOB: sem `RADAR_JOB_DOCKER` e sem o docker-proxy, o painel de
+# extração daqui não abre run nenhuma. Uma run disparada do desenvolvimento rodaria o
+# código em teste contra o banco de produção, por horas — isso fica só na produção.
+# =============================================================================
+name: radar-comercial-api-dev
+services:
+  radar-comercial-api-dev:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.api
+    image: radar-comercial-api-dev
+    container_name: radar-comercial-api-dev
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      PORTA_API: 7741
+      PYTHONUNBUFFERED: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+      ANEXOS_DIR: /app/anexos
+      A2L_DB_HOST: "192.168.3.10"
+      RADAR_JOB_DOCKER: ""
+      RADAR_AMBIENTE: "desenvolvimento"
+    ports:
+      - "127.0.0.1:7741:7720"
+    volumes:
+      # o código do diretório de desenvolvimento, ao vivo e só leitura
+      - ..:/app:ro
+      # os mesmos dados da produção
+      - radar-crops:/app/crops:ro
+      - radar-capturas:/app/capturas:ro
+      - radar-anexos:/app/anexos
+      - radar-uploads:/app/uploads
+    mem_limit: 1g
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /app/logs
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:7720/api/saude', timeout=5).status==200 else 1)"]
+      interval: 30s
+      timeout: 8s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+volumes:
+  radar-crops:
+    external: true
+  radar-capturas:
+    external: true
+  radar-uploads:
+    external: true
+  radar-anexos:
+    external: true
+    name: radar-comercial-api_radar-anexos

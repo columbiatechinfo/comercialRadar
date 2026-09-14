@@ -666,6 +666,15 @@ def _comando_no_minerador(cmd: list, env: dict) -> tuple:
     `--network host` porque o pipeline fala com o pooler, o Photon, o OSRM e o
     Nominatim por `127.0.0.1` do host, como o compose do minerador já faz.
     """
+    # A API DE DESENVOLVIMENTO NAO DESPACHA RUN (14/09/2026, docs/DESENVOLVIMENTO.md).
+    #
+    # Ela le e grava o banco de producao. Sem `RADAR_JOB_DOCKER` o job rodaria
+    # aqui dentro, com o codigo em teste, gravando POI real por horas — a run
+    # fica so na API de producao.
+    if os.environ.get("RADAR_AMBIENTE", "").strip() == "desenvolvimento":
+        raise RuntimeError(
+            "este é o ambiente de desenvolvimento: runs de extração só na "
+            "produção (https://a2lsolucoes.com/seek/extrair).")
     if not _JOB_DOCKER or not cmd or cmd[0] != PYTHON:
         return cmd, ""
     if not _JOB_REPO:
