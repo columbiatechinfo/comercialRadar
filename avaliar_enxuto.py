@@ -196,10 +196,11 @@ def uma(poco, ligacao, modelo, placar, trava, aplicar):
     # cortadas no meio do JSON (4.683 caracteres com 1.600 + 80 por POI).
     teto = min(16000, 3000 + 200 * len(ids))  # predio de 140 POIs cortava o JSON em 3.000 (12/09/2026)
     # O CONTEXTO DA SPARK E DE 32.768 TOKENS (prompt + resposta): passar disso o vLLM
-    # recusa com 400. 2 CARACTERES POR TOKEN, e nao 2,8: a lista de registros e densa
-    # de CNPJ, telefone e numero, e com 2,8 os predios de 130 a 177 POIs (27 a 40 mil
-    # caracteres so de registros) passavam do contexto (14/09/2026). 1.000 por foto.
-    teto = max(1500, min(teto, 32768 - int(len(PROMPT + dados) / 2.0) - 1000 * len(fotos) - 500))
+    # recusa com 400. 1,6 CARACTERE POR TOKEN: medido pelo /tokenize da Spark em
+    # 14/09/2026, a lista de registros (densa de CNPJ, telefone e numero) da 1,82 a
+    # 1,92, e os predios de 130 a 177 POIs passavam do contexto com 2,8 e com 2,0.
+    # A folga de 1.000 cobre o molde do chat. 1.000 por foto.
+    teto = max(1500, min(teto, 32768 - int(len(PROMPT + dados) / 1.6) - 1000 * len(fotos) - 1000))
     try:
         # O TEMPO SEGUE O TAMANHO DA RESPOSTA (14/09/2026): com 120 julgamentos ao
         # mesmo tempo a Spark gera ~3 tokens/s para cada um, e com o motivo sem
