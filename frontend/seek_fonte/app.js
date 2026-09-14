@@ -1,0 +1,1788 @@
+/* ==== 97-seek-radar.js ==== */
+/* 97-seek-radar.js — SEEK da A2L sobre o Comercial Radar
+ *
+ * A HOME DO SISTEMA desde 13/09/2026. A tela de extração mudou para /extrair.
+ * O eixo continua sendo a LIGAÇÃO do cadastro; cada fonte é hipótese sobre ela.
+ *
+ * TRÊS TIPOS DE VEREDITO, E SÓ UM É OFICIAL (decisão do dono do produto):
+ *   fonte   cada uma diz "achou" ou "não achou" registro para a ligação;
+ *   IA      aprovado, revisão humana ou reprovado — uma fonte como as outras,
+ *           filtrável como as outras;
+ *   pessoa  a decisão OFICIAL, gravada à parte em `seek_decisao`. Ela nunca
+ *           altera o veredito da IA nem o das fontes, e pode ser aplicada a um
+ *           caso ou a todos os filtrados de uma vez.
+ *
+ * DUAS CHAMADAS: a fila leve (/api/seek/fila, uma linha por ligação, tudo o que
+ * filtra) chega inteira ao abrir; a ficha (/api/seek/caso) só quando alguém
+ * escolhe a ligação. Ordens de serviço e impacto financeiro não existem no
+ * Comercial Radar — a tela mostra "sem dado", e não número inventado.
+ *
+ * A SESSÃO É A DO SISTEMA: `sessao.js` faz o login, põe o token em toda
+ * chamada a /api/ e avisa com o evento `cr:sessao` quando o crachá chegou.
+ */
+var SEEK = (function () {
+  'use strict';
+
+  /* ===================================================================
+   * 1 · CONTRATO — grupos, fontes, vereditos e ações
+   * =================================================================== */
+  var GRUPOS = [
+    {id: 'ia', rot: 'Julgamento da IA', cor: '#6D4AC7',
+     diz: 'o parecer da IA sobre os registros e as imagens — uma fonte como as outras'},
+    {id: 'documento', rot: 'Documento', cor: '#0B2E59',
+     diz: 'registro com CNPJ vinculado ao endereço da ligação'},
+    {id: 'plataforma', rot: 'Plataformas', cor: '#006DFF',
+     diz: 'estabelecimento publicado em diretório ou aplicativo'},
+    {id: 'oficial', rot: 'Bases públicas', cor: '#1F9D62',
+     diz: 'endereço declarado em base censitária ou estadual'},
+    /* WEB E IMAGEM SEPARADOS, e verdes só quando CONFIRMAM (dono do produto,
+     * 13/09/2026): coletar a foto ou achar página no endereço não é prova. */
+    {id: 'web', rot: 'Web', cor: '#F28C28',
+     diz: 'resultado da busca pelo endereço que a IA usou para confirmar um registro'},
+    {id: 'imagem', rot: 'Imagem', cor: '#138A9E',
+     diz: 'foto de rua ou publicada em que a IA identificou o comércio ou serviço'}
+  ];
+  /* os grupos cujo "achou" quer dizer "confirmou" */
+  var PROVA = {web: 1, imagem: 1};
+
+  /* os centros são as dez áreas do motor, uma por fonte */
+  var FONTES = [
+    {id: 'ia', grupo: 'ia', curto: 'IA', interno: 'IA · julgamento',
+     cliente: 'ANÁLISE AUTOMÁTICA', centro: [0.00, 0.26, -0.36]},
+    {id: 'receita', grupo: 'documento', curto: 'FISCAL', interno: 'Receita Federal',
+     cliente: 'CADASTRO FISCAL', centro: [-0.42, 0.20, 0.54]},
+    {id: 'cadastur', grupo: 'documento', curto: 'TURISMO', interno: 'Cadastur',
+     cliente: 'CADASTRO DE TURISMO', centro: [-0.36, -0.04, 0.70]},
+    {id: 'maps', grupo: 'plataforma', curto: 'DIRETÓRIO', interno: 'Google Maps',
+     cliente: 'DIRETÓRIO DE ESTABELECIMENTOS', centro: [0.38, -0.04, 0.68]},
+    {id: 'ifood', grupo: 'plataforma', curto: 'DELIVERY', interno: 'iFood',
+     cliente: 'PLATAFORMA DE DELIVERY', centro: [0.42, 0.18, 0.52]},
+    {id: 'airbnb', grupo: 'plataforma', curto: 'HOSPEDAGEM', interno: 'Airbnb',
+     cliente: 'PLATAFORMA DE HOSPEDAGEM', centro: [-0.26, 0.30, 0.02]},
+    {id: 'ibge', grupo: 'oficial', curto: 'CENSO', interno: 'IBGE · CNEFE',
+     cliente: 'BASE CENSITÁRIA', centro: [0.00, 0.08, -0.74]},
+    {id: 'estadual', grupo: 'oficial', curto: 'ESTADUAL', interno: 'Base estadual',
+     cliente: 'CADASTRO ESTADUAL', centro: [-0.34, -0.30, 0.20]},
+    {id: 'busca', grupo: 'web', curto: 'WEB', interno: 'Busca web · DuckDuckGo e Yahoo',
+     cliente: 'BUSCA NA WEB', centro: [0.00, -0.50, -0.48]},
+    {id: 'foto', grupo: 'imagem', curto: 'IMAGEM', interno: 'Fotos · rua e publicadas',
+     cliente: 'LEITURA DE IMAGEM', centro: [0.34, -0.30, 0.22]}
+  ];
+  function ehProva(f) { return !!PROVA[f.grupo]; }
+  function achouTxt(f) { return ehProva(f) ? 'confirmou' : 'achou'; }
+  var FONTES_DADO = FONTES.slice(1);   /* as que dizem achou/não achou */
+
+  var VEREDITOS = {
+    aprovado:       {rot: 'aprovado', cor: '#1F9D62', tom: 'aprova'},
+    revisao_humana: {rot: 'revisão humana', cor: '#F28C28', tom: 'atencao'},
+    reprovado:      {rot: 'reprovado', cor: '#D64545', tom: 'nega'}
+  };
+
+  var ACOES = {
+    aprovar:  {rot: 'aprovar', curto: 'aprovada', cor: '#14603D',
+               diz: 'a evidência sustenta a cobrança como comercial'},
+    campo:    {rot: 'mandar a campo', curto: 'campo', cor: '#006DFF',
+               diz: 'só uma visita resolve'},
+    revisar:  {rot: 'deixar em revisão', curto: 'revisão', cor: '#C96F16',
+               diz: 'fica na fila, sem decidir agora'},
+    rejeitar: {rot: 'rejeitar', curto: 'rejeitada', cor: '#D64545',
+               diz: 'não há caso aqui — exige o motivo escrito'}
+  };
+
+  var DECISOES = [
+    {id: 'todos', rot: 'todas'},
+    {id: 'sem', rot: 'sem decisão oficial', cor: '#98A2B3'},
+    {id: 'aprovar', rot: 'aprovadas', cor: ACOES.aprovar.cor},
+    {id: 'campo', rot: 'mandadas a campo', cor: ACOES.campo.cor},
+    {id: 'revisar', rot: 'em revisão', cor: ACOES.revisar.cor},
+    {id: 'rejeitar', rot: 'rejeitadas', cor: ACOES.rejeitar.cor}
+  ];
+
+  /* quem pode gravar decisão — o servidor confere de novo (403) */
+  var DECIDEM = ['editor', 'supervisor', 'admin', 'root'];
+  var ALT_FI = 66;          /* altura fixa da linha da fila: é o que deixa virtualizar */
+  var MAX_FICHAS = 150;     /* fichas guardadas em memória */
+  var MAX_LOTE = 50000;     /* o mesmo teto do servidor */
+
+  var CAMPOS_BASE = [
+    ['ligacao', 'ligação', 1], ['titular', 'titular'], ['documento', 'documento', 1],
+    ['telefone', 'telefone', 1], ['endereco', 'endereço'], ['logradouro', 'logradouro'],
+    ['numero', 'número', 1], ['bairro', 'bairro'], ['cidade', 'cidade'], ['cep', 'CEP', 1],
+    ['categoria', 'categoria'], ['subcategoria', 'subcategoria'], ['situacao', 'situação'],
+    ['qualificacao', 'qualificação'], ['qualificacao_motivo', 'motivo da qualificação'],
+    ['eco_res', 'economias residenciais', 1], ['eco_com', 'economias comerciais', 1],
+    ['eco_ind', 'economias industriais', 1], ['eco_pub', 'economias públicas', 1],
+    ['tipo_faturamento', 'tipo de faturamento'], ['medidor', 'hidrômetro', 1],
+    ['lat', 'latitude', 1], ['lng', 'longitude', 1]
+  ];
+
+  var CAMPOS_REG = [
+    ['razao_social', 'razão social'], ['cnpj', 'CNPJ'], ['situacao_cadastral', 'situação cadastral'],
+    ['cnae', 'CNAE'], ['complemento', 'complemento'], ['abertura', 'abertura'],
+    ['categoria', 'categoria'], ['endereco', 'endereço'], ['telefone', 'telefone'],
+    ['site', 'site'], ['instagram', 'instagram'], ['metros', 'distância do hidrômetro'],
+    ['mesmo_endereco', 'mesmo endereço'], ['mesmo_numero', 'mesmo número'],
+    ['criterios_ok', 'critérios do vínculo'], ['confianca', 'confiança do vínculo'],
+    ['origem', 'origem do vínculo'], ['aceito_por', 'aceito por'],
+    ['avaliacao', 'nota no Maps'], ['horario', 'horário'], ['estado_ifood', 'estado no iFood']
+  ];
+
+  var VISADAS = {sv_frente: 'frente', sv_fundo: 'fundo', sv_lado_a: 'lado A', sv_lado_b: 'lado B'};
+
+  /* ===================================================================
+   * 2 · ESTADO
+   * =================================================================== */
+  var S = {
+    casos: [], porLig: {}, vistos: [], quals: [], gerado: null, erro: null,
+    fichas: {}, ordemFichas: [], carregando: {},
+    sel: null, abertos: {}, mudos: false, rotuloCliente: true, tira: true,
+    busca: '', termo: '', fIA: 'todos', fDec: 'todos', fQual: 'todos', fFonte: {},
+    imgs: [], pendente: null
+  };
+
+  function $(s) { return document.querySelector(s); }
+  function esc(t) {
+    return String(t === null || t === undefined ? '' : t)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+  function fonte(id) {
+    for (var i = 0; i < FONTES.length; i++) { if (FONTES[i].id === id) { return FONTES[i]; } }
+    return null;
+  }
+  function grupo(id) {
+    for (var i = 0; i < GRUPOS.length; i++) { if (GRUPOS[i].id === id) { return GRUPOS[i]; } }
+    return GRUPOS[0];
+  }
+  function corFonte(f) { return grupo(f.grupo).cor; }
+  function rotuloFonte(f) { return S.rotuloCliente ? f.cliente : f.interno; }
+  function outroNome(f) { return S.rotuloCliente ? f.interno : f.cliente; }
+  function caso(lig) { return S.porLig[lig] || null; }
+  function ficha(lig) {
+    var f = S.fichas[lig === undefined ? S.sel : lig];
+    return f && !f.erro ? f : null;
+  }
+  function num(n) { return (+n || 0).toLocaleString('pt-BR'); }
+  function veredito(v) {
+    return VEREDITOS[v] || {rot: v ? String(v) : 'sem julgamento', cor: '#8FA0BA', tom: 'nulo'};
+  }
+  function podeDecidir() { return !!(window.EU && DECIDEM.indexOf(window.EU.nivel) >= 0); }
+
+  /* data do servidor → "11/09/26 21:50", no fuso de quem olha */
+  function quando(iso) {
+    if (!iso) { return ''; }
+    var s = String(iso);
+    if (/T\d{2}:\d{2}/.test(s) && /([zZ]|[+-]\d{2}:?\d{2})$/.test(s)) {
+      var d = new Date(s);
+      if (!isNaN(d.getTime())) {
+        var p = function (n) { return (n < 10 ? '0' : '') + n; };
+        return p(d.getDate()) + '/' + p(d.getMonth() + 1) + '/' + String(d.getFullYear()).slice(2)
+          + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+      }
+    }
+    var m = /^(\d{4})-(\d{2})(?:-(\d{2}))?(?:[T ](\d{2}):(\d{2}))?/.exec(s);
+    if (!m) { return s; }
+    return (m[3] ? m[3] + '/' : '') + m[2] + '/' + m[1].slice(2) + (m[4] ? ' ' + m[4] + ':' + m[5] : '');
+  }
+  function agoraIso() {
+    return new Date().toISOString();
+  }
+  function metrosTxt(m) {
+    if (m === null || m === undefined || !isFinite(+m)) { return ''; }
+    m = +m;
+    return m >= 1000 ? (m / 1000).toFixed(1).replace('.', ',') + ' km' : Math.round(m) + ' m';
+  }
+  function valorTxt(v) {
+    if (v === null || v === undefined || v === '') { return ''; }
+    if (v === true) { return 'sim'; }
+    if (v === false) { return 'não'; }
+    if (Array.isArray(v)) { return v.join(', '); }
+    if (typeof v === 'object') { return JSON.stringify(v); }
+    return String(v);
+  }
+
+  function torrada(msg, ruim) {
+    var d = document.createElement('div');
+    d.className = 't' + (ruim ? ' ruim' : '');
+    d.textContent = msg;
+    $('#torradas').appendChild(d);
+    window.setTimeout(function () { d.classList.add('vai'); }, ruim ? 6000 : 3400);
+    window.setTimeout(function () { if (d.parentNode) { d.parentNode.removeChild(d); } }, ruim ? 6500 : 3900);
+  }
+  function chipApi(txt, estado) {
+    $('#api-txt').textContent = txt;
+    $('#chip-api').className = 'chip' + (estado ? ' ' + estado : '');
+  }
+  function lerJson(r) {
+    return r.json().catch(function () { return {}; }).then(function (b) {
+      if (!r.ok) { throw new Error(b.detail || ('HTTP ' + r.status)); }
+      return b;
+    });
+  }
+
+  /* ===================================================================
+   * 3 · A FILA — carga, filtros e a lista virtual
+   * =================================================================== */
+  function carregaFila() {
+    chipApi('carregando a fila…', '');
+    var t0 = Date.now();
+    return fetch('/api/seek/fila').then(lerJson).then(function (d) {
+      var ix = {};
+      d.colunas.forEach(function (nome, i) { ix[nome] = i; });
+      var quals = {};
+      S.casos = d.linhas.map(function (l) {
+        var c = {
+          ligacao: String(l[ix.ligacao]), titular: l[ix.titular] || '', endereco: l[ix.endereco] || '',
+          bairro: l[ix.bairro] || '', cidade: l[ix.cidade] || '', qualificacao: l[ix.qualificacao] || '',
+          economias: l[ix.economias] || 0, ia: l[ix.ia], checagem: l[ix.checagem],
+          avaliado_em: l[ix.avaliado_em], decisao: l[ix.decisao], decidido_em: l[ix.decidido_em],
+          decidido_por: l[ix.decidido_por], f: {}
+        };
+        FONTES_DADO.forEach(function (f) { c.f[f.id] = !!l[ix['f_' + f.id]]; });
+        c.txt = (c.ligacao + ' ' + c.titular + ' ' + c.endereco + ' ' + c.bairro).toLowerCase();
+        if (c.qualificacao) { quals[c.qualificacao] = 1; }
+        return c;
+      });
+      S.porLig = {};
+      S.casos.forEach(function (c) { S.porLig[c.ligacao] = c; });
+      S.quals = Object.keys(quals).sort();
+      /* a hora é a da chegada aqui: `gerado_em` sai do contêiner em UTC, sem
+       * fuso, e aparecia três horas adiantada */
+      S.gerado = agoraIso();
+      S.erro = null;
+      chipApi(num(S.casos.length) + ' ligações · ' + ((Date.now() - t0) / 1000).toFixed(1) + ' s', 'on');
+    }).catch(function (e) {
+      S.erro = e.message;
+      chipApi('a fila não carregou', 'ruim');
+      torrada('A fila não carregou: ' + e.message, true);
+    });
+  }
+
+  /* `sem` diz qual recorte ignorar: é assim que cada lista mostra quantas
+   * ligações ela traria com os OUTROS recortes valendo */
+  function passa(c, sem) {
+    if (sem !== '#ia' && S.fIA !== 'todos' && c.ia !== S.fIA) { return false; }
+    if (sem !== '#dec' && S.fDec !== 'todos' && (c.decisao || 'sem') !== S.fDec) { return false; }
+    if (sem !== '#qual' && S.fQual !== 'todos' && c.qualificacao !== S.fQual) { return false; }
+    for (var k in S.fFonte) {
+      if (k === sem || !S.fFonte.hasOwnProperty(k)) { continue; }
+      if (S.fFonte[k] === 'sim' && !c.f[k]) { return false; }
+      if (S.fFonte[k] === 'nao' && c.f[k]) { return false; }
+    }
+    if (sem !== '#texto' && S.termo && c.txt.indexOf(S.termo) < 0) { return false; }
+    return true;
+  }
+
+  function filtra() {
+    S.termo = S.busca.trim().toLowerCase();
+    var r = {vistos: [], ia: {}, dec: {}, qual: {}, fs: {}, ft: {}, tIA: 0, tDec: 0, tQual: 0};
+    FONTES_DADO.forEach(function (f) { r.fs[f.id] = 0; r.ft[f.id] = 0; });
+    for (var i = 0; i < S.casos.length; i++) {
+      var c = S.casos[i];
+      if (passa(c, null)) { r.vistos.push(c); }
+      if (passa(c, '#ia')) { r.ia[c.ia] = (r.ia[c.ia] || 0) + 1; r.tIA++; }
+      if (passa(c, '#dec')) { var d = c.decisao || 'sem'; r.dec[d] = (r.dec[d] || 0) + 1; r.tDec++; }
+      if (passa(c, '#qual')) { r.qual[c.qualificacao] = (r.qual[c.qualificacao] || 0) + 1; r.tQual++; }
+      for (var j = 0; j < FONTES_DADO.length; j++) {
+        var id = FONTES_DADO[j].id;
+        if (passa(c, id)) { r.ft[id]++; if (c.f[id]) { r.fs[id]++; } }
+      }
+    }
+    return r;
+  }
+
+  function seletor(id, rot, cor, valor, opcoes) {
+    return '<span class="fl-rot">' + esc(rot) + '</span>'
+      + '<span class="pt" style="background:' + (cor || '#8FA0BA') + '"></span>'
+      + '<select id="' + id + '" class="fl-sel" aria-label="filtrar por ' + esc(rot) + '">'
+      + opcoes.map(function (o) {
+          return '<option value="' + esc(o.id) + '"' + (valor === o.id ? ' selected' : '') + '>'
+            + esc(o.rot) + ' · ' + num(o.n) + '</option>';
+        }).join('') + '</select>';
+  }
+
+  function pintaFila() {
+    var r = filtra();
+    S.vistos = r.vistos;
+
+    var opIA = [{id: 'todos', rot: 'todos', n: r.tIA}];
+    Object.keys(VEREDITOS).forEach(function (v) {
+      opIA.push({id: v, rot: VEREDITOS[v].rot, n: r.ia[v] || 0});
+    });
+    $('#f-ia').innerHTML = seletor('f-sel-ia', 'IA', S.fIA === 'todos' ? null : VEREDITOS[S.fIA].cor,
+                                   S.fIA, opIA);
+
+    var opQ = [{id: 'todos', rot: 'todas', n: r.tQual}].concat(S.quals.map(function (q) {
+      return {id: q, rot: q.replace(/_/g, ' ').toLowerCase(), n: r.qual[q] || 0};
+    }));
+    $('#f-qual').innerHTML = seletor('f-sel-qual', 'cadastro', null, S.fQual, opQ);
+
+    var opD = DECISOES.map(function (d) {
+      return {id: d.id, rot: d.rot, n: d.id === 'todos' ? r.tDec : (r.dec[d.id] || 0)};
+    });
+    var corD = (DECISOES.filter(function (d) { return d.id === S.fDec; })[0] || {}).cor;
+    $('#f-decisao').innerHTML = seletor('f-sel-dec', 'decisão', corD, S.fDec, opD);
+
+    $('#f-fontes').innerHTML = FONTES_DADO.map(function (f) {
+      var e = S.fFonte[f.id] || 'todos';
+      var n = e === 'nao' ? r.ft[f.id] - r.fs[f.id] : r.fs[f.id];
+      var dica = rotuloFonte(f) + ' — ' + (ehProva(f)
+                 ? (e === 'sim' ? 'só as que a IA CONFIRMOU por esta fonte'
+                    : e === 'nao' ? 'só as que esta fonte NÃO confirmou' : 'sem recorte')
+                 : (e === 'sim' ? 'só as que ACHARAM registro'
+                    : e === 'nao' ? 'só as que NÃO acharam' : 'sem recorte'))
+               + ' · clique para alternar (todas → achou → não achou)';
+      return '<button class="fch" data-ff="' + f.id + '" data-estado="' + e + '" title="' + esc(dica) + '">'
+        + '<i>' + (e === 'sim' ? '✓' : e === 'nao' ? '✕' : '·') + '</i>'
+        + '<span>' + esc(f.curto) + '</span><b>' + num(n) + '</b></button>';
+    }).join('');
+    $('#f-limpa').hidden = !Object.keys(S.fFonte).length;
+
+    var lote = $('#f-lote');
+    lote.innerHTML = '<span>decidir as filtradas</span><b>' + num(S.vistos.length) + '</b>';
+    lote.disabled = !S.vistos.length || !podeDecidir();
+    lote.title = podeDecidir()
+      ? 'grava a decisão oficial em todas as ' + num(S.vistos.length) + ' ligações do recorte'
+      : 'decidir exige nível editor ou acima';
+
+    pintaLista();
+    $('#f-pe').innerHTML = '<span>' + num(S.vistos.length) + ' de ' + num(S.casos.length)
+      + '</span>' + (S.gerado ? '<span title="hora em que a fila chegou">· ' + esc(quando(S.gerado).slice(-5))
+      + '</span>' : '')
+      + '<button data-recarrega="1" title="buscar a fila de novo no servidor">atualizar</button>';
+  }
+
+  function linhaFila(c) {
+    var V = veredito(c.ia);
+    var A = c.decisao ? ACOES[c.decisao] : null;
+    var mini = FONTES_DADO.map(function (f) {
+      return c.f[f.id] ? '<i class="on" style="--mc:' + corFonte(f) + '"></i>' : '<i></i>';
+    }).join('');
+    var achou = FONTES_DADO.filter(function (f) { return c.f[f.id]; })
+      .map(function (f) { return f.curto; }).join(', ');
+    return '<button class="fi' + (S.sel === c.ligacao ? ' on' : '') + '" data-caso="'
+      + esc(c.ligacao) + '">'
+      + '<span class="l1"><span class="pt" style="background:' + V.cor + '" title="IA: '
+      + esc(V.rot) + '"></span><b class="mono">' + esc(c.ligacao) + '</b>'
+      + (A ? '<span class="dchip" style="--dc:' + A.cor + '" title="decisão oficial: '
+             + esc(A.rot) + (c.decidido_por ? ' · ' + esc(c.decidido_por) : '') + '">'
+             + esc(A.curto) + '</span>' : '')
+      + '<span class="mini" title="' + esc(achou ? 'acharam: ' + achou : 'nenhuma fonte achou') + '">'
+      + mini + '</span></span>'
+      + '<span class="l2">' + esc(c.titular || '—') + '</span>'
+      + '<span class="l3"><span>' + esc(c.endereco) + (c.bairro ? ' · ' + esc(c.bairro) : '')
+      + '</span><em>' + esc(c.economias) + ' ec.</em></span>'
+      + '</button>';
+  }
+
+  var pedidoLista = 0;
+  function pintaLista() {
+    var lista = $('#f-lista'), vl = $('#f-vl'), jan = $('#f-jan'), vazio = $('#f-vazio');
+    var n = S.vistos.length;
+    if (!n) {
+      vl.style.height = '0px'; jan.innerHTML = '';
+      vazio.hidden = false;
+      vazio.innerHTML = S.casos.length ? 'nenhuma ligação com este recorte'
+        : S.erro ? 'A fila não carregou: ' + esc(S.erro) : 'carregando a fila…';
+      return;
+    }
+    vazio.hidden = true;
+    vl.style.height = (n * ALT_FI) + 'px';
+    var topo = lista.scrollTop, alt = lista.clientHeight || 600;
+    var i0 = Math.max(0, Math.floor(topo / ALT_FI) - 6);
+    var i1 = Math.min(n, Math.ceil((topo + alt) / ALT_FI) + 6);
+    var h = '';
+    for (var i = i0; i < i1; i++) { h += linhaFila(S.vistos[i]); }
+    jan.style.transform = 'translateY(' + (i0 * ALT_FI) + 'px)';
+    jan.innerHTML = h;
+  }
+  function agendaLista() {
+    if (pedidoLista) { return; }
+    pedidoLista = window.requestAnimationFrame(function () { pedidoLista = 0; pintaLista(); });
+  }
+  function indiceNaFila(lig) {
+    for (var i = 0; i < S.vistos.length; i++) { if (S.vistos[i].ligacao === lig) { return i; } }
+    return -1;
+  }
+  function mostraNaFila(lig) {
+    var i = indiceNaFila(lig), lista = $('#f-lista');
+    if (i < 0) { return; }
+    var y = i * ALT_FI;
+    if (y < lista.scrollTop) { lista.scrollTop = y; }
+    else if (y + ALT_FI > lista.scrollTop + lista.clientHeight) {
+      lista.scrollTop = y + ALT_FI - lista.clientHeight;
+    }
+    pintaLista();
+  }
+  function refiltra() {
+    $('#f-lista').scrollTop = 0;
+    pintaFila();
+  }
+
+  /* ===================================================================
+   * 4 · A FICHA — carregada no clique, guardada em memória
+   * =================================================================== */
+  function carregaFicha(lig, silenciosa) {
+    if (S.fichas[lig] && !S.fichas[lig].erro) { return Promise.resolve(S.fichas[lig]); }
+    if (S.carregando[lig]) { return S.carregando[lig]; }
+    var p = fetch('/api/seek/caso/' + encodeURIComponent(lig)).then(lerJson).then(function (d) {
+      S.fichas[lig] = d;
+      S.ordemFichas.push(lig);
+      while (S.ordemFichas.length > MAX_FICHAS) {
+        var velha = S.ordemFichas.shift();
+        if (velha !== S.sel) { delete S.fichas[velha]; }
+      }
+      return d;
+    }).catch(function (e) {
+      if (!silenciosa) { S.fichas[lig] = {erro: e.message}; }
+      return null;
+    }).then(function (d) {
+      delete S.carregando[lig];
+      if (S.sel === lig && !silenciosa) { pintaCaso(); }
+      return d;
+    });
+    S.carregando[lig] = p;
+    return p;
+  }
+
+  function seleciona(lig, rolar) {
+    if (!caso(lig)) { return; }
+    var mudou = S.sel !== lig;
+    S.sel = lig;
+    try { window.history.replaceState(null, '', '#' + lig); } catch (e) { /* sem histórico */ }
+    if (rolar) { mostraNaFila(lig); } else { pintaLista(); }
+    if (mudou) { $('#arvore').scrollTop = 0; }
+    pintaCaso();
+    if (CER.motor) { CER.motor.cobertura(coberturaDoCaso()); }
+    carregaFicha(lig).then(function () {
+      /* a próxima da fila já vem de carona: quem confere anda para baixo */
+      var i = indiceNaFila(lig);
+      if (i >= 0 && S.vistos[i + 1] && S.sel === lig) {
+        carregaFicha(S.vistos[i + 1].ligacao, true);
+      }
+    });
+  }
+
+  function pintaCaso() { pintaFaixa(); pintaArvore(); pintaVeredito(); pintaLado(); }
+
+  /* ===================================================================
+   * 5 · FAIXA DO CASO
+   * =================================================================== */
+  function coordenada(fi) {
+    var b = fi && fi.base;
+    if (!b || !isFinite(+b.lat) || !isFinite(+b.lng) || b.lat === null || b.lng === null) { return null; }
+    return {lat: +b.lat, lon: +b.lng, origem: 'hidrômetro no cadastro da concessionária'};
+  }
+
+  function blocoCoordenada(fi) {
+    var k = coordenada(fi);
+    if (!k) {
+      return '<div class="cf vazio"><i>coordenada</i><b>'
+        + (fi ? 'sem coordenada no cadastro' : '…') + '</b></div>';
+    }
+    var par = k.lat.toFixed(6) + ', ' + k.lon.toFixed(6);
+    var rota = 'https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(k.lat + ',' + k.lon);
+    var rua = 'https://www.google.com/maps/@?api=1&map_action=pano&viewpoint='
+      + encodeURIComponent(k.lat + ',' + k.lon);
+    return '<div class="cf coord"><i>coordenada</i>'
+      + '<b class="mono" tabindex="0" data-copia="' + esc(par) + '" data-copia-rot="coordenada" title="' + esc(par)
+      + '&#10;clique para copiar">' + esc(par) + '</b>'
+      + '<span class="prec" title="' + esc(k.origem) + '">cadastro</span>'
+      + '<a class="ir" href="' + rota + '" target="_blank" rel="noopener noreferrer"'
+      + ' title="abrir rota até esta ligação no mapa">rota ↗</a>'
+      + '<a class="ir" href="' + rua + '" target="_blank" rel="noopener noreferrer"'
+      + ' title="abrir a vista de rua neste ponto">rua ↗</a>'
+      + '<button class="ir copia" data-copia="' + esc(par) + '" data-copia-rot="coordenada"'
+      + ' title="copiar a coordenada">copiar</button>'
+      + '</div>';
+  }
+
+  function economiasTxt(c, fi) {
+    var b = fi && fi.base;
+    if (!b) { return String(c.economias); }
+    var partes = [];
+    if (+b.eco_res) { partes.push(b.eco_res + ' res'); }
+    if (+b.eco_com) { partes.push(b.eco_com + ' com'); }
+    if (+b.eco_ind) { partes.push(b.eco_ind + ' ind'); }
+    if (+b.eco_pub) { partes.push(b.eco_pub + ' púb'); }
+    return b.economias + (partes.length ? ' (' + partes.join(' · ') + ')' : '');
+  }
+
+  function pintaFaixa() {
+    var c = caso(S.sel);
+    if (!c) { $('#faixa').innerHTML = ''; return; }
+    var fi = ficha();
+    var doc = fi && fi.base ? fi.base.documento : '';
+    /* O VALOR INTEIRO NO PASSAR DO MOUSE E COPIADO NO CLIQUE (13/09/2026): o
+     * campo corta com reticências quando não cabe, e o valor é o que se cola
+     * em outro sistema. */
+    function cf(rot, val, mono, vazio) {
+      var v = val === null || val === undefined ? '' : String(val);
+      return '<div class="cf' + (vazio ? ' vazio' : '') + '"><i>' + esc(rot) + '</i>'
+        + '<b' + (mono ? ' class="mono"' : '')
+        + (v ? ' tabindex="0" data-copia="' + esc(v) + '" data-copia-rot="' + esc(rot) + '" title="' + esc(v)
+               + '&#10;clique para copiar"' : '')
+        + '>' + esc(v || '—') + '</b></div>';
+    }
+    $('#faixa').innerHTML = cf('ligação', c.ligacao, true)
+      + cf('titular', c.titular)
+      + cf('endereço', c.endereco + (c.bairro ? ' · ' + c.bairro : ''))
+      + blocoCoordenada(fi)
+      + cf('economias', economiasTxt(c, fi), true)
+      + cf('cadastro', (c.qualificacao || '').replace(/_/g, ' '))
+      + cf('documento', doc, true, !doc);
+  }
+
+  /* ===================================================================
+   * 6 · A ÁRVORE — grupo · fonte · registro
+   * =================================================================== */
+  function aberto(lig, chave, padrao) {
+    var m = S.abertos[lig] || {};
+    return m[chave] === undefined ? padrao : m[chave];
+  }
+  function seta(ab) { return '<span class="seta">' + (ab ? '▾' : '▸') + '</span>'; }
+
+  /* o que a IA e a checagem disseram de cada POI, para marcar os registros */
+  function contexto(fi) {
+    var ia = fi.ia || {}, ch = ia.checagem || {};
+    var ctx = {ader: {}, nao: {}, rem: {}, val: {}, nome: {}};
+    function poi(a) { return typeof a === 'number' || typeof a === 'string' ? {poi: a} : (a || {}); }
+    (ia.aderentes || []).forEach(function (a) { a = poi(a); if (a.poi !== undefined) { ctx.ader[a.poi] = a; } });
+    (ia.nao_combinam || []).forEach(function (a) { a = poi(a); if (a.poi !== undefined) { ctx.nao[a.poi] = a; } });
+    (ch.removidos || []).forEach(function (a) { a = poi(a); if (a.poi !== undefined) { ctx.rem[a.poi] = a.porque || ''; } });
+    (ch.validos || []).forEach(function (p) { ctx.val[p] = 1; });
+    Object.keys(fi.fontes || {}).forEach(function (k) {
+      ((fi.fontes[k] || {}).registros || []).forEach(function (r) { ctx.nome[r.poi_id] = r.nome; });
+    });
+    return ctx;
+  }
+
+  function achouNa(c, fi, id) {
+    var d = fi && fi.fontes && fi.fontes[id];
+    return d ? !!d.achou : !!(c && c.f[id]);
+  }
+
+  function kv(pares) {
+    var h = pares.filter(function (p) { return p[1] !== '' && p[1] !== null && p[1] !== undefined; })
+      .map(function (p) {
+        return '<div><i>' + esc(p[0]) + '</i><b' + (p[2] ? ' class="mono"' : '') + '>'
+          + esc(p[1]) + '</b></div>';
+      }).join('');
+    return h ? '<div class="kv">' + h + '</div>' : '';
+  }
+
+  function ramoBase(c, fi) {
+    var chave = 'c:base', ab = aberto(c.ligacao, chave, false), b = fi.base || {};
+    var cab = '<button class="no-crit base" data-abre="' + chave + '" data-aberto="' + (ab ? '1' : '0')
+      + '" style="--cc:#5B6274">' + seta(ab)
+      + '<span class="nm">Cadastro</span>'
+      + '<span class="res">' + esc(b.categoria || '') + (b.situacao ? ' · ' + esc(b.situacao) : '') + '</span>'
+      + '<span class="cresce"></span>'
+      + '<span class="regra">a linha da concessionária: toda fonte é hipótese sobre ela</span></button>';
+    if (!ab) { return '<section class="ramo n-base">' + cab + '</section>'; }
+    return '<section class="ramo n-base">' + cab + '<div class="ramo-corpo"><div class="no-corpo base-corpo">'
+      + '<div class="kv-caixa">' + kv(CAMPOS_BASE.map(function (x) {
+          return [x[1], valorTxt(b[x[0]]), x[2]];
+        })) + '</div></div></div></section>';
+  }
+
+  function linhasPoi(lista, ctx, limite) {
+    return lista.slice(0, limite || lista.length).map(function (a) {
+      var id = a.poi !== undefined ? a.poi : a;
+      return '<div class="ia-lin"><b>#' + esc(id) + '</b><span>'
+        + (ctx.nome[id] ? '<em>' + esc(ctx.nome[id]) + '</em>' + (a.por || a.porque ? ' — ' : '') : '')
+        + esc(a.por || a.porque || '') + '</span></div>';
+    }).join('');
+  }
+
+  function ramoIA(c, fi, ctx) {
+    var g = grupo('ia'), chave = 'g:ia', ab = aberto(c.ligacao, chave, true);
+    var ia = fi.ia, V = veredito(ia ? ia.veredito : c.ia);
+    var ch = ia && ia.checagem;
+    var mudou = !!(ch && ch.veredito_ia && ia && ch.veredito_ia !== ia.veredito);
+    var cab = '<button class="no-crit' + (ia && ia.veredito === 'aprovado' ? ' tem' : '') + '" data-abre="'
+      + chave + '" data-aberto="' + (ab ? '1' : '0') + '" style="--cc:' + g.cor + '">' + seta(ab)
+      + '<span class="nm">' + esc(g.rot) + '</span>'
+      + '<span class="res" style="color:' + V.cor + '">' + esc(V.rot)
+      + (mudou ? ' · mudado pela checagem' : '') + '</span>'
+      + '<span class="cresce"></span><span class="regra">' + esc(g.diz) + '</span></button>';
+    if (!ab) { return '<section class="ramo n-ia">' + cab + '</section>'; }
+    if (!ia) {
+      return '<section class="ramo n-ia">' + cab + '<div class="ramo-corpo"><div class="no-corpo">'
+        + '<div class="sem-dado">A IA ainda não julgou esta ligação.</div></div></div></section>';
+    }
+    var nao = ia.nao_combinam || [], rem = (ch && ch.removidos) || [], ader = ia.aderentes || [];
+    var todosNao = aberto(c.ligacao, 'ia:nao', false);
+    var corpo = '<div class="ia-txt">' + esc(ia.motivo || ia.justificativa || 'A IA não deixou motivo.') + '</div>'
+      + (mudou ? '<div class="ia-aviso"><b>checagem do código</b>A IA disse <b>'
+                 + esc(veredito(ch.veredito_ia).rot) + '</b>; a checagem mudou para <b>' + esc(V.rot) + '</b>'
+                 + (ch.porque ? ': ' + esc(ch.porque) : '.') + '</div>' : '')
+      + '<div class="grupo-cab">aderentes para a IA · ' + ader.length + '</div>'
+      + (ader.length ? '<div class="ia-lista">' + linhasPoi(ader, ctx) + '</div>'
+                     : '<div class="sem-dado">A IA não apontou nenhum registro aderente.</div>')
+      + (rem.length ? '<div class="grupo-cab">tirados pela checagem do código · ' + rem.length + '</div>'
+                      + '<div class="ia-lista">' + linhasPoi(rem, ctx) + '</div>' : '')
+      + (nao.length ? '<div class="grupo-cab">não combinam · ' + nao.length + '</div>'
+                      + '<div class="ia-lista">' + linhasPoi(nao, ctx, todosNao ? 0 : 6) + '</div>'
+                      + (nao.length > 6 ? '<button class="mais" data-abre="ia:nao" data-aberto="'
+                          + (todosNao ? '1' : '0') + '">' + (todosNao ? 'mostrar só os 6 primeiros'
+                          : 'mostrar os ' + nao.length) + '</button>' : '') : '')
+      + '<div class="grupo-cab">como foi julgada</div><div class="kv-caixa">'
+      + kv([['julgada em', quando(ia.avaliado_em)], ['modelo', ia.modelo || '', 1],
+            ['processo', ia.processo || ''],
+            ['fotos que a IA viu', (ia.fotos_vistas || []).length
+               ? (ia.fotos_vistas || []).join(' · ') : 'nenhuma']])
+      + '</div>';
+    return '<section class="ramo n-ia">' + cab + '<div class="ramo-corpo"><div class="no-corpo">'
+      + corpo + '</div></div></section>';
+  }
+
+  function cartaoRegistro(r, ctx) {
+    var selos = [];
+    if (r.descartado_em) {
+      selos.push(['cinza', 'vínculo descartado' + (r.descartado_motivo ? ': ' + r.descartado_motivo : '')]);
+    }
+    if (ctx.rem[r.poi_id] !== undefined) { selos.push(['nao', 'tirado pela checagem']); }
+    if (ctx.ader[r.poi_id]) { selos.push(['ok', 'aderente para a IA']); }
+    else if (ctx.nao[r.poi_id]) { selos.push(['alerta', 'não combina para a IA']); }
+    var por = ctx.rem[r.poi_id] ? ['checagem', ctx.rem[r.poi_id]]
+            : ctx.ader[r.poi_id] && ctx.ader[r.poi_id].por ? ['IA', ctx.ader[r.poi_id].por]
+            : ctx.nao[r.poi_id] && ctx.nao[r.poi_id].por ? ['IA', ctx.nao[r.poi_id].por] : null;
+    var valores = CAMPOS_REG.map(function (x) {
+      var v = r[x[0]];
+      if (x[0] === 'metros') { v = metrosTxt(v); }
+      else if (x[0] === 'avaliacao' && v !== null && v !== undefined) {
+        v = String(v).replace('.', ',') + (r.total_avaliacoes ? ' (' + num(r.total_avaliacoes) + ' avaliações)' : '');
+      } else if (x[0] === 'confianca' && v !== null && v !== undefined) {
+        v = (+v).toFixed(2).replace('.', ',');
+      } else { v = valorTxt(v); }
+      return [x[1], v, x[0] === 'cnpj' || x[0] === 'cnae' || x[0] === 'telefone'];
+    });
+    return '<div class="reg' + (r.descartado_em ? ' descartado' : '') + '">'
+      + '<div class="reg-cab"><b>' + esc(r.nome || r.razao_social || '(sem nome)') + '</b>'
+      + '<span class="poi">POI #' + esc(r.poi_id) + '</span>'
+      + selos.map(function (s) { return '<span class="selo ' + s[0] + '">' + esc(s[1]) + '</span>'; }).join('')
+      + '</div>'
+      + (por ? '<div class="reg-por"><b>' + esc(por[0]) + '</b>' + esc(por[1]) + '</div>' : '')
+      + kv(valores) + '</div>';
+  }
+
+  /* A BUSCA WEB, RESUMIDA NO QUE CONFIRMOU (13/09/2026). DuckDuckGo, Yahoo e o
+   * Google da reserva buscam pelo endereço; a IA lê os resultados que citam a
+   * rua e o número e diz quais CONFIRMAM um registro. Só esses aparecem, e só
+   * eles pintam de verde. O resto fica contado numa linha — a página inteira
+   * está no carrossel, como evidência. */
+  var NOME_MOTOR = {duckduckgo: 'DuckDuckGo', yahoo: 'Yahoo', google: 'Google (reserva)'};
+
+  function linkSeguro(u) {
+    var s = String(u || '').trim();
+    if (/^https?:\/\//i.test(s)) { return s; }
+    if (/^[\w.-]+\.[a-z]{2,}(\/|$)/i.test(s)) { return 'https://' + s; }
+    return '';
+  }
+
+  function corpoBusca(d, ctx) {
+    var buscas = d.buscas || [], usados = d.usados || [];
+    if (!buscas.length) {
+      return '<div class="sem-dado">A busca web (DuckDuckGo e Yahoo) ainda não rodou para esta ligação.</div>';
+    }
+    var resumo = '<div class="prova-resumo">' + esc(buscas.map(function (b) {
+      return (NOME_MOTOR[b.motor] || b.motor) + ': ' + (b.no_endereco ? b.no_endereco + ' no endereço' : 'nada no endereço');
+    }).join(' · ')) + '</div>';
+    if (!d.informado) {
+      return resumo + '<div class="sem-dado">Julgada antes de a IA dizer quais resultados usou: está na fila '
+        + 'do rejulgamento. Até lá a busca não conta como confirmação.</div>';
+    }
+    if (!usados.length) {
+      return resumo + '<div class="sem-dado">Nenhum resultado confirmou um registro desta ligação'
+        + (d.recusados ? ' — a IA leu ' + d.recusados + ' e não aceitou (outro negócio no endereço ou sem '
+                         + 'dado do registro)' : '') + '.</div>';
+    }
+    return resumo + usados.map(function (u) {
+      var nome = ctx.nome[u.poi], link = linkSeguro(u.url);
+      var motores = (u.motores || []).map(function (m) { return NOME_MOTOR[m] || m; }).join(' e ');
+      var trecho = u.trecho ? (u.trecho.length > 160 ? u.trecho.slice(0, 157) + '…' : u.trecho) : '';
+      return '<div class="prova ok">'
+        + '<div class="prova-cab"><span class="selo ok">confirma</span>'
+        + (u.poi ? '<b>#' + esc(u.poi) + (nome ? ' · ' + esc(nome) : '') + '</b>' : '')
+        + '<span class="poi">' + esc(motores) + '</span></div>'
+        + (u.titulo ? '<div class="prova-tit">' + (link
+            ? '<a href="' + esc(link) + '" target="_blank" rel="noopener noreferrer">' + esc(u.titulo) + ' ↗</a>'
+            : esc(u.titulo)) + '</div>' : '')
+        + (trecho ? '<div class="prova-trecho">' + esc(trecho) + '</div>' : '')
+        + (u.casa ? '<div class="reg-por"><b>o que casa</b>' + esc(u.casa) + '</div>' : '')
+        + '</div>';
+    }).join('');
+  }
+
+  function nomeFoto(q, ctx) {
+    return (q.tipo === 'foto publicada' ? 'foto publicada' : 'rua · ' + (VISADAS[q.tipo] || q.tipo))
+      + (q.poi ? ' do POI #' + q.poi + (ctx.nome[q.poi] ? ' (' + ctx.nome[q.poi] + ')' : '') : '');
+  }
+
+  /* AS FOTOS, PELO QUE A IA IDENTIFICOU NELAS (13/09/2026): ter imagem coletada
+   * não é confirmação; a foto confirma quando a IA viu nela o comércio. */
+  function corpoFoto(fi, ctx) {
+    var d = (fi.fontes && fi.fontes.foto) || {};
+    var n = (fi.imagens || []).length;
+    if (!n) {
+      return '<div class="sem-dado">Nenhuma foto de rua nem foto publicada dos POIs desta ligação.</div>';
+    }
+    if (!d.informado) {
+      return '<div class="sem-dado">Julgada antes de a IA dizer se as fotos mostram o comércio: está na fila '
+        + 'do rejulgamento. Até lá as ' + n + ' imagem(ns) coletada(s) não contam como confirmação.</div>';
+    }
+    var quais = (d.quais || []).map(function (q) { return nomeFoto(q, ctx); });
+    return '<div class="prova' + (d.achou ? ' ok' : '') + '">'
+      + '<div class="prova-cab"><span class="selo ' + (d.achou ? 'ok' : 'cinza') + '">'
+      + (d.achou ? 'identificou o comércio' : 'não identificou') + '</span>'
+      + '<span class="poi">a IA viu ' + (d.vistas || []).length + ' de ' + n + ' imagem(ns)</span></div>'
+      + (d.o_que_mostram ? '<div class="prova-tit">' + esc(d.o_que_mostram) + '</div>' : '')
+      + (quais.length ? '<div class="reg-por"><b>' + (quais.length > 1 ? 'nas fotos' : 'na foto') + '</b>'
+                        + esc(quais.join(' · ')) + '</div>' : '')
+      + '</div>'
+      + '<div class="fonte-nota">As imagens estão no carrossel do topo' + (d.achou ? '; a que confirma leva o selo verde' : '')
+      + '.</div>';
+  }
+
+  function noFonte(c, fi, f, ctx) {
+    var d = (fi.fontes && fi.fontes[f.id]) || {achou: false};
+    var regs = d.registros || [];
+    var vivos = regs.filter(function (r) { return !r.descartado_em; });
+    var nAder = vivos.filter(function (r) { return ctx.ader[r.poi_id]; }).length;
+    var chave = 'f:' + f.id, ab = aberto(c.ligacao, chave, !!d.achou);
+    var sit;
+    if (f.id === 'busca') {
+      sit = d.achou ? 'confirmou · ' + (d.usados || []).length + ' resultado(s)'
+          : (d.buscas || []).length && !d.informado ? 'a IA ainda não informou' : 'não confirmou';
+    } else if (f.id === 'foto') {
+      sit = d.achou ? 'identificou o comércio'
+          : (fi.imagens || []).length && !d.informado ? 'a IA ainda não informou' : 'não identificou';
+    } else {
+      sit = d.achou ? 'achou · ' + vivos.length + ' registro(s)' : (regs.length ? 'só vínculos descartados' : 'não achou');
+    }
+    var cab = '<button class="no-fonte' + (d.achou ? '' : ' mudo') + '" data-abre="' + chave
+      + '" data-aberto="' + (ab ? '1' : '0') + '">' + seta(ab)
+      + '<span class="nm">' + esc(rotuloFonte(f)) + '</span>'
+      + '<span class="sit ' + (d.achou ? 'ok' : 'mudo') + '">' + esc(sit) + '</span>'
+      + (nAder ? '<span class="curado">' + nAder + ' aderente(s) para a IA</span>' : '')
+      + '<span class="cresce"></span>'
+      + '<span class="chave mono">' + esc(outroNome(f)) + '</span></button>';
+    if (!ab) { return cab; }
+    var corpo;
+    if (f.id === 'busca') { corpo = corpoBusca(d, ctx); }
+    else if (f.id === 'foto') { corpo = corpoFoto(fi, ctx); }
+    else if (regs.length) {
+      corpo = regs.map(function (r) { return cartaoRegistro(r, ctx); }).join('');
+    } else {
+      corpo = '<div class="sem-dado">A fonte não tem registro vinculado a esta ligação. Não achar '
+        + 'não é negativa: é ausência de dado.</div>';
+    }
+    return cab + '<div class="no-corpo">' + corpo + '</div>';
+  }
+
+  function ramoGrupo(c, fi, g, ctx) {
+    var fs = FONTES.filter(function (f) { return f.grupo === g.id; });
+    var achou = fs.filter(function (f) { return achouNa(c, fi, f.id); });
+    var mostrar = S.mudos ? fs : achou;
+    var chave = 'g:' + g.id, ab = aberto(c.ligacao, chave, achou.length > 0);
+    var prova = !!PROVA[g.id];
+    var cab = '<button class="no-crit' + (achou.length ? ' tem' : '') + '" data-abre="' + chave
+      + '" data-aberto="' + (ab ? '1' : '0') + '" style="--cc:' + g.cor + '">' + seta(ab)
+      + '<span class="nm">' + esc(g.rot) + '</span>'
+      + '<span class="res">' + (prova ? (achou.length ? 'confirmou' : 'não confirmou')
+          : achou.length ? achou.length + ' de ' + fs.length + ' fonte(s) acharam' : 'nenhuma fonte achou') + '</span>'
+      + '<span class="cresce"></span><span class="regra">' + esc(g.diz) + '</span></button>';
+    if (!ab) { return '<section class="ramo n-' + g.id + '">' + cab + '</section>'; }
+    var dentro = mostrar.length
+      ? mostrar.map(function (f) { return noFonte(c, fi, f, ctx); }).join('')
+      : '<div class="sem-dado">' + (prova ? 'Não confirmou. Use “mostrar quem não achou” para ver o que foi lido.'
+          : 'Nenhuma fonte deste grupo achou registro. Use “mostrar quem não achou” para ver quais eram.')
+        + '</div>';
+    return '<section class="ramo n-' + g.id + '">' + cab + '<div class="ramo-corpo">' + dentro
+      + '</div></section>';
+  }
+
+  function ramoOS(c) {
+    var chave = 'c:os', ab = aberto(c.ligacao, chave, false);
+    var cab = '<button class="no-crit os" data-abre="' + chave + '" data-aberto="' + (ab ? '1' : '0')
+      + '" style="--cc:#5B6274">' + seta(ab) + '<span class="nm">Ordens de serviço</span>'
+      + '<span class="res">sem dado</span><span class="cresce"></span>'
+      + '<span class="regra">o que a operação já sabia sobre este imóvel</span></button>';
+    if (!ab) { return '<section class="ramo n-os">' + cab + '</section>'; }
+    return '<section class="ramo n-os">' + cab + '<div class="ramo-corpo"><div class="no-corpo">'
+      + '<div class="sem-dado">Sem dado: o Comercial Radar ainda não recebe as ordens de serviço da '
+      + 'concessionária. Isto não quer dizer que não houve OS — quer dizer que não sabemos.</div>'
+      + '</div></div></section>';
+  }
+
+  function ramoImpacto(c) {
+    var chave = 'c:impacto', ab = aberto(c.ligacao, chave, false);
+    var cab = '<button class="no-crit impacto" data-abre="' + chave + '" data-aberto="' + (ab ? '1' : '0')
+      + '" style="--cc:#0E8C9E">' + seta(ab) + '<span class="nm">Impacto financeiro</span>'
+      + '<span class="res">sem dado</span><span class="cresce"></span>'
+      + '<span class="regra">o que a retificação faria com a conta</span></button>';
+    if (!ab) { return '<section class="ramo n-impacto">' + cab + '</section>'; }
+    return '<section class="ramo n-impacto">' + cab + '<div class="ramo-corpo"><div class="no-corpo">'
+      + '<div class="sem-dado">Sem dado: o Comercial Radar não recebe consumo nem valor faturado. '
+      + 'Sem os dois, qualquer número aqui seria estimativa nossa — e estimativa não vira valor a '
+      + 'cobrar.</div></div></div></section>';
+  }
+
+  function pintaArvore() {
+    var c = caso(S.sel), alvo = $('#arvore');
+    if (!c) {
+      alvo.innerHTML = '<div class="vazio-g">' + (S.casos.length ? 'Escolha uma ligação na fila à esquerda.'
+        : S.erro ? 'A fila não carregou: ' + esc(S.erro) : 'Carregando a fila…') + '</div>';
+      return;
+    }
+    var fi = S.fichas[c.ligacao];
+    if (!fi) {
+      alvo.innerHTML = '<div class="vazio-g">carregando a ficha da ligação ' + esc(c.ligacao) + '…</div>';
+      return;
+    }
+    if (fi.erro) {
+      alvo.innerHTML = '<div class="vazio-g">A ficha não carregou: ' + esc(fi.erro)
+        + '<br><br><button class="bt p" data-refaz="' + esc(c.ligacao) + '">tentar de novo</button></div>';
+      return;
+    }
+    var ctx = contexto(fi);
+    alvo.innerHTML = secaoImagens(c, fi) + ramoIA(c, fi, ctx) + ramoBase(c, fi)
+      + GRUPOS.slice(1).map(function (g) { return ramoGrupo(c, fi, g, ctx); }).join('')
+      + ramoOS(c) + ramoImpacto(c);
+    alvo.setAttribute('data-ligacao', c.ligacao);
+    var mini = alvo.querySelector('.terr-mini');
+    if (mini) { window.setTimeout(function () { desenhaTerritorio(mini, fi, true); }, 20); }
+    ajustaRolo();
+  }
+
+  /* ===================================================================
+   * 6a · TERRITÓRIO, RUA E IMAGENS
+   * =================================================================== */
+  function anguloDe(id) {
+    var h = 0, i, s = String(id);
+    for (i = 0; i < s.length; i++) { h = (h * 31 + s.charCodeAt(i)) % 3600; }
+    return (h / 3600) * Math.PI * 2;
+  }
+
+  function pontosDoTerritorio(fi) {
+    var pts = [];
+    if (!fi || !fi.fontes) { return pts; }
+    FONTES_DADO.forEach(function (f) {
+      var d = fi.fontes[f.id];
+      ((d && d.registros) || []).forEach(function (r) {
+        if (r.descartado_em || r.metros === null || r.metros === undefined) { return; }
+        pts.push({id: 'p' + r.poi_id, rot: f.curto + ' #' + r.poi_id, nome: r.nome || '', m: +r.metros,
+                  cor: corFonte(f)});
+      });
+    });
+    pts.sort(function (a, b) { return a.m - b.m; });
+    return pts.slice(0, 40);
+  }
+
+  function desenhaTerritorio(cv, fi, mini) {
+    if (!cv || !cv.getContext) { return; }
+    var ctx = cv.getContext('2d');
+    var dpr = Math.min(window.devicePixelRatio || 1, 3);
+    var L = cv.clientWidth || 300, A = cv.clientHeight || 200;
+    cv.width = Math.round(L * dpr); cv.height = Math.round(A * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, L, A);
+    var pts = pontosDoTerritorio(fi);
+    var maior = 120;
+    pts.forEach(function (p) { if (p.m > maior) { maior = p.m; } });
+    var raio = Math.min(L, A) * 0.40, cx = L / 2, cy = A / 2, escala = raio / (maior * 1.12);
+    ctx.fillStyle = '#F7F9FC'; ctx.fillRect(0, 0, L, A);
+    [[30, '30 m'], [100, '100 m']].forEach(function (par) {
+      var r = par[0] * escala;
+      if (r < 4) { return; }
+      ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.strokeStyle = '#CFD6E0'; ctx.setLineDash([4, 5]); ctx.lineWidth = 1;
+      ctx.stroke(); ctx.setLineDash([]);
+      if (!mini) {
+        ctx.fillStyle = '#98A2B3'; ctx.font = '9px ui-monospace, Menlo, monospace';
+        ctx.textAlign = 'left'; ctx.fillText(par[1], cx + r + 4, cy - 3);
+      }
+    });
+    var rotula = !mini && pts.length <= 12;
+    pts.forEach(function (p) {
+      var a = anguloDe(p.id), r = Math.min(p.m * escala, raio * 1.06);
+      var x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r;
+      ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(x, y);
+      ctx.strokeStyle = p.m <= 100 ? 'rgba(11,46,89,.22)' : 'rgba(214,69,69,.30)';
+      ctx.lineWidth = 1; ctx.stroke();
+      ctx.beginPath(); ctx.arc(x, y, mini ? 3.5 : 5, 0, Math.PI * 2);
+      ctx.fillStyle = p.cor; ctx.fill();
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
+      if (rotula) {
+        ctx.fillStyle = '#2A2E35'; ctx.font = '10px -apple-system, Segoe UI, sans-serif';
+        ctx.textAlign = x < cx ? 'right' : 'left';
+        ctx.fillText(p.rot + '  ' + metrosTxt(p.m), x + (x < cx ? -9 : 9), y + 3);
+      }
+    });
+    ctx.beginPath(); ctx.arc(cx, cy, mini ? 5 : 7, 0, Math.PI * 2);
+    ctx.fillStyle = '#F28C28'; ctx.fill();
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
+    if (!mini) {
+      ctx.fillStyle = '#0B2E59'; ctx.font = '600 11px -apple-system, Segoe UI, sans-serif';
+      ctx.textAlign = 'center'; ctx.fillText('ligação ' + S.sel, cx, cy - 14);
+      if (!pts.length) {
+        ctx.fillStyle = '#98A2B3'; ctx.font = '11px -apple-system, Segoe UI, sans-serif';
+        ctx.fillText('nenhum registro com distância medida', cx, cy + 34);
+      }
+    }
+  }
+
+  function abreTerritorio() {
+    var fi = ficha();
+    if (!fi) { return; }
+    var pts = pontosDoTerritorio(fi);
+    $('#modal-tit').textContent = 'Território · ligação ' + S.sel;
+    $('#modal-corpo').innerHTML = '<div class="terr-grande"><canvas id="terr-cv"></canvas></div>'
+      + '<p class="img-legenda"><i>o que este mapa mostra</i>'
+      + 'O hidrômetro da ligação no centro e cada registro vinculado na distância medida até ele. '
+      + 'Os anéis de 30 m e 100 m são só régua de leitura.</p>'
+      + '<div class="terr-lista">' + (pts.length
+          ? pts.map(function (p) {
+              return '<div class="tl' + (p.m > 100 ? ' fora' : '') + '">'
+                + '<i style="background:' + p.cor + '"></i>'
+                + '<span>' + esc(p.rot) + (p.nome ? ' · ' + esc(p.nome) : '') + '</span>'
+                + '<b class="mono">' + metrosTxt(p.m) + '</b>'
+                + '<em>' + (p.m > 100 ? 'além de 100 m' : 'até 100 m') + '</em></div>';
+            }).join('')
+          : '<div class="sem-dado">Nenhum registro com distância medida.</div>')
+      + '</div>';
+    $('#modal-pe').innerHTML = '<button class="bt p" data-fecha="1">fechar</button>';
+    $('#modal').hidden = false;
+    window.setTimeout(function () { desenhaTerritorio($('#terr-cv'), fi, false); }, 30);
+  }
+
+  function abreRua() {
+    var k = coordenada(ficha());
+    $('#modal-tit').textContent = 'Vista de rua · ligação ' + S.sel;
+    if (!k) {
+      $('#modal-corpo').innerHTML = '<div class="sem-dado">Esta ligação não tem coordenada no '
+        + 'cadastro — sem ponto, não há vista de rua.</div>';
+    } else {
+      $('#modal-corpo').innerHTML = '<div class="rua-aviso">A vista de rua vem de um provedor '
+        + 'externo. Carregar significa <b>enviar a coordenada desta ligação para ele</b> — por isso '
+        + 'nada foi carregado até aqui.</div>'
+        + '<div class="rua-tela" id="rua-tela"><button class="bt pri" data-rua="'
+        + esc(k.lat + ',' + k.lon) + '">carregar vista de rua</button></div>'
+        + '<p class="img-meta mono">' + esc(k.lat.toFixed(6) + ', ' + k.lon.toFixed(6)) + ' · '
+        + esc(k.origem) + '</p>';
+    }
+    $('#modal-pe').innerHTML = '<button class="bt p" data-fecha="1">fechar</button>';
+    $('#modal').hidden = false;
+  }
+
+  function carregaRua(par) {
+    var tela = $('#rua-tela');
+    if (!tela) { return; }
+    var src = 'https://maps.google.com/maps?q=&layer=c&cbll=' + encodeURIComponent(par)
+      + '&cbp=11,0,0,0,0&output=svembed';
+    tela.innerHTML = '<iframe src="' + src + '" loading="lazy" referrerpolicy="no-referrer"'
+      + ' allowfullscreen title="vista de rua"></iframe>';
+  }
+
+  /* as imagens da ficha, com a legenda dizendo de onde vêm e de quem são. O
+   * SELO VERDE É SÓ DA QUE CONFIRMA (13/09/2026): a foto em que a IA viu o
+   * comércio e o print da busca de onde saiu um resultado que confirmou. A
+   * coleta, sozinha, fica com selo neutro. */
+  function imagensDaFicha(fi, ctx) {
+    var pf = (fi.fontes && fi.fontes.foto) || {}, pb = (fi.fontes && fi.fontes.busca) || {};
+    var confirma = {}, vista = {}, publicadaVista = {};
+    (pf.quais || []).forEach(function (q) { confirma[q.poi + ':' + q.tipo] = 1; });
+    (pf.vistas || []).forEach(function (q) { vista[q.poi + ':' + q.tipo] = 1; });
+    var lista = (fi.imagens || []).map(function (x) {
+      var nome = ctx.nome[x.poi_id] ? ' (' + ctx.nome[x.poi_id] + ')' : '';
+      var tipo = x.fonte === 'maps' ? 'foto publicada' : x.tipo;
+      /* da publicada a IA vê só a primeira do POI */
+      var primeira = x.fonte !== 'maps' || !publicadaVista[x.poi_id];
+      if (x.fonte === 'maps') { publicadaVista[x.poi_id] = 1; }
+      var ok = primeira && !!confirma[x.poi_id + ':' + tipo];
+      var viu = primeira && !!vista[x.poi_id + ':' + tipo];
+      var rot = x.fonte === 'maps' ? 'foto publicada' : 'rua · ' + (VISADAS[x.tipo] || x.tipo);
+      return {
+        id: x.id, url: x.url, fonte: x.fonte === 'maps' ? fonte('maps') : fonte('foto'),
+        rot: rot, selo: ok ? 'confirma · ' + rot : rot, sel: ok ? 'ok' : 'neutro',
+        legenda: (x.fonte === 'maps'
+          ? 'Foto publicada no Google Maps do POI #' + x.poi_id + nome + '.'
+          : 'Foto de rua, visada ' + (VISADAS[x.tipo] || x.tipo) + ', tirada do ponto do POI #'
+            + x.poi_id + nome + '.'
+            + (x.mira ? ' A mira verde marca a direção da coordenada do POI.' : ''))
+          + (ok ? ' A IA identificou o comércio nesta foto' + (pf.o_que_mostram ? ': ' + pf.o_que_mostram : '.')
+                : viu ? ' A IA viu esta foto no julgamento.' : ''),
+        quando: x.quando || 'sem data'
+      };
+    });
+    var bs = pb.buscas || [];
+    var motorUsado = {};
+    (pb.usados || []).forEach(function (u) { (u.motores || []).forEach(function (m) { motorUsado[m] = (motorUsado[m] || 0) + 1; }); });
+    bs.slice().reverse().forEach(function (b) {
+      if (!b.print) { return; }
+      var nm = NOME_MOTOR[b.motor] || b.motor, usou = motorUsado[b.motor] || 0;
+      lista.unshift({id: 'busca' + b.id, url: b.print, fonte: fonte('busca'),
+                     rot: 'print · ' + nm, selo: (usou ? 'confirma · ' : '') + 'print · ' + nm,
+                     sel: usou ? 'ok' : 'neutro',
+                     legenda: 'A página que ' + nm + ' mostrou para a busca pelo endereço: '
+                       + (b.consulta || '') + '. ' + (b.no_endereco ? b.no_endereco + ' resultado(s) no endereço'
+                                                                    : 'Nenhum resultado no endereço')
+                       + (usou ? '; ' + usou + ' confirmou(aram) um registro para a IA.' : '.'),
+                     quando: quando(b.feito_em)});
+    });
+    return lista;
+  }
+
+  function secaoImagens(c, fi) {
+    var ctx = contexto(fi);
+    var imgs = imagensDaFicha(fi, ctx);
+    S.imgs = imgs;
+    var ab = S.tira;
+    var pts = pontosDoTerritorio(fi);
+    var k = coordenada(fi);
+    var cab = '<button class="img-cab" data-abre="sec:imagens" data-aberto="' + (ab ? '1' : '0') + '">'
+      + seta(ab) + '<span class="nm">Território, rua e imagens</span>'
+      + '<span class="res">' + pts.length + ' registro(s) no mapa · ' + imgs.length + ' imagem(ns)</span>'
+      + '<span class="cresce"></span>'
+      + '<span class="lgpd">a vista de rua só carrega no clique · a legenda diz de onde a imagem vem</span>'
+      + '</button>';
+    if (!ab) { return '<section id="imagens">' + cab + '</section>'; }
+    var cartoes = [
+      '<figure class="img-cart terr" data-terr="1" tabindex="0" role="button">'
+      + '<div class="img-tela"><canvas class="terr-mini"></canvas><span class="img-sel neutro">local</span></div>'
+      + '<figcaption><b>TERRITÓRIO</b><span>O hidrômetro no centro e cada registro na distância '
+      + 'medida até ele.</span><i class="mono">' + pts.length + ' ponto(s) · desenhado aqui</i>'
+      + '</figcaption></figure>',
+      '<figure class="img-cart rua" data-rua-abre="1" tabindex="0" role="button">'
+      + '<div class="img-tela rua-cap"><span class="rua-icone">◉</span><span class="img-sel '
+      + (k ? 'neutro' : 'nao') + '">' + (k ? 'sob clique' : 'sem coord') + '</span></div>'
+      + '<figcaption><b>VISTA DE RUA</b><span>' + (k
+          ? 'Acervo do provedor no ponto do hidrômetro. Carrega só quando alguém pede.'
+          : 'Sem coordenada no cadastro: não há vista de rua.')
+      + '</span><i class="mono">provedor externo</i></figcaption></figure>'
+    ].concat(imgs.map(function (x) {
+      return '<figure class="img-cart" data-img="' + esc(x.id) + '" tabindex="0" role="button">'
+        + '<div class="img-tela"><img loading="lazy" src="' + esc(window.comToken(x.url)) + '" alt="'
+        + esc(x.legenda) + '"><span class="img-sel ' + x.sel + '">' + esc(x.selo) + '</span></div>'
+        + '<figcaption><b>' + esc(rotuloFonte(x.fonte)) + '</b><span>' + esc(x.legenda) + '</span>'
+        + '<i class="mono">' + esc(x.quando) + '</i></figcaption></figure>';
+    }));
+    return '<section id="imagens">' + cab + '<div class="img-rolo">'
+      + '<button class="rola esq" data-rola="-1" aria-label="rolar para a esquerda">‹</button>'
+      + '<div class="img-tira" id="img-tira">' + cartoes.join('') + '</div>'
+      + '<button class="rola dir" data-rola="1" aria-label="rolar para a direita">›</button>'
+      + '</div></section>';
+  }
+
+  function ajustaRolo() {
+    var tira = $('#img-tira');
+    if (!tira) { return; }
+    var rolo = tira.parentNode;
+    var passa = tira.scrollWidth > tira.clientWidth + 4;
+    rolo.classList.toggle('tem-rolo', passa);
+    if (!passa) { return; }
+    rolo.querySelector('.rola.esq').disabled = tira.scrollLeft <= 2;
+    rolo.querySelector('.rola.dir').disabled = tira.scrollLeft + tira.clientWidth >= tira.scrollWidth - 2;
+  }
+
+  function abreImagem(id) {
+    for (var i = 0; i < S.imgs.length; i++) { if (S.imgs[i].id === id) { abreVisor(i); return; } }
+  }
+
+  /* ===================================================================
+   * 6b · O VISOR — toda imagem do carrossel em tela quase cheia, com zoom
+   * (dono do produto, 13/09/2026). Roda do mouse aproxima no ponto do
+   * cursor, arrastar move, clique duplo alterna entre ajustar e 2,5×; as
+   * setas passam de imagem. O print da busca é alto: abre pela largura,
+   * do topo, para dar para ler.
+   * =================================================================== */
+  var VIS = {i: -1, z: 1, x: 0, y: 0, fit: 1, arrasto: null};
+
+  function visorAberto() { var v = document.getElementById('visor'); return !!(v && !v.hidden); }
+
+  function visorEl() {
+    var v = document.getElementById('visor');
+    if (v) { return v; }
+    v = document.createElement('div');
+    v.id = 'visor';
+    v.hidden = true;
+    v.setAttribute('role', 'dialog');
+    v.setAttribute('aria-modal', 'true');
+    v.setAttribute('aria-label', 'imagem ampliada');
+    v.innerHTML = '<div class="vis-topo"><strong id="vis-tit"></strong><span class="vis-quando" id="vis-quando"></span>'
+      + '<span class="cresce"></span>'
+      + '<button class="vis-bt" data-vis="menos" title="afastar (tecla −)" aria-label="afastar">−</button>'
+      + '<button class="vis-bt num" data-vis="ajustar" id="vis-zoom" title="ajustar à tela (tecla 0)">100%</button>'
+      + '<button class="vis-bt" data-vis="mais" title="aproximar (tecla +)" aria-label="aproximar">+</button>'
+      + '<button class="vis-bt num" data-vis="real" title="tamanho real (tecla 1)">1:1</button>'
+      + '<button class="vis-bt" data-vis="fecha" title="fechar (Esc)" aria-label="fechar">✕</button></div>'
+      + '<div class="vis-palco" id="vis-palco"><img id="vis-img" alt="" draggable="false">'
+      + '<button class="vis-nav esq" data-vis="ant" aria-label="imagem anterior">‹</button>'
+      + '<button class="vis-nav dir" data-vis="prox" aria-label="próxima imagem">›</button></div>'
+      + '<p class="vis-legenda" id="vis-legenda"></p>';
+    document.body.appendChild(v);
+    var palco = v.querySelector('#vis-palco'), img = v.querySelector('#vis-img');
+    img.addEventListener('load', visorAjusta);
+    palco.addEventListener('wheel', function (ev) {
+      ev.preventDefault();
+      var r = palco.getBoundingClientRect();
+      visorZoom(VIS.z * (ev.deltaY < 0 ? 1.18 : 1 / 1.18), ev.clientX - r.left, ev.clientY - r.top);
+    }, {passive: false});
+    palco.addEventListener('pointerdown', function (ev) {
+      if (ev.button !== 0 || ev.target.closest('.vis-nav')) { return; }
+      VIS.arrasto = {x: ev.clientX - VIS.x, y: ev.clientY - VIS.y};
+      palco.setPointerCapture(ev.pointerId);
+      palco.classList.add('arrasta');
+    });
+    palco.addEventListener('pointermove', function (ev) {
+      if (!VIS.arrasto) { return; }
+      VIS.x = ev.clientX - VIS.arrasto.x;
+      VIS.y = ev.clientY - VIS.arrasto.y;
+      visorPinta();
+    });
+    function solta() { VIS.arrasto = null; palco.classList.remove('arrasta'); }
+    palco.addEventListener('pointerup', solta);
+    palco.addEventListener('pointercancel', solta);
+    palco.addEventListener('dblclick', function (ev) {
+      if (ev.target.closest('.vis-nav')) { return; }
+      var r = palco.getBoundingClientRect();
+      if (VIS.z > VIS.fit * 1.05) { visorAjusta(); } else { visorZoom(VIS.fit * 2.5, ev.clientX - r.left, ev.clientY - r.top); }
+    });
+    return v;
+  }
+
+  function visorAjusta() {
+    var palco = $('#vis-palco'), img = $('#vis-img');
+    if (!palco || !img || !img.naturalWidth) { return; }
+    var W = palco.clientWidth, H = palco.clientHeight, w = img.naturalWidth, h = img.naturalHeight;
+    var alta = h / w > 2 * (H / W);
+    VIS.fit = alta ? Math.min(W / w, 1.5) : Math.min(W / w, H / h);
+    VIS.z = VIS.fit;
+    VIS.x = (W - w * VIS.z) / 2;
+    VIS.y = alta ? 0 : (H - h * VIS.z) / 2;
+    visorPinta();
+  }
+
+  function visorZoom(z, cx, cy) {
+    var palco = $('#vis-palco');
+    if (!palco) { return; }
+    z = Math.max(VIS.fit * 0.5, Math.min(z, Math.max(8, VIS.fit * 8)));
+    if (cx === undefined) { cx = palco.clientWidth / 2; cy = palco.clientHeight / 2; }
+    VIS.x = cx - (cx - VIS.x) * (z / VIS.z);
+    VIS.y = cy - (cy - VIS.y) * (z / VIS.z);
+    VIS.z = z;
+    visorPinta();
+  }
+
+  function visorPinta() {
+    var img = $('#vis-img');
+    img.style.transform = 'translate(' + VIS.x + 'px,' + VIS.y + 'px) scale(' + VIS.z + ')';
+    img.style.visibility = 'visible';
+    $('#vis-zoom').textContent = Math.round(VIS.z * 100) + '%';
+  }
+
+  function abreVisor(i) {
+    if (i < 0 || i >= S.imgs.length) { return; }
+    var v = visorEl(), x = S.imgs[i], img = $('#vis-img');
+    VIS.i = i;
+    $('#vis-tit').textContent = rotuloFonte(x.fonte) + ' · ' + x.selo;
+    $('#vis-quando').textContent = (x.quando || '') + ' · ligação ' + S.sel + ' · ' + (i + 1) + ' de ' + S.imgs.length;
+    $('#vis-legenda').textContent = x.legenda;
+    img.style.visibility = 'hidden';
+    img.alt = x.legenda;
+    v.hidden = false;
+    img.src = window.comToken(x.url);
+    if (img.complete && img.naturalWidth) { visorAjusta(); }
+    v.querySelector('.vis-nav.esq').disabled = i === 0;
+    v.querySelector('.vis-nav.dir').disabled = i === S.imgs.length - 1;
+    v.querySelector('[data-vis="fecha"]').focus();
+  }
+
+  function fechaVisor() {
+    var v = document.getElementById('visor');
+    if (!v || v.hidden) { return; }
+    v.hidden = true;
+    var cart = document.querySelector('[data-img="' + (S.imgs[VIS.i] || {}).id + '"]');
+    if (cart) { cart.focus(); }
+  }
+
+  function acaoVisor(a) {
+    if (a === 'fecha') { fechaVisor(); }
+    else if (a === 'mais') { visorZoom(VIS.z * 1.35); }
+    else if (a === 'menos') { visorZoom(VIS.z / 1.35); }
+    else if (a === 'ajustar') { visorAjusta(); }
+    else if (a === 'real') { visorZoom(1); }
+    else if (a === 'ant') { abreVisor(VIS.i - 1); }
+    else if (a === 'prox') { abreVisor(VIS.i + 1); }
+  }
+
+  function copiar(txt, rot) {
+    function ok() { torrada((rot || 'valor') + ' copiado: ' + txt); }
+    function falha() { torrada('não deu para copiar', true); }
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(txt).then(ok).catch(falha);
+      return;
+    }
+    var ta = document.createElement('textarea');
+    ta.value = txt;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { if (document.execCommand('copy')) { ok(); } else { falha(); } } catch (e) { falha(); }
+    document.body.removeChild(ta);
+  }
+
+  /* ===================================================================
+   * 7 · VEREDITO DA IA E DECISÃO OFICIAL
+   * =================================================================== */
+  function decisaoAtual(c, fi) {
+    if (fi && fi.decisao) { return fi.decisao; }
+    if (c.decisao) { return {acao: c.decisao, em: c.decidido_em, quem: c.decidido_por}; }
+    return null;
+  }
+
+  function pintaVeredito() {
+    var c = caso(S.sel);
+    if (!c) { $('#veredito').innerHTML = ''; $('#decisao').innerHTML = ''; return; }
+    var fi = ficha(), ia = fi && fi.ia;
+    var V = veredito(c.ia);
+    var texto = ia ? (ia.motivo || ia.justificativa || 'A IA não deixou motivo.')
+                   : (S.fichas[S.sel] && S.fichas[S.sel].erro ? 'a ficha não carregou' : 'carregando o parecer…');
+    var fontesAchou = FONTES_DADO.filter(function (f) { return c.f[f.id]; });
+    var motivos = fontesAchou.length
+      ? fontesAchou.map(function (f) {
+          return '<span class="pm" style="--mc:' + corFonte(f) + '"><i></i><b>' + esc(rotuloFonte(f))
+            + '</b><em>' + achouTxt(f) + '</em></span>';
+        }).join('')
+      : '<span class="pm vazio">nenhuma fonte achou registro</span>';
+    var ressalvas = [];
+    var ch = ia && ia.checagem;
+    if (ch && ch.veredito_ia && ch.veredito_ia !== ia.veredito) {
+      ressalvas.push('a IA disse <b>' + esc(veredito(ch.veredito_ia).rot) + '</b>; a checagem do código mudou');
+    }
+    var dec = decisaoAtual(c, fi);
+    if (dec && ((dec.acao === 'aprovar') !== (c.ia === 'aprovado'))) {
+      ressalvas.push('a decisão oficial (<b>' + esc(ACOES[dec.acao].rot) + '</b>) diverge da IA');
+    }
+    $('#veredito').innerHTML = '<div class="par ' + V.tom + '">'
+      + '<div class="par-cab"><i>veredito da IA · uma das fontes</i><b>' + esc(V.rot) + '</b>'
+      + '<span class="par-chip">' + (c.avaliado_em ? 'julgada em ' + esc(quando(c.avaliado_em))
+                                                  : 'sem data de julgamento') + '</span></div>'
+      + '<p class="par-texto" data-expande="1" tabindex="0" title="clique para ler o motivo inteiro">'
+      + esc(texto) + '</p>'
+      + '<div class="par-motivos">' + motivos
+      + ressalvas.map(function (r) { return '<span class="pr">⚠ ' + r + '</span>'; }).join('')
+      + '</div></div>';
+
+    var sug = c.ia === 'aprovado' ? 'aprovar' : c.ia === 'reprovado' ? 'rejeitar' : null;
+    var pode = podeDecidir();
+    var botoes = Object.keys(ACOES).map(function (a) {
+      return '<button class="bt ' + (a === sug ? 'pri' : 'p') + (dec && dec.acao === a ? ' escolhido' : '')
+        + '" data-decide="' + a + '"' + (pode ? '' : ' disabled')
+        + ' title="' + esc(pode ? ACOES[a].diz : 'decidir exige nível editor ou acima') + '">'
+        + esc(ACOES[a].rot) + (a === sug ? '<span class="sug">IA</span>' : '') + '</button>';
+    }).join('');
+    var hist = fi && fi.decisoes ? fi.decisoes.length : 0;
+    $('#decisao').innerHTML = '<div class="dec-estado' + (dec ? ' feito' : '') + '">'
+      + (dec
+          ? '<b>' + esc(ACOES[dec.acao] ? ACOES[dec.acao].rot : dec.acao) + '</b><span>'
+            + esc(dec.quem || '') + (dec.em ? ' · ' + esc(quando(dec.em)) : '')
+            + (dec.motivo ? ' · ' + esc(dec.motivo) : '') + '</span>'
+          : '<b>sem decisão oficial</b><span>a IA diz <b>' + esc(V.rot) + '</b></span>')
+      + '</div>'
+      + '<div class="dec-curadoria">'
+      + (hist > 1 ? '<button class="lk" data-historico="1">' + hist + ' decisões registradas</button> · ' : '')
+      + 'a decisão oficial não altera o veredito da IA nem o das fontes</div>'
+      + '<div class="cresce"></div><div class="acoes">' + botoes + '</div>';
+  }
+
+  function decide(acao) {
+    var c = caso(S.sel);
+    if (!c) { return; }
+    if (!podeDecidir()) { torrada('decidir exige nível editor ou acima', true); return; }
+    if (acao === 'rejeitar') { abreDecisao([c.ligacao], acao); return; }
+    grava([c.ligacao], acao, '');
+  }
+
+  function descreveFiltros() {
+    var f = [];
+    if (S.fIA !== 'todos') { f.push('IA: ' + veredito(S.fIA).rot); }
+    if (S.fQual !== 'todos') { f.push('cadastro: ' + S.fQual.replace(/_/g, ' ').toLowerCase()); }
+    if (S.fDec !== 'todos') {
+      f.push('decisão: ' + (DECISOES.filter(function (d) { return d.id === S.fDec; })[0] || {}).rot);
+    }
+    Object.keys(S.fFonte).forEach(function (k) {
+      f.push(fonte(k).curto + ': ' + (S.fFonte[k] === 'sim' ? 'achou' : 'não achou'));
+    });
+    if (S.termo) { f.push('busca: “' + S.termo + '”'); }
+    return f;
+  }
+
+  function abreDecisao(ligs, acao) {
+    S.pendente = {ligs: ligs, acao: acao || null};
+    var lote = ligs.length > 1;
+    var filtros = descreveFiltros();
+    $('#modal-tit').textContent = lote ? 'Decisão oficial em lote' : 'Decisão oficial · ligação ' + ligs[0];
+    $('#modal-corpo').innerHTML = (lote
+        ? '<div class="lote-resumo"><b>' + num(ligs.length) + '</b> ligações do recorte atual recebem '
+          + 'a mesma decisão.' + (filtros.length
+            ? '<ul>' + filtros.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>'
+            : ' Nenhum recorte está ativo: é a fila inteira.') + '</div>'
+        : '')
+      + '<div class="acao-opcoes">' + Object.keys(ACOES).map(function (a) {
+          return '<button class="acao-op' + (S.pendente.acao === a ? ' on' : '') + '" data-escolhe="' + a
+            + '" style="--ac:' + ACOES[a].cor + '"><b>' + esc(ACOES[a].rot) + '</b><span>'
+            + esc(ACOES[a].diz) + '</span></button>';
+        }).join('') + '</div>'
+      + '<label class="obs-rot" for="dec-motivo" id="dec-motivo-rot">motivo</label>'
+      + '<textarea id="dec-motivo" rows="3" placeholder="por que esta decisão — obrigatório para rejeitar"></textarea>'
+      + '<p class="obs-ajuda">A decisão oficial é gravada à parte: o veredito da IA e o das fontes '
+      + 'continuam como estão. Fica registrado quem decidiu, quando e por quê'
+      + (lote ? ', e as ' + num(ligs.length) + ' linhas ficam marcadas como um mesmo lote.' : '.') + '</p>';
+    pintaPeDecisao();
+    $('#modal').hidden = false;
+    window.setTimeout(function () { $('#dec-motivo').focus(); }, 40);
+  }
+
+  function pintaPeDecisao() {
+    var p = S.pendente;
+    if (!p) { return; }
+    var rot = $('#dec-motivo-rot');
+    if (rot) { rot.textContent = p.acao === 'rejeitar' ? 'motivo · obrigatório' : 'motivo · opcional'; }
+    $('#modal-pe').innerHTML = '<button class="bt p" data-fecha="1">cancelar</button>'
+      + '<span class="cresce"></span>'
+      + '<button class="bt pri' + (p.acao === 'rejeitar' ? ' ruim' : '') + '" data-grava="1"'
+      + (p.acao ? '' : ' disabled') + '>'
+      + (p.acao ? esc(ACOES[p.acao].rot) : 'escolha a decisão')
+      + (p.ligs.length > 1 ? ' · ' + num(p.ligs.length) + ' ligações' : '') + '</button>';
+  }
+
+  function confirmaDecisao() {
+    var p = S.pendente;
+    if (!p || !p.acao) { return; }
+    var motivo = ($('#dec-motivo') && $('#dec-motivo').value || '').trim();
+    if (p.acao === 'rejeitar' && !motivo) { torrada('rejeitar exige o motivo escrito', true); return; }
+    var bt = document.querySelector('[data-grava]');
+    if (bt) { bt.disabled = true; bt.textContent = 'gravando…'; }
+    grava(p.ligs, p.acao, motivo).then(function (ok) {
+      if (ok) { $('#modal').hidden = true; S.pendente = null; }
+      else if (bt) { pintaPeDecisao(); }
+    });
+  }
+
+  /* grava, e só mexe na tela com a resposta do servidor na mão */
+  function grava(ligs, acao, motivo) {
+    var antes = indiceNaFila(S.sel);
+    return fetch('/api/seek/decidir', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ligacoes: ligs, acao: acao, motivo: motivo || null})
+    }).then(lerJson).then(function (b) {
+      var agora = agoraIso();
+      var quem = (window.EU && (window.EU.nome || window.EU.email)) || '';
+      var sem = {};
+      (b.sem_veredito || []).forEach(function (l) { sem[l] = 1; });
+      ligs.forEach(function (l) {
+        if (sem[l]) { return; }
+        var c = S.porLig[l];
+        if (c) { c.decisao = acao; c.decidido_em = agora; c.decidido_por = quem; }
+        var fi = S.fichas[l];
+        if (fi && !fi.erro) {
+          var d = {acao: acao, motivo: motivo || null, quem: quem, em: agora, lote: b.lote};
+          fi.decisoes = [d].concat(fi.decisoes || []);
+          fi.decisao = d;
+        }
+      });
+      var tudo = b.gravadas >= b.pedidas;
+      torrada(ligs.length === 1 ? (tudo ? 'decisão gravada: ' + ACOES[acao].rot : 'o servidor não gravou a decisão')
+              : num(b.gravadas) + ' de ' + num(b.pedidas) + ' decisões gravadas', !tudo);
+      pintaFila();
+      /* a ligação saiu do recorte (ex.: "sem decisão oficial"): a próxima assume */
+      if (S.sel && indiceNaFila(S.sel) < 0 && S.vistos.length) {
+        seleciona(S.vistos[Math.min(Math.max(antes, 0), S.vistos.length - 1)].ligacao, true);
+      } else {
+        pintaVeredito(); pintaLado();
+      }
+      return true;
+    }).catch(function (e) {
+      torrada('não gravou: ' + e.message, true);
+      return false;
+    });
+  }
+
+  function abreHistorico() {
+    var fi = ficha();
+    if (!fi) { return; }
+    $('#modal-tit').textContent = 'Decisões · ligação ' + S.sel;
+    $('#modal-corpo').innerHTML = (fi.decisoes || []).map(function (d) {
+      return '<div class="hist-lin"><i>' + esc(quando(d.em)) + '</i><div><b>'
+        + esc(ACOES[d.acao] ? ACOES[d.acao].rot : d.acao) + '</b> · ' + esc(d.quem || '')
+        + (d.motivo ? '<span>' + esc(d.motivo) + '</span>' : '')
+        + (d.lote ? '<span class="mono">lote ' + esc(String(d.lote).slice(0, 8)) + '</span>' : '')
+        + '</div></div>';
+    }).join('') || '<div class="sem-dado">Nenhuma decisão registrada.</div>';
+    $('#modal-pe').innerHTML = '<button class="bt p" data-fecha="1">fechar</button>';
+    $('#modal').hidden = false;
+  }
+
+  /* ===================================================================
+   * 8 · O VOLUME — as dez fontes desta ligação
+   * =================================================================== */
+  var CER = {motor: null, laco: 0, olho: null};
+  var MOV_REDUZIDO = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  var PONTEIRO = {x: 0, y: 0};
+
+  function coberturaDoCaso() {
+    var c = caso(S.sel), m = {};
+    FONTES.forEach(function (f) {
+      if (!c) { m[f.id] = null; return; }
+      if (f.id === 'ia') {
+        m.ia = c.ia === 'aprovado' ? 1 : c.ia === 'revisao_humana' ? 0.55 : c.ia ? 0.2 : null;
+        return;
+      }
+      m[f.id] = c.f[f.id] ? 1 : null;   /* não achou fica anônima, como camada sem registro */
+    });
+    return m;
+  }
+
+  function paraCerebro() {
+    if (CER.laco) { window.cancelAnimationFrame(CER.laco); CER.laco = 0; }
+    if (CER.olho) { CER.olho.disconnect(); CER.olho = null; }
+    if (CER.motor) { CER.motor.destroi(); CER.motor = null; }
+  }
+
+  function dizArea(id) {
+    var el = $('#cer-leg'), c = caso(S.sel), tela = $('#lado .lado-tela');
+    if (!el || !tela) { return; }
+    var f = id ? fonte(id) : null;
+    if (!f || !c) { el.hidden = true; return; }
+    var fi = ficha(), estado, classe;
+    if (f.id === 'ia') {
+      estado = 'veredito: ' + veredito(c.ia).rot;
+      classe = c.ia === 'aprovado' ? 'ok' : 'nada';
+    } else if (c.f[f.id]) {
+      var d = fi && fi.fontes && fi.fontes[f.id];
+      var n = d && d.registros ? d.registros.filter(function (r) { return !r.descartado_em; }).length : null;
+      estado = f.id === 'busca' ? 'a IA confirmou um registro pela busca'
+             : f.id === 'foto' ? 'a IA identificou o comércio nas fotos'
+             : 'achou' + (n ? ' · ' + n + ' registro(s)' : '');
+      classe = 'ok';
+    } else {
+      estado = ehProva(f) ? 'não confirmou' : 'não achou registro para esta ligação';
+      classe = 'mudo';
+    }
+    el.innerHTML = '<b><i style="background:' + corFonte(f) + '"></i>' + esc(rotuloFonte(f)) + '</b>'
+      + '<span>' + esc(grupo(f.grupo).rot) + ' · <span class="mono">' + esc(outroNome(f)) + '</span></span>'
+      + '<em class="' + classe + '">' + esc(estado) + '</em>';
+    el.hidden = false;
+    var cx = tela.clientWidth, cy = tela.clientHeight, L = el.offsetWidth, A = el.offsetHeight;
+    var x = Math.min(Math.max(10, PONTEIRO.x - L / 2), Math.max(10, cx - L - 10));
+    var acima = PONTEIRO.y > A + 26;
+    var y = acima ? PONTEIRO.y - A - 14 : Math.min(PONTEIRO.y + 16, cy - A - 8);
+    el.style.left = x + 'px';
+    el.style.top = y + 'px';
+    el.className = 'cer-leg' + (acima ? ' acima' : ' abaixo');
+    el.style.setProperty('--seta', Math.min(Math.max(14, PONTEIRO.x - x), L - 14) + 'px');
+  }
+
+  function ligaCerebro() {
+    var cv = document.getElementById('cer-cv');
+    paraCerebro();
+    if (!cv || !window.MotorCerebro) { return; }
+    var meu = window.MotorCerebro.cria(cv, {
+      areas: FONTES.map(function (f) {
+        return {id: f.id, nome: f.curto, cor: corFonte(f), centro: f.centro};
+      }),
+      velocidade: 0.4,
+      rotulos: true,
+      aoPassarArea: dizArea,
+      aoClicarArea: function (id) {
+        var f = fonte(id), c = caso(S.sel);
+        if (!f || !c) { return; }
+        if (!S.abertos[S.sel]) { S.abertos[S.sel] = {}; }
+        S.abertos[S.sel]['g:' + f.grupo] = true;
+        S.abertos[S.sel]['f:' + f.id] = true;
+        if (f.id !== 'ia' && !c.f[f.id]) { S.mudos = true; sincronizaMudos(); }
+        pintaArvore();
+        var no = document.querySelector('[data-abre="' + (f.id === 'ia' ? 'g:ia' : 'f:' + f.id) + '"]');
+        if (no) {
+          no.scrollIntoView({block: 'center'});
+          no.classList.add('piscou');
+          window.setTimeout(function () { no.classList.remove('piscou'); }, 1200);
+        }
+      }
+    });
+    CER.motor = meu;
+    cv.addEventListener('mousemove', function (ev) {
+      var r = cv.getBoundingClientRect();
+      PONTEIRO.x = ev.clientX - r.left;
+      PONTEIRO.y = ev.clientY - r.top;
+    });
+    cv.addEventListener('mouseleave', function () { dizArea(null); });
+    meu.cobertura(coberturaDoCaso());
+    meu.redimensiona();
+    if (window.ResizeObserver) {
+      CER.olho = new window.ResizeObserver(function () {
+        if (!CER.motor || cv.clientWidth < 8 || cv.clientHeight < 8) { return; }
+        CER.motor.redimensiona();
+        if (MOV_REDUZIDO) { CER.motor.quadro(0); }
+      });
+      CER.olho.observe(cv);
+    }
+    if (MOV_REDUZIDO) { meu.quadro(0); return; }
+    function quadro(t) {
+      if (CER.motor !== meu) { return; }
+      meu.quadro(t);
+      CER.laco = window.requestAnimationFrame(quadro);
+    }
+    CER.laco = window.requestAnimationFrame(quadro);
+  }
+
+  function pintaLado() {
+    var c = caso(S.sel);
+    if (!c) { $('#criterios').innerHTML = ''; $('#lado-pe').innerHTML = ''; $('#tese').hidden = true; return; }
+    var fi = ficha(), b = fi && fi.base;
+    var tese = $('#tese');
+    tese.innerHTML = '<i>qualificação no cadastro</i>' + esc((c.qualificacao || '—').replace(/_/g, ' '))
+      + (b && b.qualificacao_motivo ? ' — ' + esc(b.qualificacao_motivo) : '');
+    tese.hidden = false;
+    var V = veredito(c.ia);
+    $('#criterios').innerHTML = '<div class="cri' + (c.ia === 'aprovado' ? ' bate' : '') + '" title="'
+      + esc(grupo('ia').diz) + '"><i style="background:' + grupo('ia').cor + '"></i><span>IA</span>'
+      + '<b style="color:' + V.cor + '">' + esc(V.rot) + '</b></div>'
+      + GRUPOS.slice(1).map(function (g) {
+          var fs = FONTES.filter(function (f) { return f.grupo === g.id; });
+          var n = fs.filter(function (f) { return c.f[f.id]; }).length;
+          return '<div class="cri' + (n ? ' bate' : '') + '" title="' + esc(g.diz) + '">'
+            + '<i style="background:' + g.cor + '"></i><span>' + esc(g.rot) + '</span>'
+            + '<b>' + (PROVA[g.id] ? (n ? 'confirmou' : 'não') : n + '/' + fs.length) + '</b></div>';
+        }).join('');
+    var n = FONTES_DADO.filter(function (f) { return c.f[f.id]; }).length;
+    $('#lado-pe').textContent = n + ' de ' + FONTES_DADO.length + ' fontes acharam registro · IA: ' + V.rot;
+  }
+
+  /* ===================================================================
+   * 9 · EVENTOS E PARTIDA
+   * =================================================================== */
+  function sincronizaMudos() {
+    var bt = $('#arv-mudos');
+    bt.classList.toggle('on', S.mudos);
+    bt.textContent = S.mudos ? 'esconder quem não achou' : 'mostrar quem não achou';
+  }
+
+  function abreTudo(v) {
+    if (!S.sel) { return; }
+    var m = {'g:ia': v, 'c:base': v, 'c:os': v, 'c:impacto': v};
+    GRUPOS.forEach(function (g) { m['g:' + g.id] = v; });
+    FONTES.forEach(function (f) { m['f:' + f.id] = v; });
+    S.abertos[S.sel] = m;
+    pintaArvore();
+  }
+
+  function digitando(ev) {
+    var t = ev.target;
+    return t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT'
+                 || t.isContentEditable);
+  }
+
+  function liga() {
+    $('#chip-sair').addEventListener('click', function () {
+      ['cr_token', 'cr_refresh', 'cr_expira'].forEach(function (k) {
+        try { window.sessionStorage.removeItem(k); } catch (e) { /* aba sem armazenamento */ }
+      });
+      window.EU = null;
+      window.location.reload();
+    });
+
+    $('#chip-rotulo').addEventListener('click', function () {
+      S.rotuloCliente = !S.rotuloCliente;
+      $('#rotulo-txt').textContent = S.rotuloCliente ? 'rótulo do cliente' : 'nome interno';
+      $('#chip-rotulo').className = 'chip' + (S.rotuloCliente ? '' : ' demo');
+      pintaFila(); pintaCaso();
+    });
+
+    var espera = 0;
+    $('#f-busca').addEventListener('input', function () {
+      S.busca = this.value;
+      window.clearTimeout(espera);
+      espera = window.setTimeout(refiltra, 140);
+    });
+    $('#f-lista').addEventListener('scroll', agendaLista, {passive: true});
+    $('#f-lote').addEventListener('click', function () {
+      if (!S.vistos.length) { return; }
+      if (S.vistos.length > MAX_LOTE) {
+        torrada('no máximo ' + num(MAX_LOTE) + ' ligações por vez — refine o recorte', true);
+        return;
+      }
+      abreDecisao(S.vistos.map(function (c) { return c.ligacao; }), null);
+    });
+    $('#f-limpa').addEventListener('click', function () { S.fFonte = {}; refiltra(); });
+
+    document.addEventListener('change', function (ev) {
+      var id = ev.target.id;
+      if (id === 'f-sel-ia') { S.fIA = ev.target.value; refiltra(); }
+      if (id === 'f-sel-qual') { S.fQual = ev.target.value; refiltra(); }
+      if (id === 'f-sel-dec') { S.fDec = ev.target.value; refiltra(); }
+    });
+
+    $('#arv-tudo').addEventListener('click', function () { abreTudo(true); });
+    $('#arv-nada').addEventListener('click', function () { abreTudo(false); });
+    $('#arv-mudos').addEventListener('click', function () {
+      S.mudos = !S.mudos; sincronizaMudos(); pintaArvore();
+    });
+
+    document.addEventListener('keydown', function (ev) {
+      if (visorAberto()) {
+        var ac = {Escape: 'fecha', ArrowLeft: 'ant', ArrowRight: 'prox', '+': 'mais', '=': 'mais',
+                  '-': 'menos', '0': 'ajustar', '1': 'real'}[ev.key];
+        if (ac) { ev.preventDefault(); acaoVisor(ac); }
+        return;
+      }
+      if (ev.key === 'Escape' && !$('#modal').hidden) { $('#modal').hidden = true; S.pendente = null; return; }
+      if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.closest && ev.target.closest('[data-copia]')
+          && !digitando(ev)) {
+        ev.preventDefault();
+        var cpk = ev.target.closest('[data-copia]');
+        copiar(cpk.getAttribute('data-copia'), cpk.getAttribute('data-copia-rot'));
+        return;
+      }
+      if (!$('#modal').hidden || digitando(ev)) { return; }
+      if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+        var i = indiceNaFila(S.sel) + (ev.key === 'ArrowDown' ? 1 : -1);
+        if (i >= 0 && i < S.vistos.length) { ev.preventDefault(); seleciona(S.vistos[i].ligacao, true); }
+        return;
+      }
+      if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.closest && ev.target.closest('[data-img]')) {
+        ev.preventDefault();
+        abreImagem(ev.target.closest('[data-img]').getAttribute('data-img'));
+      }
+    });
+
+    document.addEventListener('click', function (ev) {
+      var t = ev.target.closest ? ev.target : null;
+      if (!t) { return; }
+
+      var vb = t.closest('[data-vis]');
+      if (vb) { acaoVisor(vb.getAttribute('data-vis')); return; }
+      if (visorAberto()) { return; }
+
+      var ff = t.closest('[data-ff]');
+      if (ff) {
+        var id = ff.getAttribute('data-ff'), e = S.fFonte[id];
+        if (!e) { S.fFonte[id] = 'sim'; } else if (e === 'sim') { S.fFonte[id] = 'nao'; } else { delete S.fFonte[id]; }
+        refiltra();
+        return;
+      }
+      var k = t.closest('[data-caso]');
+      if (k) { seleciona(k.getAttribute('data-caso'), false); return; }
+
+      if (t.closest('[data-recarrega]')) {
+        carregaFila().then(function () {
+          pintaFila();
+          if (S.sel && caso(S.sel)) { pintaCaso(); } else if (S.vistos.length) { seleciona(S.vistos[0].ligacao, true); }
+        });
+        return;
+      }
+      var rf = t.closest('[data-refaz]');
+      if (rf) { delete S.fichas[rf.getAttribute('data-refaz')]; seleciona(rf.getAttribute('data-refaz')); return; }
+
+      var rl = t.closest('[data-rola]');
+      if (rl) {
+        var tira = $('#img-tira');
+        if (tira) {
+          tira.scrollBy({left: (+rl.getAttribute('data-rola')) * 210, behavior: 'smooth'});
+          window.setTimeout(ajustaRolo, 400);
+        }
+        return;
+      }
+      if (t.closest('[data-terr]')) { abreTerritorio(); return; }
+      if (t.closest('[data-rua-abre]')) { abreRua(); return; }
+      var ru = t.closest('[data-rua]');
+      if (ru) { carregaRua(ru.getAttribute('data-rua')); return; }
+      var im = t.closest('[data-img]');
+      if (im) { abreImagem(im.getAttribute('data-img')); return; }
+      var ex = t.closest('[data-expande]');
+      if (ex) { ex.classList.toggle('aberto'); return; }
+
+      var es = t.closest('[data-escolhe]');
+      if (es && S.pendente) {
+        S.pendente.acao = es.getAttribute('data-escolhe');
+        Array.prototype.forEach.call(document.querySelectorAll('.acao-op'), function (b) {
+          b.classList.toggle('on', b.getAttribute('data-escolhe') === S.pendente.acao);
+        });
+        pintaPeDecisao();
+        return;
+      }
+      if (t.closest('[data-grava]')) { confirmaDecisao(); return; }
+      if (t.closest('[data-historico]')) { abreHistorico(); return; }
+
+      if (t.closest('[data-fecha]') || t.closest('#modal-x') || t.closest('.modal-fundo')) {
+        $('#modal').hidden = true;
+        S.pendente = null;
+        return;
+      }
+
+      var ab = t.closest('[data-abre]');
+      if (ab) {
+        var chave = ab.getAttribute('data-abre');
+        var estava = ab.getAttribute('data-aberto') === '1';
+        if (chave === 'sec:imagens') { S.tira = !estava; pintaArvore(); return; }
+        if (!S.abertos[S.sel]) { S.abertos[S.sel] = {}; }
+        S.abertos[S.sel][chave] = !estava;
+        pintaArvore();
+        return;
+      }
+
+      var cp = t.closest('[data-copia]');
+      if (cp) { copiar(cp.getAttribute('data-copia'), cp.getAttribute('data-copia-rot')); return; }
+
+      var dc = t.closest('[data-decide]');
+      if (dc && !dc.disabled) { decide(dc.getAttribute('data-decide')); }
+    });
+
+    window.addEventListener('resize', function () {
+      if (visorAberto()) { visorAjusta(); }
+      if (CER.motor && !CER.olho) { CER.motor.redimensiona(); }
+      ajustaRolo();
+      pintaLista();
+    });
+  }
+
+  function mostraTela(eu) {
+    $('#quem-nome').textContent = eu.nome || eu.email || '—';
+    $('#quem-sub').textContent = (eu.nivel || '—') + (eu.empresa ? ' · ' + eu.empresa : '');
+    pintaFila(); pintaArvore();
+    ligaCerebro();
+    carregaFila().then(function () {
+      pintaFila();
+      var pedida = (window.location.hash || '').replace('#', '');
+      var alvo = caso(pedida) ? pedida : (S.vistos[0] && S.vistos[0].ligacao);
+      if (alvo) { seleciona(alvo, true); } else { pintaCaso(); }
+    });
+  }
+
+  function inicia() {
+    liga();
+    var foi = false;
+    function vai(eu) {
+      if (foi || !eu) { return; }
+      foi = true;
+      mostraTela(eu);
+    }
+    /* o sessao.js avisa quando o crachá chegou; sem sessão ele mesmo abre o
+     * login, e depois de entrar recarrega a página */
+    document.addEventListener('cr:sessao', function (ev) { vai(ev.detail); });
+    if (window.EU) { vai(window.EU); }
+    pintaFila(); pintaArvore();
+  }
+
+  return {inicia: inicia, FONTES: FONTES, GRUPOS: GRUPOS,
+          estado: function () { return S; },
+          cerebro: function () { return CER.motor; }};
+}());
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', SEEK.inicia);
+} else { SEEK.inicia(); }

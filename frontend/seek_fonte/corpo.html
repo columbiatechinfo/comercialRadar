@@ -1,0 +1,101 @@
+
+<!-- 1 · filete de marca 22/78 -->
+<div id="filete"><i></i><b></b></div>
+
+<!-- 2 · faixa de identidade do produto -->
+<header id="topo">
+  <div class="marca">@@LOGO@@</div>
+  <div class="ident">
+    <strong id="id-titulo">SEEK</strong>
+    <span id="id-sub">recuperação de receita · Comercial Radar</span>
+  </div>
+
+  <div class="sessao">
+    <a class="chip" href="/extrair" title="a tela de extração: mapa, captura e mineração">extração ↗</a>
+    <button class="chip" id="chip-rotulo" title="alterna entre o nome interno da fonte e o rótulo que vai ao cliente">
+      <i class="pip"></i><span id="rotulo-txt">rótulo do cliente</span>
+    </button>
+    <button class="chip" id="chip-api" title="estado da fila de ligações">
+      <i class="pip"></i><span id="api-txt">—</span>
+    </button>
+    <div class="quem">
+      <span id="quem-nome">—</span>
+      <span id="quem-sub">—</span>
+    </div>
+    <button class="chip" id="chip-sair" title="encerrar a sessão neste navegador">sair</button>
+  </div>
+</header>
+
+<!-- 3 · faixa de identidade do caso -->
+<div id="faixa"></div>
+
+<main id="corpo">
+
+  <!-- fila de ligações -->
+  <aside id="fila">
+    <div class="fila-topo">
+      <div class="busca"><input id="f-busca" placeholder="ligação, titular, endereço ou bairro" autocomplete="off"></div>
+      <div class="fila-filtros" id="f-ia"></div>
+      <div class="fila-filtros" id="f-qual"></div>
+      <div class="fila-filtros dec" id="f-decisao"></div>
+      <div class="ffontes-rot"><span class="fl-rot">fontes · achou / não achou</span><button id="f-limpa" hidden>limpar</button></div>
+      <div class="ffontes" id="f-fontes"></div>
+      <button class="bt p lote" id="f-lote" title="grava a decisão oficial em todas as ligações do recorte"></button>
+    </div>
+    <div class="fila-lista" id="f-lista" tabindex="0">
+      <div class="vl" id="f-vl"><div class="vl-jan" id="f-jan"></div></div>
+      <div class="vazio" id="f-vazio" hidden></div>
+    </div>
+    <div class="fila-pe" id="f-pe">—</div>
+  </aside>
+
+  <!-- a árvore de evidência -->
+  <section id="arvore-caixa">
+    <div class="arv-topo">
+      <div class="arv-tit">
+        <strong>Árvore de evidência</strong>
+        <span id="arv-sub">grupo · fonte · registro — a decisão oficial fica no rodapé</span>
+      </div>
+      <div class="cresce"></div>
+      <div class="arv-ferramentas">
+        <button class="bt p" id="arv-tudo" title="abrir todos os ramos">expandir</button>
+        <button class="bt p" id="arv-nada" title="fechar todos os ramos">recolher</button>
+        <button class="bt p" id="arv-mudos" title="mostrar também as fontes que não acharam registro">
+          mostrar quem não achou</button>
+      </div>
+    </div>
+    <div class="arvore" id="arvore"></div>
+  </section>
+
+  <!-- o volume e os grupos -->
+  <aside id="lado">
+    <div class="lado-tela">
+      <canvas id="cer-cv" role="img"
+        aria-label="as fontes desta ligação em volume; a mesma leitura está na árvore ao lado"></canvas>
+      <div class="cer-leg" id="cer-leg" hidden></div>
+    </div>
+    <div class="tese" id="tese" hidden></div>
+    <div class="criterios" id="criterios"></div>
+    <div class="lado-pe" id="lado-pe"></div>
+  </aside>
+
+</main>
+
+<!-- 4 · faixa do veredito da IA -->
+<div id="veredito"></div>
+
+<!-- 5 · rodapé da decisão oficial -->
+<div id="decisao"></div>
+
+<!-- diálogo -->
+<div id="modal" hidden>
+  <div class="modal-fundo"></div>
+  <div class="modal-caixa" role="dialog" aria-modal="true">
+    <header><strong id="modal-tit">—</strong><button id="modal-x" aria-label="fechar">✕</button></header>
+    <div id="modal-corpo"></div>
+    <footer id="modal-pe"></footer>
+  </div>
+</div>
+
+<div id="dica" hidden></div>
+<div id="torradas"></div>

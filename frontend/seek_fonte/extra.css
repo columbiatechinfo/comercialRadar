@@ -1,0 +1,205 @@
+/* ==== 98-seek-radar.css ==== */
+/* 98-seek-radar.css — o que o SEEK precisou a mais para morar no Comercial Radar
+ * (13/09/2026): filtro por fonte, fila de 22 mil linhas, registro por fonte,
+ * parecer da IA como fonte e a decisão em lote. Nada acima foi alterado. */
+
+.hidden{display:none!important}
+/* o sessao.js pendura o botão de perfil no body; aqui a pessoa sai pelo chip
+ * "sair" e edita o perfil na tela de extração */
+#btn-perfil{display:none!important}
+a.chip{text-decoration:none}
+
+/* ---- a fila: três recortes em lista e um por fonte, em pastilha ---- */
+.fila-topo{gap:7px}
+.fila-filtros .fl-sel + .fl-sel{margin-left:0}
+.ffontes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px}
+/* nome em cima, contagem embaixo: lado a lado, "DIRETÓRIO 3.123" não cabia
+ * em um terço da fila e virava "DI…" */
+.fch{
+  display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;column-gap:4px;
+  padding:3px 6px 3px 7px;min-width:0;text-align:left;
+  border:1px solid var(--linha);border-radius:var(--r3);background:var(--sup2);
+  font-family:var(--mono);font-size:9px;color:var(--fraco);letter-spacing:.02em;line-height:1.3;
+  transition:border-color var(--t),background var(--t);
+}
+.fch:hover{border-color:var(--linha2)}
+.fch span{grid-column:1;grid-row:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fch i{grid-column:2;grid-row:1;font-style:normal;font-size:9px;color:var(--tenue)}
+.fch b{grid-column:1 / -1;grid-row:2;font-weight:600;color:var(--tenue);font-size:10px;
+  font-variant-numeric:tabular-nums}
+.fch[data-estado="sim"]{background:#E8F6EE;border-color:#9FD3B6;color:#14603D}
+.fch[data-estado="sim"] i,.fch[data-estado="sim"] b{color:#14603D}
+.fch[data-estado="nao"]{background:#FDF2F2;border-color:#EBB5B5;border-style:dashed;color:#A82F2F}
+.fch[data-estado="nao"] i,.fch[data-estado="nao"] b{color:#A82F2F}
+.ffontes-rot{display:flex;align-items:center;justify-content:space-between;margin-bottom:-3px}
+.ffontes-rot .fl-rot{width:auto}
+.ffontes-rot button{font-family:var(--mono);font-size:9px;color:var(--azul)}
+.bt.lote{width:100%;height:30px;justify-content:space-between;padding:0 10px}
+.bt.lote b{font-family:var(--mono);font-size:11px;font-variant-numeric:tabular-nums}
+
+/* 22 mil linhas não viram 22 mil botões: a lista desenha só a janela visível */
+.fila-lista{position:relative}
+.vl{position:relative}
+.vl-jan{position:absolute;left:0;right:0;top:0;will-change:transform}
+.fila-lista .fi{height:66px;overflow:hidden}
+.fi .l3{display:flex;gap:6px}
+.fi .l3 span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fi .l3 em{font-style:normal;font-family:var(--mono);font-size:9.5px;color:var(--tenue);flex:none}
+.fi .mini{display:flex;gap:2px;margin-left:auto;flex:none}
+.fi .mini i{width:6px;height:6px;border-radius:2px;background:var(--linha)}
+.fi .mini i.on{background:var(--mc)}
+.dchip{
+  font-family:var(--mono);font-size:8.5px;padding:1px 6px;border-radius:99px;
+  color:var(--dc);border:1px solid color-mix(in srgb,var(--dc) 45%,transparent);
+  background:color-mix(in srgb,var(--dc) 9%,var(--sup));white-space:nowrap;
+}
+.fila-pe{display:flex;align-items:center;gap:8px}
+.fila-pe button{font-family:var(--mono);font-size:10px;color:var(--azul);margin-left:auto}
+
+/* ---- a árvore: grupo · fonte · registro ---- */
+.ramo.n-ia{--cc:#6D4AC7} .ramo.n-plataforma{--cc:#006DFF}
+.ramo.n-oficial{--cc:#1F9D62} .ramo.n-web{--cc:#F28C28} .ramo.n-imagem{--cc:#138A9E}
+.reg{padding:9px 13px 10px 26px;border-top:1px solid var(--linha);background:var(--sup)}
+.no-corpo > .reg:first-child{border-top:0}
+.reg-cab{display:flex;align-items:baseline;gap:7px;flex-wrap:wrap}
+.reg-cab b{font-size:12.5px;color:var(--tit);font-weight:600}
+.reg-cab .poi{font-family:var(--mono);font-size:9.5px;color:var(--tenue)}
+.reg.descartado{background:repeating-linear-gradient(135deg,var(--sup2) 0 6px,var(--sup) 6px 12px)}
+.reg.descartado .reg-cab b{color:var(--fraco);font-weight:500}
+.selo{font-family:var(--mono);font-size:9px;padding:1px 7px;border-radius:99px;white-space:nowrap;
+  border:1px solid var(--linha);background:var(--sup3);color:var(--fraco)}
+.selo.ok{background:#E8F6EE;border-color:#BFE3CE;color:#14603D}
+.selo.nao{background:#FDECEC;border-color:#F3C9C9;color:#A82F2F}
+.selo.alerta{background:#FEF3E5;border-color:#F7DCBB;color:#8A5410}
+.selo.cinza{background:none;border-style:dashed;color:var(--tenue)}
+.reg-por{font-size:11px;color:var(--fraco);margin-top:3px;line-height:1.45}
+.reg-por b{font-family:var(--mono);font-size:8.5px;text-transform:uppercase;letter-spacing:.07em;
+  color:var(--tenue);font-weight:500;margin-right:5px}
+.kv{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:5px 14px;margin-top:6px}
+.kv > div{display:flex;flex-direction:column;min-width:0}
+.kv i{font-style:normal;font-family:var(--mono);font-size:8.5px;color:var(--tenue);
+  text-transform:uppercase;letter-spacing:.07em}
+.kv b{font-size:12px;font-weight:500;color:var(--txt);overflow-wrap:anywhere;
+  font-variant-numeric:tabular-nums}
+.kv-caixa{padding:4px 13px 12px 26px}
+.busca-txt{white-space:pre-wrap;font-family:var(--mono);font-size:11px;line-height:1.5;
+  max-height:260px;overflow:auto;background:var(--sup2);border:1px solid var(--linha);
+  border-radius:var(--r3);padding:8px 10px;margin-top:8px;color:var(--txt)}
+.reg .bt.p{margin-top:8px}
+
+/* o parecer da IA dentro da árvore */
+.ia-txt{padding:11px 13px 10px 26px;font-size:12.5px;line-height:1.55;color:var(--tit)}
+.ia-aviso{margin:0 13px 10px 26px;font-size:11.5px;line-height:1.5;color:#8A5410;
+  background:#FEF8F0;border:1px solid #F7DCBB;border-radius:var(--r2);padding:8px 11px}
+.ia-aviso > b:first-child{display:block;font-family:var(--mono);font-size:8.5px;
+  text-transform:uppercase;letter-spacing:.08em;color:#6F420B;margin-bottom:2px}
+.ia-lista{display:flex;flex-direction:column}
+.ia-lin{display:grid;grid-template-columns:78px 1fr;gap:10px;align-items:baseline;
+  padding:6px 13px 6px 26px;border-bottom:1px solid var(--linha);font-size:11.5px}
+.ia-lin:last-child{border-bottom:0}
+.ia-lin b{font-family:var(--mono);font-size:10.5px;color:var(--navy);font-weight:600}
+.ia-lin span{color:var(--txt);line-height:1.45}
+.ia-lin em{font-style:normal;font-weight:600;color:var(--tit)}
+.mais{display:block;width:100%;text-align:left;padding:7px 13px 8px 26px;
+  font-family:var(--mono);font-size:10px;color:var(--azul)}
+
+/* a prova de Web e Imagem: só o que confirmou, resumido (13/09/2026) */
+.prova{padding:9px 13px 10px 26px;border-top:1px solid var(--linha);background:var(--sup)}
+.prova.ok{box-shadow:inset 3px 0 0 #1F9D62}
+.prova-cab{display:flex;align-items:baseline;gap:7px;flex-wrap:wrap}
+.prova-cab b{font-size:12.5px;color:var(--tit);font-weight:600}
+.prova-cab .poi{font-family:var(--mono);font-size:9.5px;color:var(--tenue)}
+.prova-tit{font-size:12px;color:var(--txt);margin-top:4px;line-height:1.45;overflow-wrap:anywhere}
+.prova-tit a{color:var(--azul);text-decoration:underline;text-underline-offset:2px}
+.prova-trecho{font-size:11px;color:var(--tenue);margin-top:2px;line-height:1.4}
+.prova-resumo{font-family:var(--mono);font-size:10px;color:var(--tenue);padding:8px 13px 6px 26px}
+.img-sel.neutro{background:rgba(255,255,255,.92);color:var(--fraco);border:1px solid var(--linha)}
+
+/* o veredito da IA cabe em duas linhas; o clique abre o motivo inteiro */
+.par-texto{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;cursor:pointer}
+.par-texto.aberto{display:block;-webkit-line-clamp:unset;max-height:30vh;overflow:auto}
+.par-texto:focus-visible{outline:2px solid var(--azul);outline-offset:2px}
+
+/* a faixa do caso: o valor inteiro no título e copiado no clique */
+#faixa .cf b[data-copia]{cursor:copy}
+#faixa .cf b[data-copia]:hover{color:var(--azul);text-decoration:underline dotted;text-underline-offset:3px}
+#faixa .cf b[data-copia]:focus-visible{outline:2px solid var(--azul);outline-offset:2px;border-radius:2px}
+
+/* ---- o visor: a imagem em tela quase cheia, com zoom (13/09/2026) ---- */
+#visor{position:fixed;inset:0;z-index:120;display:flex;flex-direction:column;gap:8px;
+  padding:1.6vh 1.6vw;background:rgba(7,18,34,.88)}
+#visor[hidden]{display:none}
+.vis-topo{display:flex;align-items:center;gap:8px;min-width:0;color:#fff}
+.vis-topo strong{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.vis-quando{font-family:var(--mono);font-size:11px;color:#B8C4D6;white-space:nowrap}
+.vis-bt{height:30px;min-width:34px;padding:0 9px;border-radius:var(--r3);border:1px solid rgba(255,255,255,.24);
+  background:rgba(255,255,255,.08);color:#fff;font-size:15px;line-height:1;flex:none}
+.vis-bt:hover{background:rgba(255,255,255,.18)}
+.vis-bt.num{font-family:var(--mono);font-size:11px;min-width:56px;font-variant-numeric:tabular-nums}
+.vis-bt:focus-visible,.vis-nav:focus-visible{outline:2px solid #8FC1FF;outline-offset:2px}
+.vis-palco{position:relative;flex:1;min-height:0;overflow:hidden;border-radius:var(--r2);
+  background:#0B1626;cursor:grab;touch-action:none}
+.vis-palco.arrasta{cursor:grabbing}
+#vis-img{position:absolute;left:0;top:0;transform-origin:0 0;max-width:none;max-height:none;
+  user-select:none;-webkit-user-drag:none}
+.vis-nav{position:absolute;top:50%;transform:translateY(-50%);width:42px;height:66px;border:0;
+  border-radius:var(--r2);background:rgba(0,0,0,.4);color:#fff;font-size:30px;line-height:1}
+.vis-nav:hover{background:rgba(0,0,0,.6)}
+.vis-nav.esq{left:10px}
+.vis-nav.dir{right:10px}
+.vis-nav:disabled{opacity:.2;cursor:default}
+.vis-legenda{color:#DDE5F0;font-size:12px;line-height:1.45;max-width:120ch}
+@media (prefers-reduced-motion: reduce){.vis-bt,.vis-nav{transition:none}}
+
+/* ---- a decisão ---- */
+.lk{font-size:11.5px;color:var(--azul);text-decoration:underline;text-underline-offset:2px}
+.acao-opcoes{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:4px 0 14px}
+.acao-op{border:1px solid var(--linha);border-radius:var(--r2);padding:9px 11px;text-align:left;
+  background:var(--sup2);display:flex;flex-direction:column;gap:2px;transition:all var(--t)}
+.acao-op:hover{border-color:var(--linha2)}
+.acao-op.on{border-color:var(--ac);box-shadow:0 0 0 1px var(--ac) inset;background:var(--sup)}
+.acao-op b{font-size:12.5px;color:var(--tit)}
+.acao-op span{font-size:11px;color:var(--fraco);line-height:1.35}
+.lote-resumo{background:var(--callout);border:1px solid #CFE0F7;border-radius:var(--r2);
+  padding:10px 12px;margin-bottom:14px;font-size:12px;color:var(--navy);line-height:1.5}
+.lote-resumo b{font-size:15px;font-variant-numeric:tabular-nums}
+.lote-resumo ul{list-style:none;margin-top:5px;display:flex;flex-wrap:wrap;gap:5px}
+.lote-resumo li{font-family:var(--mono);font-size:10px;background:var(--sup);border:1px solid #CFE0F7;
+  border-radius:99px;padding:1px 8px}
+.hist-lin{display:grid;grid-template-columns:110px 1fr;gap:10px;padding:8px 0;
+  border-bottom:1px solid var(--linha);font-size:12px}
+.hist-lin:last-child{border-bottom:0}
+.hist-lin i{font-style:normal;font-family:var(--mono);font-size:10px;color:var(--tenue)}
+.hist-lin b{color:var(--tit)}
+.hist-lin span{color:var(--fraco);display:block;font-size:11px}
+
+/* ---- tela estreita (notebook, painel lateral) ----
+ * Visto em 800 px no dia da estreia: os campos da faixa encolhiam até sumir
+ * (o número da ligação não aparecia), chips e títulos quebravam em três linhas
+ * e o texto do rodapé subia por cima do veredito. A regra: nada encolhe abaixo
+ * do próprio conteúdo — o que não cabe rola ou sai de cena. */
+.chip,.bt{white-space:nowrap;flex:none}
+.no-crit .nm,.img-cab .nm,.arv-tit strong{white-space:nowrap}
+.img-cab .res{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+#faixa{overflow-x:auto;scrollbar-width:none}
+#faixa::-webkit-scrollbar{display:none}
+#faixa .cf{flex:none}
+#faixa .cf b{max-width:34ch}
+.dec-curadoria{flex:0 1 auto;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+#decisao .acoes{min-width:0;overflow-x:auto}
+.fila-pe span{white-space:nowrap}
+.dec-estado b,.dec-estado span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.arv-topo{gap:10px}
+.arv-ferramentas{min-width:0;overflow-x:auto;scrollbar-width:none}
+.arv-ferramentas::-webkit-scrollbar{display:none}
+@media (max-width:1220px){
+  #id-sub,#chip-rotulo,#arv-sub{display:none}
+  #faixa .cf b{max-width:24ch}
+}
+@media (max-width:1000px){
+  .dec-curadoria,#topo .quem span:last-child{display:none}
+  .dec-estado{min-width:0;flex:0 1 auto}
+  .dec-estado span{display:none}
+  .arv-tit strong{display:none}
+  #decisao{gap:10px}
+}
