@@ -20,6 +20,10 @@ Pedido do dono do produto em 12/09/2026, depois da analise dos aprovados:
    base do Simples da Receita (`rf_simples.opcao_mei = 'S'`). Se outra
    empresa tambem confirma — CNPJ que nao e MEI, ficha do Maps, loja do iFood,
    base estadual, IBGE —, a ligacao segue aprovada.
+4. SIM COM ANALISE HUMANA NAO APROVA (dono do produto, 14/09/2026): a ligacao
+   cuja qualificacao no cadastro e SIM_COM_ANALISE_HUMANA e que sairia aprovada
+   vai para revisao humana — "cabendo ao usuario gerar o status atual". A
+   reprovada continua reprovada.
 
 O VEREDITO DA IA FICA GUARDADO em `percepcao.checagem.veredito_ia`, e a
 revisao recomeca sempre dele: rodar de novo nao acumula efeito.
@@ -59,7 +63,11 @@ RE_NAO_COMERCIO = re.compile(
     # Bomi) e 'COMITE POLITICO' do IBGE
     r"organiza[cç][aã]o religiosa|candombl|il[eê] ax[eé]|kardec|"
     r"sal[aã]o do reino|testemunhas de jeov|mesquita|sinagoga|ma[cç]onaria|loja ma[cç][oô]nica|"
-    r"comit[eê] pol[ií]tico|partido pol[ií]tico|diret[oó]rio (municipal|do partido)", re.I)
+    r"comit[eê] pol[ií]tico|partido pol[ií]tico|diret[oó]rio (municipal|do partido)|"
+    # 14/09/2026: o 'Clube de Maes Santa Ines' (ligacao 314534) aprovou como
+    # "servico social", com categoria 'Comunitario Servicos Non Profits'
+    r"clube (de )?m[aã]es|servi[cç]o social|centro comunit[aá]rio|servi[cç]os? comunit[aá]rio|comunit[aá]rio servi[cç]|"
+    r"beneficente|filantr[oó]pic|sem fins lucrativos|non[- ]?profit|obra social|\bong\b", re.I)
 
 
 def _numeros(txt):
@@ -109,9 +117,13 @@ class Contexto:
         cur.execute("set statement_timeout = '300s'")
         ligs = sorted({str(x) for x in ligacoes})
         ids = sorted({int(x) for x in pois if str(x).isdigit()})
-        cur.execute("""select num_ligacao::text, coalesce(end_ligacao,''), coalesce(nom_bairro,'')
+        cur.execute("""select num_ligacao::text, coalesce(end_ligacao,''), coalesce(nom_bairro,''),
+                              coalesce(qualificacao,'')
                          from resources_root.cadastro_corsan where num_ligacao::text = any(%s)""", (ligs,))
-        self.compl_inst = {l: complemento_da_instalacao(e, b) for l, e, b in cur.fetchall()}
+        self.compl_inst, self.qualificacao = {}, {}
+        for l, e, b, q in cur.fetchall():
+            self.compl_inst[l] = complemento_da_instalacao(e, b)
+            self.qualificacao[l] = q.upper()
         cur.execute("""select p.id, lower(coalesce(p.fonte,'')), coalesce(p.nome,''), coalesce(p.categoria,''),
                               rd.cnpj, coalesce(rd.complemento,'')
                          from radar_comercial.pois p
@@ -191,8 +203,8 @@ def validar(ctx, lig, base, ids):
     return validos, removidos
 
 
-def decidir(ctx, validos, perdeu_por_duvida):
-    """O veredito final de uma ligacao que a IA aprovou: regras 1 e 3."""
+def decidir(ctx, validos, perdeu_por_duvida, lig=None):
+    """O veredito final de uma ligacao que a IA aprovou: regras 1, 3 e 4."""
     if not validos:
         if perdeu_por_duvida:
             return "revisao_humana", ("o registro que aprovava também é candidato de outra(s) instalação(ões) "
@@ -200,6 +212,9 @@ def decidir(ctx, validos, perdeu_por_duvida):
         return "reprovado", "nenhum registro válido sustenta a aprovação"
     if all(ctx.e_mei(p) for p in validos):
         return "revisao_humana", "aprovada só por MEI (%s)" % ", ".join("#%s" % p for p in validos)
+    # REGRA 4: a qualificacao SIM com analise humana nao aprova sozinha.
+    if lig is not None and ctx.qualificacao.get(str(lig)) == "SIM_COM_ANALISE_HUMANA":
+        return "revisao_humana", "qualificação SIM com análise humana: a decisão é do usuário"
     return "aprovado", None
 
 
@@ -272,7 +287,7 @@ def revisar(con, aplicar=False, log=print, saida_antes=None):
         v_ia = chk.get("veredito_ia") or v_atual
         if v_ia != "aprovado":
             continue
-        v_novo, porque = decidir(ctx, validos[lig], lig in duvida and not validos[lig])
+        v_novo, porque = decidir(ctx, validos[lig], lig in duvida and not validos[lig], lig)
         placar["%s -> %s" % (v_ia, v_novo)] += 1
         novo_chk = {"regra": REGRA, "veredito_ia": v_ia, "veredito": v_novo, "porque": porque,
                     "validos": validos[lig], "removidos": removidos[lig], "em": agora}
@@ -315,7 +330,7 @@ def checar_uma(con, lig, v, resposta, ids, processo="enxuto de 12/09/2026"):
     b = base_da_aprovacao(resposta, processo)
     ctx = Contexto(con, [lig], [_pid(x) for x in b if _pid(x) is not None] + list(ids or []))
     validos, removidos = validar(ctx, lig, b, ids)
-    v_novo, porque = decidir(ctx, validos, False)
+    v_novo, porque = decidir(ctx, validos, False, lig)
     return v_novo, {"regra": REGRA, "veredito_ia": v, "veredito": v_novo, "porque": porque,
                     "validos": validos, "removidos": removidos,
                     "em": datetime.datetime.now().isoformat(timespec="seconds")}
