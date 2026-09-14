@@ -199,8 +199,11 @@ def uma(poco, ligacao, modelo, placar, trava, aplicar):
     # recusa com 400. Estimativa folgada: 2,8 caracteres por token e 1.000 por foto.
     teto = max(1500, min(teto, 32768 - int(len(PROMPT + dados) / 2.8) - 1000 * len(fotos) - 500))
     try:
+        # O TEMPO SEGUE O TAMANHO DA RESPOSTA (14/09/2026): com 120 julgamentos ao
+        # mesmo tempo a Spark gera ~3 tokens/s para cada um, e com o motivo sem
+        # limite o predio passava dos 40 s por POI e morria em "timed out".
         r = di._chat_local(modelo, PROMPT + dados, [base64.b64encode(b).decode() for b in fotos],
-                           max_tokens=teto, timeout=max(al.TIMEOUT, min(3600, 40 * len(ids))))
+                           max_tokens=teto, timeout=max(al.TIMEOUT, min(7200, max(40 * len(ids), int(teto / 2.5)))))
     except Exception as e:                                     # noqa: BLE001
         with trava:
             placar["falha"] += 1
