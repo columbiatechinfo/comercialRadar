@@ -40,9 +40,13 @@ conferir() {
   [ $ok = 1 ] && echo "  api local: ok" || { echo "  api local: NAO RESPONDEU"; return 1; }
   local pub; pub=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 $URL_PUBLICA/api/saude)
   echo "  $URL_PUBLICA/api/saude: $pub"
-  local tela=0
+  # A página vai para uma variável antes do grep: com `pipefail`, o `grep -q` fecha o
+  # cano no primeiro acerto, o curl morre de SIGPIPE e a conferência dava "SEM o
+  # prefixo" com a tela certa (14/09/2026).
+  local tela=0 pagina
   for i in 1 2 3 4 5; do
-    curl -s --max-time 15 $URL_PUBLICA/ | grep -q 'src="/seek/static/sessao.js' && tela=1 && break
+    pagina=$(curl -s --max-time 15 $URL_PUBLICA/ || true)
+    if grep -q 'src="/seek/static/sessao.js' <<< "$pagina"; then tela=1; break; fi
     sleep 3
   done
   [ $tela = 1 ] && echo "  tela publica: ok" || echo "  tela publica: SEM o prefixo /seek (conferir o túnel e o nginx)"

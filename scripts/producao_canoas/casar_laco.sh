@@ -3,7 +3,7 @@
 # produto, 11/09/2026): o descartado procura outra ligacao no mesmo endereco, e
 # a ligacao que ganhar POI volta para a IA na rodada seguinte (--vinculo-novo).
 D=$HOME/producao_canoas
-cd $HOME/Documentos/sistemas/radarComercial || exit 1
+cd $HOME/producao/radarComercial || exit 1  # copia de producao desde 14/09/2026
 while ! grep -q FIM $D/avaliacao.progresso 2>/dev/null; do
   docker run --rm --name radar-casar-orfaos --env-file .env -e A2L_DB_HOST=192.168.3.10 \
     -e RADAR_CONEXOES=1 -e PYTHONIOENCODING=utf-8 -w /app radar-comercial-minerador-worker \

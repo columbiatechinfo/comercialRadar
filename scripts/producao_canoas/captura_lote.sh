@@ -3,7 +3,7 @@
 # Uso: captura_lote.sh <k> <n> <trabalhadores>   (a fatia k de n da lista)
 K=$1; N=$2; T=${3:-8}
 D=$HOME/producao_canoas
-cd $HOME/Documentos/sistemas/radarComercial || exit 1
+cd $HOME/producao/radarComercial || exit 1  # copia de producao desde 14/09/2026
 awk -v k=$K -v n=$N 'NR % n == k' $D/recaptura_pois.txt > $D/recaptura_fatia_$K.txt
 [ -e $D/lote_${K}_0000 ] || split -l 150 -d -a 4 $D/recaptura_fatia_$K.txt $D/lote_${K}_
 echo "$(date +%T) inicio · $(wc -l < $D/recaptura_fatia_$K.txt) POIs" >> $D/captura_$K.progresso

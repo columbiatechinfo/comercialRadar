@@ -6,7 +6,7 @@
 # ligacoes sozinho quando a foto chega.
 D=$HOME/producao_canoas
 C=$D/captura_sem_imagem
-REPO=$HOME/Documentos/sistemas/radarComercial
+REPO=$HOME/producao/radarComercial  # copia de producao desde 14/09/2026 (docs/DESENVOLVIMENTO.md)
 mkdir -p $C
 cd $REPO || exit 1
 [ -e $C/lote_0000 ] || split -l 150 -d -a 4 $C/pois.txt $C/lote_

@@ -9,7 +9,7 @@
 #   C. avaliacao de Canoas do zero, com a checagem do codigo (vereditos limpos antes)
 D=$HOME/producao_canoas
 S=$D/busca_nova
-REPO=$HOME/Documentos/sistemas/radarComercial
+REPO=$HOME/producao/radarComercial  # copia de producao desde 14/09/2026 (docs/DESENVOLVIMENTO.md)
 P=$S/progresso
 mkdir -p $S
 cd $REPO || exit 1

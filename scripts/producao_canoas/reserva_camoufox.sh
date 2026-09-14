@@ -7,7 +7,9 @@
 # ritmo fixo de 40/min do `buscar_web.py`.
 D=$HOME/producao_canoas
 S=$D/busca_nova
-REPO=$HOME/Documentos/sistemas/radarComercial
+# A COPIA DE PRODUCAO (14/09/2026, docs/DESENVOLVIMENTO.md): o diretorio de
+# desenvolvimento e editado sem publicar; laco de producao nao le dele.
+REPO=$HOME/producao/radarComercial
 P=$S/progresso
 cd $REPO || exit 1
 passo() { echo "$(date +%T) $*" >> $P; }

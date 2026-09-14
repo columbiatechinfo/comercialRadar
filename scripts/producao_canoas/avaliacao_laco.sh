@@ -1,16 +1,18 @@
 #!/bin/bash
-# Avaliacao de Canoas pela IA, em rodadas de 5 min (noite de 11/09/2026).
+# Avaliacao ENXUTA de Canoas (processo de 12/09/2026), em rodadas de 3 min.
 #
-# Cada rodada julga as ligacoes com busca web feita, na ordem Maps, iFood e
-# demais, e as que ganharam POI depois do veredito. A cada 6 rodadas o
-# casamento por endereco religa os POIs que a IA descartou. Quando a busca
-# acaba nas duas maquinas, entram as ligacoes com imagem cuja busca falhou,
-# julgadas sem ela (decisao do dono do produto).
-#
-# O avaliar_ligacao DO REPOSITORIO por cima da imagem: o recorte --cidade
-# entrou depois do build da noite.
+# Cada rodada julga as ligacoes COM IMAGEM — com ou sem busca web (pedido do
+# dono do produto em 12/09/2026, com a busca bloqueada) — na ordem SIM, depois
+# SIM com analise humana, e dentro de cada uma Maps, iFood e demais. As
+# reprovadas voltam para a fila quando a busca do Google delas chega
+# (--vinculo-novo), e tambem as que ganharam POI depois do veredito. A Spark
+# fica so com a avaliacao. O casamento dos descartados roda no casar_laco.sh.
+# OS PREDIOS (mais de 20 POIs) VAO PARA O predios_laco.sh (12/09/2026, 18:10).
+# RODADAS DE 3.000 (~43 min) e 15 s entre elas: a fila e montada no inicio da rodada, e uma
+# rodada de 19 mil segurava por 4,5 h a volta das reprovadas que ganharam a
+# ficha do Google Maps (6 de 12 viraram aprovadas no teste de 12/09).
 D=$HOME/producao_canoas
-REPO=$HOME/Documentos/sistemas/radarComercial
+REPO=$HOME/producao/radarComercial  # copia de producao desde 14/09/2026 (docs/DESENVOLVIMENTO.md)
 cd $REPO || exit 1
 rodada=0; vazias=0
 busca_acabou() {
@@ -20,30 +22,21 @@ busca_acabou() {
 }
 while true; do
   rodada=$((rodada + 1))
-  if [ $((rodada % 6)) -eq 0 ]; then
-    echo "$(date +%T) casamento dos órfãos" >> $D/avaliacao.progresso
-    docker run --rm --name radar-casar-orfaos --env-file .env -e A2L_DB_HOST=192.168.3.10 \
-      -e RADAR_CONEXOES=1 -e PYTHONIOENCODING=utf-8 -w /app radar-comercial-minerador-worker \
-      timeout 1800 python3 -u casar_por_endereco.py --cidade Canoas --so-orfaos --aplicar \
-      >> $D/casar.log 2>&1
-  fi
-  BUSCA="--exigir-busca-web"
-  if busca_acabou; then BUSCA=""; fi
-  echo "$(date +%T) rodada $rodada ${BUSCA:-sem exigir busca web}" >> $D/avaliacao.progresso
+  echo "$(date +%T) rodada $rodada enxuta · todas com imagem" >> $D/avaliacao.progresso
   docker run --rm --name radar-avaliacao-canoas --env-file .env -e A2L_DB_HOST=192.168.3.10 \
-    -e RADAR_CONEXOES=3 -e PYTHONIOENCODING=utf-8 -w /app \
-    -v $REPO/avaliar_ligacao.py:/app/avaliar_ligacao.py:ro \
+    -e RADAR_CONEXOES=4 -e PYTHONIOENCODING=utf-8 -w /app \
+    -v $REPO/avaliar_enxuto.py:/app/avaliar_enxuto.py:ro -v $REPO/checagem_veredito.py:/app/checagem_veredito.py:ro \
     radar-comercial-minerador-worker \
-    python3 -u avaliar_ligacao.py --cidade Canoas $BUSCA --vinculo-novo --sem-catalogo \
-      --trabalhadores 12 --aplicar >> $D/avaliacao.log 2>&1
-  if tail -60 $D/avaliacao.log | grep -q "   0 ligação(ões) na fila"; then
+    python3 -u avaliar_enxuto.py --cidade Canoas --vinculo-novo --adiar-grandes 20 --limite 3000 --trabalhadores 80 --aplicar \
+    >> $D/avaliacao.log 2>&1
+  if tail -40 $D/avaliacao.log | grep -q "   0 ligação(ões) na fila"; then
     vazias=$((vazias + 1))
   else
     vazias=0
   fi
-  if [ -z "$BUSCA" ] && [ $vazias -ge 2 ]; then
+  if busca_acabou && [ $vazias -ge 2 ]; then
     break
   fi
-  sleep 300
+  if [ $vazias -gt 0 ]; then sleep 180; else sleep 15; fi
 done
 echo "$(date +%T) FIM" >> $D/avaliacao.progresso

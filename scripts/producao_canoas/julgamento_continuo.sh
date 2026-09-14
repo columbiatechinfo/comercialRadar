@@ -6,11 +6,15 @@
 D=$HOME/producao_canoas
 S=$D/busca_nova
 J=$D/julgamento_continuo
-REPO=$HOME/Documentos/sistemas/radarComercial
+# A COPIA DE PRODUCAO (14/09/2026, docs/DESENVOLVIMENTO.md): o diretorio de
+# desenvolvimento e editado sem publicar; laco de producao nao le dele.
+REPO=$HOME/producao/radarComercial
 mkdir -p $J
 cd $REPO || exit 1
 AVALIA="-v $REPO/avaliar_enxuto.py:/app/avaliar_enxuto.py:ro -v $REPO/avaliar_ligacao.py:/app/avaliar_ligacao.py:ro -v $REPO/checagem_veredito.py:/app/checagem_veredito.py:ro"
-n=0
+# a numeracao continua de onde parou: religar o laco nao sobrescreve lote_1.log
+n=$(ls $J/lote_*.log 2>/dev/null | sed 's/.*lote_\([0-9]*\)\.log/\1/' | sort -n | tail -1)
+n=${n:-0}
 while true; do
   # PARA SO POR PEDIDO (13/09/2026, noite): o arquivo PARAR. Antes parava ao ver
   # "FIM" no progresso da busca, e o "A. FIM" da busca derrubou o julgamento.

@@ -58,9 +58,16 @@ git tag -a producao-AAAA-MM-DD -m "o que muda" && git push origin producao-AAAA-
 bash scripts/publicar.sh producao-AAAA-MM-DD
 ```
 
-O script guarda a imagem no ar como `:anterior`, leva a cópia de produção para a tag, reconstrói
-a API e confere `/api/saude`, `https://a2lsolucoes.com/seek/api/saude` e o prefixo da tela.
-Histórico em `~/producao/PUBLICACOES.log`.
+O script guarda a imagem no ar como `:anterior`, leva a cópia de produção para a tag, sincroniza
+o que o git não leva, constrói a imagem nova e **ensaia** (`import server` nela, com o mesmo
+compose só-leitura) antes de trocar o contêiner — se o ensaio falha, a API no ar não é tocada.
+Depois confere `/api/saude`, `https://a2lsolucoes.com/seek/api/saude` e o prefixo da tela.
+Histórico em `~/producao/PUBLICACOES.log`. O build leva ~5 min (a imagem embute os 10 GB de
+`dados_externos/`); a troca, segundos.
+
+> A primeira publicação (14/09/2026, 15h40) derrubou a API por ~3 min: `server.py` cria
+> `areas/`, `mineracao/` e `malhas/` no import, pasta vazia não entra no git e a imagem é
+> só-leitura. Voltou pelo `--voltar`; o script passou a criar as pastas e a ensaiar.
 
 Voltar:
 

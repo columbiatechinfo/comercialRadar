@@ -5,7 +5,7 @@
 # dono do produto para a tela SEEK. Roda ao lado do julgamento continuo, 40 e 40.
 D=$HOME/producao_canoas
 R=$D/rejulgar_prompt_novo
-REPO=$HOME/Documentos/sistemas/radarComercial
+REPO=$HOME/producao/radarComercial  # copia de producao desde 14/09/2026 (docs/DESENVOLVIMENTO.md)
 mkdir -p $R
 cd $REPO || exit 1
 AVALIA="-v $REPO/avaliar_enxuto.py:/app/avaliar_enxuto.py:ro -v $REPO/avaliar_ligacao.py:/app/avaliar_ligacao.py:ro -v $REPO/checagem_veredito.py:/app/checagem_veredito.py:ro"
