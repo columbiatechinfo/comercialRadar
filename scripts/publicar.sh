@@ -11,8 +11,10 @@
 #   1. a tag existe e o desenvolvimento está commitado     → nada mudou ainda
 #   2. a imagem no ar ganha o apelido :anterior             → há para onde voltar
 #   3. a cópia de produção vai para a tag                    → o código novo existe
-#   4. build e recriação da API                              → segundos fora do ar
-#   5. /api/saude local, /seek/api/saude público e a tela    → avisa e diz como voltar
+#   4. build da imagem nova e `import server` nela, com a
+#      mesma configuração só-leitura                         → a API no ar nem foi tocada
+#   5. recriação da API                                      → segundos fora do ar
+#   6. /api/saude local, /seek/api/saude público e a tela    → avisa e diz como voltar
 #
 # MIGRAÇÃO NÃO RODA AQUI: o banco é o mesmo do desenvolvimento, então a migração é
 # aplicada quando a mudança é testada, antes de publicar. O script lista as que
@@ -38,8 +40,12 @@ conferir() {
   [ $ok = 1 ] && echo "  api local: ok" || { echo "  api local: NAO RESPONDEU"; return 1; }
   local pub; pub=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 $URL_PUBLICA/api/saude)
   echo "  $URL_PUBLICA/api/saude: $pub"
-  curl -s --max-time 15 $URL_PUBLICA/ | grep -q 'src="/seek/static/sessao.js' \
-    && echo "  tela publica: ok" || echo "  tela publica: SEM o prefixo /seek (conferir o túnel e o nginx)"
+  local tela=0
+  for i in 1 2 3 4 5; do
+    curl -s --max-time 15 $URL_PUBLICA/ | grep -q 'src="/seek/static/sessao.js' && tela=1 && break
+    sleep 3
+  done
+  [ $tela = 1 ] && echo "  tela publica: ok" || echo "  tela publica: SEM o prefixo /seek (conferir o túnel e o nginx)"
   [ "$pub" = 200 ]
 }
 
@@ -60,7 +66,12 @@ sincronizar_fora_do_git() {
   for d in estado cache_ibge dados_externos; do
     if [ -d $DEV/$d ]; then mkdir -p $PROD/$d && rsync -a --no-owner --no-group $DEV/$d/ $PROD/$d/; fi
   done
-  echo "  fora do git sincronizado (.env, proxies, estado, cache_ibge, dados_externos)"
+  # AS PASTAS VAZIAS, que o git não guarda. O server.py as cria no import e a API roda
+  # somente-leitura: sem elas na imagem a API não sobe. Foi a primeira publicação, em
+  # 14/09/2026 — "Read-only file system: '/app/areas'", 3 min fora, volta pelo --voltar.
+  mkdir -p $PROD/{areas,crops,capturas,malhas,mineracao,node_modules,saida_telhados,uploads} \
+           $PROD/logs/{prints,medicoes,tiles}
+  echo "  fora do git sincronizado (.env, proxies, estado, cache_ibge, dados_externos, pastas vazias)"
 }
 
 if [ "${1:-}" = "--voltar" ]; then
@@ -90,7 +101,10 @@ else
   echo "▶ publicar $TAG — cria a cópia de produção em $PROD"
 fi
 
-docker image inspect $IMG:latest >/dev/null 2>&1 && docker tag $IMG:latest $IMG:anterior && echo "  imagem no ar guardada como :anterior"
+# A imagem DO CONTÊINER NO AR, e não a :latest — depois de uma publicação que falhou
+# as duas podem ser diferentes, e aí o :anterior guardaria a imagem quebrada.
+NO_AR=$(docker inspect -f '{{.Image}}' radar-comercial-api 2>/dev/null || true)
+if [ -n "$NO_AR" ]; then docker tag $NO_AR $IMG:anterior && echo "  imagem no ar guardada como :anterior"; fi
 if [ -d $PROD ]; then
   git -C $PROD checkout -q --detach "$TAG"
 else
@@ -101,7 +115,20 @@ echo "  cópia de produção em $(git -C $PROD describe --tags --always)"
 sincronizar_fora_do_git
 
 cd $PROD/deploy
-RADAR_JOB_REPO=$PROD docker compose -f compose.radar-comercial-api.yml --env-file ../.env up -d --build radar-comercial-api
+export RADAR_JOB_REPO=$PROD
+COMPOSE="docker compose -f compose.radar-comercial-api.yml --env-file ../.env"
+$COMPOSE build radar-comercial-api
+# O ENSAIO: a imagem nova importa o server.py com o mesmo compose (só-leitura, volumes,
+# variáveis), num contêiner à parte e sem porta. Falhou, a API no ar nem foi tocada.
+if ! $COMPOSE run --rm --no-deps -T radar-comercial-api \
+     python -c "import os, server; print('import ok'); os._exit(0)" > $HOME/producao/ensaio.log 2>&1; then
+  tail -5 $HOME/producao/ensaio.log
+  [ -n "$NO_AR" ] && docker tag $NO_AR $IMG:latest
+  echo "■ ENSAIO FALHOU: a imagem nova não importa o server.py (log em ~/producao/ensaio.log). A API no ar não foi tocada."
+  exit 1
+fi
+echo "  ensaio: a imagem nova importa o server.py"
+$COMPOSE up -d --no-build radar-comercial-api
 echo "$(date '+%Y-%m-%d %H:%M:%S') $TAG (antes: $ANTES)" >> $HOME/producao/PUBLICACOES.log
 
 if conferir; then
