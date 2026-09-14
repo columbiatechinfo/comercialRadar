@@ -1,2 +1,2 @@
-Scripts da producao de Canoas (11/09/2026). Rodam de ~/producao_canoas no i9 e no notebook.
-Ver docs/RETOMAR-11-09-2026.md, secao Producao de Canoas.
+Scripts da producao de Canoas. Rodam de ~/producao_canoas no i9; esta pasta guarda a copia
+versionada. Estado de 14/09/2026 em docs/RETOMAR-14-09-2026.md (o de 11/09 em docs/RETOMAR-11-09-2026.md).
