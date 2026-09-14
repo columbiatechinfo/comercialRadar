@@ -4628,6 +4628,86 @@ class _FrontSemCache(StaticFiles):
         return r
 
 
+# ── O prefixo público: a ferramenta em https://a2lsolucoes.com/seek ─────────
+#
+# PUBLICADA SOB UM CAMINHO, e não na raiz (dono do produto, 14/09/2026), no molde
+# do Hippo (a2l_gcp, ADR 0004): o nginx da VPS recebe `/seek/...`, tira o prefixo
+# e entrega aqui pelo túnel reverso (`deploy/seek-tunel.service`), com o cabeçalho
+# `X-Forwarded-Prefix: /seek`. Procedimento em `docs/PRODUCAO-SEEK.md`.
+#
+# O FRONT FALA EM CAMINHO ABSOLUTO — ~150 `"/api/..."` e `"/static/..."` entre
+# painel.js, app.js, fila.js, seek.html e sessao.js, mais as URLs de imagem que a
+# própria API devolve em JSON (`/api/sv/...`). Sob `/seek`, todas cairiam na raiz
+# do site institucional. Em vez de mexer em cada uma — e esquecer a próxima —,
+# esta camada acrescenta o prefixo NAS RESPOSTAS DE TEXTO (html, js, css, json)
+# quando, e só quando, o pedido veio com o prefixo esperado. Pelo endereço do
+# Tailscale, sem o cabeçalho, nada muda.
+#
+# O VALOR DO CABEÇALHO NÃO É ECOADO: só vale se for IGUAL a `PREFIXO_PUBLICO`. Se
+# ecoasse, quem alcançasse a API poderia injetar texto no JavaScript servido.
+#
+# O QUE NÃO PASSA POR AQUI: resposta já comprimida (a fila do SEEK sai em gzip e
+# não tem caminho dentro), binário (foto, print) e WebSocket.
+PREFIXO_PUBLICO = (os.environ.get("PREFIXO_PUBLICO") or "/seek").rstrip("/")
+_TIPOS_TEXTO = (b"text/html", b"text/javascript", b"application/javascript",
+                b"text/css", b"application/json")
+#: Os caminhos da aplicação, e o que pode vir antes deles no código: aspas, crase,
+#: `url(` do CSS e o `}` de `${location.host}/ws`.
+_CAMINHOS = (b"/api/", b"/static/", b"/ws?", b"/bancada", b"/extrair", b"/painel", b"/antigo")
+_ANTES = (b'"', b"'", b"`", b"(", b"}")
+
+
+def _com_prefixo(corpo: bytes, prefixo: bytes) -> bytes:
+    for antes in _ANTES:
+        for caminho in _CAMINHOS:
+            corpo = corpo.replace(antes + caminho, antes + prefixo + caminho)
+    # A RAIZ DA APLICAÇÃO só aparece nestas formas; trocar todo `"/"` quebraria
+    # `split("/")` e afins.
+    corpo = corpo.replace(b'href="/"', b'href="' + prefixo + b'/"')
+    corpo = corpo.replace(b'location.href = "/";', b'location.href = "' + prefixo + b'/";')
+    return corpo
+
+
+class PrefixoPublico:
+    """ASGI puro: segura o corpo das respostas de texto e devolve com o prefixo."""
+
+    def __init__(self, app_asgi):
+        self.app = app_asgi
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or not PREFIXO_PUBLICO:
+            return await self.app(scope, receive, send)
+        pedido = dict(scope.get("headers") or [])
+        if pedido.get(b"x-forwarded-prefix", b"").decode("latin-1").rstrip("/") != PREFIXO_PUBLICO:
+            return await self.app(scope, receive, send)
+        prefixo = PREFIXO_PUBLICO.encode()
+        guardado, partes = {}, []
+
+        async def enviar(msg):
+            if msg["type"] == "http.response.start":
+                cab = dict(msg.get("headers") or [])
+                if cab.get(b"content-type", b"").startswith(_TIPOS_TEXTO) and b"content-encoding" not in cab:
+                    guardado["inicio"] = msg
+                    return None
+                return await send(msg)
+            if msg["type"] == "http.response.body" and "inicio" in guardado:
+                partes.append(msg.get("body", b""))
+                if msg.get("more_body"):
+                    return None
+                corpo = _com_prefixo(b"".join(partes), prefixo)
+                inicio = guardado.pop("inicio")
+                cab = [(k, v) for k, v in (inicio.get("headers") or []) if k.lower() != b"content-length"]
+                cab.append((b"content-length", str(len(corpo)).encode()))
+                await send({**inicio, "headers": cab})
+                return await send({"type": "http.response.body", "body": corpo, "more_body": False})
+            return await send(msg)
+
+        return await self.app(scope, receive, enviar)
+
+
+app.add_middleware(PrefixoPublico)
+
+
 # ── O portão ─────────────────────────────────────────────────────────────────
 #
 # Fecha `/api/*` por padrão. O que é público entra na lista abaixo, e o padrão é

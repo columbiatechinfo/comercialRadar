@@ -1,0 +1,64 @@
+# =============================================================================
+# Túnel reverso i9 → VPS de produção para o Comercial Radar em /seek.
+#
+# O molde é o `hippo-tunel.service` (repositório a2lGcp) — lido e seguido em
+# 14/09/2026. Túnel PRÓPRIO, e não uma porta a mais no do Hippo (dono do produto,
+# com a alternativa apresentada): chave e usuário separados, um cai sem derrubar
+# o outro, e a chave de um não abre a porta do outro.
+#
+# Instalar NO i9:
+#   sudo cp deploy/seek-tunel.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now seek-tunel
+#   systemctl status seek-tunel
+#
+#   VPS 127.0.0.1:7740  →  i9 127.0.0.1:7740   radar-comercial-api (SEEK e extração)
+#
+# `-R` porque a VPS não alcança o i9 (Tailscale offline lá) e a API escuta só em
+# loopback. Loopback na VPS também: sem `GatewayPorts`, a porta só existe para o
+# nginx, e o TLS é obrigatório por construção.
+#
+# A entrada em authorized_keys do usuário `seek-tunel` na VPS é restrita:
+#   restrict,port-forwarding,permitopen="127.0.0.1:1",permitlisten="127.0.0.1:7740" ssh-ed25519 ...
+# Se a chave vazar, o que ela permite é abrir esta porta, e nada mais.
+#
+# ARMADILHA HERDADA DO HIPPO: `ProtectHome=read-only` impede o ssh de gravar o
+# known_hosts. O host key da VPS tem de estar lá ANTES (docs/PRODUCAO-SEEK.md):
+#     SHA256:nCfcIE90huoFlvpogpp972I7zqjPx5ErxUeOq+U/Q/8
+# =============================================================================
+[Unit]
+Description=Túnel reverso do Comercial Radar (/seek) para a VPS de produção
+Documentation=file:///home/a2l/Documentos/sistemas/radarComercial/docs/PRODUCAO-SEEK.md
+After=network-online.target
+Wants=network-online.target
+# Sem teto de tentativas — e em [Unit], que é onde a chave vale (o Hippo a teve no
+# lugar errado por dias, com o limite padrão valendo calado).
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=a2l
+# -N sem comando remoto · -T sem terminal
+# ExitOnForwardFailure: se a porta não abrir, morre em vez de ficar "active" inútil
+# ServerAlive: derruba a sessão em ~90 s de silêncio e deixa o systemd reerguer
+ExecStart=/usr/bin/ssh -NT \
+  -o ExitOnForwardFailure=yes \
+  -o ServerAliveInterval=30 \
+  -o ServerAliveCountMax=3 \
+  -o StrictHostKeyChecking=yes \
+  -o IdentitiesOnly=yes \
+  -i /home/a2l/.ssh/id_ed25519_seek_tunel \
+  -R 127.0.0.1:7740:127.0.0.1:7740 \
+  seek-tunel@193.203.174.5
+
+Restart=always
+RestartSec=10
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=
+
+[Install]
+WantedBy=multi-user.target
