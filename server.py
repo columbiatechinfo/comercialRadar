@@ -106,7 +106,13 @@ from contextlib import asynccontextmanager
 @asynccontextmanager
 async def _lifespan(_app):
     manager.loop = asyncio.get_running_loop()   # captura o event loop p/ broadcast WS
+    # OS AVISOS DA SEEK (trava, liberacao, decisao) chegam as telas deste processo
+    # pelo `manager`, e aos outros processos pelo Realtime — ver `seek_eventos.py`.
+    import seek_eventos
+    seek_eventos.configurar(manager.enviar_seek)
+    seek_eventos.iniciar()
     yield
+    seek_eventos.parar()
 
 
 app = FastAPI(title="ComercialRadar", lifespan=_lifespan)
@@ -122,14 +128,85 @@ class WSManager:
     def __init__(self):
         self.conns: list[WebSocket] = []
         self.loop: asyncio.AbstractEventLoop | None = None
+        # QUEM ESTA EM CADA CONEXAO (14/09/2026). Antes o `/ws` autenticava e
+        # jogava o usuario fora: todo evento ia para todo mundo. Os avisos da SEEK
+        # sao da EMPRESA — trava e decisao de uma nao podem aparecer na tela de
+        # outra —, entao a conexao guarda o cracha e a tela assina.
+        #
+        # INDICE POR EMPRESA, e nao filtro na lista: um aviso percorre so as telas
+        # daquela empresa, e nao todas as conexoes do processo. Tudo aqui e mexido
+        # SO na thread do event loop (as outras threads agendam por
+        # `call_soon_threadsafe`), por isso dispensa trava.
+        self.quem: dict = {}                 # ws -> auth.Usuario
+        self.seek_por_empresa: dict = {}     # id_empresa -> {ws} das telas SEEK assinadas
+        self.seek_suporte: set = set()       # root: recebe de todas as empresas
+        self._seek_chave: dict = {}          # ws -> id_empresa (para sair em O(1))
 
-    async def connect(self, ws: WebSocket):
+    async def connect(self, ws: WebSocket, u=None):
         await ws.accept()
         self.conns.append(ws)
+        if u is not None:
+            self.quem[ws] = u
 
     def disconnect(self, ws: WebSocket):
         if ws in self.conns:
             self.conns.remove(ws)
+        self.quem.pop(ws, None)
+        self.seek_suporte.discard(ws)
+        emp = self._seek_chave.pop(ws, None)
+        if emp is not None:
+            alvo = self.seek_por_empresa.get(emp)
+            if alvo is not None:
+                alvo.discard(ws)
+                if not alvo:
+                    self.seek_por_empresa.pop(emp, None)
+
+    def assinar_seek(self, ws: WebSocket) -> bool:
+        """A tela SEEK passa a receber os avisos da empresa de quem conectou."""
+        u = self.quem.get(ws)
+        if u is None:
+            return False
+        if u.nivel == "root":
+            self.seek_suporte.add(ws)
+            return True
+        if not u.id_empresa:
+            return False
+        self.seek_por_empresa.setdefault(u.id_empresa, set()).add(ws)
+        self._seek_chave[ws] = u.id_empresa
+        return True
+
+    async def _send_alguns(self, alvos, texto: str):
+        async def um(ws):
+            try:
+                # CINCO SEGUNDOS POR TELA: uma conexao engasgada (rede ruim, aba
+                # congelada) nao segura a entrega das outras.
+                await asyncio.wait_for(ws.send_text(texto), 5)
+            except Exception:
+                self.disconnect(ws)
+        await asyncio.gather(*(um(w) for w in alvos))
+
+    def enviar_seek(self, evento: dict):
+        """Thread-safe: entrega um aviso da SEEK as telas da empresa do evento (e ao
+        suporte). Evento sem empresa (ressincronizar) vai para todas as telas SEEK."""
+        loop = self.loop
+        if not loop:
+            return
+        texto = json.dumps(evento, ensure_ascii=False, default=str)
+        emp = evento.get("id_empresa")
+
+        def agenda():
+            alvos = set(self.seek_suporte)
+            if emp:
+                alvos |= self.seek_por_empresa.get(str(emp), set())
+            else:
+                for conjunto in self.seek_por_empresa.values():
+                    alvos |= conjunto
+            if alvos:
+                asyncio.ensure_future(self._send_alguns(list(alvos), texto))
+        try:
+            loop.call_soon_threadsafe(agenda)
+        except RuntimeError:
+            pass          # loop encerrado (desligando)
 
     async def _send_all(self, texto: str):
         mortas = []
@@ -167,16 +244,28 @@ async def ws_endpoint(ws: WebSocket):
     handshake de WebSocket.
     """
     try:
-        _auth.usuario_atual(f"Bearer {ws.query_params.get('token', '')}")
+        # NUMA THREAD: validar o token vai ao GoTrue e ao banco, e feito aqui direto
+        # seguraria o event loop — e com ele todo WebSocket aberto — a cada conexao.
+        u = await asyncio.to_thread(_auth.usuario_atual, f"Bearer {ws.query_params.get('token', '')}")
     except HTTPException:
         await ws.close(code=1008)      # 1008 = policy violation
         return
-    await manager.connect(ws)
+    await manager.connect(ws, u)
     try:
         # manda o estado atual do job na conexão (reconexão não perde contexto)
         await ws.send_text(json.dumps({"tipo": "job", "dados": job_status()}, ensure_ascii=False))
         while True:
-            await ws.receive_text()  # mantém a conexão viva (pings do cliente)
+            texto = await ws.receive_text()  # mantém a conexão viva (pings do cliente)
+            # A SEEK ASSINA OS AVISOS DA EMPRESA mandando {"assina": "seek"}. O resto
+            # (os pings do painel) continua sendo so sinal de vida.
+            if texto[:1] == "{":
+                try:
+                    msg = json.loads(texto)
+                except ValueError:
+                    continue
+                if isinstance(msg, dict) and msg.get("assina") == "seek" and manager.assinar_seek(ws):
+                    await ws.send_text(json.dumps({"tipo": "seek", "ev": "assinado", "eu": u.id},
+                                                  ensure_ascii=False))
     except WebSocketDisconnect:
         manager.disconnect(ws)
     except Exception:
@@ -4662,7 +4751,7 @@ _TIPOS_TEXTO = (b"text/html", b"text/javascript", b"application/javascript",
                 b"text/css", b"application/json")
 #: Os caminhos da aplicação, e o que pode vir antes deles no código: aspas, crase,
 #: `url(` do CSS e o `}` de `${location.host}/ws`.
-_CAMINHOS = (b"/api/", b"/static/", b"/ws?", b"/bancada", b"/extrair", b"/painel", b"/antigo")
+_CAMINHOS = (b"/api/", b"/static/", b"/ws?", b"/bancada", b"/extrair", b"/painel", b"/antigo", b"/gestao")
 _ANTES = (b'"', b"'", b"`", b"(", b"}")
 
 
@@ -6506,6 +6595,9 @@ def bancada_pagina():
 import seek_api  # noqa: E402
 
 app.include_router(seek_api.router)
+# Abrir chamado no Hippo a partir da ficha (14/09/2026): rotas em `seek_chamado.py`.
+import seek_chamado  # noqa: E402
+app.include_router(seek_chamado.router)
 
 
 @app.get("/extrair")

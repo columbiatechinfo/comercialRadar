@@ -123,6 +123,56 @@ Na tela: login, fila, uma ficha com fotos e o visor, e `/seek/extrair` com o map
 | Chave do túnel | i9 `~/.ssh/id_ed25519_seek_tunel`, usuário `seek-tunel@VPS` |
 | Endereço interno | `https://a2l-server-main-i914hx-pc-1.tail7e301b.ts.net:8445/` continua valendo |
 
+## Chamado no Hippo
+
+> 14/09/2026. Código em `seek_chamado.py` + `migrations/0110_o_chamado_do_seek.sql` (aplicada no
+> `a2l`). No Hippo: migration 0021 (aplicada), ADR 0005 e branch `feat/integracao-seek` (não
+> publicada). **Nada disto está em produção ainda.**
+
+As rotas que a tela usa:
+
+| Rota | Entrada | Saída |
+|---|---|---|
+| `GET /api/seek/chamado/empresas` | — | `{"empresas": [{"id", "nome"}]}` |
+| `POST /api/seek/chamado` | `{"ligacao", "id_empresa_atendente", "texto"}` e, opcional, `"chave"` (um uuid gerado ao abrir o formulário) | `{"id", "numero", "url", "responsavel": {"id","nome"} \| null}` + `situacao`, `ja_existia`, `empresa_atendente`, `anexos` |
+| `GET /api/seek/chamado/{ligacao}` | `?todos=1` inclui os encerrados | `{"ligacao", "chamados": [...], "hippo_indisponivel"}` |
+
+Erro é sempre `{"erro": "<mensagem>"}`. Nível mínimo para abrir: **editor**. Clique duplo devolve o
+mesmo chamado (200, `ja_existia: true`) e não reenvia foto.
+
+### Publicar (depois do Hippo — ver `docs/PRODUCAO.md` do a2lGcp, seção 5)
+
+A API do Hippo escuta só em `127.0.0.1`; este contêiner é *bridge* e não a alcança. O desenho
+recomendado (opção A de lá) é o Hippo abrir o listener de integração em `172.17.0.1:7751`, e aqui:
+
+1. `deploy/compose.radar-comercial-api.yml`, no serviço da API:
+   ```yaml
+   environment:
+     HIPPO_API_URL: "http://hippo-integracao:7751"
+   extra_hosts:
+     - "hippo-integracao:host-gateway"
+   ```
+2. `.env`: `HIPPO_CHAVE_SERVICO` com a chave **nova** de produção (a mesma de
+   `INTEGRACAO_CHAVE_SEEK` no Hippo). A que está hoje no `.env` de desenvolvimento aponta para a
+   instância de teste — trocar nos dois lados na publicação;
+3. `bash scripts/publicar.sh <tag>` (ele leva `.env` e compose);
+4. conferir de dentro do contêiner:
+   `docker exec radar-comercial-api python -c "import urllib.request;print(urllib.request.urlopen('http://hippo-integracao:7751/saude').read())"`.
+
+As outras opções (endereço público pela VPS, socket Unix montado) e o preço de cada uma estão na
+tabela da seção 5 do `PRODUCAO.md` do Hippo.
+
+### Onde quebra sob carga
+
+- **Imagens na mesma requisição.** Até 8 (≈1-2 MB) lidas para a memória e subidas em série: segundos
+  por clique, ocupando thread do FastAPI. O passo seguinte é fila: o chamado nasce na hora, as fotos
+  chegam depois. O contrato da tela não muda.
+- **Pooler.** A conexão fecha antes de chamar o Hippo e reabre curta para gravar `seek_chamado` —
+  não segura sessão durante HTTP. Mesmo assim cada abertura usa duas transações.
+- **A lista da ficha pergunta ao Hippo** a situação a cada abertura da ficha (uma chamada, até 50
+  chamados). Com o Hippo fora, a lista vem com `situacao: null` e `hippo_indisponivel: true`.
+- **Empresas em cache de 60 s por processo**: empresa nova no Hippo aparece em até um minuto.
+
 ## Pendências conhecidas
 
 - **Content-Security-Policy**: fica de fora até inventariar os domínios externos da extração (mapa, fontes, Street View).

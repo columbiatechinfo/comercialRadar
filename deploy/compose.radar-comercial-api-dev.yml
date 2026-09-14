@@ -41,6 +41,12 @@ services:
       A2L_DB_HOST: "192.168.3.10"
       RADAR_JOB_DOCKER: ""
       RADAR_AMBIENTE: "desenvolvimento"
+      # A integracao do Hippo de TESTE (worktree a2l_gcp-integracao), que escuta no
+      # gateway do docker0 e nao na LAN. A chave vem do .env (HIPPO_CHAVE_SERVICO).
+      # Producao: ver docs/PRODUCAO-SEEK.md, secao "Chamado no Hippo".
+      HIPPO_API_URL: "http://hippo-integracao:7751"
+    extra_hosts:
+      - "hippo-integracao:host-gateway"
     ports:
       - "127.0.0.1:7741:7720"
     volumes:

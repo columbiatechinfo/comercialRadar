@@ -872,6 +872,33 @@ a.chip{text-decoration:none}
 .hist-lin b{color:var(--tit)}
 .hist-lin span{color:var(--fraco);display:block;font-size:11px}
 
+/* ---- a trava: ligação em análise por outra pessoa (14/09/2026) ----
+ * Cinza e listrada como o vínculo descartado, para ler "fora do seu alcance" sem
+ * precisar da legenda; o nome de quem está nela ocupa a linha do titular. */
+.fi.travada{cursor:not-allowed;
+  background:repeating-linear-gradient(135deg,var(--sup2) 0 6px,var(--sup3) 6px 12px)}
+.fi.travada:hover{background:repeating-linear-gradient(135deg,var(--sup2) 0 6px,var(--sup3) 6px 12px)}
+.fi.travada .l1 b,.fi.travada .l3 span,.fi.travada .l3 em{color:var(--tenue)}
+.fi.travada .l2{color:var(--fraco);font-style:italic}
+.fi.travada .pt,.fi.travada .dchip{filter:grayscale(1);opacity:.55}
+.tchip{margin-left:auto;flex:none;font-family:var(--mono);font-size:8.5px;padding:1px 7px;border-radius:99px;
+  color:var(--fraco);border:1px dashed var(--linha2);background:var(--sup);white-space:nowrap}
+.dec-estado.travado b{color:var(--critico)}
+#decisao .acoes .sep{width:1px;height:22px;background:var(--linha);margin:0 3px;flex:none}
+@media (max-width:1400px){ #decisao .bt.chamado .longo{display:none} }
+
+/* ---- o chamado ---- */
+.ch-caso{display:flex;align-items:baseline;gap:9px;background:var(--sup2);border:1px solid var(--linha);
+  border-radius:var(--r2);padding:8px 11px;margin-bottom:14px;font-size:12px;color:var(--fraco);min-width:0}
+.ch-caso b{color:var(--tit);font-size:12.5px;flex:none}
+.ch-caso span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ch-sel{display:block;width:100%;height:32px;margin-bottom:14px}
+.obs-ajuda.ch-erro{color:var(--critico)}
+.ch-ok{display:flex;flex-direction:column;gap:5px;background:#E8F6EE;border:1px solid #BFE3CE;
+  border-radius:var(--r2);padding:12px 14px;color:#14603D;font-size:12.5px}
+.ch-ok b{font-size:14px}
+.ch-ok a{color:var(--azul);text-decoration:underline;text-underline-offset:2px;width:max-content}
+
 /* ---- tela estreita (notebook, painel lateral) ----
  * Visto em 800 px no dia da estreia: os campos da faixa encolhiam até sumir
  * (o número da ligação não aparecia), chips e títulos quebravam em três linhas
@@ -892,7 +919,7 @@ a.chip{text-decoration:none}
 .arv-ferramentas{min-width:0;overflow-x:auto;scrollbar-width:none}
 .arv-ferramentas::-webkit-scrollbar{display:none}
 @media (max-width:1220px){
-  #id-sub,#chip-rotulo,#arv-sub{display:none}
+  #id-sub,#chip-rotulo,#arv-sub,#vivo-txt{display:none}
   #faixa .cf b{max-width:24ch}
 }
 @media (max-width:1000px){
@@ -944,6 +971,11 @@ a.chip{text-decoration:none}
 
   <div class="sessao">
     <a class="chip" href="/extrair" title="a tela de extração: mapa, captura e mineração">extração ↗</a>
+    <a class="chip" id="chip-gestao" href="/gestao" hidden
+       title="gestão das aprovações: quem decide o quê, em quanto tempo, e a exportação">gestão ↗</a>
+    <span class="chip" id="chip-vivo" title="avisos em tempo real das outras telas da empresa">
+      <i class="pip"></i><span id="vivo-txt">tempo real…</span>
+    </span>
     <button class="chip" id="chip-rotulo" title="alterna entre o nome interno da fonte e o rótulo que vai ao cliente">
       <i class="pip"></i><span id="rotulo-txt">rótulo do cliente</span>
     </button>
@@ -2510,8 +2542,19 @@ var SEEK = (function () {
     fichas: {}, ordemFichas: [], carregando: {},
     sel: null, abertos: {}, mudos: false, rotuloCliente: true, tira: true,
     busca: '', termo: '', fIA: 'todos', fDec: 'todos', fQual: 'todos', fFonte: {},
-    imgs: [], pendente: null
+    imgs: [], pendente: null, chamado: null,
+    /* A TRAVA (14/09/2026): quem está com cada ligação aberta, a aba desta tela e
+     * o caso aberto aqui que outra pessoa segura */
+    travas: {}, sessao: novoId(), minha: null, bloqueio: null, vivo: false
   };
+
+  function novoId() {
+    if (window.crypto && window.crypto.randomUUID) { return window.crypto.randomUUID(); }
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (ch) {
+      var r = Math.random() * 16 | 0;
+      return (ch === 'x' ? r : (r & 3 | 8)).toString(16);
+    });
+  }
 
   function $(s) { return document.querySelector(s); }
   function esc(t) {
@@ -2540,6 +2583,11 @@ var SEEK = (function () {
     return VEREDITOS[v] || {rot: v ? String(v) : 'sem julgamento', cor: '#8FA0BA', tom: 'nulo'};
   }
   function podeDecidir() { return !!(window.EU && DECIDEM.indexOf(window.EU.nivel) >= 0); }
+  /* a trava de OUTRA pessoa nesta ligação; a mesma pessoa em outra aba não bloqueia */
+  function travaDeOutro(lig) {
+    var t = S.travas[lig];
+    return t && window.EU && t.quem !== window.EU.id ? t : null;
+  }
 
   /* data do servidor → "11/09/26 21:50", no fuso de quem olha */
   function quando(iso) {
@@ -2588,7 +2636,12 @@ var SEEK = (function () {
   }
   function lerJson(r) {
     return r.json().catch(function () { return {}; }).then(function (b) {
-      if (!r.ok) { throw new Error(b.detail || ('HTTP ' + r.status)); }
+      if (!r.ok) {
+        var e = new Error(b.erro || (typeof b.detail === 'string' ? b.detail : '') || ('HTTP ' + r.status));
+        e.status = r.status;
+        e.corpo = b;
+        throw e;
+      }
       return b;
     });
   }
@@ -2733,6 +2786,22 @@ var SEEK = (function () {
     }).join('');
     var achou = FONTES_DADO.filter(function (f) { return c.f[f.id]; })
       .map(function (f) { return f.curto; }).join(', ');
+    /* EM ANÁLISE POR OUTRA PESSOA (14/09/2026): a linha fica cinza, diz com quem
+     * está e não abre para decidir */
+    var t = travaDeOutro(c.ligacao);
+    if (t) {
+      return '<button class="fi travada' + (S.sel === c.ligacao ? ' on' : '') + '" data-caso="'
+        + esc(c.ligacao) + '" aria-disabled="true" title="' + esc('em análise por ' + (t.quem_nome || 'outro usuário')
+        + ' — não abre para decidir enquanto a pessoa estiver nela') + '">'
+        + '<span class="l1"><span class="pt" style="background:' + V.cor + '"></span><b class="mono">'
+        + esc(c.ligacao) + '</b>'
+        + (A ? '<span class="dchip" style="--dc:' + A.cor + '">' + esc(A.curto) + '</span>' : '')
+        + '<span class="tchip">em análise</span></span>'
+        + '<span class="l2">por ' + esc(t.quem_nome || 'outro usuário') + '</span>'
+        + '<span class="l3"><span>' + esc(c.endereco) + (c.bairro ? ' · ' + esc(c.bairro) : '')
+        + '</span><em>' + esc(c.economias) + ' ec.</em></span>'
+        + '</button>';
+    }
     return '<button class="fi' + (S.sel === c.ligacao ? ' on' : '') + '" data-caso="'
       + esc(c.ligacao) + '">'
       + '<span class="l1"><span class="pt" style="background:' + V.cor + '" title="IA: '
@@ -2818,10 +2887,26 @@ var SEEK = (function () {
     return p;
   }
 
+  /* a próxima ligação do recorte que ninguém mais está analisando, a partir de i,
+   * andando no sentido `passo` */
+  function livreDesde(i, passo) {
+    while (i >= 0 && i < S.vistos.length) {
+      if (!travaDeOutro(S.vistos[i].ligacao)) { return i; }
+      i += passo;
+    }
+    return -1;
+  }
+
   function seleciona(lig, rolar) {
-    if (!caso(lig)) { return; }
+    if (!caso(lig)) { return false; }
+    var t = travaDeOutro(lig);
+    if (t && S.sel !== lig) {
+      torrada('Ligação ' + lig + ' em análise por ' + (t.quem_nome || 'outro usuário') + ' — não abre para decidir', true);
+      return false;
+    }
     var mudou = S.sel !== lig;
     S.sel = lig;
+    if (mudou) { S.bloqueio = null; pedeTrava(lig); }
     try { window.history.replaceState(null, '', '#' + lig); } catch (e) { /* sem histórico */ }
     if (rolar) { mostraNaFila(lig); } else { pintaLista(); }
     if (mudou) { $('#arvore').scrollTop = 0; }
@@ -2834,6 +2919,216 @@ var SEEK = (function () {
         carregaFicha(S.vistos[i + 1].ligacao, true);
       }
     });
+    return true;
+  }
+
+  /* ===================================================================
+   * 4a · A TRAVA E OS AVISOS EM TEMPO REAL (14/09/2026)
+   *
+   * Abrir a ligação pede a trava; na fila dos outros ela fica cinza, "em análise
+   * por <nome>". A trava é renovada a cada 30 s (o servidor solta com 2 min sem
+   * sinal), troca quando esta aba abre outra ligação e sai ao fechar a aba. Os
+   * avisos chegam pelo /ws, só os da própria empresa; a lista das travas é pedida
+   * de novo ao conectar, ao voltar para a aba e a cada 2 min — o aviso perdido
+   * se corrige sozinho. A autoridade é o servidor: decidir travada volta 409.
+   * =================================================================== */
+  var filaTrava = Promise.resolve();
+
+  function pedeTrava(lig) {
+    if (!podeDecidir() || !lig) { return; }
+    /* EM FILA, uma por vez: duas trocas rápidas fora de ordem deixariam a trava
+     * na ligação anterior */
+    filaTrava = filaTrava.then(function () {
+      return fetch('/api/seek/trava', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ligacao: lig, sessao: S.sessao})
+      }).then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (b) {
+          if (r.status === 409) {
+            S.travas[lig] = {quem: b.quem, quem_nome: b.quem_nome, id_empresa: b.id_empresa};
+            if (S.minha === lig) { S.minha = null; }
+            if (S.sel === lig) {
+              if (!S.bloqueio) {
+                torrada('Ligação ' + lig + ' em análise por ' + (b.quem_nome || 'outro usuário')
+                        + ': a decisão fica bloqueada até a pessoa sair dela', true);
+              }
+              S.bloqueio = {ligacao: lig, quem_nome: b.quem_nome};
+              pintaVeredito();
+            }
+            agendaLista();
+            return;
+          }
+          if (!r.ok || !b.trava) { return; }
+          S.minha = lig;
+          S.travas[lig] = {quem: window.EU.id, quem_nome: window.EU.nome || window.EU.email, sessao: S.sessao,
+                           id_empresa: b.id_empresa};
+          if (S.bloqueio && S.bloqueio.ligacao === lig) {
+            S.bloqueio = null;
+            if (S.sel === lig) { torrada('Ligação ' + lig + ' liberada: agora ela está com você'); pintaVeredito(); }
+          }
+        });
+      }).catch(function () { /* sem rede: o próximo sinal tenta de novo */ });
+    });
+  }
+
+  function liberaAba(saindo) {
+    if (!podeDecidir()) { return; }
+    try {
+      fetch('/api/seek/trava/liberar', {
+        method: 'POST', headers: {'Content-Type': 'application/json'}, keepalive: !!saindo,
+        body: JSON.stringify({sessao: S.sessao})
+      }).catch(function () { /* a trava vence sozinha em 2 min */ });
+    } catch (e) { /* idem */ }
+    S.minha = null;
+  }
+
+  function carregaTravas() {
+    return fetch('/api/seek/travas').then(lerJson).then(function (d) {
+      var novas = {};
+      (d.travas || []).forEach(function (t) { novas[t.ligacao] = t; });
+      /* a minha trava continua minha até o servidor dizer o contrário */
+      if (S.minha && !novas[S.minha] && S.sel === S.minha) {
+        novas[S.minha] = {quem: window.EU && window.EU.id, quem_nome: window.EU && window.EU.nome, sessao: S.sessao};
+      }
+      S.travas = novas;
+      var t = S.sel && travaDeOutro(S.sel);
+      if (t) { S.bloqueio = {ligacao: S.sel, quem_nome: t.quem_nome}; }
+      else if (S.bloqueio && S.sel) { pedeTrava(S.sel); }
+      agendaLista();
+      if (S.sel) { pintaVeredito(); }
+    }).catch(function () { /* a próxima rodada tenta de novo */ });
+  }
+
+  var repinta = 0;
+  function agendaFila() {
+    if (repinta) { return; }
+    repinta = window.setTimeout(function () {
+      repinta = 0;
+      pintaFila();
+      if (S.sel) { pintaVeredito(); pintaLado(); }
+    }, 250);
+  }
+
+  /* ESPALHADA NO TEMPO: depois de um lote grande todas as telas abertas da empresa
+   * buscam a fila. Todas no mesmo segundo seriam centenas de montagens da fila de
+   * uma vez no servidor (o lote acabou de limpar o cache); entre 3 e 15 s, a
+   * primeira monta e as outras pegam o cache. */
+  var recarga = 0;
+  function recarregaFilaDepois() {
+    if (recarga) { return; }
+    recarga = window.setTimeout(function () {
+      recarga = 0;
+      carregaFila().then(function () { pintaFila(); if (S.sel && caso(S.sel)) { pintaCaso(); } });
+    }, 3000 + Math.floor(Math.random() * 12000));
+  }
+
+  function aoAviso(ev) {
+    var eu = window.EU && window.EU.id;
+    if (ev.ev === 'assinado') { vivo(true); carregaTravas(); return; }
+    if (ev.ev === 'ressincronizar') { carregaTravas(); return; }
+    if (ev.ev === 'trava') {
+      S.travas[ev.ligacao] = {quem: ev.quem, quem_nome: ev.quem_nome, sessao: ev.sessao, id_empresa: ev.id_empresa};
+      if (ev.ligacao === S.sel && ev.quem !== eu) {
+        S.bloqueio = {ligacao: ev.ligacao, quem_nome: ev.quem_nome};
+        if (S.minha === ev.ligacao) { S.minha = null; }
+        torrada('Ligação ' + ev.ligacao + ' passou a estar em análise por ' + (ev.quem_nome || 'outro usuário'), true);
+        pintaVeredito();
+      }
+      agendaLista();
+      return;
+    }
+    if (ev.ev === 'liberada') {
+      (ev.ligacoes || []).forEach(function (l) {
+        var t = S.travas[l];
+        /* só solta se a trava ainda for de quem soltou: a ligação pode já ter novo dono */
+        if (t && (!ev.quem || t.quem === ev.quem) && !(t.quem === eu && t.sessao === S.sessao && S.minha === l)) {
+          delete S.travas[l];
+        }
+        if (l === S.sel && S.bloqueio && S.bloqueio.ligacao === l && !travaDeOutro(l)) {
+          /* quem decide assume a ligação que acabou de soltar; quem só consulta
+           * apenas deixa de ver o aviso */
+          if (podeDecidir()) { pedeTrava(l); } else { S.bloqueio = null; }
+          pintaVeredito();
+        }
+      });
+      agendaLista();
+      return;
+    }
+    if (ev.ev === 'decisao') {
+      (ev.ligacoes || []).forEach(function (l) {
+        var c = S.porLig[l];
+        if (c) { c.decisao = ev.acao; c.decidido_em = ev.em; c.decidido_por = ev.quem_nome; }
+        var fi = S.fichas[l];
+        if (fi && !fi.erro) {
+          var topo = (fi.decisoes || [])[0];
+          if (topo && topo.local && topo.acao === ev.acao && ev.quem === eu) {
+            topo.em = ev.em || topo.em;
+            delete topo.local;
+          } else {
+            var d = {acao: ev.acao, motivo: ev.motivo || null, quem: ev.quem_nome, em: ev.em, lote: ev.lote};
+            fi.decisoes = [d].concat(fi.decisoes || []);
+            fi.decisao = d;
+          }
+        }
+      });
+      agendaFila();
+      return;
+    }
+    if (ev.ev === 'decisao_lote') {
+      if (ev.quem !== eu) { torrada((ev.quem_nome || 'Alguém') + ' decidiu ' + num(ev.n) + ' ligações em lote: atualizando a fila'); }
+      recarregaFilaDepois();
+    }
+  }
+
+  function vivo(on) {
+    S.vivo = on;
+    var chip = $('#chip-vivo');
+    if (!chip) { return; }
+    chip.className = 'chip' + (on ? ' on' : ' ruim');
+    $('#vivo-txt').textContent = on ? 'tempo real' : 'tempo real caiu';
+    chip.title = on ? 'recebendo travas e decisões das outras telas da empresa'
+      : 'sem aviso em tempo real: a fila se corrige a cada 2 min e a decisão continua protegida pelo servidor';
+  }
+
+  var WS = {sock: null, espera: 2000, ping: 0, volta: 0};
+  function ligaTempoReal() {
+    if (WS.sock || !window.EU) { return; }
+    function abre() {
+      var tok = '';
+      try { tok = window.sessionStorage.getItem('cr_token') || ''; } catch (e) { tok = ''; }
+      if (!tok) { return; }
+      var proto = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+      var ws;
+      try { ws = new WebSocket(proto + window.location.host + '/ws?token=' + encodeURIComponent(tok)); }
+      catch (e) { agendaVolta(); return; }
+      WS.sock = ws;
+      ws.onopen = function () {
+        WS.espera = 2000;
+        ws.send(JSON.stringify({assina: 'seek'}));
+        window.clearInterval(WS.ping);
+        /* sinal de vida: proxies derrubam WebSocket calado */
+        WS.ping = window.setInterval(function () { try { ws.send('ping'); } catch (e) { /* caiu */ } }, 25000);
+      };
+      ws.onmessage = function (m) {
+        var ev;
+        try { ev = JSON.parse(m.data); } catch (e) { return; }
+        if (ev && ev.tipo === 'seek') { aoAviso(ev); }
+      };
+      ws.onclose = function () {
+        window.clearInterval(WS.ping);
+        if (WS.sock === ws) { WS.sock = null; }
+        vivo(false);
+        agendaVolta();
+      };
+    }
+    /* token vencendo: renova antes, senão o handshake sai com o token morto */
+    if (window.crVencendo && window.crVencendo() && window.crRenovar) { window.crRenovar().then(abre); }
+    else { abre(); }
+  }
+  function agendaVolta() {
+    window.clearTimeout(WS.volta);
+    WS.volta = window.setTimeout(ligaTempoReal, WS.espera);
+    WS.espera = Math.min(WS.espera * 2, 30000);
   }
 
   function pintaCaso() { pintaFaixa(); pintaArvore(); pintaVeredito(); pintaLado(); }
@@ -3652,32 +3947,46 @@ var SEEK = (function () {
 
     var sug = c.ia === 'aprovado' ? 'aprovar' : c.ia === 'reprovado' ? 'rejeitar' : null;
     var pode = podeDecidir();
+    var trava = travaDeOutro(c.ligacao);
+    var livre = pode && !trava;
+    var porque = !pode ? 'decidir exige nível editor ou acima'
+      : trava ? 'em análise por ' + (trava.quem_nome || 'outro usuário') + ' — a decisão fica bloqueada até liberar' : '';
     var botoes = Object.keys(ACOES).map(function (a) {
       return '<button class="bt ' + (a === sug ? 'pri' : 'p') + (dec && dec.acao === a ? ' escolhido' : '')
-        + '" data-decide="' + a + '"' + (pode ? '' : ' disabled')
-        + ' title="' + esc(pode ? ACOES[a].diz : 'decidir exige nível editor ou acima') + '">'
+        + '" data-decide="' + a + '"' + (livre ? '' : ' disabled')
+        + ' title="' + esc(livre ? ACOES[a].diz : porque) + '">'
         + esc(ACOES[a].rot) + (a === sug ? '<span class="sug">IA</span>' : '') + '</button>';
     }).join('');
+    /* o chamado não altera a decisão e não depende da trava (14/09/2026) */
+    var chamado = '<button class="bt p chamado" data-chamado="1" title="Abrir chamado para esta ligação">'
+      + 'abrir chamado<span class="longo"> para esta ligação</span></button><i class="sep" aria-hidden="true"></i>';
     var hist = fi && fi.decisoes ? fi.decisoes.length : 0;
-    $('#decisao').innerHTML = '<div class="dec-estado' + (dec ? ' feito' : '') + '">'
-      + (dec
-          ? '<b>' + esc(ACOES[dec.acao] ? ACOES[dec.acao].rot : dec.acao) + '</b><span>'
-            + esc(dec.quem || '') + (dec.em ? ' · ' + esc(quando(dec.em)) : '')
-            + (dec.motivo ? ' · ' + esc(dec.motivo) : '') + '</span>'
-          : '<b>sem decisão oficial</b><span>a IA diz <b>' + esc(V.rot) + '</b></span>')
-      + '</div>'
+    $('#decisao').innerHTML = (trava
+        ? '<div class="dec-estado travado"><b>em análise por ' + esc(trava.quem_nome || 'outro usuário') + '</b>'
+          + '<span>a decisão fica bloqueada até a pessoa sair desta ligação</span></div>'
+        : '<div class="dec-estado' + (dec ? ' feito' : '') + '">'
+          + (dec
+              ? '<b>' + esc(ACOES[dec.acao] ? ACOES[dec.acao].rot : dec.acao) + '</b><span>'
+                + esc(dec.quem || '') + (dec.em ? ' · ' + esc(quando(dec.em)) : '')
+                + (dec.motivo ? ' · ' + esc(dec.motivo) : '') + '</span>'
+              : '<b>sem decisão oficial</b><span>a IA diz <b>' + esc(V.rot) + '</b></span>')
+          + '</div>')
       + '<div class="dec-curadoria">'
-      + (hist > 1 ? '<button class="lk" data-historico="1">' + hist + ' decisões registradas</button> · ' : '')
+      + (hist > 1 ? '<button class="lk" data-historico="1">' + hist + ' decisões registradas</button> · '
+         : hist === 1 && dec && dec.motivo ? '<button class="lk" data-historico="1">ver o comentário</button> · ' : '')
       + 'a decisão oficial não altera o veredito da IA nem o das fontes</div>'
-      + '<div class="cresce"></div><div class="acoes">' + botoes + '</div>';
+      + '<div class="cresce"></div><div class="acoes">' + chamado + botoes + '</div>';
   }
 
+  /* TODA DECISÃO ABRE O DIÁLOGO (14/09/2026): o comentário é opcional em aprovar,
+   * campo e revisar, e continua obrigatório para rejeitar */
   function decide(acao) {
     var c = caso(S.sel);
     if (!c) { return; }
     if (!podeDecidir()) { torrada('decidir exige nível editor ou acima', true); return; }
-    if (acao === 'rejeitar') { abreDecisao([c.ligacao], acao); return; }
-    grava([c.ligacao], acao, '');
+    var t = travaDeOutro(c.ligacao);
+    if (t) { torrada('em análise por ' + (t.quem_nome || 'outro usuário') + ': a decisão fica bloqueada', true); return; }
+    abreDecisao([c.ligacao], acao);
   }
 
   function descreveFiltros() {
@@ -3710,11 +4019,12 @@ var SEEK = (function () {
             + '" style="--ac:' + ACOES[a].cor + '"><b>' + esc(ACOES[a].rot) + '</b><span>'
             + esc(ACOES[a].diz) + '</span></button>';
         }).join('') + '</div>'
-      + '<label class="obs-rot" for="dec-motivo" id="dec-motivo-rot">motivo</label>'
-      + '<textarea id="dec-motivo" rows="3" placeholder="por que esta decisão — obrigatório para rejeitar"></textarea>'
+      + '<label class="obs-rot" for="dec-motivo" id="dec-motivo-rot">comentário</label>'
+      + '<textarea id="dec-motivo" rows="3" placeholder="comentário sobre a decisão — obrigatório para rejeitar"></textarea>'
       + '<p class="obs-ajuda">A decisão oficial é gravada à parte: o veredito da IA e o das fontes '
-      + 'continuam como estão. Fica registrado quem decidiu, quando e por quê'
-      + (lote ? ', e as ' + num(ligs.length) + ' linhas ficam marcadas como um mesmo lote.' : '.') + '</p>';
+      + 'continuam como estão. Fica registrado quem decidiu, quando e o comentário'
+      + (lote ? ', e as ' + num(ligs.length) + ' linhas ficam marcadas como um mesmo lote.' : '.')
+      + ' <b>Ctrl+Enter</b> grava.</p>';
     pintaPeDecisao();
     $('#modal').hidden = false;
     window.setTimeout(function () { $('#dec-motivo').focus(); }, 40);
@@ -3724,7 +4034,7 @@ var SEEK = (function () {
     var p = S.pendente;
     if (!p) { return; }
     var rot = $('#dec-motivo-rot');
-    if (rot) { rot.textContent = p.acao === 'rejeitar' ? 'motivo · obrigatório' : 'motivo · opcional'; }
+    if (rot) { rot.textContent = p.acao === 'rejeitar' ? 'motivo · obrigatório' : 'comentário · opcional'; }
     $('#modal-pe').innerHTML = '<button class="bt p" data-fecha="1">cancelar</button>'
       + '<span class="cresce"></span>'
       + '<button class="bt pri' + (p.acao === 'rejeitar' ? ' ruim' : '') + '" data-grava="1"'
@@ -3753,35 +4063,155 @@ var SEEK = (function () {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ligacoes: ligs, acao: acao, motivo: motivo || null})
     }).then(lerJson).then(function (b) {
-      var agora = agoraIso();
+      var agora = b.em || agoraIso();
       var quem = (window.EU && (window.EU.nome || window.EU.email)) || '';
-      var sem = {};
-      (b.sem_veredito || []).forEach(function (l) { sem[l] = 1; });
+      var fora = {};
+      (b.sem_veredito || []).forEach(function (l) { fora[l] = 1; });
+      (b.travadas || []).forEach(function (t) { fora[t.ligacao] = 1; });
+      /* no lote, as travadas que não couberam na lista da resposta: nenhuma é marcada
+       * localmente — a fila é buscada de novo */
+      var incerto = (b.n_travadas || 0) > (b.travadas || []).length;
       ligs.forEach(function (l) {
-        if (sem[l]) { return; }
+        if (fora[l] || incerto) { return; }
         var c = S.porLig[l];
         if (c) { c.decisao = acao; c.decidido_em = agora; c.decidido_por = quem; }
         var fi = S.fichas[l];
         if (fi && !fi.erro) {
-          var d = {acao: acao, motivo: motivo || null, quem: quem, em: agora, lote: b.lote};
+          /* `local`: o aviso da mesma decisão, quando chegar pelo /ws, só confirma */
+          var d = {acao: acao, motivo: motivo || null, quem: quem, em: agora, lote: b.lote, local: true};
           fi.decisoes = [d].concat(fi.decisoes || []);
           fi.decisao = d;
         }
       });
+      if (incerto) { recarregaFilaDepois(); }
       var tudo = b.gravadas >= b.pedidas;
-      torrada(ligs.length === 1 ? (tudo ? 'decisão gravada: ' + ACOES[acao].rot : 'o servidor não gravou a decisão')
-              : num(b.gravadas) + ' de ' + num(b.pedidas) + ' decisões gravadas', !tudo);
+      var txt = ligs.length === 1 ? (tudo ? 'decisão gravada: ' + ACOES[acao].rot : 'o servidor não gravou a decisão')
+        : num(b.gravadas) + ' de ' + num(b.pedidas) + ' decisões gravadas';
+      if (b.n_travadas) {
+        txt += ' · ' + num(b.n_travadas) + ' ficaram de fora: em análise por outras pessoas';
+      }
+      torrada(txt, !tudo);
       pintaFila();
-      /* a ligação saiu do recorte (ex.: "sem decisão oficial"): a próxima assume */
+      /* a ligação saiu do recorte (ex.: "sem decisão oficial"): a próxima livre assume */
       if (S.sel && indiceNaFila(S.sel) < 0 && S.vistos.length) {
-        seleciona(S.vistos[Math.min(Math.max(antes, 0), S.vistos.length - 1)].ligacao, true);
+        var i = Math.min(Math.max(antes, 0), S.vistos.length - 1);
+        var j = livreDesde(i, 1);
+        if (j < 0) { j = livreDesde(i, -1); }
+        if (j >= 0) { seleciona(S.vistos[j].ligacao, true); } else { pintaVeredito(); pintaLado(); }
       } else {
         pintaVeredito(); pintaLado();
       }
       return true;
     }).catch(function (e) {
       torrada('não gravou: ' + e.message, true);
+      if (e.status === 409) { carregaTravas(); }
       return false;
+    });
+  }
+
+  /* ===================================================================
+   * 7a · CHAMADO PARA A LIGAÇÃO (14/09/2026)
+   *
+   * A tela só conversa com o contrato: GET /api/seek/chamado/empresas e
+   * POST /api/seek/chamado. A integração com o sistema de chamados é do
+   * servidor; se as rotas ainda não existem (404), o diálogo diz e a tela segue.
+   * =================================================================== */
+  function erroChamado(e) {
+    if (e && e.status === 404) {
+      return 'o serviço de chamados ainda não está disponível neste ambiente (HTTP 404)';
+    }
+    return (e && e.message) || 'falha de rede';
+  }
+
+  function abreChamado() {
+    var c = caso(S.sel);
+    if (!c) { return; }
+    S.pendente = null;
+    S.chamado = {ligacao: c.ligacao, empresas: null, enviando: false, feito: null};
+    $('#modal-tit').textContent = 'Abrir chamado · ligação ' + c.ligacao;
+    $('#modal-corpo').innerHTML = '<div class="ch-caso"><b class="mono">' + esc(c.ligacao) + '</b><span>'
+      + esc(c.endereco + (c.bairro ? ' · ' + c.bairro : '') + (c.cidade ? ' · ' + c.cidade : '')) + '</span></div>'
+      + '<label class="obs-rot" for="ch-empresa">empresa que vai atender · obrigatório</label>'
+      + '<select id="ch-empresa" class="fl-sel ch-sel" disabled><option value="">carregando as empresas…</option></select>'
+      + '<label class="obs-rot" for="ch-texto">o problema · obrigatório</label>'
+      + '<textarea id="ch-texto" rows="5" maxlength="4000" '
+      + 'placeholder="o que precisa ser verificado ou corrigido nesta ligação"></textarea>'
+      + '<p class="obs-ajuda" id="ch-msg">O chamado vai com o número da ligação. A decisão oficial não muda.</p>';
+    pintaPeChamado();
+    $('#modal').hidden = false;
+    fetch('/api/seek/chamado/empresas').then(lerJson).then(function (d) {
+      if (!S.chamado || S.chamado.ligacao !== c.ligacao) { return; }
+      var lista = (d && d.empresas) || [];
+      S.chamado.empresas = lista;
+      var sel = $('#ch-empresa');
+      if (!sel) { return; }
+      sel.innerHTML = '<option value="">' + (lista.length ? 'escolha a empresa' : 'nenhuma empresa atende chamados')
+        + '</option>' + lista.map(function (x) {
+          return '<option value="' + esc(x.id) + '">' + esc(x.nome) + '</option>';
+        }).join('');
+      sel.disabled = !lista.length;
+      if (lista.length === 1) { sel.value = lista[0].id; }
+      pintaPeChamado();
+      window.setTimeout(function () { var t = $('#ch-texto'); if (t) { t.focus(); } }, 30);
+    }).catch(function (e) {
+      if (!S.chamado || S.chamado.ligacao !== c.ligacao) { return; }
+      var sel = $('#ch-empresa');
+      if (sel) { sel.innerHTML = '<option value="">empresas indisponíveis</option>'; }
+      avisoChamado('Não deu para listar as empresas: ' + erroChamado(e), true);
+      pintaPeChamado();
+    });
+  }
+
+  function avisoChamado(txt, ruim) {
+    var m = $('#ch-msg');
+    if (!m) { return; }
+    m.textContent = txt;
+    m.className = 'obs-ajuda' + (ruim ? ' ch-erro' : '');
+  }
+
+  function pintaPeChamado() {
+    var ch = S.chamado;
+    if (!ch) { return; }
+    if (ch.feito) {
+      $('#modal-pe').innerHTML = '<span class="cresce"></span><button class="bt pri" data-fecha="1">fechar</button>';
+      return;
+    }
+    var emp = $('#ch-empresa'), txt = $('#ch-texto');
+    var pronto = !!(emp && emp.value && txt && txt.value.trim()) && !ch.enviando;
+    $('#modal-pe').innerHTML = '<button class="bt p" data-fecha="1">cancelar</button><span class="cresce"></span>'
+      + '<button class="bt pri" data-chamado-envia="1"' + (pronto ? '' : ' disabled') + '>'
+      + (ch.enviando ? 'enviando…' : 'enviar chamado') + '</button>';
+  }
+
+  function enviaChamado() {
+    var ch = S.chamado;
+    if (!ch || ch.enviando || ch.feito) { return; }
+    var emp = ($('#ch-empresa') || {}).value, texto = (($('#ch-texto') || {}).value || '').trim();
+    if (!emp) { avisoChamado('Escolha a empresa que vai atender.', true); return; }
+    if (!texto) { avisoChamado('Descreva o problema.', true); return; }
+    ch.enviando = true;
+    pintaPeChamado();
+    avisoChamado('Enviando…');
+    fetch('/api/seek/chamado', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ligacao: ch.ligacao, id_empresa_atendente: emp, texto: texto})
+    }).then(lerJson).then(function (b) {
+      if (S.chamado !== ch) { return; }
+      ch.enviando = false;
+      ch.feito = b;
+      var link = linkSeguro(b.url);
+      var resp = b.responsavel && b.responsavel.nome;
+      $('#modal-corpo').innerHTML = '<div class="ch-ok"><b>Chamado #' + esc(b.numero) + ' aberto</b>'
+        + '<span>' + (resp ? 'encaminhado a ' + esc(resp) : 'ainda sem responsável definido') + '</span>'
+        + (link ? '<a href="' + esc(link) + '" target="_blank" rel="noopener noreferrer">abrir o chamado ↗</a>' : '')
+        + '</div>';
+      pintaPeChamado();
+      torrada('Chamado #' + b.numero + ' aberto' + (resp ? ', encaminhado a ' + resp : ''));
+    }).catch(function (e) {
+      if (S.chamado !== ch) { return; }
+      ch.enviando = false;
+      avisoChamado('O chamado não foi aberto: ' + erroChamado(e), true);
+      pintaPeChamado();
     });
   }
 
@@ -3962,6 +4392,7 @@ var SEEK = (function () {
 
   function liga() {
     $('#chip-sair').addEventListener('click', function () {
+      liberaAba(true);
       ['cr_token', 'cr_refresh', 'cr_expira'].forEach(function (k) {
         try { window.sessionStorage.removeItem(k); } catch (e) { /* aba sem armazenamento */ }
       });
@@ -3998,7 +4429,24 @@ var SEEK = (function () {
       if (id === 'f-sel-ia') { S.fIA = ev.target.value; refiltra(); }
       if (id === 'f-sel-qual') { S.fQual = ev.target.value; refiltra(); }
       if (id === 'f-sel-dec') { S.fDec = ev.target.value; refiltra(); }
+      if (id === 'ch-empresa') { pintaPeChamado(); }
     });
+    document.addEventListener('input', function (ev) {
+      if (ev.target.id === 'ch-texto') { pintaPeChamado(); }
+    });
+
+    /* A TRAVA: sinal a cada 30 s, lista de novo a cada 2 min e ao voltar para a
+     * aba, e soltar ao sair */
+    window.setInterval(function () { if (S.sel) { pedeTrava(S.sel); } }, 30000);
+    window.setInterval(function () { if (window.EU) { carregaTravas(); } }, 120000);
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'visible' && window.EU) {
+        carregaTravas();
+        if (S.sel) { pedeTrava(S.sel); }
+        if (!WS.sock) { ligaTempoReal(); }
+      }
+    });
+    window.addEventListener('pagehide', function () { liberaAba(true); });
 
     $('#arv-tudo').addEventListener('click', function () { abreTudo(true); });
     $('#arv-nada').addEventListener('click', function () { abreTudo(false); });
@@ -4013,7 +4461,13 @@ var SEEK = (function () {
         if (ac) { ev.preventDefault(); acaoVisor(ac); }
         return;
       }
-      if (ev.key === 'Escape' && !$('#modal').hidden) { $('#modal').hidden = true; S.pendente = null; return; }
+      if (ev.key === 'Escape' && !$('#modal').hidden) {
+        $('#modal').hidden = true; S.pendente = null; S.chamado = null; return;
+      }
+      if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey) && !$('#modal').hidden) {
+        if (ev.target.id === 'dec-motivo') { ev.preventDefault(); confirmaDecisao(); return; }
+        if (ev.target.id === 'ch-texto') { ev.preventDefault(); enviaChamado(); return; }
+      }
       if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.closest && ev.target.closest('[data-copia]')
           && !digitando(ev)) {
         ev.preventDefault();
@@ -4023,8 +4477,10 @@ var SEEK = (function () {
       }
       if (!$('#modal').hidden || digitando(ev)) { return; }
       if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
-        var i = indiceNaFila(S.sel) + (ev.key === 'ArrowDown' ? 1 : -1);
-        if (i >= 0 && i < S.vistos.length) { ev.preventDefault(); seleciona(S.vistos[i].ligacao, true); }
+        /* pula as que estão em análise por outra pessoa */
+        var passo = ev.key === 'ArrowDown' ? 1 : -1;
+        var i = livreDesde(indiceNaFila(S.sel) + passo, passo);
+        if (i >= 0) { ev.preventDefault(); seleciona(S.vistos[i].ligacao, true); }
         return;
       }
       if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.closest && ev.target.closest('[data-img]')) {
@@ -4090,10 +4546,13 @@ var SEEK = (function () {
       }
       if (t.closest('[data-grava]')) { confirmaDecisao(); return; }
       if (t.closest('[data-historico]')) { abreHistorico(); return; }
+      if (t.closest('[data-chamado-envia]')) { enviaChamado(); return; }
+      if (t.closest('[data-chamado]')) { abreChamado(); return; }
 
       if (t.closest('[data-fecha]') || t.closest('#modal-x') || t.closest('.modal-fundo')) {
         $('#modal').hidden = true;
         S.pendente = null;
+        S.chamado = null;
         return;
       }
 
@@ -4126,12 +4585,21 @@ var SEEK = (function () {
   function mostraTela(eu) {
     $('#quem-nome').textContent = eu.nome || eu.email || '—';
     $('#quem-sub').textContent = (eu.nivel || '—') + (eu.empresa ? ' · ' + eu.empresa : '');
+    /* a gestão das aprovações é de administrador para cima; o servidor confere de novo */
+    $('#chip-gestao').hidden = ['admin', 'root'].indexOf(eu.nivel) < 0;
     pintaFila(); pintaArvore();
     ligaCerebro();
-    carregaFila().then(function () {
+    ligaTempoReal();
+    Promise.all([carregaFila(), carregaTravas()]).then(function () {
       pintaFila();
       var pedida = (window.location.hash || '').replace('#', '');
       var alvo = caso(pedida) ? pedida : (S.vistos[0] && S.vistos[0].ligacao);
+      /* a pedida (ou a primeira) em análise por outra pessoa: abre a próxima livre */
+      if (alvo && travaDeOutro(alvo)) {
+        if (pedida === alvo) { seleciona(alvo, true); }
+        var i = livreDesde(Math.max(indiceNaFila(alvo), 0), 1);
+        alvo = i >= 0 ? S.vistos[i].ligacao : null;
+      }
       if (alvo) { seleciona(alvo, true); } else { pintaCaso(); }
     });
   }

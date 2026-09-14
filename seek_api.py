@@ -12,6 +12,10 @@ veredito da IA nem no das fontes.
     GET  /api/seek/foto/{id}       a foto publicada do Maps (<img>, token na query)
     GET  /api/seek/busca/{id}      o print da busca web (<img>, token na query)
 
+    /api/seek/trava*               a ligacao em analise fica com quem abriu (`seek_trava.py`)
+    /api/seek/gestao/*  e /gestao  a gestao das aprovacoes, admin para cima (`seek_gestao.py`)
+    avisos em tempo real           pelo `/ws`, entre processos pelo Realtime (`seek_eventos.py`)
+
 A FILA E LEVE DE PROPOSITO. Sao 22 mil ligacoes: com a arvore inteira de cada
 uma seriam dezenas de megabytes. Ela traz o que filtra (as fontes, a IA, a
 decisao); a ficha vem quando alguem abre o caso.
@@ -34,8 +38,15 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 import auth as _auth
+import seek_eventos
+import seek_gestao
+import seek_trava
 
 router = APIRouter()
+# A TRAVA E A GESTAO (14/09/2026) moram em modulos proprios e entram por aqui, e
+# nao por mais um `include_router` no server.py.
+router.include_router(seek_trava.router)
+router.include_router(seek_gestao.router)
 
 #: As fontes, na ordem em que a tela as mostra. `ia` e a do julgamento; `busca`
 #: e a busca web pelo endereco; `foto` sao as fotos de rua e as publicadas.
@@ -55,6 +66,18 @@ MOTORES_DA_BUSCA = ("duckduckgo", "yahoo", "google")
 _CACHE_S = 60
 _cache = {}
 _trava = threading.Lock()
+
+
+def _decisao_de_fora(evento):
+    """DECISAO GRAVADA POR OUTRO PROCESSO (a producao, ou outra replica) tambem
+    invalida a fila guardada aqui — senao quem abrisse a tela nos 60 s seguintes
+    receberia o status velho."""
+    if evento.get("ev") in ("decisao", "decisao_lote"):
+        with _trava:
+            _cache.clear()
+
+
+seek_eventos.ouvir(_decisao_de_fora)
 
 
 def _quem() -> _auth.Usuario:
@@ -378,9 +401,23 @@ class DecisaoEntrada(BaseModel):
     observacoes: dict | None = None
 
 
+#: Ate quantas ligacoes a decisao vai nominal no aviso as outras telas. Acima disso
+#: o aviso diz so "houve um lote" e as telas buscam a fila de novo.
+AVISO_NOMINAL = 2000
+
+
 @router.post("/api/seek/decidir")
 def seek_decidir(e: DecisaoEntrada, u: _auth.Usuario = Depends(_quem)):
-    """Grava a decisao oficial de uma ligacao ou de varias (as filtradas, de uma vez)."""
+    """Grava a decisao oficial de uma ligacao ou de varias (as filtradas, de uma vez).
+
+    O COMENTARIO (`motivo`) E ACEITO EM TODA ACAO desde 14/09/2026 e continua
+    obrigatorio so para rejeitar.
+
+    LIGACAO EM ANALISE POR OUTRA PESSOA (`seek_trava`) NAO RECEBE A DECISAO: uma
+    ligacao so volta 409 com o nome de quem esta nela. No LOTE, as travadas ficam
+    de fora e voltam em `travadas` — recusar o lote inteiro porque uma de cinco mil
+    esta aberta na tela de alguem tornaria o lote inutil numa equipe grande; so
+    quando todas estao travadas o lote volta 409."""
     if not u.pode("editor"):
         raise HTTPException(403, "decidir exige nível editor ou acima")
     acao = (e.acao or "").strip().lower()
@@ -403,21 +440,47 @@ def seek_decidir(e: DecisaoEntrada, u: _auth.Usuario = Depends(_quem)):
         # decide por qualquer empresa, e a linha precisa cair na certa.
         cur.execute("""select ligacao, id_empresa from radar_comercial.ligacao_veredito
                         where ligacao = any(%s)""", (ligs,))
-        emp = {str(l): i for l, i in cur.fetchall()}
+        emp = {str(l): str(i) for l, i in cur.fetchall()}
         faltam = [l for l in ligs if l not in emp]
+        travadas = seek_trava.travadas_por_outro(cur, u, [(emp[l], l) for l in ligs if l in emp])
+        if travadas and len(travadas) >= len([l for l in ligs if l in emp]):
+            con.rollback()
+            nome = next(iter(travadas.values()))
+            raise HTTPException(409, ("em análise por %s" % nome) if len(ligs) == 1
+                                else "todas as %d ligações estão em análise por outras pessoas" % len(travadas))
+        # O TEMPO DE AVALIACAO: a ultima abertura desta pessoa nesta ligacao. No lote
+        # ninguem avaliou caso a caso, e fica nulo.
+        aberta = seek_trava.abertura_de(cur, u, emp[ligs[0]], ligs[0]) if len(ligs) == 1 and ligs[0] in emp else None
         linhas = [(emp[l], l, acao, motivo, json.dumps(e.observacoes, ensure_ascii=False) if e.observacoes else None,
-                   lote, u.id, u.nome or u.email) for l in ligs if l in emp]
-        execute_values(cur, """insert into radar_comercial.seek_decisao
-                                   (id_empresa, ligacao, acao, motivo, observacoes, lote, quem, quem_nome)
-                               values %s""", linhas, page_size=1000)
-        gravadas = cur.rowcount if len(linhas) <= 1000 else len(linhas)
+                   lote, u.id, u.nome or u.email, aberta) for l in ligs if l in emp and l not in travadas]
+        # RETURNING, e nao `rowcount`: com mais de uma pagina o `rowcount` e so o da
+        # ultima, e sob RLS o que conta e o que o banco de fato gravou.
+        gravadas = execute_values(cur, """insert into radar_comercial.seek_decisao
+                                              (id_empresa, ligacao, acao, motivo, observacoes, lote, quem,
+                                               quem_nome, aberta_em)
+                                          values %s
+                                          returning id_empresa::text, ligacao, em""",
+                                  linhas, page_size=1000, fetch=True) if linhas else []
         con.commit()
     finally:
         con.close()
     with _trava:
         _cache.clear()
-    return {"gravadas": gravadas, "pedidas": len(ligs), "sem_veredito": faltam[:20],
-            "lote": lote, "acao": acao}
+    # O AVISO AS OUTRAS TELAS, por empresa: cada uma so recebe o que e dela.
+    por_emp = {}
+    for em_id, l, t in gravadas:
+        por_emp.setdefault(em_id, []).append(l)
+    quando = gravadas[0][2].isoformat(timespec="minutes") if gravadas else None
+    for em_id, ls in por_emp.items():
+        base = {"id_empresa": em_id, "acao": acao, "quem": u.id, "quem_nome": u.nome or u.email,
+                "em": quando, "lote": lote}
+        if len(ls) <= AVISO_NOMINAL:
+            seek_eventos.publicar(dict(base, ev="decisao", ligacoes=ls, motivo=motivo))
+        else:
+            seek_eventos.publicar(dict(base, ev="decisao_lote", n=len(ls)))
+    return {"gravadas": len(gravadas), "pedidas": len(ligs), "sem_veredito": faltam[:20],
+            "travadas": [{"ligacao": l, "quem_nome": n} for l, n in list(travadas.items())[:50]],
+            "n_travadas": len(travadas), "lote": lote, "acao": acao, "em": quando}
 
 
 def _bytes(u, tabela, ident):

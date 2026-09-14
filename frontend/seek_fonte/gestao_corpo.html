@@ -1,0 +1,135 @@
+
+<!-- GESTÃO DAS APROVAÇÕES (14/09/2026) — mesma marca e mesmos tokens da SEEK -->
+<div id="filete"><i></i><b></b></div>
+
+<header id="topo">
+  <div class="marca">@@LOGO@@</div>
+  <div class="ident">
+    <strong>GESTÃO</strong>
+    <span id="id-sub">aprovações da SEEK · Comercial Radar</span>
+  </div>
+  <div class="sessao">
+    <a class="chip" href="/" title="voltar para a fila de ligações">SEEK ↗</a>
+    <div class="quem">
+      <span id="quem-nome">—</span>
+      <span id="quem-sub">—</span>
+    </div>
+    <button class="chip" id="chip-sair" title="encerrar a sessão neste navegador">sair</button>
+  </div>
+</header>
+
+<main id="gestao">
+
+  <!-- o recorte que vale para a página inteira -->
+  <div class="g-barra" id="g-barra">
+    <div class="g-campo" id="g-campo-empresa" hidden>
+      <label class="fl-rot" for="g-empresa">empresa</label>
+      <select id="g-empresa" class="fl-sel g-sel"></select>
+    </div>
+    <div class="g-campo">
+      <label class="fl-rot" for="g-de">de</label>
+      <input id="g-de" type="date" class="g-in">
+    </div>
+    <div class="g-campo">
+      <label class="fl-rot" for="g-ate">até</label>
+      <input id="g-ate" type="date" class="g-in">
+    </div>
+    <div class="g-atalhos" role="group" aria-label="períodos prontos">
+      <button class="bt p" data-dias="1">hoje</button>
+      <button class="bt p" data-dias="7">7 dias</button>
+      <button class="bt p" data-dias="30">30 dias</button>
+      <button class="bt p" data-dias="90">90 dias</button>
+    </div>
+    <div class="g-campo">
+      <label class="fl-rot" for="g-cidade">cidade</label>
+      <select id="g-cidade" class="fl-sel g-sel"><option value="">todas</option></select>
+    </div>
+    <button class="bt pri" id="g-aplica">atualizar</button>
+    <nav class="g-ancoras">
+      <a href="#sec-pessoas">pessoas</a>
+      <a href="#sec-exportar">exportação</a>
+    </nav>
+  </div>
+
+  <div class="g-aviso" id="g-aviso" hidden></div>
+
+  <!-- 1 · quem decide o quê -->
+  <section class="g-cartao" id="sec-pessoas">
+    <div class="g-cab">
+      <div><h2>Pessoas que decidem</h2>
+        <p id="g-resumo-sub">decisão vigente é a mais recente de cada ligação · tempo de avaliação vai da abertura do caso à decisão</p></div>
+      <span class="cresce"></span>
+      <button class="bt p" id="g-todas" title="as decisões de todas as pessoas no período">todas as decisões</button>
+    </div>
+    <div class="g-kpis" id="g-kpis"></div>
+    <div class="g-tabela-caixa"><table class="g-tab" id="g-pessoas"></table></div>
+    <div class="vazio" id="g-pessoas-vazio" hidden></div>
+  </section>
+
+  <!-- 2 · as ligações de uma pessoa -->
+  <section class="g-cartao" id="sec-ligacoes" hidden>
+    <div class="g-cab">
+      <div><h2 id="g-lig-tit">Ligações</h2><p id="g-lig-sub">—</p></div>
+      <span class="cresce"></span>
+      <div class="g-status" id="g-lig-status" role="group" aria-label="filtrar por status"></div>
+      <label class="g-check"><input type="checkbox" id="g-lig-vigentes"> só as vigentes</label>
+      <button class="bt p" id="g-lig-fecha" title="fechar a lista">fechar</button>
+    </div>
+    <div class="g-tabela-caixa"><table class="g-tab" id="g-ligacoes"></table></div>
+    <div class="vazio" id="g-lig-vazio" hidden></div>
+    <div class="g-pe" id="g-lig-pe"></div>
+  </section>
+
+  <!-- 3 · exportação, seção à parte -->
+  <section class="g-cartao" id="sec-exportar">
+    <div class="g-cab">
+      <div><h2>Exportação</h2>
+        <p>escolha o recorte e as colunas · cada exportação fica registrada com quem, quando, filtros, colunas, linhas e IP</p></div>
+    </div>
+    <div class="g-exp">
+      <div class="g-exp-filtros">
+        <div class="g-linha2">
+          <div class="g-campo"><label class="fl-rot" for="x-de">de</label><input id="x-de" type="date" class="g-in"></div>
+          <div class="g-campo"><label class="fl-rot" for="x-ate">até</label><input id="x-ate" type="date" class="g-in"></div>
+        </div>
+        <div class="g-campo"><label class="fl-rot" for="x-quem">usuário</label>
+          <select id="x-quem" class="fl-sel g-sel"><option value="">todos</option></select></div>
+        <div class="g-campo"><span class="fl-rot">status</span>
+          <div class="g-checks" id="x-acoes"></div></div>
+        <div class="g-campo"><label class="fl-rot" for="x-cidade">cidade</label>
+          <select id="x-cidade" class="fl-sel g-sel"><option value="">todas</option></select></div>
+        <label class="g-check"><input type="checkbox" id="x-vigentes"> só as decisões vigentes (sem o histórico)</label>
+        <div class="g-campo"><span class="fl-rot">formato</span>
+          <div class="g-formatos">
+            <label class="g-check"><input type="radio" name="x-formato" value="xlsx" checked> XLSX</label>
+            <label class="g-check"><input type="radio" name="x-formato" value="csv"> CSV</label>
+          </div></div>
+        <p class="g-nota" id="x-empresa-nota"></p>
+        <button class="bt pri g" id="x-exporta">exportar</button>
+      </div>
+      <div class="g-exp-colunas">
+        <div class="g-colunas-cab"><span class="fl-rot">colunas</span><span class="cresce"></span>
+          <button class="lk" id="x-col-padrao">padrão</button><button class="lk" id="x-col-todas">todas</button>
+          <button class="lk" id="x-col-nenhuma">nenhuma</button></div>
+        <div class="g-colunas" id="x-colunas"></div>
+      </div>
+    </div>
+    <div class="g-sub-cab"><h3>Exportações feitas</h3><span class="cresce"></span>
+      <button class="lk" id="x-recarrega">atualizar</button></div>
+    <div class="g-tabela-caixa"><table class="g-tab" id="x-lista"></table></div>
+    <div class="vazio" id="x-lista-vazio" hidden></div>
+  </section>
+
+</main>
+
+<!-- diálogo -->
+<div id="modal" hidden>
+  <div class="modal-fundo"></div>
+  <div class="modal-caixa" role="dialog" aria-modal="true">
+    <header><strong id="modal-tit">—</strong><button id="modal-x" aria-label="fechar">✕</button></header>
+    <div id="modal-corpo"></div>
+    <footer id="modal-pe"></footer>
+  </div>
+</div>
+
+<div id="torradas"></div>

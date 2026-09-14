@@ -45,3 +45,23 @@ html = ("<!doctype html>\n<html lang=\"pt-BR\">\n<head>\n<meta charset=\"utf-8\"
         + "</script>\n</body>\n</html>\n")
 saida.write_text(html, encoding="utf-8", newline="\n")
 print("ok", saida, len(html.splitlines()), "linhas", len(html.encode("utf-8")) // 1024, "KB")
+
+# A GESTAO DAS APROVACOES (14/09/2026): a mesma marca e os mesmos tokens da SEEK
+# (o CSS do desenho aprovado + o extra da SEEK), com corpo, estilo e script proprios.
+# Sai ao lado da SEEK, em frontend/gestao.html, servida em /gestao.
+gestao = ("<!doctype html>\n<html lang=\"pt-BR\">\n<head>\n<meta charset=\"utf-8\">\n"
+          "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n"
+          "<title>Gestão · SEEK · A2L</title>\n"
+          + linhas(7, 699)
+          + (aqui / "extra.css").read_text(encoding="utf-8")
+          + (aqui / "gestao.css").read_text(encoding="utf-8")
+          + "</style>\n</head>\n<body>\n"
+          + (aqui / "gestao_corpo.html").read_text(encoding="utf-8").replace("@@LOGO@@", logo)
+          + "\n<!-- login, token em toda chamada a /api/ e o cracha em window.EU -->\n"
+          + "<script src=\"/static/sessao.js\"></script>\n"
+          + "<script>\n"
+          + (aqui / "gestao.js").read_text(encoding="utf-8")
+          + "</script>\n</body>\n</html>\n")
+saida_gestao = saida.parent / "gestao.html"
+saida_gestao.write_text(gestao, encoding="utf-8", newline="\n")
+print("ok", saida_gestao, len(gestao.splitlines()), "linhas", len(gestao.encode("utf-8")) // 1024, "KB")

@@ -173,6 +173,33 @@ a.chip{text-decoration:none}
 .hist-lin b{color:var(--tit)}
 .hist-lin span{color:var(--fraco);display:block;font-size:11px}
 
+/* ---- a trava: ligação em análise por outra pessoa (14/09/2026) ----
+ * Cinza e listrada como o vínculo descartado, para ler "fora do seu alcance" sem
+ * precisar da legenda; o nome de quem está nela ocupa a linha do titular. */
+.fi.travada{cursor:not-allowed;
+  background:repeating-linear-gradient(135deg,var(--sup2) 0 6px,var(--sup3) 6px 12px)}
+.fi.travada:hover{background:repeating-linear-gradient(135deg,var(--sup2) 0 6px,var(--sup3) 6px 12px)}
+.fi.travada .l1 b,.fi.travada .l3 span,.fi.travada .l3 em{color:var(--tenue)}
+.fi.travada .l2{color:var(--fraco);font-style:italic}
+.fi.travada .pt,.fi.travada .dchip{filter:grayscale(1);opacity:.55}
+.tchip{margin-left:auto;flex:none;font-family:var(--mono);font-size:8.5px;padding:1px 7px;border-radius:99px;
+  color:var(--fraco);border:1px dashed var(--linha2);background:var(--sup);white-space:nowrap}
+.dec-estado.travado b{color:var(--critico)}
+#decisao .acoes .sep{width:1px;height:22px;background:var(--linha);margin:0 3px;flex:none}
+@media (max-width:1400px){ #decisao .bt.chamado .longo{display:none} }
+
+/* ---- o chamado ---- */
+.ch-caso{display:flex;align-items:baseline;gap:9px;background:var(--sup2);border:1px solid var(--linha);
+  border-radius:var(--r2);padding:8px 11px;margin-bottom:14px;font-size:12px;color:var(--fraco);min-width:0}
+.ch-caso b{color:var(--tit);font-size:12.5px;flex:none}
+.ch-caso span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ch-sel{display:block;width:100%;height:32px;margin-bottom:14px}
+.obs-ajuda.ch-erro{color:var(--critico)}
+.ch-ok{display:flex;flex-direction:column;gap:5px;background:#E8F6EE;border:1px solid #BFE3CE;
+  border-radius:var(--r2);padding:12px 14px;color:#14603D;font-size:12.5px}
+.ch-ok b{font-size:14px}
+.ch-ok a{color:var(--azul);text-decoration:underline;text-underline-offset:2px;width:max-content}
+
 /* ---- tela estreita (notebook, painel lateral) ----
  * Visto em 800 px no dia da estreia: os campos da faixa encolhiam até sumir
  * (o número da ligação não aparecia), chips e títulos quebravam em três linhas
@@ -193,7 +220,7 @@ a.chip{text-decoration:none}
 .arv-ferramentas{min-width:0;overflow-x:auto;scrollbar-width:none}
 .arv-ferramentas::-webkit-scrollbar{display:none}
 @media (max-width:1220px){
-  #id-sub,#chip-rotulo,#arv-sub{display:none}
+  #id-sub,#chip-rotulo,#arv-sub,#vivo-txt{display:none}
   #faixa .cf b{max-width:24ch}
 }
 @media (max-width:1000px){

@@ -128,6 +128,14 @@ chat), **as três conferidas conectando em 31/08/2026**:
 | `A2L_MIGRATOR_URL` | `migrator.a2l` | 7110 |
 | `A2L_PIPELINE_DB_URL` | `app_user.a2l` | 7100 |
 
+**Integração com o Hippo** (14/09/2026, `seek_chamado.py`):
+
+| variável | o que é | quebra se rotacionar |
+|---|---|---|
+| `HIPPO_CHAVE_SERVICO` | chave de serviço da SEEK no Hippo — igual a `INTEGRACAO_CHAVE_SEEK` do `.env` do a2lGcp | "Abrir chamado" responde 502 até trocar nos dois `.env` e reiniciar as duas APIs |
+| `HIPPO_API_URL` | listener de integração do Hippo (dev: `http://hippo-integracao:7751`, vindo do compose de dev) | — (endereço, não segredo) |
+| porta **7751** | listener de integração do Hippo em `172.17.0.1` (docker0), alcançado por `host-gateway`; **não** está na LAN nem na VPS | — |
+
 **`inet_server_port()` devolve 7100 nas três**, e isso confundiu a conferência
 por um tempo: não é a porta do host. O Postgres escuta na 7100 **dentro** do
 contêiner (`POSTGRES_PORT=7100` no ambiente do pooler) — dois espaços de nome
