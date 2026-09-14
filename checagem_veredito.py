@@ -151,7 +151,9 @@ def base_da_aprovacao(resposta, processo):
     Antigo: os registros que 'pertence: sim' e sao comercio ou servico.
     """
     r = resposta or {}
-    if processo == "enxuto de 12/09/2026":
+    # QUALQUER ENXUTO (14/09/2026): o prompt de 13/09 ganhou outro nome de processo, e a
+    # comparacao exata com "enxuto de 12/09/2026" reprovou as 6.883 aprovadas da rodada.
+    if str(processo or "").startswith("enxuto de "):
         ader = [a for a in (r.get("aderentes") or []) if isinstance(a, dict)]
         conf = [a for a in ader if a.get("confirmado")]
         return [a.get("poi") for a in (conf or ader)]

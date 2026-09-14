@@ -757,7 +757,7 @@ a.chip{text-decoration:none}
 
 /* ---- a árvore: grupo · fonte · registro ---- */
 .ramo.n-ia{--cc:#6D4AC7} .ramo.n-plataforma{--cc:#006DFF}
-.ramo.n-oficial{--cc:#1F9D62} .ramo.n-olhar{--cc:#F28C28}
+.ramo.n-oficial{--cc:#1F9D62} .ramo.n-web{--cc:#F28C28} .ramo.n-imagem{--cc:#138A9E}
 .reg{padding:9px 13px 10px 26px;border-top:1px solid var(--linha);background:var(--sup)}
 .no-corpo > .reg:first-child{border-top:0}
 .reg-cab{display:flex;align-items:baseline;gap:7px;flex-wrap:wrap}
@@ -802,8 +802,53 @@ a.chip{text-decoration:none}
 .mais{display:block;width:100%;text-align:left;padding:7px 13px 8px 26px;
   font-family:var(--mono);font-size:10px;color:var(--azul)}
 
-/* o veredito da IA cabe em duas linhas; o texto inteiro está na árvore */
-.par-texto{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+/* a prova de Web e Imagem: só o que confirmou, resumido (13/09/2026) */
+.prova{padding:9px 13px 10px 26px;border-top:1px solid var(--linha);background:var(--sup)}
+.prova.ok{box-shadow:inset 3px 0 0 #1F9D62}
+.prova-cab{display:flex;align-items:baseline;gap:7px;flex-wrap:wrap}
+.prova-cab b{font-size:12.5px;color:var(--tit);font-weight:600}
+.prova-cab .poi{font-family:var(--mono);font-size:9.5px;color:var(--tenue)}
+.prova-tit{font-size:12px;color:var(--txt);margin-top:4px;line-height:1.45;overflow-wrap:anywhere}
+.prova-tit a{color:var(--azul);text-decoration:underline;text-underline-offset:2px}
+.prova-trecho{font-size:11px;color:var(--tenue);margin-top:2px;line-height:1.4}
+.prova-resumo{font-family:var(--mono);font-size:10px;color:var(--tenue);padding:8px 13px 6px 26px}
+.img-sel.neutro{background:rgba(255,255,255,.92);color:var(--fraco);border:1px solid var(--linha)}
+
+/* o veredito da IA cabe em duas linhas; o clique abre o motivo inteiro */
+.par-texto{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;cursor:pointer}
+.par-texto.aberto{display:block;-webkit-line-clamp:unset;max-height:30vh;overflow:auto}
+.par-texto:focus-visible{outline:2px solid var(--azul);outline-offset:2px}
+
+/* a faixa do caso: o valor inteiro no título e copiado no clique */
+#faixa .cf b[data-copia]{cursor:copy}
+#faixa .cf b[data-copia]:hover{color:var(--azul);text-decoration:underline dotted;text-underline-offset:3px}
+#faixa .cf b[data-copia]:focus-visible{outline:2px solid var(--azul);outline-offset:2px;border-radius:2px}
+
+/* ---- o visor: a imagem em tela quase cheia, com zoom (13/09/2026) ---- */
+#visor{position:fixed;inset:0;z-index:120;display:flex;flex-direction:column;gap:8px;
+  padding:1.6vh 1.6vw;background:rgba(7,18,34,.88)}
+#visor[hidden]{display:none}
+.vis-topo{display:flex;align-items:center;gap:8px;min-width:0;color:#fff}
+.vis-topo strong{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.vis-quando{font-family:var(--mono);font-size:11px;color:#B8C4D6;white-space:nowrap}
+.vis-bt{height:30px;min-width:34px;padding:0 9px;border-radius:var(--r3);border:1px solid rgba(255,255,255,.24);
+  background:rgba(255,255,255,.08);color:#fff;font-size:15px;line-height:1;flex:none}
+.vis-bt:hover{background:rgba(255,255,255,.18)}
+.vis-bt.num{font-family:var(--mono);font-size:11px;min-width:56px;font-variant-numeric:tabular-nums}
+.vis-bt:focus-visible,.vis-nav:focus-visible{outline:2px solid #8FC1FF;outline-offset:2px}
+.vis-palco{position:relative;flex:1;min-height:0;overflow:hidden;border-radius:var(--r2);
+  background:#0B1626;cursor:grab;touch-action:none}
+.vis-palco.arrasta{cursor:grabbing}
+#vis-img{position:absolute;left:0;top:0;transform-origin:0 0;max-width:none;max-height:none;
+  user-select:none;-webkit-user-drag:none}
+.vis-nav{position:absolute;top:50%;transform:translateY(-50%);width:42px;height:66px;border:0;
+  border-radius:var(--r2);background:rgba(0,0,0,.4);color:#fff;font-size:30px;line-height:1}
+.vis-nav:hover{background:rgba(0,0,0,.6)}
+.vis-nav.esq{left:10px}
+.vis-nav.dir{right:10px}
+.vis-nav:disabled{opacity:.2;cursor:default}
+.vis-legenda{color:#DDE5F0;font-size:12px;line-height:1.45;max-width:120ch}
+@media (prefers-reduced-motion: reduce){.vis-bt,.vis-nav{transition:none}}
 
 /* ---- a decisão ---- */
 .lk{font-size:11.5px;color:var(--azul);text-decoration:underline;text-underline-offset:2px}
@@ -2363,9 +2408,15 @@ var SEEK = (function () {
      diz: 'estabelecimento publicado em diretório ou aplicativo'},
     {id: 'oficial', rot: 'Bases públicas', cor: '#1F9D62',
      diz: 'endereço declarado em base censitária ou estadual'},
-    {id: 'olhar', rot: 'Web e imagem', cor: '#F28C28',
-     diz: 'o que a busca pelo endereço e a foto de rua mostram'}
+    /* WEB E IMAGEM SEPARADOS, e verdes só quando CONFIRMAM (dono do produto,
+     * 13/09/2026): coletar a foto ou achar página no endereço não é prova. */
+    {id: 'web', rot: 'Web', cor: '#F28C28',
+     diz: 'resultado da busca pelo endereço que a IA usou para confirmar um registro'},
+    {id: 'imagem', rot: 'Imagem', cor: '#138A9E',
+     diz: 'foto de rua ou publicada em que a IA identificou o comércio ou serviço'}
   ];
+  /* os grupos cujo "achou" quer dizer "confirmou" */
+  var PROVA = {web: 1, imagem: 1};
 
   /* os centros são as dez áreas do motor, uma por fonte */
   var FONTES = [
@@ -2385,11 +2436,13 @@ var SEEK = (function () {
      cliente: 'BASE CENSITÁRIA', centro: [0.00, 0.08, -0.74]},
     {id: 'estadual', grupo: 'oficial', curto: 'ESTADUAL', interno: 'Base estadual',
      cliente: 'CADASTRO ESTADUAL', centro: [-0.34, -0.30, 0.20]},
-    {id: 'busca', grupo: 'olhar', curto: 'BUSCA', interno: 'Busca web · DuckDuckGo e Yahoo',
+    {id: 'busca', grupo: 'web', curto: 'WEB', interno: 'Busca web · DuckDuckGo e Yahoo',
      cliente: 'BUSCA NA WEB', centro: [0.00, -0.50, -0.48]},
-    {id: 'foto', grupo: 'olhar', curto: 'FACHADA', interno: 'Foto de rua',
-     cliente: 'LEITURA DE FACHADA', centro: [0.34, -0.30, 0.22]}
+    {id: 'foto', grupo: 'imagem', curto: 'IMAGEM', interno: 'Fotos · rua e publicadas',
+     cliente: 'LEITURA DE IMAGEM', centro: [0.34, -0.30, 0.22]}
   ];
+  function ehProva(f) { return !!PROVA[f.grupo]; }
+  function achouTxt(f) { return ehProva(f) ? 'confirmou' : 'achou'; }
   var FONTES_DADO = FONTES.slice(1);   /* as que dizem achou/não achou */
 
   var VEREDITOS = {
@@ -2646,8 +2699,11 @@ var SEEK = (function () {
     $('#f-fontes').innerHTML = FONTES_DADO.map(function (f) {
       var e = S.fFonte[f.id] || 'todos';
       var n = e === 'nao' ? r.ft[f.id] - r.fs[f.id] : r.fs[f.id];
-      var dica = rotuloFonte(f) + ' — ' + (e === 'sim' ? 'só as que ACHARAM registro'
-               : e === 'nao' ? 'só as que NÃO acharam' : 'sem recorte')
+      var dica = rotuloFonte(f) + ' — ' + (ehProva(f)
+                 ? (e === 'sim' ? 'só as que a IA CONFIRMOU por esta fonte'
+                    : e === 'nao' ? 'só as que esta fonte NÃO confirmou' : 'sem recorte')
+                 : (e === 'sim' ? 'só as que ACHARAM registro'
+                    : e === 'nao' ? 'só as que NÃO acharam' : 'sem recorte'))
                + ' · clique para alternar (todas → achou → não achou)';
       return '<button class="fch" data-ff="' + f.id + '" data-estado="' + e + '" title="' + esc(dica) + '">'
         + '<i>' + (e === 'sim' ? '✓' : e === 'nao' ? '✕' : '·') + '</i>'
@@ -2802,13 +2858,15 @@ var SEEK = (function () {
     var rua = 'https://www.google.com/maps/@?api=1&map_action=pano&viewpoint='
       + encodeURIComponent(k.lat + ',' + k.lon);
     return '<div class="cf coord"><i>coordenada</i>'
-      + '<b class="mono">' + esc(par) + '</b>'
+      + '<b class="mono" tabindex="0" data-copia="' + esc(par) + '" data-copia-rot="coordenada" title="' + esc(par)
+      + '&#10;clique para copiar">' + esc(par) + '</b>'
       + '<span class="prec" title="' + esc(k.origem) + '">cadastro</span>'
       + '<a class="ir" href="' + rota + '" target="_blank" rel="noopener noreferrer"'
       + ' title="abrir rota até esta ligação no mapa">rota ↗</a>'
       + '<a class="ir" href="' + rua + '" target="_blank" rel="noopener noreferrer"'
       + ' title="abrir a vista de rua neste ponto">rua ↗</a>'
-      + '<button class="ir copia" data-copia="' + esc(par) + '" title="copiar a coordenada">copiar</button>'
+      + '<button class="ir copia" data-copia="' + esc(par) + '" data-copia-rot="coordenada"'
+      + ' title="copiar a coordenada">copiar</button>'
       + '</div>';
   }
 
@@ -2827,11 +2885,18 @@ var SEEK = (function () {
     var c = caso(S.sel);
     if (!c) { $('#faixa').innerHTML = ''; return; }
     var fi = ficha();
-    function cf(rot, val, mono, vazio) {
-      return '<div class="cf' + (vazio ? ' vazio' : '') + '"><i>' + esc(rot) + '</i>'
-        + '<b' + (mono ? ' class="mono"' : '') + '>' + esc(val || '—') + '</b></div>';
-    }
     var doc = fi && fi.base ? fi.base.documento : '';
+    /* O VALOR INTEIRO NO PASSAR DO MOUSE E COPIADO NO CLIQUE (13/09/2026): o
+     * campo corta com reticências quando não cabe, e o valor é o que se cola
+     * em outro sistema. */
+    function cf(rot, val, mono, vazio) {
+      var v = val === null || val === undefined ? '' : String(val);
+      return '<div class="cf' + (vazio ? ' vazio' : '') + '"><i>' + esc(rot) + '</i>'
+        + '<b' + (mono ? ' class="mono"' : '')
+        + (v ? ' tabindex="0" data-copia="' + esc(v) + '" data-copia-rot="' + esc(rot) + '" title="' + esc(v)
+               + '&#10;clique para copiar"' : '')
+        + '>' + esc(v || '—') + '</b></div>';
+    }
     $('#faixa').innerHTML = cf('ligação', c.ligacao, true)
       + cf('titular', c.titular)
       + cf('endereço', c.endereco + (c.bairro ? ' · ' + c.bairro : ''))
@@ -2975,51 +3040,82 @@ var SEEK = (function () {
       + kv(valores) + '</div>';
   }
 
-  /* A BUSCA WEB, UMA POR MOTOR (13/09/2026): DuckDuckGo, Yahoo e o Google da
-   * reserva. Só o resultado que cita a rua e o número da instalação aparece —
-   * é o mesmo que foi para a IA. O resto fica contado, não mostrado. */
+  /* A BUSCA WEB, RESUMIDA NO QUE CONFIRMOU (13/09/2026). DuckDuckGo, Yahoo e o
+   * Google da reserva buscam pelo endereço; a IA lê os resultados que citam a
+   * rua e o número e diz quais CONFIRMAM um registro. Só esses aparecem, e só
+   * eles pintam de verde. O resto fica contado numa linha — a página inteira
+   * está no carrossel, como evidência. */
   var NOME_MOTOR = {duckduckgo: 'DuckDuckGo', yahoo: 'Yahoo', google: 'Google (reserva)'};
 
-  function corpoBusca(buscas) {
-    if (!buscas || !buscas.length) {
-      return '<div class="sem-dado">A busca web nova (DuckDuckGo e Yahoo) ainda não rodou para esta ligação.</div>';
+  function linkSeguro(u) {
+    var s = String(u || '').trim();
+    if (/^https?:\/\//i.test(s)) { return s; }
+    if (/^[\w.-]+\.[a-z]{2,}(\/|$)/i.test(s)) { return 'https://' + s; }
+    return '';
+  }
+
+  function corpoBusca(d, ctx) {
+    var buscas = d.buscas || [], usados = d.usados || [];
+    if (!buscas.length) {
+      return '<div class="sem-dado">A busca web (DuckDuckGo e Yahoo) ainda não rodou para esta ligação.</div>';
     }
-    return buscas.map(function (b) {
-      var res = b.resultados || [];
-      return '<div class="reg">'
-        + '<div class="reg-cab"><b>' + esc(NOME_MOTOR[b.motor] || b.motor) + '</b>'
-        + '<span class="selo ' + (b.no_endereco ? 'ok' : 'cinza') + '">'
-        + (b.no_endereco ? b.no_endereco + ' no endereço' : 'nada no endereço') + '</span>'
-        + '<span class="poi">' + num(b.total) + ' resultado(s) na página · ' + esc(quando(b.feito_em)) + '</span></div>'
-        + kv([['consulta', b.consulta || '']])
-        + res.map(function (r) {
-            return '<div class="reg-por"><b>resultado</b>' + esc(r.titulo || '') + ' — <span class="mono">'
-              + esc(r.url || '') + '</span><br>' + esc(r.trecho || '') + '</div>';
-          }).join('')
-        + (b.print ? '<button class="bt p" data-print="' + esc(b.print) + '">ver o print da página</button>' : '')
+    var resumo = '<div class="prova-resumo">' + esc(buscas.map(function (b) {
+      return (NOME_MOTOR[b.motor] || b.motor) + ': ' + (b.no_endereco ? b.no_endereco + ' no endereço' : 'nada no endereço');
+    }).join(' · ')) + '</div>';
+    if (!d.informado) {
+      return resumo + '<div class="sem-dado">Julgada antes de a IA dizer quais resultados usou: está na fila '
+        + 'do rejulgamento. Até lá a busca não conta como confirmação.</div>';
+    }
+    if (!usados.length) {
+      return resumo + '<div class="sem-dado">Nenhum resultado confirmou um registro desta ligação'
+        + (d.recusados ? ' — a IA leu ' + d.recusados + ' e não aceitou (outro negócio no endereço ou sem '
+                         + 'dado do registro)' : '') + '.</div>';
+    }
+    return resumo + usados.map(function (u) {
+      var nome = ctx.nome[u.poi], link = linkSeguro(u.url);
+      var motores = (u.motores || []).map(function (m) { return NOME_MOTOR[m] || m; }).join(' e ');
+      var trecho = u.trecho ? (u.trecho.length > 160 ? u.trecho.slice(0, 157) + '…' : u.trecho) : '';
+      return '<div class="prova ok">'
+        + '<div class="prova-cab"><span class="selo ok">confirma</span>'
+        + (u.poi ? '<b>#' + esc(u.poi) + (nome ? ' · ' + esc(nome) : '') + '</b>' : '')
+        + '<span class="poi">' + esc(motores) + '</span></div>'
+        + (u.titulo ? '<div class="prova-tit">' + (link
+            ? '<a href="' + esc(link) + '" target="_blank" rel="noopener noreferrer">' + esc(u.titulo) + ' ↗</a>'
+            : esc(u.titulo)) + '</div>' : '')
+        + (trecho ? '<div class="prova-trecho">' + esc(trecho) + '</div>' : '')
+        + (u.casa ? '<div class="reg-por"><b>o que casa</b>' + esc(u.casa) + '</div>' : '')
         + '</div>';
     }).join('');
   }
 
+  function nomeFoto(q, ctx) {
+    return (q.tipo === 'foto publicada' ? 'foto publicada' : 'rua · ' + (VISADAS[q.tipo] || q.tipo))
+      + (q.poi ? ' do POI #' + q.poi + (ctx.nome[q.poi] ? ' (' + ctx.nome[q.poi] + ')' : '') : '');
+  }
+
+  /* AS FOTOS, PELO QUE A IA IDENTIFICOU NELAS (13/09/2026): ter imagem coletada
+   * não é confirmação; a foto confirma quando a IA viu nela o comércio. */
   function corpoFoto(fi, ctx) {
-    var porPoi = {}, ordem = [];
-    (fi.imagens || []).forEach(function (x) {
-      var k = x.fonte + ':' + x.poi_id;
-      if (!porPoi[k]) { porPoi[k] = {poi: x.poi_id, fonte: x.fonte, tipos: [], quando: x.quando}; ordem.push(k); }
-      porPoi[k].tipos.push(VISADAS[x.tipo] || x.tipo);
-    });
-    if (!ordem.length) {
+    var d = (fi.fontes && fi.fontes.foto) || {};
+    var n = (fi.imagens || []).length;
+    if (!n) {
       return '<div class="sem-dado">Nenhuma foto de rua nem foto publicada dos POIs desta ligação.</div>';
     }
-    return '<div class="ia-lista">' + ordem.map(function (k) {
-      var p = porPoi[k];
-      return '<div class="ia-lin"><b>#' + esc(p.poi) + '</b><span>'
-        + (ctx.nome[p.poi] ? '<em>' + esc(ctx.nome[p.poi]) + '</em> — ' : '')
-        + (p.fonte === 'maps' ? p.tipos.length + ' foto(s) publicada(s) no Google Maps'
-                              : 'foto de rua: ' + p.tipos.join(', '))
-        + (p.quando ? ' · ' + esc(p.quando) : '') + '</span></div>';
-    }).join('') + '</div>'
-      + '<div class="fonte-nota">As imagens estão na seção do topo da árvore.</div>';
+    if (!d.informado) {
+      return '<div class="sem-dado">Julgada antes de a IA dizer se as fotos mostram o comércio: está na fila '
+        + 'do rejulgamento. Até lá as ' + n + ' imagem(ns) coletada(s) não contam como confirmação.</div>';
+    }
+    var quais = (d.quais || []).map(function (q) { return nomeFoto(q, ctx); });
+    return '<div class="prova' + (d.achou ? ' ok' : '') + '">'
+      + '<div class="prova-cab"><span class="selo ' + (d.achou ? 'ok' : 'cinza') + '">'
+      + (d.achou ? 'identificou o comércio' : 'não identificou') + '</span>'
+      + '<span class="poi">a IA viu ' + (d.vistas || []).length + ' de ' + n + ' imagem(ns)</span></div>'
+      + (d.o_que_mostram ? '<div class="prova-tit">' + esc(d.o_que_mostram) + '</div>' : '')
+      + (quais.length ? '<div class="reg-por"><b>' + (quais.length > 1 ? 'nas fotos' : 'na foto') + '</b>'
+                        + esc(quais.join(' · ')) + '</div>' : '')
+      + '</div>'
+      + '<div class="fonte-nota">As imagens estão no carrossel do topo' + (d.achou ? '; a que confirma leva o selo verde' : '')
+      + '.</div>';
   }
 
   function noFonte(c, fi, f, ctx) {
@@ -3028,10 +3124,16 @@ var SEEK = (function () {
     var vivos = regs.filter(function (r) { return !r.descartado_em; });
     var nAder = vivos.filter(function (r) { return ctx.ader[r.poi_id]; }).length;
     var chave = 'f:' + f.id, ab = aberto(c.ligacao, chave, !!d.achou);
-    var sit = d.achou
-      ? (f.id === 'busca' ? 'achou no endereço' : f.id === 'foto' ? 'achou ' + (fi.imagens || []).length + ' imagem(ns)'
-         : 'achou · ' + vivos.length + ' registro(s)')
-      : (regs.length ? 'só vínculos descartados' : 'não achou');
+    var sit;
+    if (f.id === 'busca') {
+      sit = d.achou ? 'confirmou · ' + (d.usados || []).length + ' resultado(s)'
+          : (d.buscas || []).length && !d.informado ? 'a IA ainda não informou' : 'não confirmou';
+    } else if (f.id === 'foto') {
+      sit = d.achou ? 'identificou o comércio'
+          : (fi.imagens || []).length && !d.informado ? 'a IA ainda não informou' : 'não identificou';
+    } else {
+      sit = d.achou ? 'achou · ' + vivos.length + ' registro(s)' : (regs.length ? 'só vínculos descartados' : 'não achou');
+    }
     var cab = '<button class="no-fonte' + (d.achou ? '' : ' mudo') + '" data-abre="' + chave
       + '" data-aberto="' + (ab ? '1' : '0') + '">' + seta(ab)
       + '<span class="nm">' + esc(rotuloFonte(f)) + '</span>'
@@ -3041,7 +3143,7 @@ var SEEK = (function () {
       + '<span class="chave mono">' + esc(outroNome(f)) + '</span></button>';
     if (!ab) { return cab; }
     var corpo;
-    if (f.id === 'busca') { corpo = corpoBusca(d.buscas); }
+    if (f.id === 'busca') { corpo = corpoBusca(d, ctx); }
     else if (f.id === 'foto') { corpo = corpoFoto(fi, ctx); }
     else if (regs.length) {
       corpo = regs.map(function (r) { return cartaoRegistro(r, ctx); }).join('');
@@ -3057,17 +3159,19 @@ var SEEK = (function () {
     var achou = fs.filter(function (f) { return achouNa(c, fi, f.id); });
     var mostrar = S.mudos ? fs : achou;
     var chave = 'g:' + g.id, ab = aberto(c.ligacao, chave, achou.length > 0);
+    var prova = !!PROVA[g.id];
     var cab = '<button class="no-crit' + (achou.length ? ' tem' : '') + '" data-abre="' + chave
       + '" data-aberto="' + (ab ? '1' : '0') + '" style="--cc:' + g.cor + '">' + seta(ab)
       + '<span class="nm">' + esc(g.rot) + '</span>'
-      + '<span class="res">' + (achou.length ? achou.length + ' de ' + fs.length + ' fonte(s) acharam'
-                                              : 'nenhuma fonte achou') + '</span>'
+      + '<span class="res">' + (prova ? (achou.length ? 'confirmou' : 'não confirmou')
+          : achou.length ? achou.length + ' de ' + fs.length + ' fonte(s) acharam' : 'nenhuma fonte achou') + '</span>'
       + '<span class="cresce"></span><span class="regra">' + esc(g.diz) + '</span></button>';
     if (!ab) { return '<section class="ramo n-' + g.id + '">' + cab + '</section>'; }
     var dentro = mostrar.length
       ? mostrar.map(function (f) { return noFonte(c, fi, f, ctx); }).join('')
-      : '<div class="sem-dado">Nenhuma fonte deste grupo achou registro. Use “mostrar quem não '
-        + 'achou” para ver quais eram.</div>';
+      : '<div class="sem-dado">' + (prova ? 'Não confirmou. Use “mostrar quem não achou” para ver o que foi lido.'
+          : 'Nenhuma fonte deste grupo achou registro. Use “mostrar quem não achou” para ver quais eram.')
+        + '</div>';
     return '<section class="ramo n-' + g.id + '">' + cab + '<div class="ramo-corpo">' + dentro
       + '</div></section>';
   }
@@ -3254,29 +3358,50 @@ var SEEK = (function () {
       + ' allowfullscreen title="vista de rua"></iframe>';
   }
 
-  /* as imagens da ficha, com a legenda dizendo de onde vêm e de quem são */
+  /* as imagens da ficha, com a legenda dizendo de onde vêm e de quem são. O
+   * SELO VERDE É SÓ DA QUE CONFIRMA (13/09/2026): a foto em que a IA viu o
+   * comércio e o print da busca de onde saiu um resultado que confirmou. A
+   * coleta, sozinha, fica com selo neutro. */
   function imagensDaFicha(fi, ctx) {
+    var pf = (fi.fontes && fi.fontes.foto) || {}, pb = (fi.fontes && fi.fontes.busca) || {};
+    var confirma = {}, vista = {}, publicadaVista = {};
+    (pf.quais || []).forEach(function (q) { confirma[q.poi + ':' + q.tipo] = 1; });
+    (pf.vistas || []).forEach(function (q) { vista[q.poi + ':' + q.tipo] = 1; });
     var lista = (fi.imagens || []).map(function (x) {
       var nome = ctx.nome[x.poi_id] ? ' (' + ctx.nome[x.poi_id] + ')' : '';
+      var tipo = x.fonte === 'maps' ? 'foto publicada' : x.tipo;
+      /* da publicada a IA vê só a primeira do POI */
+      var primeira = x.fonte !== 'maps' || !publicadaVista[x.poi_id];
+      if (x.fonte === 'maps') { publicadaVista[x.poi_id] = 1; }
+      var ok = primeira && !!confirma[x.poi_id + ':' + tipo];
+      var viu = primeira && !!vista[x.poi_id + ':' + tipo];
+      var rot = x.fonte === 'maps' ? 'foto publicada' : 'rua · ' + (VISADAS[x.tipo] || x.tipo);
       return {
         id: x.id, url: x.url, fonte: x.fonte === 'maps' ? fonte('maps') : fonte('foto'),
-        rot: x.fonte === 'maps' ? 'foto publicada' : 'rua · ' + (VISADAS[x.tipo] || x.tipo),
-        legenda: x.fonte === 'maps'
+        rot: rot, selo: ok ? 'confirma · ' + rot : rot, sel: ok ? 'ok' : 'neutro',
+        legenda: (x.fonte === 'maps'
           ? 'Foto publicada no Google Maps do POI #' + x.poi_id + nome + '.'
           : 'Foto de rua, visada ' + (VISADAS[x.tipo] || x.tipo) + ', tirada do ponto do POI #'
             + x.poi_id + nome + '.'
-            + (x.mira ? ' A mira verde marca a direção da coordenada do POI.' : ''),
+            + (x.mira ? ' A mira verde marca a direção da coordenada do POI.' : ''))
+          + (ok ? ' A IA identificou o comércio nesta foto' + (pf.o_que_mostram ? ': ' + pf.o_que_mostram : '.')
+                : viu ? ' A IA viu esta foto no julgamento.' : ''),
         quando: x.quando || 'sem data'
       };
     });
-    var bs = (fi.fontes && fi.fontes.busca && fi.fontes.busca.buscas) || [];
+    var bs = pb.buscas || [];
+    var motorUsado = {};
+    (pb.usados || []).forEach(function (u) { (u.motores || []).forEach(function (m) { motorUsado[m] = (motorUsado[m] || 0) + 1; }); });
     bs.slice().reverse().forEach(function (b) {
       if (!b.print) { return; }
+      var nm = NOME_MOTOR[b.motor] || b.motor, usou = motorUsado[b.motor] || 0;
       lista.unshift({id: 'busca' + b.id, url: b.print, fonte: fonte('busca'),
-                     rot: 'print · ' + (NOME_MOTOR[b.motor] || b.motor),
-                     legenda: 'A página que ' + (NOME_MOTOR[b.motor] || b.motor) + ' mostrou para a busca pelo endereço: '
-                       + (b.consulta || '') + '. ' + (b.no_endereco ? b.no_endereco + ' resultado(s) no endereço.'
-                                                                    : 'Nenhum resultado no endereço.'),
+                     rot: 'print · ' + nm, selo: (usou ? 'confirma · ' : '') + 'print · ' + nm,
+                     sel: usou ? 'ok' : 'neutro',
+                     legenda: 'A página que ' + nm + ' mostrou para a busca pelo endereço: '
+                       + (b.consulta || '') + '. ' + (b.no_endereco ? b.no_endereco + ' resultado(s) no endereço'
+                                                                    : 'Nenhum resultado no endereço')
+                       + (usou ? '; ' + usou + ' confirmou(aram) um registro para a IA.' : '.'),
                      quando: quando(b.feito_em)});
     });
     return lista;
@@ -3298,13 +3423,13 @@ var SEEK = (function () {
     if (!ab) { return '<section id="imagens">' + cab + '</section>'; }
     var cartoes = [
       '<figure class="img-cart terr" data-terr="1" tabindex="0" role="button">'
-      + '<div class="img-tela"><canvas class="terr-mini"></canvas><span class="img-sel ok">local</span></div>'
+      + '<div class="img-tela"><canvas class="terr-mini"></canvas><span class="img-sel neutro">local</span></div>'
       + '<figcaption><b>TERRITÓRIO</b><span>O hidrômetro no centro e cada registro na distância '
       + 'medida até ele.</span><i class="mono">' + pts.length + ' ponto(s) · desenhado aqui</i>'
       + '</figcaption></figure>',
       '<figure class="img-cart rua" data-rua-abre="1" tabindex="0" role="button">'
       + '<div class="img-tela rua-cap"><span class="rua-icone">◉</span><span class="img-sel '
-      + (k ? 'ok' : 'nao') + '">' + (k ? 'sob clique' : 'sem coord') + '</span></div>'
+      + (k ? 'neutro' : 'nao') + '">' + (k ? 'sob clique' : 'sem coord') + '</span></div>'
       + '<figcaption><b>VISTA DE RUA</b><span>' + (k
           ? 'Acervo do provedor no ponto do hidrômetro. Carrega só quando alguém pede.'
           : 'Sem coordenada no cadastro: não há vista de rua.')
@@ -3312,7 +3437,7 @@ var SEEK = (function () {
     ].concat(imgs.map(function (x) {
       return '<figure class="img-cart" data-img="' + esc(x.id) + '" tabindex="0" role="button">'
         + '<div class="img-tela"><img loading="lazy" src="' + esc(window.comToken(x.url)) + '" alt="'
-        + esc(x.legenda) + '"><span class="img-sel ok">' + esc(x.rot) + '</span></div>'
+        + esc(x.legenda) + '"><span class="img-sel ' + x.sel + '">' + esc(x.selo) + '</span></div>'
         + '<figcaption><b>' + esc(rotuloFonte(x.fonte)) + '</b><span>' + esc(x.legenda) + '</span>'
         + '<i class="mono">' + esc(x.quando) + '</i></figcaption></figure>';
     }));
@@ -3335,18 +3460,152 @@ var SEEK = (function () {
   }
 
   function abreImagem(id) {
-    var x = S.imgs.filter(function (i) { return i.id === id; })[0];
-    if (!x) { return; }
-    mostraImagem(rotuloFonte(x.fonte) + ' · ' + x.rot, x.url, x.legenda, x.quando);
+    for (var i = 0; i < S.imgs.length; i++) { if (S.imgs[i].id === id) { abreVisor(i); return; } }
   }
-  function mostraImagem(titulo, url, legenda, data) {
-    $('#modal-tit').textContent = titulo;
-    $('#modal-corpo').innerHTML = '<div class="img-grande"><img src="' + esc(window.comToken(url))
-      + '" alt="' + esc(legenda) + '"></div>'
-      + '<p class="img-legenda"><i>de onde vem esta imagem</i>' + esc(legenda) + '</p>'
-      + '<p class="img-meta mono">' + esc(data || '') + ' · ligação ' + esc(S.sel) + '</p>';
-    $('#modal-pe').innerHTML = '<button class="bt p" data-fecha="1">fechar</button>';
-    $('#modal').hidden = false;
+
+  /* ===================================================================
+   * 6b · O VISOR — toda imagem do carrossel em tela quase cheia, com zoom
+   * (dono do produto, 13/09/2026). Roda do mouse aproxima no ponto do
+   * cursor, arrastar move, clique duplo alterna entre ajustar e 2,5×; as
+   * setas passam de imagem. O print da busca é alto: abre pela largura,
+   * do topo, para dar para ler.
+   * =================================================================== */
+  var VIS = {i: -1, z: 1, x: 0, y: 0, fit: 1, arrasto: null};
+
+  function visorAberto() { var v = document.getElementById('visor'); return !!(v && !v.hidden); }
+
+  function visorEl() {
+    var v = document.getElementById('visor');
+    if (v) { return v; }
+    v = document.createElement('div');
+    v.id = 'visor';
+    v.hidden = true;
+    v.setAttribute('role', 'dialog');
+    v.setAttribute('aria-modal', 'true');
+    v.setAttribute('aria-label', 'imagem ampliada');
+    v.innerHTML = '<div class="vis-topo"><strong id="vis-tit"></strong><span class="vis-quando" id="vis-quando"></span>'
+      + '<span class="cresce"></span>'
+      + '<button class="vis-bt" data-vis="menos" title="afastar (tecla −)" aria-label="afastar">−</button>'
+      + '<button class="vis-bt num" data-vis="ajustar" id="vis-zoom" title="ajustar à tela (tecla 0)">100%</button>'
+      + '<button class="vis-bt" data-vis="mais" title="aproximar (tecla +)" aria-label="aproximar">+</button>'
+      + '<button class="vis-bt num" data-vis="real" title="tamanho real (tecla 1)">1:1</button>'
+      + '<button class="vis-bt" data-vis="fecha" title="fechar (Esc)" aria-label="fechar">✕</button></div>'
+      + '<div class="vis-palco" id="vis-palco"><img id="vis-img" alt="" draggable="false">'
+      + '<button class="vis-nav esq" data-vis="ant" aria-label="imagem anterior">‹</button>'
+      + '<button class="vis-nav dir" data-vis="prox" aria-label="próxima imagem">›</button></div>'
+      + '<p class="vis-legenda" id="vis-legenda"></p>';
+    document.body.appendChild(v);
+    var palco = v.querySelector('#vis-palco'), img = v.querySelector('#vis-img');
+    img.addEventListener('load', visorAjusta);
+    palco.addEventListener('wheel', function (ev) {
+      ev.preventDefault();
+      var r = palco.getBoundingClientRect();
+      visorZoom(VIS.z * (ev.deltaY < 0 ? 1.18 : 1 / 1.18), ev.clientX - r.left, ev.clientY - r.top);
+    }, {passive: false});
+    palco.addEventListener('pointerdown', function (ev) {
+      if (ev.button !== 0 || ev.target.closest('.vis-nav')) { return; }
+      VIS.arrasto = {x: ev.clientX - VIS.x, y: ev.clientY - VIS.y};
+      palco.setPointerCapture(ev.pointerId);
+      palco.classList.add('arrasta');
+    });
+    palco.addEventListener('pointermove', function (ev) {
+      if (!VIS.arrasto) { return; }
+      VIS.x = ev.clientX - VIS.arrasto.x;
+      VIS.y = ev.clientY - VIS.arrasto.y;
+      visorPinta();
+    });
+    function solta() { VIS.arrasto = null; palco.classList.remove('arrasta'); }
+    palco.addEventListener('pointerup', solta);
+    palco.addEventListener('pointercancel', solta);
+    palco.addEventListener('dblclick', function (ev) {
+      if (ev.target.closest('.vis-nav')) { return; }
+      var r = palco.getBoundingClientRect();
+      if (VIS.z > VIS.fit * 1.05) { visorAjusta(); } else { visorZoom(VIS.fit * 2.5, ev.clientX - r.left, ev.clientY - r.top); }
+    });
+    return v;
+  }
+
+  function visorAjusta() {
+    var palco = $('#vis-palco'), img = $('#vis-img');
+    if (!palco || !img || !img.naturalWidth) { return; }
+    var W = palco.clientWidth, H = palco.clientHeight, w = img.naturalWidth, h = img.naturalHeight;
+    var alta = h / w > 2 * (H / W);
+    VIS.fit = alta ? Math.min(W / w, 1.5) : Math.min(W / w, H / h);
+    VIS.z = VIS.fit;
+    VIS.x = (W - w * VIS.z) / 2;
+    VIS.y = alta ? 0 : (H - h * VIS.z) / 2;
+    visorPinta();
+  }
+
+  function visorZoom(z, cx, cy) {
+    var palco = $('#vis-palco');
+    if (!palco) { return; }
+    z = Math.max(VIS.fit * 0.5, Math.min(z, Math.max(8, VIS.fit * 8)));
+    if (cx === undefined) { cx = palco.clientWidth / 2; cy = palco.clientHeight / 2; }
+    VIS.x = cx - (cx - VIS.x) * (z / VIS.z);
+    VIS.y = cy - (cy - VIS.y) * (z / VIS.z);
+    VIS.z = z;
+    visorPinta();
+  }
+
+  function visorPinta() {
+    var img = $('#vis-img');
+    img.style.transform = 'translate(' + VIS.x + 'px,' + VIS.y + 'px) scale(' + VIS.z + ')';
+    img.style.visibility = 'visible';
+    $('#vis-zoom').textContent = Math.round(VIS.z * 100) + '%';
+  }
+
+  function abreVisor(i) {
+    if (i < 0 || i >= S.imgs.length) { return; }
+    var v = visorEl(), x = S.imgs[i], img = $('#vis-img');
+    VIS.i = i;
+    $('#vis-tit').textContent = rotuloFonte(x.fonte) + ' · ' + x.selo;
+    $('#vis-quando').textContent = (x.quando || '') + ' · ligação ' + S.sel + ' · ' + (i + 1) + ' de ' + S.imgs.length;
+    $('#vis-legenda').textContent = x.legenda;
+    img.style.visibility = 'hidden';
+    img.alt = x.legenda;
+    v.hidden = false;
+    img.src = window.comToken(x.url);
+    if (img.complete && img.naturalWidth) { visorAjusta(); }
+    v.querySelector('.vis-nav.esq').disabled = i === 0;
+    v.querySelector('.vis-nav.dir').disabled = i === S.imgs.length - 1;
+    v.querySelector('[data-vis="fecha"]').focus();
+  }
+
+  function fechaVisor() {
+    var v = document.getElementById('visor');
+    if (!v || v.hidden) { return; }
+    v.hidden = true;
+    var cart = document.querySelector('[data-img="' + (S.imgs[VIS.i] || {}).id + '"]');
+    if (cart) { cart.focus(); }
+  }
+
+  function acaoVisor(a) {
+    if (a === 'fecha') { fechaVisor(); }
+    else if (a === 'mais') { visorZoom(VIS.z * 1.35); }
+    else if (a === 'menos') { visorZoom(VIS.z / 1.35); }
+    else if (a === 'ajustar') { visorAjusta(); }
+    else if (a === 'real') { visorZoom(1); }
+    else if (a === 'ant') { abreVisor(VIS.i - 1); }
+    else if (a === 'prox') { abreVisor(VIS.i + 1); }
+  }
+
+  function copiar(txt, rot) {
+    function ok() { torrada((rot || 'valor') + ' copiado: ' + txt); }
+    function falha() { torrada('não deu para copiar', true); }
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(txt).then(ok).catch(falha);
+      return;
+    }
+    var ta = document.createElement('textarea');
+    ta.value = txt;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { if (document.execCommand('copy')) { ok(); } else { falha(); } } catch (e) { falha(); }
+    document.body.removeChild(ta);
   }
 
   /* ===================================================================
@@ -3369,7 +3628,7 @@ var SEEK = (function () {
     var motivos = fontesAchou.length
       ? fontesAchou.map(function (f) {
           return '<span class="pm" style="--mc:' + corFonte(f) + '"><i></i><b>' + esc(rotuloFonte(f))
-            + '</b><em>achou</em></span>';
+            + '</b><em>' + achouTxt(f) + '</em></span>';
         }).join('')
       : '<span class="pm vazio">nenhuma fonte achou registro</span>';
     var ressalvas = [];
@@ -3385,7 +3644,8 @@ var SEEK = (function () {
       + '<div class="par-cab"><i>veredito da IA · uma das fontes</i><b>' + esc(V.rot) + '</b>'
       + '<span class="par-chip">' + (c.avaliado_em ? 'julgada em ' + esc(quando(c.avaliado_em))
                                                   : 'sem data de julgamento') + '</span></div>'
-      + '<p class="par-texto" title="' + esc(texto) + '">' + esc(texto) + '</p>'
+      + '<p class="par-texto" data-expande="1" tabindex="0" title="clique para ler o motivo inteiro">'
+      + esc(texto) + '</p>'
       + '<div class="par-motivos">' + motivos
       + ressalvas.map(function (r) { return '<span class="pr">⚠ ' + r + '</span>'; }).join('')
       + '</div></div>';
@@ -3578,9 +3838,14 @@ var SEEK = (function () {
     } else if (c.f[f.id]) {
       var d = fi && fi.fontes && fi.fontes[f.id];
       var n = d && d.registros ? d.registros.filter(function (r) { return !r.descartado_em; }).length : null;
-      estado = 'achou' + (n ? ' · ' + n + ' registro(s)' : '');
+      estado = f.id === 'busca' ? 'a IA confirmou um registro pela busca'
+             : f.id === 'foto' ? 'a IA identificou o comércio nas fotos'
+             : 'achou' + (n ? ' · ' + n + ' registro(s)' : '');
       classe = 'ok';
-    } else { estado = 'não achou registro para esta ligação'; classe = 'mudo'; }
+    } else {
+      estado = ehProva(f) ? 'não confirmou' : 'não achou registro para esta ligação';
+      classe = 'mudo';
+    }
     el.innerHTML = '<b><i style="background:' + corFonte(f) + '"></i>' + esc(rotuloFonte(f)) + '</b>'
       + '<span>' + esc(grupo(f.grupo).rot) + ' · <span class="mono">' + esc(outroNome(f)) + '</span></span>'
       + '<em class="' + classe + '">' + esc(estado) + '</em>';
@@ -3665,7 +3930,7 @@ var SEEK = (function () {
           var n = fs.filter(function (f) { return c.f[f.id]; }).length;
           return '<div class="cri' + (n ? ' bate' : '') + '" title="' + esc(g.diz) + '">'
             + '<i style="background:' + g.cor + '"></i><span>' + esc(g.rot) + '</span>'
-            + '<b>' + n + '/' + fs.length + '</b></div>';
+            + '<b>' + (PROVA[g.id] ? (n ? 'confirmou' : 'não') : n + '/' + fs.length) + '</b></div>';
         }).join('');
     var n = FONTES_DADO.filter(function (f) { return c.f[f.id]; }).length;
     $('#lado-pe').textContent = n + ' de ' + FONTES_DADO.length + ' fontes acharam registro · IA: ' + V.rot;
@@ -3742,7 +4007,20 @@ var SEEK = (function () {
     });
 
     document.addEventListener('keydown', function (ev) {
+      if (visorAberto()) {
+        var ac = {Escape: 'fecha', ArrowLeft: 'ant', ArrowRight: 'prox', '+': 'mais', '=': 'mais',
+                  '-': 'menos', '0': 'ajustar', '1': 'real'}[ev.key];
+        if (ac) { ev.preventDefault(); acaoVisor(ac); }
+        return;
+      }
       if (ev.key === 'Escape' && !$('#modal').hidden) { $('#modal').hidden = true; S.pendente = null; return; }
+      if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.closest && ev.target.closest('[data-copia]')
+          && !digitando(ev)) {
+        ev.preventDefault();
+        var cpk = ev.target.closest('[data-copia]');
+        copiar(cpk.getAttribute('data-copia'), cpk.getAttribute('data-copia-rot'));
+        return;
+      }
       if (!$('#modal').hidden || digitando(ev)) { return; }
       if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
         var i = indiceNaFila(S.sel) + (ev.key === 'ArrowDown' ? 1 : -1);
@@ -3758,6 +4036,10 @@ var SEEK = (function () {
     document.addEventListener('click', function (ev) {
       var t = ev.target.closest ? ev.target : null;
       if (!t) { return; }
+
+      var vb = t.closest('[data-vis]');
+      if (vb) { acaoVisor(vb.getAttribute('data-vis')); return; }
+      if (visorAberto()) { return; }
 
       var ff = t.closest('[data-ff]');
       if (ff) {
@@ -3794,12 +4076,8 @@ var SEEK = (function () {
       if (ru) { carregaRua(ru.getAttribute('data-rua')); return; }
       var im = t.closest('[data-img]');
       if (im) { abreImagem(im.getAttribute('data-img')); return; }
-      var pr = t.closest('[data-print]');
-      if (pr) {
-        mostraImagem('Busca web · print', pr.getAttribute('data-print'),
-                     'A página que a busca pelo endereço mostrou.', '');
-        return;
-      }
+      var ex = t.closest('[data-expande]');
+      if (ex) { ex.classList.toggle('aberto'); return; }
 
       var es = t.closest('[data-escolhe]');
       if (es && S.pendente) {
@@ -3831,20 +4109,14 @@ var SEEK = (function () {
       }
 
       var cp = t.closest('[data-copia]');
-      if (cp) {
-        var txt = cp.getAttribute('data-copia');
-        if (navigator.clipboard) {
-          navigator.clipboard.writeText(txt).then(function () { torrada('coordenada copiada: ' + txt); })
-            .catch(function () { torrada('não deu para copiar', true); });
-        }
-        return;
-      }
+      if (cp) { copiar(cp.getAttribute('data-copia'), cp.getAttribute('data-copia-rot')); return; }
 
       var dc = t.closest('[data-decide]');
       if (dc && !dc.disabled) { decide(dc.getAttribute('data-decide')); }
     });
 
     window.addEventListener('resize', function () {
+      if (visorAberto()) { visorAjusta(); }
       if (CER.motor && !CER.olho) { CER.motor.redimensiona(); }
       ajustaRolo();
       pintaLista();

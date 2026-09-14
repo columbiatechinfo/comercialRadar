@@ -1,0 +1,14 @@
+# A busca web do enriquecimento (DuckDuckGo e Yahoo) pelo Camoufox, com sessao
+# quente — decisao do dono do produto em 13/09/2026. Ver o cabecalho de
+# `buscar_web.py` para as medicoes.
+#
+# UMA IMAGEM EM CIMA DO MINERADOR, e nao mais uma linha no Dockerfile dele: a
+# imagem do minerador tem 32 GB e o `COPY . .` dela refaz a camada inteira. Esta
+# so acrescenta o pacote e o navegador (~2 min).
+#
+# O Camoufox traz o proprio Firefox, baixado pelo `camoufox fetch` para o cache
+# do `pwuser`. O pip instala no usuario, porque a imagem de base ja roda como ele.
+#
+#   docker build -f deploy/Dockerfile.busca-camoufox -t radar-busca-camoufox .
+FROM radar-comercial-minerador-worker
+RUN pip install --no-cache-dir "camoufox[geoip]==0.5.6" && python3 -m camoufox fetch

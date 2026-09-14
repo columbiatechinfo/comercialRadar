@@ -52,6 +52,12 @@ TEXTO_MAX = 7000
 #: tempo: sem teto, as 80 vagas viram 80 predios de 4 a 10 min cada (12/09/2026).
 MAX_GRANDES = 16
 VEREDITOS = ("aprovado", "reprovado", "revisao_humana")
+#: O PROCESSO QUE FICA GRAVADO NA PERCEPCAO. Desde 13/09/2026 (noite) a IA diz em
+#: campo proprio se as fotos mostram o comercio (`fotos`) e quais resultados da
+#: busca usou (`busca`), e o motivo nao tem mais limite de frases — pedido do dono
+#: do produto para a tela SEEK so pintar de verde a imagem e a busca que
+#: confirmaram. O julgamento anterior a isso e rejulgado (`--prompt-antigo`).
+PROCESSO = "enxuto de 13/09/2026 (fotos e busca em campo próprio)"
 #: `--saida DIR`: grava cada julgamento (e as fotos) numa pasta, para a galeria
 #: de validacao — o lote de conferencia roda sem `--aplicar`.
 SAIDA = None
@@ -67,12 +73,16 @@ Olhe todos os dados e responda, nesta ordem:
    - "aprovado" se ao menos um registro de comércio ou serviço pertence a esta instalação;
    - "reprovado" se nenhum pertence;
    - "revisao_humana" só quando a dúvida é a qual instalação o registro pertence — a unidade do número —, e o motivo diz qual é. Dúvida sobre se o negócio funciona não é revisão: decida pelas provas.
+4. As fotos: "confirmam" é true só se alguma foto MOSTRA o comércio ou serviço — placa, letreiro, vitrine, porta de loja, fachada com o nome ou a atividade do registro. Casa, portão ou muro sem sinal de comércio é false. "quais" são os números, na lista de fotos, das que mostram; "o_que_mostram" diz o que se vê nelas, ou por que as fotos não provam.
+5. A busca: liste os resultados que você usou. "confirma" é true só quando o resultado traz o nome, o telefone, o CNPJ ou a atividade DO REGISTRO junto do endereço desta instalação; resultado de outro negócio no mesmo endereço é false. Resultado que você não usou fica fora; sem nenhum, a lista é vazia.
 Templo, igreja, associação e escola não são comércio nem serviço. CNPJ ou MEI com atividade de comércio ou serviço registrada é negócio, mesmo com nome de pessoa. A foto de rua mostra a data em que foi tirada, e não hoje. A ficha do lugar no painel do Google, ou um resultado da busca, com o nome, o endereço desta instalação e horário ou telefone, confirma o registro. Foto de rua sem sinal de comércio NÃO desmente uma confirmação: muito comércio e serviço funciona em casa comum, e a foto não pesa mais que as outras provas. Resultado da busca que fala de outro endereço não conta.
 
 Responda SOMENTE um JSON:
-{"aderentes": [{"poi": <número>, "confirmado": true|false, "por": "<até 12 palavras>"}],
+{"aderentes": [{"poi": <número>, "confirmado": true|false, "por": "<o que confirma o registro, ou o que falta>"}],
  "nao_combinam": [{"poi": <número>, "por": "<até 12 palavras>"}],
- "motivo": "<até 3 frases>",
+ "fotos": {"confirmam": true|false, "quais": [<número da foto>], "o_que_mostram": "<o que se vê>"},
+ "busca": [{"motor": "DuckDuckGo|Yahoo|Google", "resultado": <número do resultado>, "poi": <número do registro>, "confirma": true|false, "casa": "<o que casa com o registro, ou o que não casa>"}],
+ "motivo": "<o motivo do veredito, em detalhe: o que os registros, as fotos e a busca mostraram, o que pesou na decisão e por quê>",
  "veredito": "aprovado|reprovado|revisao_humana"}
 
 ────────────────────────────────────────
@@ -111,12 +121,19 @@ def _texto_da_busca(cur, ligacao):
 
 def montar(con, ligacao):
     """(dados_do_prompt, fotos_jpeg, rotulos, ids, n_fontes) ou (None, ...) sem POI."""
+    return montar_com_refs(con, ligacao)[:5]
+
+
+def montar_com_refs(con, ligacao):
+    """O mesmo que `montar`, e mais DE QUEM E CADA FOTO: [{"poi", "tipo"}], na ordem
+    em que foram para a IA. A tela SEEK marca no carrossel a foto que a IA disse
+    que mostra o comercio (dono do produto, 13/09/2026)."""
     cur = con.cursor()
     cur.execute("""select coalesce(end_ligacao,''), coalesce(categoria,''), coalesce(nom_bairro,'')
                      from resources_root.cadastro_corsan where num_ligacao::text = %s""", (str(ligacao),))
     cad = cur.fetchone()
     if not cad:
-        return None, [], [], [], 0
+        return None, [], [], [], 0, []
     end_l, cat, bairro = cad
     cur.execute("""select p.id, lower(coalesce(p.fonte,'')), coalesce(p.nome,''), coalesce(p.categoria,''),
                           coalesce(p.endereco,''), coalesce(p.telefone,''), coalesce(p.cnpj,''),
@@ -140,7 +157,7 @@ def montar(con, ligacao):
                               ("candidato também de %d outra(s) instalação(ões)" % outras) if outras else "") if x]
         regs.append("#%s [%s] %s · %s" % (pid, fonte, nome, " · ".join(partes)))
     if not ids:
-        return None, [], [], [], 0
+        return None, [], [], [], 0, []
     # AS FOTOS: as quatro de rua do POI mais proximo do medidor e a primeira
     # publicada — as mesmas que o dossie escolhe, sem o texto dele.
     _t, imgs, tipos, _r = dl.montar(con, ligacao, ia, imagens, busca_web=None)
@@ -148,19 +165,22 @@ def montar(con, ligacao):
     pub = [(b, t) for b, t in zip(imgs, tipos) if not t.startswith("sv_")][:1]
     fotos = [_jpeg_leve(b) for b, t in sv + pub]
     rot = [t if t.startswith("sv_") else "foto publicada no Google (sem data)" for b, t in sv + pub]
+    _r = _r or {}
+    refs = [{"poi": _r.get("fonte_das_visadas"), "tipo": t.split(" ")[0]} for _b, t in sv] \
+        + [{"poi": _r.get("fonte_das_fotos"), "tipo": "foto publicada"} for _b, _t2 in pub]
     consulta, texto = _texto_da_busca(cur, ligacao)
     dados = ("INSTALAÇÃO: %s · categoria %s · bairro %s\n\nREGISTROS CANDIDATOS:\n%s\n\nFOTOS, nesta ordem:\n%s\n\n"
              "TEXTO DA BUSCA NA WEB%s:\n%s"
              % (end_l, cat, bairro, "\n".join(regs), "\n".join("%d. %s" % (i + 1, r) for i, r in enumerate(rot))
                 or "(nenhuma foto)", (" (consulta \"%s\", DuckDuckGo e Yahoo)" % consulta) if consulta else "",
                 texto or "(não houve busca na web para esta instalação)"))
-    return dados, fotos, rot, ids, len(fontes)
+    return dados, fotos, rot, ids, len(fontes), refs
 
 
 def uma(poco, ligacao, modelo, placar, trava, aplicar):
     t0 = time.time()
     with poco.pegar() as con:
-        dados, fotos, rot, ids, n_fontes = montar(con, ligacao)
+        dados, fotos, rot, ids, n_fontes, refs = montar_com_refs(con, ligacao)
     if dados is None:
         with trava:
             placar["sem_poi"] += 1
@@ -170,8 +190,14 @@ def uma(poco, ligacao, modelo, placar, trava, aplicar):
             placar["sem_imagem_fica_para_o_fim"] += 1
         return
     # O TETO CRESCE COM OS REGISTROS: a lista de aderentes de um predio grande
-    # passa dos 900 tokens.
-    teto = min(12000, 900 + 80 * len(ids))  # predio de 140 POIs cortava o JSON em 3.000 (12/09/2026)
+    # passa dos 900 tokens. A base subiu para 1.600 em 13/09/2026: o motivo
+    # deixou de ter limite de frases, e as fotos e a busca ganharam campo.
+    # 14/09/2026: com o "por" de cada aderente sem limite, 33 respostas vieram
+    # cortadas no meio do JSON (4.683 caracteres com 1.600 + 80 por POI).
+    teto = min(16000, 3000 + 200 * len(ids))  # predio de 140 POIs cortava o JSON em 3.000 (12/09/2026)
+    # O CONTEXTO DA SPARK E DE 32.768 TOKENS (prompt + resposta): passar disso o vLLM
+    # recusa com 400. Estimativa folgada: 2,8 caracteres por token e 1.000 por foto.
+    teto = max(1500, min(teto, 32768 - int(len(PROMPT + dados) / 2.8) - 1000 * len(fotos) - 500))
     try:
         r = di._chat_local(modelo, PROMPT + dados, [base64.b64encode(b).decode() for b in fotos],
                            max_tokens=teto, timeout=max(al.TIMEOUT, min(3600, 40 * len(ids))))
@@ -202,7 +228,7 @@ def uma(poco, ligacao, modelo, placar, trava, aplicar):
             checagem["justificativa_ia"] = r.get("justificativa")
             if v != "aprovado":
                 r["justificativa"] = "[checagem: %s] %s" % (checagem.get("porque"), r.get("motivo") or "")
-    percepcao = {"processo": "enxuto de 12/09/2026", "dados": dados, "fotos": rot, "resposta": r,
+    percepcao = {"processo": PROCESSO, "dados": dados, "fotos": rot, "fotos_ref": refs, "resposta": r,
                  "ids": ids}
     if checagem:
         percepcao["checagem"] = checagem
@@ -212,7 +238,7 @@ def uma(poco, ligacao, modelo, placar, trava, aplicar):
         with trava:
             with open(os.path.join(SAIDA, "resultado.jsonl"), "a", encoding="utf-8") as f:
                 f.write(json.dumps({"ligacao": ligacao, "veredito": v, "resposta": r, "dados": dados,
-                                    "fotos": rot, "segundos": round(time.time() - t0, 1)},
+                                    "fotos": rot, "fotos_ref": refs, "segundos": round(time.time() - t0, 1)},
                                    ensure_ascii=False) + "\n")
             for i, b in enumerate(fotos):
                 open(os.path.join(SAIDA, "%s_%d.jpg" % (ligacao, i + 1)), "wb").write(b)
@@ -315,6 +341,31 @@ def rodar(limite, aplicar, trabalhadores, modelo, ligacoes, cidade, exigir_busca
     return dict(placar)
 
 
+def ligacoes_do_prompt_antigo(cidade, limite=0):
+    """As ligacoes com veredito de OUTRO processo que nao `PROCESSO`, na cidade.
+    Dois conjuntos cruzados em Python, e nao `exists` por linha."""
+    con = bc.conectar()
+    try:
+        cur = con.cursor()
+        cur.execute("""select ligacao, id_empresa from radar_comercial.ligacao_veredito
+                        where coalesce(percepcao::jsonb->>'processo', '') <> %s""", (PROCESSO,))
+        velhas = {}
+        for l, emp in cur.fetchall():
+            velhas.setdefault(str(emp), set()).add(str(l))
+        ligs = []
+        for emp, conj in velhas.items():
+            cur.execute("""select num_ligacao::text from resources_root.cadastro_corsan
+                            where id_empresa = %s and num_ligacao = any(%s::bigint[])"""
+                        + (" and upper(cidade) = upper(%s)" if cidade else ""),
+                        (emp, [int(x) for x in conj if x.isdigit()]) + ((cidade,) if cidade else ()))
+            ligs += [r[0] for r in cur.fetchall()]
+    finally:
+        con.close()
+    ligs.sort(key=int)
+    al._log("   %d ligação(ões) julgadas por outro processo%s" % (len(ligs), " em " + cidade if cidade else ""))
+    return ligs[:limite] if limite else ligs
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--limite", type=int, default=0)
@@ -331,6 +382,8 @@ def main(argv=None):
                    help="o laco dos predios: so as ligacoes com mais de N POIs")
     p.add_argument("--ligacoes-arquivo", dest="ligacoes_arquivo", default=None,
                    help="arquivo com uma ligacao por linha (a reavaliacao das 22 mil nao cabe na linha de comando)")
+    p.add_argument("--prompt-antigo", dest="prompt_antigo", action="store_true",
+                   help="rejulga as ligacoes (da --cidade) cujo veredito veio de outro processo que nao o atual")
     p.add_argument("--aplicar", action="store_true")
     a = p.parse_args(argv)
     global SAIDA
@@ -340,6 +393,11 @@ def main(argv=None):
     ligs = list(a.ligacao or [])
     if a.ligacoes_arquivo:
         ligs += [x.strip() for x in open(a.ligacoes_arquivo) if x.strip()]
+    if a.prompt_antigo:
+        ligs += ligacoes_do_prompt_antigo(a.cidade, a.limite)
+        if not ligs:
+            al._log("nenhuma ligação julgada por outro processo")
+            return 0
     r = rodar(a.limite, a.aplicar, a.trabalhadores, a.modelo, ligs or None, a.cidade, a.exigir_busca,
               a.vinculo_novo, a.adiar_grandes, a.so_grandes)
     return 1 if r.get("erro") else 0

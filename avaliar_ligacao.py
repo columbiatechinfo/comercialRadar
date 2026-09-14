@@ -578,12 +578,13 @@ def fila(con, limite, refazer, ligacoes=None, sem_catalogo=False,
         # quando so havia a pagina generica do Bing (12/09/2026), ela volta. SO A
         # REPROVADA (dono do produto): aprovada e revisao humana ficam.
         # Desde 13/09/2026 a busca web e DuckDuckGo e Yahoo, com o Google na
-        # reserva, e so conta a linha no formato novo (`resultados`).
+        # reserva, e so conta a linha no formato novo (`resultados`). E SO A QUE ACHOU ALGO
+        # NO ENDERECO (14/09/2026): sem isso 2.540 das 3.969 voltavam sem prova nova.
         cur.execute("""select b.ligacao
                          from radar_comercial.busca_web b
                          join radar_comercial.ligacao_veredito v on v.ligacao = b.ligacao
                         where b.tipo = 'endereco' and b.motor in ('duckduckgo', 'yahoo', 'google')
-                          and b.resultados is not null and b.texto is not null
+                          and b.resultados is not null and b.texto is not null and b.no_endereco > 0
                           and b.feito_em > v.avaliado_em and v.veredito = 'reprovado'
                         group by b.ligacao""")
         ja = set(saida)
@@ -667,13 +668,14 @@ def fila(con, limite, refazer, ligacoes=None, sem_catalogo=False,
         # em seguida a do endereco e podem ainda estar na fila.
         # A BUSCA FEITA TEM LEITURA (processo anterior) OU TEXTO (o enxuto de
         # 12/09/2026). Sem a folga de 15 min: a busca pelo nome foi desligada.
-        # DESDE 13/09/2026: feita e a busca web NOVA nos DOIS motores principais,
-        # DuckDuckGo e Yahoo. A do Google Maps (12 a 13/09) nao conta mais: ela
-        # devolvia os lugares da regiao, e foi o que contaminou os vereditos.
-        cur.execute("""select ligacao from radar_comercial.busca_web
+        # DESDE 13/09/2026: feita e a busca web NOVA no DuckDuckGo. O Yahoo entra
+        # no dossie se ja tiver passado, mas nao segura o julgamento: ele chegou a
+        # falhar 70% das buscas na producao de Canoas, e o dono do produto
+        # decidiu que "so DuckDuckGo basta". A do Google Maps (12 a 13/09) nao
+        # conta mais: devolvia os lugares da regiao e contaminou os vereditos.
+        cur.execute("""select distinct ligacao from radar_comercial.busca_web
                         where tipo = 'endereco' and not bloqueado and resultados is not null
-                          and motor in ('duckduckgo', 'yahoo')
-                        group by ligacao having count(distinct motor) = 2""")
+                          and motor = 'duckduckgo'""")
         buscadas = {str(r[0]) for r in cur.fetchall()}
         antes = len(saida)
         saida = [l for l in saida if l in buscadas]

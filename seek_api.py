@@ -38,7 +38,13 @@ import auth as _auth
 router = APIRouter()
 
 #: As fontes, na ordem em que a tela as mostra. `ia` e a do julgamento; `busca`
-#: e a busca no Google Maps pelo endereco; `foto` e a foto de rua.
+#: e a busca web pelo endereco; `foto` sao as fotos de rua e as publicadas.
+#:
+#: BUSCA E FOTO SO "ACHAM" QUANDO CONFIRMAM (dono do produto, 13/09/2026): a
+#: coleta nao pinta de verde. A busca conta quando a IA usou um resultado que
+#: confirma um registro (`resposta.busca[].confirma`); a foto, quando a IA
+#: identificou o comercio nela (`resposta.fotos.confirmam`). Veredito do prompt
+#: anterior, sem esses campos, conta como nao confirmado ate ser rejulgado.
 FONTES = ("ia", "receita", "ifood", "maps", "ibge", "estadual", "cadastur", "airbnb", "busca", "foto")
 ACOES = ("aprovar", "campo", "revisar", "rejeitar")
 #: Os motores da busca web desde 13/09/2026 (ver `buscar_web.py`).
@@ -74,17 +80,97 @@ def _economias(r):
     return sum(int(x or 0) for x in r)
 
 
+def _busca_confirma(itens):
+    """Se a IA usou ao menos um resultado da busca que CONFIRMA um registro."""
+    return isinstance(itens, list) and any(isinstance(x, dict) and x.get("confirma") is True for x in itens)
+
+
+def _url_normal(u):
+    """A mesma pagina com cara de mesma: o Yahoo embrulha o link num redirecionador
+    (`.../RU=<link>/RK=...`), e um motor da `https://www.` onde o outro nao da."""
+    import urllib.parse
+    s = str(u or "").strip()
+    if "/RU=" in s:
+        s = urllib.parse.unquote(s.split("/RU=", 1)[1].split("/RK=", 1)[0])
+    s = s.lower().split("#", 1)[0]
+    for p in ("https://", "http://"):
+        if s.startswith(p):
+            s = s[len(p):]
+    if s.startswith("www."):
+        s = s[4:]
+    return s.rstrip("/")
+
+
+def _prova_busca(resp, buscas):
+    """([usados], recusados): os resultados que a IA disse que confirmam um registro,
+    com titulo e endereco da pagina. O numero que ela cita e a posicao na lista do
+    motor SO COM OS RESULTADOS NO ENDERECO — a mesma lista de `buscar_web.texto_para_dossie`.
+    O mesmo resultado achado pelos dois motores aparece uma vez, com os dois nomes."""
+    por_motor = {b["motor"]: b for b in buscas}
+    usados, chaves, recusados = [], {}, 0
+    for x in resp.get("busca") or []:
+        if not isinstance(x, dict):
+            continue
+        if x.get("confirma") is not True:
+            recusados += 1
+            continue
+        m = str(x.get("motor") or "").strip().lower().split(" ")[0]
+        try:
+            n = int(x.get("resultado"))
+        except (TypeError, ValueError):
+            n = 0
+        b = por_motor.get(m)
+        r = b["resultados"][n - 1] if b and 1 <= n <= len(b["resultados"]) else {}
+        # DUAS CHAVES: o endereco da pagina e o comeco do titulo com o registro —
+        # os motores cortam o titulo em pontos diferentes ("... - RS ..." e "... ...").
+        k_url = _url_normal(r.get("url")) or None
+        k_tit = ("%s|%s" % (x.get("poi"), " ".join(str(r.get("titulo") or "").lower().split())[:32])
+                 if r.get("titulo") else None)
+        u = chaves.get(k_url) or chaves.get(k_tit)
+        if u:
+            if m not in u["motores"]:
+                u["motores"].append(m)
+            continue
+        u = {"motores": [m], "numero": n, "poi": x.get("poi"), "casa": x.get("casa") or "",
+             "titulo": r.get("titulo"), "url": r.get("url"), "trecho": (r.get("trecho") or "")[:240]}
+        for k in (k_url, k_tit) if r else ("%s:%s" % (m, n),):
+            if k:
+                chaves[k] = u
+        usados.append(u)
+    return usados, recusados
+
+
+def _prova_fotos(resp, refs):
+    """O que a IA disse das fotos, com o POI e a visada de cada uma que confirma;
+    None quando o veredito e do prompt anterior, que nao dizia."""
+    f = resp.get("fotos")
+    if not isinstance(f, dict):
+        return None
+    quais = []
+    for q in f.get("quais") or []:
+        try:
+            i = int(q)
+        except (TypeError, ValueError):
+            continue
+        if 1 <= i <= len(refs or []):
+            quais.append(refs[i - 1])
+    return {"confirmam": f.get("confirmam") is True, "o_que_mostram": f.get("o_que_mostram") or "", "quais": quais}
+
+
 def _montar_fila(u, cidade: str | None):
     con = _con(u)
     try:
         cur = con.cursor()
         cur.execute("""select ligacao, veredito, avaliado_em,
-                              percepcao::jsonb->'checagem'->>'porque', id_empresa
+                              percepcao::jsonb->'checagem'->>'porque', id_empresa,
+                              percepcao::jsonb->'resposta'->'fotos'->>'confirmam',
+                              percepcao::jsonb->'resposta'->'busca'
                          from radar_comercial.ligacao_veredito""")
-        vered, empresas = {}, set()
-        for l, v, t, p, emp in cur.fetchall():
+        vered, empresas, prova = {}, set(), {}
+        for l, v, t, p, emp, fotos_ok, busca in cur.fetchall():
             vered[str(l)] = (v, t, p)
             empresas.add(str(emp))
+            prova[str(l)] = (_busca_confirma(busca), fotos_ok == "true")
         ligs = sorted(vered)
         onde_cidade = "and upper(cidade) = upper(%s)" if cidade else ""
         # A EMPRESA NA FRENTE: a chave do cadastro e (id_empresa, num_ligacao), e
@@ -102,27 +188,11 @@ def _montar_fila(u, cidade: str | None):
                         where lp.descartado_em is null and p.fundido_em is null
                           and lp.ligacao = any(%s)""", (list(cad),))
         fontes = collections.defaultdict(set)
-        pois_da = collections.defaultdict(set)
-        for l, f, pid in cur.fetchall():
+        for l, f, _pid in cur.fetchall():
             fontes[l].add(f)
-            pois_da[l].add(pid)
-        todos = sorted({p for s in pois_da.values() for p in s})
-        cur.execute("""select distinct poi_id from radar_comercial.poi_evidencia
-                        where poi_id = any(%s) and tipo like 'sv_%%'
-                          and (bytes_tam is not null or storage_path is not null)""", (todos,))
-        com_foto = {r[0] for r in cur.fetchall()}
-        cur.execute("""select distinct poi_id from radar_comercial.images_urls
-                        where poi_id = any(%s) and url like '%%gps-cs-s%%'
-                          and (bytes_tam is not null or storage_path is not null)""", (todos,))
-        com_foto |= {r[0] for r in cur.fetchall()}
-        # A BUSCA "ACHOU" SO COM RESULTADO NO ENDERECO (13/09/2026). Antes bastava
-        # existir busca — e a do Google Maps, que devolvia lugares da regiao,
-        # marcava "achou" em todas as 22 mil ligacoes.
-        cur.execute("""select distinct ligacao from radar_comercial.busca_web
-                        where ligacao = any(%s) and tipo = 'endereco' and not bloqueado
-                          and motor = any(%s) and resultados is not null and no_endereco > 0""",
-                    (list(cad), list(MOTORES_DA_BUSCA)))
-        com_busca = {str(r[0]) for r in cur.fetchall()}
+        # BUSCA E FOTO VEM DA RESPOSTA DA IA, lida acima (ver `FONTES`). Antes a
+        # foto "achava" por existir imagem coletada, e a busca por ter resultado
+        # no endereco — o verde nao dizia se confirmou.
         cur.execute("""select distinct on (ligacao) ligacao, acao, em, quem_nome
                          from radar_comercial.seek_decisao
                         where ligacao = any(%s) order by ligacao, em desc""", (list(cad),))
@@ -140,8 +210,8 @@ def _montar_fila(u, cidade: str | None):
         linhas.append([lig, r[1], r[2], r[3], r[4], r[5], _economias(r[6:10]),
                        v, porque, t.isoformat(timespec="minutes") if t else None,
                        "receita" in fs, "ifood" in fs, "maps" in fs, "ibge" in fs, "estadual" in fs,
-                       "cadastur" in fs, "airbnb" in fs, lig in com_busca,
-                       bool(pois_da.get(lig, set()) & com_foto),
+                       "cadastur" in fs, "airbnb" in fs,
+                       prova.get(lig, (False, False))[0], prova.get(lig, (False, False))[1],
                        d[0] if d else None, d[1].isoformat(timespec="minutes") if d else None,
                        d[2] if d else None])
     return {"colunas": colunas, "linhas": linhas, "gerado_em": time.strftime("%Y-%m-%dT%H:%M:%S")}
@@ -235,9 +305,11 @@ def seek_caso(ligacao: str, u: _auth.Usuario = Depends(_quem)):
                          from radar_comercial.ligacao_veredito where ligacao = %s""", (ligacao,))
         v = cur.fetchone()
         ia = None
+        resp, refs = {}, []
         if v:
             p = v[2] or {}
             resp = p.get("resposta") or {}
+            refs = p.get("fotos_ref") or []
             dados = p.get("dados") or ""
             ia = {"veredito": v[0], "motivo": resp.get("motivo") or v[1], "justificativa": v[1],
                   "aderentes": resp.get("aderentes") or [], "nao_combinam": resp.get("nao_combinam") or [],
@@ -286,8 +358,13 @@ def seek_caso(ligacao: str, u: _auth.Usuario = Depends(_quem)):
     for f in FONTES[1:-2]:
         vivos = [r for r in regs if r["fonte"] == f and not r["descartado_em"]]
         fontes[f] = {"achou": bool(vivos), "registros": [r for r in regs if r["fonte"] == f]}
-    fontes["busca"] = {"achou": any(b["no_endereco"] for b in buscas), "buscas": buscas}
-    fontes["foto"] = {"achou": any(i["fonte"] == "foto" for i in imagens) or any(i["fonte"] == "maps" for i in imagens)}
+    usados, recusados = _prova_busca(resp, buscas)
+    fontes["busca"] = {"achou": _busca_confirma(resp.get("busca")), "informado": "busca" in resp,
+                       "usados": usados, "recusados": recusados, "buscas": buscas}
+    pf = _prova_fotos(resp, refs)
+    fontes["foto"] = {"achou": bool(pf and pf["confirmam"]), "informado": pf is not None,
+                      "o_que_mostram": (pf or {}).get("o_que_mostram") or "", "quais": (pf or {}).get("quais") or [],
+                      "vistas": refs}
     return {"ligacao": ligacao, "base": base, "fontes": fontes, "ia": ia, "imagens": imagens,
             "decisoes": decisoes, "decisao": decisoes[0] if decisoes else None,
             # SEM DADO no Comercial Radar: a tela mostra a secao vazia, com o aviso.

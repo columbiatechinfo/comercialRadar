@@ -19,6 +19,19 @@ uma empresa do nº 64b. Medido nos mesmos 20 enderecos:
   instalacao, e ainda a cidade, o bairro ou o CEP. O resto fica em
   `resultados`, para conferir, e nunca no texto do dossie (`no_endereco`).
 
+DESDE 13/09/2026 (NOITE): CAMOUFOX COM SESSAO QUENTE, e nao o Chromium do
+Scrapling. Decisao do dono do produto. O Yahoo falhava em rajadas pelo Chromium
+(ERR_HTTP_RESPONSE_CODE_FAILURE, ate 98%), e a busca abria um navegador frio
+por consulta. Medido nas consultas do Yahoo que tinham acabado de falhar:
+
+    Chromium frio, uma por vez           1 de 20
+    Camoufox frio, uma por vez          20 de 20
+    Camoufox quente, 8 em paralelo      Yahoo 80 de 80 · DuckDuckGo 40 de 40 · 2,4 s por busca
+
+Cada trabalhador guarda UM Camoufox com UM proxy fixo e troca os dois a cada
+`BUSCAS_POR_SESSAO` buscas ou no primeiro erro (`SessaoQuente`). `--chromium`
+volta ao navegador antigo. O Google da reserva continua no Chromium.
+
 O DESENHO, do dono do produto, provado em 22 + 15 ligacoes de Canoas antes de
 entrar aqui (docs/RETOMAR-11-09-2026.md):
 
@@ -92,6 +105,12 @@ MOTORES_EM_USO = ("duckduckgo", "yahoo")
 RESERVA = "google"
 #: O GOOGLE DE QUE SE FALA: a pagina de busca e o Maps. Os dois tem castigo de IP.
 GOOGLES = ("google", "google_maps")
+#: O NAVEGADOR DO DUCKDUCKGO E DO YAHOO: "camoufox" (sessao quente, desde a
+#: noite de 13/09/2026) ou "chromium" (o do Scrapling, frio). Ver o cabecalho.
+NAVEGADOR_WEB = "camoufox"
+#: A SESSAO QUENTE troca de navegador e de IP a cada tantas buscas. No teste
+#: cada sessao fez 15 sem erro; o quanto um IP aguenta ainda nao foi medido.
+BUSCAS_POR_SESSAO = 50
 #: Largura da pagina que vai para o modelo: densidade normal (decisao de 11/09).
 LARGURA = 1366
 ALVO = ("SIM", "SIM_COM_ANALISE_HUMANA")
@@ -292,6 +311,95 @@ def capturar_resultados(consulta, motor, proxy):
             caixa.get("url", ""), "", caixa.get("img"))
 
 
+class SessaoQuente:
+    """Um Camoufox por trabalhador, com um proxy fixo, reaproveitado entre buscas.
+
+    A API sincrona do Playwright nao atravessa threads: cada thread do
+    `ThreadPoolExecutor` guarda o SEU navegador (`threading.local`) e so ela o
+    usa e o fecha. Troca navegador e IP a cada `BUSCAS_POR_SESSAO` buscas, no
+    erro e no bloqueio. `capturar` devolve o mesmo que `capturar_resultados`.
+
+    O GOOGLE TAMBEM, desde a noite de 13/09/2026 (a reserva). Medido na fila da
+    reserva, 8 navegadores quentes: 65 de 68 buscas com resultado, 35 com empresa
+    no endereco, e os 3 bloqueios na PRIMEIRA busca de IPs ja marcados — contra
+    metade bloqueada e 3 buscas/min pelo Chromium frio. Para o Google a sessao
+    abre a pagina inicial antes (cookies), e o IP bloqueado vai para
+    `ao_bloquear` (o castigo de uma hora)."""
+
+    def __init__(self, proximo_ip, ao_bloquear=None):
+        self.proximo_ip = proximo_ip
+        self.ao_bloquear = ao_bloquear
+        self.local = threading.local()
+
+    def _abrir(self, motor):
+        from camoufox.sync_api import Camoufox
+        px = self.proximo_ip()
+        cm = Camoufox(headless=True, proxy=bn_proxy_dict(px), geoip=True, locale="pt-BR")
+        self.local.s = {"cm": cm, "buscas": 0, "px": px}
+        nav = cm.__enter__()
+        page = nav.new_page(viewport={"width": LARGURA, "height": 900})
+        self.local.s["page"] = page
+        if motor in GOOGLES:
+            try:
+                page.goto("https://www.google.com.br/?hl=pt-BR", timeout=45000, wait_until="domcontentloaded")
+                page.wait_for_timeout(2500)
+            except Exception:                                  # noqa: BLE001
+                pass
+
+    def fechar(self):
+        s = getattr(self.local, "s", None)
+        self.local.s = None
+        if s:
+            try:
+                s["cm"].__exit__(None, None, None)
+            except Exception:                                  # noqa: BLE001
+                pass
+
+    def capturar(self, consulta, motor):
+        s = getattr(self.local, "s", None)
+        if s is None or s["buscas"] >= BUSCAS_POR_SESSAO:
+            self.fechar()
+            try:
+                self._abrir(motor)
+            except Exception as e:                             # noqa: BLE001
+                self.fechar()
+                return False, None, [], "", "abrir o Camoufox: %s: %s" % (type(e).__name__, str(e)[:140]), None
+            s = self.local.s
+        s["buscas"] += 1
+        page = s["page"]
+        corpo_js = "() => document.body ? document.body.innerText : ''"
+        try:
+            page.goto(MOTORES[motor] % urllib.parse.quote(consulta), timeout=45000, wait_until="domcontentloaded")
+            if motor in GOOGLES:
+                page.wait_for_timeout(2000)
+                corpo = page.evaluate(corpo_js) or ""
+                # "Verificando sua solicitacao" libera sozinho: ate 6 s a mais
+                for _ in range(3):
+                    if "verificando" not in corpo.lower():
+                        break
+                    page.wait_for_timeout(2000)
+                    corpo = page.evaluate(corpo_js) or ""
+                baixo = corpo.lower()
+                bloq = ("/sorry/" in page.url or "unusual traffic" in baixo or "tráfego incomum" in baixo
+                        or any(b in baixo for b in BLOQUEIO_WEB))
+                resultados = [] if bloq else resultados_do_google(corpo)
+            else:
+                page.wait_for_timeout(1500)
+                resultados = page.evaluate(JS_RESULTADOS[motor]) or []
+                corpo = (page.evaluate(corpo_js) or "")
+                bloq = not resultados and any(b in corpo.lower() for b in BLOQUEIO_WEB)
+            img = page.screenshot(full_page=True, type="jpeg", quality=80)
+            url = page.url
+        except Exception as e:                                 # noqa: BLE001
+            self.fechar()
+            return False, None, [], "", "%s: %s" % (type(e).__name__, str(e)[:160]), None
+        if bloq:
+            if self.ao_bloquear and s.get("px"):
+                self.ao_bloquear(s["px"])
+            self.fechar()
+        return bool(img), bloq, resultados, url, "", img
+
+
 def resultados_do_google(texto):
     """A pagina do Google em blocos (ficha e resultados), para o mesmo filtro."""
     blocos = [b.strip() for b in re.split(r"\n\s*\n", texto or "") if b.strip()]
@@ -321,7 +429,9 @@ class Ritmo:
         with self.trava:
             self.janela.append(bool(bloqueado))
             self.lote.append(bool(bloqueado))
-            if len(self.lote) >= 10:
+            if getattr(self, "fixo", False):
+                self.lote = []
+            elif len(self.lote) >= 10:
                 b = sum(self.lote)
                 antes = self.por_min
                 if b >= 3:
@@ -343,7 +453,11 @@ class Ritmo:
 def sonda():
     """Uma busca so, por um IP do rodizio: 0 se o motor respondeu, 3 se bloqueou."""
     px = bn.rodizio(quantos=500, pais="", embaralhar=True)()
-    if MOTORES_EM_USO[0] in JS_RESULTADOS:
+    if MOTORES_EM_USO[0] in JS_RESULTADOS and NAVEGADOR_WEB == "camoufox":
+        s = SessaoQuente(lambda: px)
+        ok, bloq, _res, url, erro, jpeg = s.capturar(CONSULTA_SONDA, MOTORES_EM_USO[0])
+        s.fechar()
+    elif MOTORES_EM_USO[0] in JS_RESULTADOS:
         ok, bloq, _res, url, erro, jpeg = capturar_resultados(CONSULTA_SONDA, MOTORES_EM_USO[0], px)
     else:
         ok, bloq, texto, url, erro, jpeg = capturar(CONSULTA_SONDA, MOTORES_EM_USO[0], px)
@@ -774,7 +888,18 @@ def rodar(itens, trabalhadores, aplicar):
     # 40 buscas medidas; para eles o ritmo comeca aberto e so freia se o bloqueio
     # aparecer (3 em 10), e o disjuntor continua valendo para todos.
     so_google = all(m in GOOGLES for it in itens for _t, _p, m in it["tarefas"])
-    ritmo = Ritmo() if so_google else Ritmo(por_min=100000.0)
+    # NO CAMOUFOX QUENTE O RITMO DO GOOGLE E FIXO (13/09/2026, noite): o bloqueio
+    # vem em IP ja marcado, a sessao troca o IP e o castiga, e a busca passa na
+    # tentativa seguinte (18 de 440 ficaram bloqueadas). O freio que divide por
+    # dois a cada 3 tentativas bloqueadas levou a rodada de 107 a 5 buscas/min.
+    # Fixo, sem freio; o disjuntor continua valendo. A 40/min os bloqueios
+    # subiram de 8% a 24% em 15 min (madrugada de 14/09): 20/min por padrao,
+    # `RITMO_GOOGLE_QUENTE` muda.
+    if NAVEGADOR_WEB == "camoufox":
+        ritmo = Ritmo(por_min=float(os.environ.get("RITMO_GOOGLE_QUENTE") or 20) if so_google else 100000.0)
+        ritmo.fixo = True
+    else:
+        ritmo = Ritmo() if so_google else Ritmo(por_min=100000.0)
     castigo = {}
     trava_ip = threading.Lock()
 
@@ -795,6 +920,10 @@ def rodar(itens, trabalhadores, aplicar):
     def castigar(px):
         with trava_ip:
             castigo[px] = time.time() + CASTIGO_S
+    # A sessao quente pega o IP pelo mesmo rodizio: na reserva do Google, pulando
+    # o que esta de castigo, e o que bloquear vai para o castigo.
+    quente = (SessaoQuente((lambda: ip_para(RESERVA)) if so_google else proximo, ao_bloquear=castigar)
+              if NAVEGADOR_WEB == "camoufox" else None)
     placar = {"ok_duckduckgo": 0, "ok_yahoo": 0, "ok_google": 0, "com_resultado_no_endereco": 0,
               "bloqueado": 0, "falha": 0}
     trava = threading.Lock()
@@ -816,13 +945,15 @@ def rodar(itens, trabalhadores, aplicar):
         for tentativa in range(1, TENTATIVAS + 1):
             px = ip_para(motor)
             ritmo.esperar()
-            if motor in JS_RESULTADOS:
+            if quente and (motor in JS_RESULTADOS or motor == "google"):
+                ok, bloq, resultados, url, erro, jpeg = quente.capturar(q, motor)
+            elif motor in JS_RESULTADOS:
                 ok, bloq, resultados, url, erro, jpeg = capturar_resultados(q, motor, px)
             else:
                 ok, bloq, texto_pagina, url, erro, jpeg = capturar(q, motor, px)
                 resultados = resultados_do_google(texto_pagina) if ok and not bloq else []
             ritmo.resultado(bloq)
-            if motor in GOOGLES and bloq:
+            if motor in GOOGLES and bloq and not quente:
                 castigar(px)
             if ok and not bloq and jpeg:
                 break
@@ -836,7 +967,8 @@ def rodar(itens, trabalhadores, aplicar):
                "consulta": q, "motor": motor, "bloqueado": bool(bloq), "erro": erro,
                "texto": texto_para_dossie(motor, resultados) if passou else None,
                "resultados": resultados if passou else None, "no_endereco": n_end if passou else None,
-               "navegador": "repositorio", "tentativas": tentativa, "url": url,
+               "navegador": "camoufox" if quente and (motor in JS_RESULTADOS or motor == "google") else "repositorio",
+               "tentativas": tentativa, "url": url,
                "chars_texto": len(texto_pagina) or sum(len(r.get("trecho") or "") for r in resultados),
                "segundos_captura": round(time.time() - t0, 1)}
         if passou:
@@ -861,6 +993,19 @@ def rodar(itens, trabalhadores, aplicar):
 
     with cf.ThreadPoolExecutor(trabalhadores) as ex:
         list(ex.map(um, trabalhos))
+        if quente:
+            # CADA THREAD FECHA O SEU NAVEGADOR. A barreira prende uma tarefa em
+            # cada thread ate todas pegarem a sua, senao uma thread livre pegaria
+            # duas e o navegador de outra ficaria aberto.
+            barreira = threading.Barrier(min(trabalhadores, len(trabalhos)), timeout=120)
+
+            def fechar_meu(_):
+                quente.fechar()
+                try:
+                    barreira.wait()
+                except threading.BrokenBarrierError:
+                    pass
+            list(ex.map(fechar_meu, range(min(trabalhadores, len(trabalhos)))))
     _log("■ busca web pronta · %s%s" % (placar, " · DISJUNTOR ABERTO" if ritmo.aberto else ""))
     return {"ligacoes": len(itens), "consultas": len(trabalhos), **placar}
 
@@ -886,8 +1031,13 @@ def main(argv=None):
                    help="so o Google, para as ligacoes em que DuckDuckGo e Yahoo falharam")
     p.add_argument("--ligacoes-arquivo", dest="ligacoes_arquivo", default=None,
                    help="arquivo com uma ligacao por linha")
+    p.add_argument("--chromium", action="store_true",
+                   help="DuckDuckGo e Yahoo pelo Chromium frio do Scrapling, e nao pelo Camoufox quente")
     p.add_argument("--aplicar", action="store_true")
     a = p.parse_args(argv)
+    global NAVEGADOR_WEB
+    if a.chromium:
+        NAVEGADOR_WEB = "chromium"
     if a.sonda:
         sys.exit(sonda())
     fatia = ler_fatia(a.fatia)
