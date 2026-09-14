@@ -457,10 +457,50 @@ VISAO_GERAL = r"""() => {
   const grande = s => /=w\d+-h\d+(-[a-z0-9-]+)?$/.test(s)
                       ? s.replace(/=w\d+-h\d+(-[a-z0-9-]+)?$/, TAMANHO_FOTO)
                       : s + TAMANHO_FOTO;
-  const fotos = [...new Set([...document.querySelectorAll('img')]
-    .map(i => i.src)
-    .filter(s => /googleusercontent|streetviewpixels/.test(s))
-    .filter(s => !/\/a-?\//.test(s) && !/=w\d{1,2}-h\d{1,2}/.test(s)))]
+  // SO A FOTO DO PROPRIO LUGAR (14/09/2026, dono do produto).
+  //
+  // Ate aqui entrava TODA `<img>` da ficha, e a ficha mostra fotos de OUTROS
+  // lugares: "Lugares tambem pesquisados", "Hoteis semelhantes por perto",
+  // "Aluguel por temporada na regiao". Sem foto propria, a primeira foto
+  // publicada que sobrava era a do vizinho de categoria, e a IA a recebia como
+  // "foto publicada no Google" do lugar — a Marmitt Pizzaria foi julgada com a
+  // foto da Pizzaria Tommatti's. Medido: 2.060 vereditos de Canoas usaram foto
+  // da ficha, 795 com sinal de foto alheia.
+  //
+  // LISTA DO QUE ENTRA, e nao do que sai. As secoes de sugestao mudam de nome
+  // conforme a categoria (hotel tem duas), e uma secao nova que o Google criar
+  // amanha entraria calada numa lista de exclusao. Entram tres lugares, todos
+  // conferidos na sonda de 14/09/2026:
+  //   · a foto de capa — botao "Foto de <nome do lugar>";
+  //   · a grade da secao "Fotos e videos" (Tudo, Mais recentes, Exterior...);
+  //   · foto anexada a uma avaliacao DESTE lugar (`data-review-id`).
+  const nomeLugar = lim((q('h1') || {}).textContent).toLowerCase();
+  const cabecalhos = [...document.querySelectorAll('h2')];
+  const secaoDe = (no) => {
+    let ult = null;
+    for (const h of cabecalhos)
+      if (h.compareDocumentPosition(no) & Node.DOCUMENT_POSITION_FOLLOWING) ult = lim(h.textContent);
+    return ult;
+  };
+  const origemDaFoto = (img) => {
+    let no = img.parentElement;
+    for (let i = 0; i < 8 && no; i++) {
+      const r = lim(no.getAttribute && no.getAttribute('aria-label'));
+      if (/^Foto de /i.test(r))
+        return r.slice(8).toLowerCase() === nomeLugar ? 'capa' : null;
+      if (no.hasAttribute && no.hasAttribute('data-review-id')) return 'avaliacao';
+      no = no.parentElement;
+    }
+    return /^Fotos?( e v[ií]deos)?$/i.test(secaoDe(img) || '') ? 'fotos' : null;
+  };
+  const doLugar = [...document.querySelectorAll('img')]
+    .filter(i => /googleusercontent|streetviewpixels/.test(i.src))
+    .filter(i => !/\/a-?\//.test(i.src) && !/=w\d{1,2}-h\d{1,2}/.test(i.src))
+    .map(i => ({src: i.src, secao: origemDaFoto(i)}));
+  const fotosSecao = {};
+  doLugar.filter(o => o.secao).forEach(o => { fotosSecao[o.src.split('=')[0]] = fotosSecao[o.src.split('=')[0]] || o.secao; });
+  const fotosDescartadas = doLugar.filter(o => !o.secao).length;
+  const fotos = [...new Set(doLugar.filter(o => o.secao).map(o => o.src))]
     .map(s => /streetviewpixels/.test(s) ? s : grande(s));
 
   // A DATA DA FOTO, AMARRADA A FOTO — e nao varrida da pagina.
@@ -502,6 +542,7 @@ VISAO_GERAL = r"""() => {
   const fotosComData = [...document.querySelectorAll('img')]
     .filter(i => /googleusercontent|streetviewpixels/.test(i.src))
     .filter(i => !/\/a-?\//.test(i.src) && !/=w\d{1,2}-h\d{1,2}/.test(i.src))
+    .filter(i => origemDaFoto(i))
     .map(i => ({ src: i.src, data: dataDaImg(i) }))
     .filter(o => o.data);
   const datasFoto = [...new Set(fotosComData.map(o => o.data))].slice(0, 8);
@@ -542,6 +583,8 @@ VISAO_GERAL = r"""() => {
     horarioSemana: horario,
     horariosDePico: pico,
     fotos    : fotos.slice(0, 60),
+    fotosSecao: fotosSecao,
+    fotosDescartadas: fotosDescartadas,
     datasFoto: datasFoto,
     // A FOTO COM A DATA DELA, quando o rotulo a trouxe. A url aqui e a
     // MINIATURA, do jeito que estava no DOM; o pareamento com a lista `fotos`
@@ -652,6 +695,192 @@ RESUMO_AVALIACOES = r"""() => {
                   .filter(t => /^[\wÀ-ÿ' ]{3,24}\s+\d{1,4}$/.test(t)).slice(0, 25)
   };
 }"""
+
+
+# ---------------------------------------------- resultados da web e datas --
+
+# A SECAO "RESULTADOS DA WEB" DA FICHA (14/09/2026, dono do produto).
+#
+# Fica abaixo de "Lugares tambem pesquisados" e traz o que a web diz do lugar:
+# o Instagram, o site, o cardapio, com um trecho de texto. E enriquecimento —
+# a foto dos lugares sugeridos logo acima NAO entra (ver `origemDaFoto`), mas
+# isto entra.
+#
+# OS CARTOES SO NASCEM NA TELA. O titulo "Resultados da Web" existe no DOM
+# desde o carregamento, mas os cartoes sao desenhados quando a secao aparece:
+# lida sem rolar, a secao vem vazia. E as vezes o Google responde "Nao foi
+# possivel exibir resultados da Web" (visto na Panca Cheia) — isso fica
+# registrado como `indisponivel`, para a proxima rodada tentar de novo, e nao
+# como "o lugar nao tem nada na web".
+RESULTADOS_WEB = r"""() => {
+  const lim = s => (s||'').replace(/\s+/g,' ').trim();
+  const h = [...document.querySelectorAll('h2')].find(e => /^Resultados da Web$/i.test(lim(e.textContent)));
+  if (!h) return {estado: 'sem_secao', cartoes: []};
+  const fim = [...document.querySelectorAll('a, button, div')].find(e =>
+      (h.compareDocumentPosition(e) & Node.DOCUMENT_POSITION_FOLLOWING) && /^Sobre esses dados$/i.test(lim(e.textContent)));
+  const dentro = e => (h.compareDocumentPosition(e) & Node.DOCUMENT_POSITION_FOLLOWING)
+                      && (!fim || (e.compareDocumentPosition(fim) & Node.DOCUMENT_POSITION_FOLLOWING));
+  // o texto da secao, do titulo ate "Sobre esses dados", pelo painel inteiro
+  const painel = h.closest('[role="main"]') || document.body;
+  const tudo = painel.innerText || '';
+  const i0 = tudo.indexOf(h.innerText.trim());
+  let texto = i0 >= 0 ? tudo.slice(i0 + h.innerText.trim().length) : '';
+  const i1 = texto.search(/\n\s*Sobre esses dados/i);
+  if (i1 >= 0) texto = texto.slice(0, i1);
+  if (/N[ãa]o foi poss[íi]vel exibir resultados da Web/i.test(texto)) return {estado: 'indisponivel', cartoes: []};
+  // cada cartao abre com o endereco em migalhas: "https://www.instagram.com › _pancacheia"
+  const linhas = texto.split('\n').map(lim).filter(Boolean);
+  const cartoes = [];
+  for (const l of linhas) {
+    if (/^https?:\/\/\S+/.test(l)) cartoes.push({url: l.split(' ')[0], migalha: l.slice(0, 200), titulo: null, trecho: ''});
+    else if (cartoes.length) {
+      const c = cartoes[cartoes.length - 1];
+      if (!c.titulo) c.titulo = l.slice(0, 200);
+      else c.trecho = (c.trecho + ' ' + l).trim().slice(0, 600);
+    }
+  }
+  // o link de verdade, quando a ancora existir (o google embrulha em /url?q=)
+  const hrefs = [...painel.querySelectorAll('a[href]')].filter(dentro).map(a => {
+    const u = a.getAttribute('href') || '';
+    const m = u.match(/[?&](?:q|url)=([^&]+)/);
+    return m && /google\./.test(u) ? decodeURIComponent(m[1]) : u;
+  }).filter(u => /^https?:/.test(u) && !/support\.google|google\.[a-z.]+\/maps/.test(u));
+  cartoes.forEach(c => {
+    const dom = (c.url.match(/^https?:\/\/([^/\s]+)/) || [])[1];
+    const casa = dom && hrefs.find(u => u.includes(dom));
+    if (casa) c.url = casa;
+  });
+  return {estado: cartoes.length ? 'lido' : (texto.trim() ? 'sem_cartao' : 'vazio'), cartoes: cartoes.slice(0, 12)};
+}"""
+
+# Quantas fotos da galeria ganham data. Abrir a galeria custa uma troca de foto
+# por data (~1 s cada, medido na sonda de 14/09/2026); a IA recebe uma ou duas
+# fotos do Maps, e o que importa nelas e ser RECENTE. Por isso a galeria abre
+# por "Mais recentes" quando o lugar tem esse botao, e as primeiras bastam.
+DATAR_FOTOS = int(os.environ.get("RADAR_DATAR_FOTOS") or 6)
+
+# O rotulo da foto aberta no visualizador: "Foto - nov. de 2021" / "Video - ago. de 2021".
+FOTO_ABERTA = r"""() => {
+  const lim = s => (s||'').replace(/\s+/g,' ').trim();
+  const RE = /^(Foto|V[ií]deo)\s*-\s*(jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)\w*\.?\s+de\s+(\d{4})$/i;
+  const e = [...document.querySelectorAll('div,span')].find(x => x.children.length === 0 && RE.test(lim(x.textContent)));
+  const m = e ? lim(e.textContent).match(RE) : null;
+  return {href: location.href, tipo: m ? m[1].toLowerCase() : null, data: m ? (m[2].toLowerCase() + '/' + m[3]) : null};
+}"""
+
+
+def _foto_grande(src):
+    """O mesmo `grande()` do JS: troca o sufixo de tamanho, nunca acrescenta dois."""
+    import re
+    tam = "=w1280-h920-p-k-no"
+    if re.search(r"=w\d+-h\d+(-[a-z0-9-]+)?$", src):
+        return re.sub(r"=w\d+-h\d+(-[a-z0-9-]+)?$", tam, src)
+    return src.split("=")[0] + tam
+
+
+def _imagem_da_url(href):
+    """A foto aberta no visualizador vem na URL da pagina: `!6s<url codificada>`."""
+    import re
+    from urllib.parse import unquote
+    m = re.search(r"!6s(https?[^!]+)", href or "")
+    return unquote(m.group(1)) if m else None
+
+
+async def ler_resultados_web(pg):
+    """Leva a secao "Resultados da Web" ate a tela e le os cartoes. Nunca levanta."""
+    # ROLAR O PAINEL AOS POUCOS, e nao pular direto para o titulo. As secoes de
+    # baixo tambem chegam depois do cabecalho: lida logo apos o `h1`, a ficha
+    # ainda nao tinha o titulo (Panca Cheia: "sem_secao" num teste, secao
+    # presente na sonda). E o `scrollIntoView` sozinho deixou os cartoes da
+    # Marmitt sem desenhar; a rolagem de 700 px por passo da sonda os desenhou.
+    rolar = ("() => { const m = document.querySelector('div[role=\"main\"]');"
+             " const s = m && [m, ...m.querySelectorAll('div')]"
+             ".find(x => x.scrollHeight > x.clientHeight + 50); if (s) s.scrollTop += 700; }")
+    try:
+        r = {"estado": "sem_secao", "cartoes": []}
+        for _ in range(16):
+            await pg.evaluate(rolar)
+            await pg.wait_for_timeout(500)
+            r = await pg.evaluate(RESULTADOS_WEB)
+            if r.get("estado") in ("lido", "indisponivel"):
+                break
+        if r.get("estado") in ("vazio", "sem_cartao"):
+            # o titulo esta na tela e os cartoes nao: a resposta da web ainda vem
+            for _ in range(6):
+                await pg.wait_for_timeout(700)
+                r = await pg.evaluate(RESULTADOS_WEB)
+                if r.get("estado") in ("lido", "indisponivel"):
+                    break
+        return r
+    except Exception as e:                                     # noqa: BLE001
+        return {"estado": "falhou", "erro": str(e)[:120], "cartoes": []}
+
+
+async def datar_fotos(pg, limite=DATAR_FOTOS):
+    """Abre a galeria e le a data das primeiras fotos. Devolve [{src, data, recente}].
+
+    A data so existe no visualizador — a grade da ficha nao a escreve (0 de
+    71.547 fotos com data ate 14/09/2026). Cada foto aberta poe a URL da imagem
+    no endereco da pagina (`!6s...`), e e por ela que a data casa com a foto:
+    pelo id antes do `=`, o mesmo pareamento de `fotosComData`.
+
+    "Mais recentes" primeiro: e a ordem que interessa ao veredito. Sem esse
+    botao (lugar com poucas fotos), a capa. Street View no meio da galeria nao
+    conta — ele ja tem data propria, da API de metadados.
+    """
+    saida, vistos = [], set()
+    try:
+        # `count()` nao espera: logo depois de voltar a visao geral a grade
+        # ainda nao existe, e o hotel do teste caiu na capa com "Mais recentes"
+        # na pagina. Espera-se a capa, que vem antes da grade.
+        try:
+            await pg.wait_for_selector('button[aria-label^="Foto de"]', timeout=6000)
+            await pg.wait_for_timeout(500)
+        except Exception:                                      # noqa: BLE001
+            pass
+        botao = pg.locator('button[aria-label^="Mais recentes"]')
+        recentes = await botao.count() > 0
+        if not recentes:
+            botao = pg.locator('button[aria-label^="Foto de"]')
+            if await botao.count() == 0:
+                return saida
+            # CAPA DE STREET VIEW = LUGAR SEM FOTO PUBLICADA. A galeria abriria o
+            # panorama, e cada seta giraria a camera sem nunca dar uma data
+            # (55 s na Marmitt Pizzaria no teste de 14/09/2026).
+            capa = await botao.first.evaluate("b => (b.querySelector('img') || {}).src || ''")
+            if "streetviewpixels" in capa:
+                return saida
+        await botao.first.click(timeout=8000)
+        anterior, sem_data = None, 0
+        for _ in range(limite * 2):
+            # espera a foto trocar pelo endereco, e nao por relogio
+            for _ in range(20):
+                f = await pg.evaluate(FOTO_ABERTA)
+                if f["href"] != anterior and (f["data"] or "streetview" in f["href"]):
+                    break
+                await pg.wait_for_timeout(200)
+            anterior = f["href"]
+            img = _imagem_da_url(f["href"])
+            if img and "googleusercontent" in img and f["data"]:
+                chave = img.split("=")[0]
+                if chave in vistos:
+                    break                                  # deu a volta
+                vistos.add(chave)
+                saida.append({"src": img, "data": f["data"], "tipo": f["tipo"],
+                              "recente": recentes})
+                sem_data = 0
+                if len(saida) >= limite:
+                    break
+            else:
+                # duas seguidas sem data: acabaram as fotos e comecou o Street View
+                sem_data += 1
+                if sem_data >= 2:
+                    break
+            await pg.keyboard.press("ArrowRight")
+        await pg.keyboard.press("Escape")
+    except Exception:                                          # noqa: BLE001
+        pass
+    return saida
 
 
 async def ordenar_recentes(pg):
@@ -1085,6 +1314,10 @@ async def _extrair_do_ponto(pg, alvo, navegar=True):
         d["lat"], d["lng"] = alvo["lat"], alvo["lng"]
         d["url"] = pg.url
 
+        # "Resultados da Web" ANTES das avaliacoes: a secao mora na visao
+        # geral, e a aba de avaliacoes a tira da pagina.
+        d["resultadosWeb"] = await ler_resultados_web(pg)
+
         # As avaliacoes sao a parte OPCIONAL. Se elas falharem, o POI continua
         # valendo: nome, categoria, endereco e telefone ja estao em `d`. Antes
         # uma falha aqui jogava tudo fora — 8 POIs perdidos por um clique numa
@@ -1101,6 +1334,33 @@ async def _extrair_do_ponto(pg, alvo, navegar=True):
         for campo in ("histograma", "totalAval", "resumoIA", "assuntos"):
             if resumo.get(campo):
                 d[campo] = resumo[campo]
+
+        # A DATA DAS FOTOS, POR ULTIMO: abrir a galeria troca a pagina, e o que
+        # vem antes (avaliacoes) nao pode depender de voltar dela. Volta-se a
+        # visao geral, onde moram a capa e o botao "Mais recentes".
+        if DATAR_FOTOS > 0:
+            try:
+                await clicar_aba(pg, r"vis[ãa]o geral|overview")
+                await pg.wait_for_timeout(800)
+                datadas = await datar_fotos(pg)
+            except Exception:                                  # noqa: BLE001
+                datadas = []
+            if datadas:
+                d.setdefault("fotosComData", []).extend(
+                    {"src": o["src"], "data": o["data"]} for o in datadas)
+                secao = d.setdefault("fotosSecao", {})
+                ja = {u.split("=")[0] for u in (d.get("fotos") or [])}
+                # AS DATADAS VAO NA FRENTE. Sao as que o veredito deve ver
+                # primeiro — e as de "Mais recentes" podem nem estar na grade.
+                novas = []
+                for o in datadas:
+                    chave = o["src"].split("=")[0]
+                    secao.setdefault(chave, "recentes" if o["recente"] else "galeria")
+                    if chave not in ja:
+                        novas.append(_foto_grande(o["src"]))
+                        ja.add(chave)
+                d["fotos"] = (novas + list(d.get("fotos") or []))[:60]
+            d["fotosDatadas"] = len(datadas)
 
         d["cobradas"] = len(cobradas)
         return d
@@ -1330,11 +1590,22 @@ def _gravar_um_cru(con, poi_id, d):
         # por que: elas sao a TRAVA DA FILA desta etapa, marcadas la em cima
         # quando a maquina PEGA o POI — antes de o Maps ter dito qualquer coisa.
         # Estado de processo, e nao dado do Maps. Elas moram na `pois`.
+        # OS "RESULTADOS DA WEB" DA FICHA (migracao 0111) ficam aqui, e nao nas
+        # colunas `instagram`/`website` da `pois`: a secao lista o que a web
+        # ACHOU perto do nome — na Panca Cheia veio uma imobiliaria "perto de
+        # Panca Cheia" junto do Instagram certo. E prova para ler, nao cadastro.
+        # `indisponivel` (o Google nao exibiu) nao apaga o que uma rodada
+        # anterior leu.
+        _web = d.get("resultadosWeb") or {}
+        _web_estado = _web.get("estado")
+        _web_cartoes = (json.dumps(_web.get("cartoes") or [], ensure_ascii=False)
+                        if _web_estado in ("lido", "sem_cartao", "vazio", "sem_secao") else None)
         k.execute("""
             insert into radar_comercial.maps_data
                    (poi_id, id_empresa, place_id, maps_url, plus_code,
                     avaliacao, total_avaliacoes, resumo_avaliacoes,
-                    status_horario)
+                    status_horario, resultados_web, resultados_web_estado,
+                    resultados_web_em)
             select %s, p.id_empresa,
                    -- SO O PLACE_ID DO GOOGLE ENTRA AQUI. A coluna `pois.place_id`
                    -- carrega duas coisas incompativeis: o id do Google e o
@@ -1346,7 +1617,8 @@ def _gravar_um_cru(con, poi_id, d):
                    case when p.place_id like 'estadual:%%' then null
                         else p.place_id end,
                    %s, %s,
-                   nullif(%s::text,'')::numeric, %s, %s, %s
+                   nullif(%s::text,'')::numeric, %s, %s, %s,
+                   %s::jsonb, %s, case when %s::text is null then null else now() end
               from radar_comercial.pois p where p.id = %s
             on conflict (poi_id) do update set
                    maps_url          = coalesce(excluded.maps_url, maps_data.maps_url),
@@ -1354,9 +1626,13 @@ def _gravar_um_cru(con, poi_id, d):
                    avaliacao         = excluded.avaliacao,
                    total_avaliacoes  = excluded.total_avaliacoes,
                    resumo_avaliacoes = excluded.resumo_avaliacoes,
-                   status_horario    = excluded.status_horario""",
+                   status_horario    = excluded.status_horario,
+                   resultados_web    = coalesce(excluded.resultados_web, maps_data.resultados_web),
+                   resultados_web_estado = coalesce(excluded.resultados_web_estado, maps_data.resultados_web_estado),
+                   resultados_web_em = coalesce(excluded.resultados_web_em, maps_data.resultados_web_em)""",
             (poi_id, d.get("url"), d.get("plusCode"), _nota,
              d.get("totalAval"), d.get("resumoIA"), d.get("statusHorario"),
+             _web_cartoes, _web_estado, _web_cartoes,
              poi_id))
 
         k.execute("delete from radar_comercial.comentarios where poi_id=%s",
@@ -1400,11 +1676,23 @@ def _gravar_um_cru(con, poi_id, d):
             src = (o or {}).get("src") or ""
             if src and o.get("data"):
                 por_id[src.split("=")[0]] = o["data"]
-        for i, u in enumerate(d.get("fotos") or []):
+        # `secao` (migracao 0111): de onde da ficha a foto veio — capa, fotos,
+        # avaliacao, recentes, galeria. Foto sem secao nao chega mais aqui.
+        secoes = d.get("fotosSecao") or {}
+        # UMA LINHA POR IMAGEM. A capa aparece na ficha em dois tamanhos, e o
+        # `Set` do JS compara a url antes da troca de sufixo: a mesma foto vinha
+        # duas vezes (Panca Cheia, ordem 0 e 2).
+        unicas, _vistas = [], set()
+        for u in (d.get("fotos") or []):
+            if u.split("=")[0] not in _vistas:
+                _vistas.add(u.split("=")[0])
+                unicas.append(u)
+        for i, u in enumerate(unicas):
             k.execute("""insert into radar_comercial.images_urls
-                           (poi_id, fonte, url, ordem, data_imagem)
-                         values (%s,'maps',%s,%s,%s)""",
-                      (poi_id, u, i, _mes_ano(por_id.get(u.split("=")[0]))))
+                           (poi_id, fonte, url, ordem, data_imagem, secao)
+                         values (%s,'maps',%s,%s,%s,%s)""",
+                      (poi_id, u, i, _mes_ano(por_id.get(u.split("=")[0])),
+                       secoes.get(u.split("=")[0])))
     con.commit()
     return n_com
 
