@@ -258,8 +258,12 @@ def feitas_na_rodada(placar):
 
 
 def rodar(limite, aplicar, trabalhadores, modelo, ligacoes, cidade, exigir_busca, vinculo_novo,
-          adiar_grandes=0, so_grandes=0):
-    al.PULAR_SEM_IMAGEM = bool(exigir_busca)
+          adiar_grandes=0, so_grandes=0, julgar_sem_foto=False):
+    # JULGAR SEM FOTO (dono do produto, 14/09/2026): a ligacao cujo registro mais
+    # perto fica a mais de `dossie_ligacao.RAIO_DA_FOTO_M` do hidrometro nunca tera
+    # foto no dossie — capturar a foto do POI nao resolve. Com a flag, ela e julgada
+    # so com registros e busca, em vez de ficar para o fim para sempre.
+    al.PULAR_SEM_IMAGEM = bool(exigir_busca) and not julgar_sem_foto
     con = bc.conectar()
     alvos = al.fila(con, 0 if so_grandes else limite, False, ligacoes, sem_catalogo=True,
                     exigir_busca=exigir_busca, vinculo_novo=vinculo_novo, cidade=cidade,
@@ -382,6 +386,8 @@ def main(argv=None):
                    help="o laco dos predios: so as ligacoes com mais de N POIs")
     p.add_argument("--ligacoes-arquivo", dest="ligacoes_arquivo", default=None,
                    help="arquivo com uma ligacao por linha (a reavaliacao das 22 mil nao cabe na linha de comando)")
+    p.add_argument("--julgar-sem-foto", dest="julgar_sem_foto", action="store_true",
+                   help="julga tambem a ligacao sem foto a ate 60 m do hidrometro, so com registros e busca")
     p.add_argument("--prompt-antigo", dest="prompt_antigo", action="store_true",
                    help="rejulga as ligacoes (da --cidade) cujo veredito veio de outro processo que nao o atual")
     p.add_argument("--aplicar", action="store_true")
@@ -399,7 +405,7 @@ def main(argv=None):
             al._log("nenhuma ligação julgada por outro processo")
             return 0
     r = rodar(a.limite, a.aplicar, a.trabalhadores, a.modelo, ligs or None, a.cidade, a.exigir_busca,
-              a.vinculo_novo, a.adiar_grandes, a.so_grandes)
+              a.vinculo_novo, a.adiar_grandes, a.so_grandes, a.julgar_sem_foto)
     return 1 if r.get("erro") else 0
 
 
