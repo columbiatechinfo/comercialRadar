@@ -53,7 +53,7 @@ import sys
 import base_comum as bc
 import provas_datadas as pdat
 
-REGRA = "checagem do codigo de 15/09/2026 v4 (número, complemento, prova recente, 2 fontes, fonte única, rede social, vizinho, aluga/vende)"
+REGRA = "checagem do codigo de 15/09/2026 v5 (número, complemento, cada fonte com prova recente, fonte única, rede social, vizinho, ficha do Maps, aluga/vende e anúncio)"
 
 #: AS FONTES INDEPENDENTES (dono do produto, 14 e 15/09/2026). Cada uma conta uma vez; o Serasa e a
 #: Casa dos Dados SAO a Receita — a IA do teste contou "Receita" e "Serasa" como duas e aprovou.
@@ -179,10 +179,23 @@ def fontes_confirmadas(resposta, fotos=None):
     return sorted(fs & FONTES_INDEPENDENTES)
 
 
+#: ARTE DE DIVULGACAO NAO E FOTO DO LUGAR (auditoria das aprovadas do R_000, 296679 e 335469): com o prompt reforcado a
+#: IA ainda escrevia "Arte com logo e dados de contato" e contava a imagem. O codigo le a descricao que ela mesma deu.
+RE_ARTE = re.compile(r"\b(arte|artes|card|flyer|folder|panfleto|divulgacao|montagem|ilustracao|captura de tela|"
+                     r"print de tela|post promocional|banner digital|cartaz digital|imagem promocional)\b")
+
+
+def _sem_acento(t):
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFD", str(t or "").lower()) if unicodedata.category(c) != "Mn")
+
+
 def imagem_tem_sinal(resposta):
     """A IA descreveu um sinal concreto de uso na imagem (letreiro, vitrine, porta de loja, patio...)."""
     f = (resposta or {}).get("fotos") or {}
     sinal = str(f.get("sinal") or "").strip().lower() if isinstance(f, dict) else ""
+    if isinstance(f, dict) and RE_ARTE.search(_sem_acento("%s %s" % (sinal, f.get("o_que_mostram") or ""))):
+        return False
     return bool(f.get("confirmam")) and sinal not in _SEM_SINAL and not sinal.startswith("nenhum")
 
 
@@ -233,6 +246,75 @@ def vago_depois_das_provas(ctx, validos, fotos, redes=()):
                           % (pdat.mes_ano(dt_foto), ("mais nova que a última prova de atividade (%s)" % pdat.mes_ano(ultima))
                              if ultima else "e não há prova de atividade datada depois dela"))
     return False, None
+
+
+def fontes_com_prova_recente(ctx, validos, resposta, fotos):
+    """{fonte: prova}: CADA FONTE COM A PROPRIA PROVA DE ATE 2 ANOS (dono do produto, 15/09/2026). A auditoria das
+    aprovadas do R_000 achou a Receita de ago/2026 somando com a base estadual SEM DATA (304938), com o post de 2018
+    (344980) e com a busca web que so repetia a ficha do Maps (319419): uma prova recente e uma fonte velha ou sem
+    data aprovavam. Aqui a fonte so vale com a prova datada DELA, lida do banco — nunca da data que a IA escreveu:
+    Receita pelo CNPJ ativo na base; Google Maps pelo comentario de cliente (a foto do Google so pela imagem que a
+    IA disse mostrar o lugar, com a data do rotulo); iFood pela loja vista; base estadual pela data que publica;
+    foto de rua pela data do rotulo; rede social pela data do post. A busca web nunca e fonte por si."""
+    saida = {}
+    nomes = {"receita": "receita", "ifood": "ifood", "estadual": "base estadual"}
+    for pid in validos or []:
+        for p in (ctx.provas.get(pid) or {}).get("provas") or []:
+            if not p.get("recente") or not p.get("data"):
+                continue
+            f = nomes.get(p.get("fonte"))
+            if p.get("fonte") == "maps" and "avaliação" in str(p.get("o_que") or ""):
+                f = "google maps"
+            if f and f not in saida:
+                saida[f] = "#%s %s" % (pid, p.get("o_que"))
+    fo = (resposta or {}).get("fotos") or {}
+    if isinstance(fo, dict) and fo.get("confirmam") and imagem_tem_sinal(resposta):
+        for n in fo.get("quais") or []:
+            try:
+                rot = (fotos or [])[int(n) - 1]
+            except (TypeError, ValueError, IndexError):
+                continue
+            fi, dt = fonte_da_imagem(rot), pdat.data_do_rotulo(rot)
+            if fi and dt and pdat.recente(dt) and fi not in saida:
+                saida[fi] = "imagem %s de %s" % (n, pdat.mes_ano(dt))
+    for x in (resposta or {}).get("_redes") or []:
+        dt = pdat.data_de_texto(x.get("data"))
+        rede = str(x.get("rede") or "").lower()
+        if dt and pdat.recente(dt) and rede and rede not in saida:
+            saida[rede] = "post no %s de %s" % (x.get("rede"), pdat.mes_ano(dt))
+    return saida
+
+
+def _ultima_prova_de_atividade(ctx, validos, redes=()):
+    """A data mais recente que diz que o negocio segue ativo: Google, iFood, base estadual e post de rede social.
+    O CNPJ ativo e o CNEFE nao dizem se o imovel segue ocupado."""
+    datas = [p["data"] for pid in validos for p in ((ctx.provas.get(pid) or {}).get("provas") or [])
+             if p.get("fonte") in ("maps", "ifood", "estadual") and p.get("data")]
+    datas += [pdat.data_de_texto(x.get("data")) for x in redes or [] if x.get("data")]
+    datas = [d for d in datas if d]
+    return max(datas) if datas else None
+
+
+def contraprova_de_anuncio(con, ctx, lig, validos, redes=()):
+    """ANUNCIO DE ALUGUEL OU VENDA DO IMOVEL NA BUSCA, DATADO E MAIS NOVO QUE A ULTIMA PROVA DE ATIVIDADE (auditoria
+    das aprovadas do R_000, 333197: casa a venda anunciada em mar/2026 e a IA aprovou a doceria). Sem data no trecho
+    nao conta: anuncio antigo de outro momento do imovel nao desmente o negocio."""
+    try:
+        import fonte_da_busca as fdb
+        with con.cursor() as k:
+            anuncios = [a for a in fdb.anuncios_no_endereco(k, lig) if a.get("data")]
+    except Exception:                                          # noqa: BLE001
+        return None
+    if not anuncios:
+        return None
+    ultima = _ultima_prova_de_atividade(ctx, validos, redes)
+    a = max(anuncios, key=lambda x: x["data"])
+    dt = pdat.data_de_texto(a["data"])
+    if dt and (not ultima or dt >= ultima):
+        return ("anúncio de aluguel/venda do imóvel na busca de %s, %s" % (pdat.mes_ano(dt), (
+            "mais novo que a última prova de atividade (%s)" % pdat.mes_ano(ultima)) if ultima else
+            "sem prova de atividade datada depois dele"))
+    return None
 
 
 def processo_leve(processo):
@@ -477,12 +559,17 @@ def decidir(ctx, validos, perdeu_por_duvida, lig=None, resposta=None, fotos=None
         imovel = (resposta or {}).get("imovel") or {}
         if isinstance(imovel, dict) and str(imovel.get("estado") or "") == "abandonado":
             return "revisao_humana", "a IA viu o imóvel abandonado ou sem uso: %s" % (imovel.get("por") or "")
-        fs = fontes_confirmadas(resposta, fotos)
+        fs_ia = fontes_confirmadas(resposta, fotos)
+        recentes = fontes_com_prova_recente(ctx, validos, resposta, fotos)
+        fs = [f for f in fs_ia if f in recentes]
         if len(fs) < 2:
             basta, texto_unica = fonte_unica_basta(ctx, validos, resposta, fotos)
             if not basta:
-                return "revisao_humana", ("só %d fonte confirma o uso (%s) e ela não basta sozinha: %s"
-                                          % (len(fs), ", ".join(fs) or "nenhuma", texto_unica))
+                sem = [f for f in fs_ia if f not in recentes]
+                return "revisao_humana", ("só %d fonte com prova de até 2 anos confirma o uso (%s)%s e ela não basta "
+                                          "sozinha: %s" % (len(fs), ", ".join(fs) or "nenhuma",
+                                                           ("; sem prova recente própria: " + ", ".join(sem)) if sem else "",
+                                                           texto_unica))
     if all(ctx.e_mei(p) for p in validos):
         return "revisao_humana", "aprovada só por MEI (%s)" % ", ".join("#%s" % p for p in validos)
     # REGRA 4: a qualificacao SIM com analise humana nao aprova sozinha.
@@ -511,7 +598,9 @@ def revisar(con, aplicar=False, log=print, saida_antes=None):
     todos = set()
     for lig, v, resp, ids, proc, chk, just, fotos in linhas:
         lig = str(lig)
-        b = base_da_aprovacao(resp, proc)
+        # a resposta que a checagem conferiu (vizinho, ficha do Maps, redes) e a base que ela usou, quando gravadas
+        resp = (chk or {}).get("resposta_checada") or resp
+        b = (chk or {}).get("base") or base_da_aprovacao(resp, proc)
         base[lig] = (b, ids or [])
         info[lig] = (v, chk or {}, just, proc)
         resposta_de[lig], fotos_de[lig] = resp or {}, fotos or []
@@ -563,9 +652,14 @@ def revisar(con, aplicar=False, log=print, saida_antes=None):
             continue
         v_novo, porque = decidir(ctx, validos[lig], lig in duvida and not validos[lig], lig,
                                  resposta_de[lig], fotos_de[lig], proc)
+        if v_novo == "aprovado" and chk.get("contraprova"):
+            v_novo, porque = "revisao_humana", chk["contraprova"]
         placar["%s -> %s" % (v_ia, v_novo)] += 1
         novo_chk = {"regra": REGRA, "veredito_ia": v_ia, "veredito": v_novo, "porque": porque,
                     "validos": validos[lig], "removidos": removidos[lig], "em": agora}
+        for chave in ("resposta_checada", "base", "contraprova", "redes_sociais", "ficha_do_maps"):
+            if chave in chk:
+                novo_chk[chave] = chk[chave]
         mesmo = (v_novo == v_atual and (chk.get("validos") == validos[lig])
                  and (chk.get("removidos") == removidos[lig]) and chk.get("porque") == porque)
         if mesmo or (not chk and v_novo == v_atual and not removidos[lig]):
@@ -633,12 +727,16 @@ def checar_uma(con, lig, v, resposta, ids, processo="enxuto de 12/09/2026", foto
     ctx = Contexto(con, [lig], [_pid(x) for x in b if _pid(x) is not None] + list(ids or []))
     validos, removidos = validar(ctx, lig, b, ids, resposta)
     v_novo, porque = decidir(ctx, validos, False, lig, resposta, fotos, processo)
-    if v_novo == "aprovado":
-        vago, texto = vago_depois_das_provas(ctx, validos, fotos, redes)
-        if vago:
-            v_novo, porque = "revisao_humana", texto
+    # AS CONTRAPROVAS FICAM GRAVADAS (auditoria das aprovadas do R_000): o fim de rodada (`revisar`) refazia a decisao
+    # so com `decidir` e reaprovava o que a placa de aluga/vende, a ficha do Maps vazia, a placa do vizinho e a rede
+    # social nao confirmada tinham segurado.
+    _vago, contraprova = vago_depois_das_provas(ctx, validos, fotos, redes)
+    contraprova = contraprova or contraprova_de_anuncio(con, ctx, lig, validos, redes)
+    if v_novo == "aprovado" and contraprova:
+        v_novo, porque = "revisao_humana", contraprova
     return v_novo, {"regra": REGRA, "veredito_ia": v, "veredito": v_novo, "porque": porque,
                     "validos": validos, "removidos": removidos, "redes_sociais": redes, "ficha_do_maps": ficha_vazia,
+                    "resposta_checada": resposta, "base": b, "contraprova": contraprova,
                     "em": datetime.datetime.now().isoformat(timespec="seconds")}
 
 

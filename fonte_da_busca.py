@@ -152,6 +152,28 @@ def na_cidade(texto, cidade, cep):
     return (len(cid) > 2 and (" %s " % cid) in t) or (len(c) == 8 and c in re.sub(r"\D", "", str(texto or "")))
 
 
+def anuncios_no_endereco(cur, ligacao):
+    """[{motor, data, url, texto}]: resultado da busca NO ENDERECO (com a cidade ou o CEP) que anuncia o imovel para
+    alugar ou vender, com a data do trecho quando o buscador mostra (auditoria das aprovadas do R_000, 333197)."""
+    cur.execute("""select motor, resultados from radar_comercial.busca_web
+                    where ligacao = %s and tipo = 'endereco' and not bloqueado and resultados is not null""", (str(ligacao),))
+    linhas = cur.fetchall()
+    if not linhas:
+        return []
+    cidade, cep = cidade_e_cep(cur, ligacao)
+    saida = []
+    for motor, res in linhas:
+        for x in res or []:
+            if not isinstance(x, dict) or not x.get("no_endereco"):
+                continue
+            texto = " ".join(("%s %s" % (x.get("titulo") or "", x.get("trecho") or "")).split())
+            if not e_anuncio(texto) or (cidade and not na_cidade(texto, cidade, cep)):
+                continue
+            dt = data_do_trecho(x.get("trecho")) or data_do_trecho(x.get("titulo"))
+            saida.append({"motor": motor, "data": dt.isoformat() if dt else None, "url": x.get("url"), "texto": texto[:200]})
+    return saida
+
+
 def anotar_texto(texto, cidade=None, cep=None):
     """O texto da busca (`busca_web.texto`) com a FONTE e a data de cada resultado na linha do titulo; o anuncio de
     aluguel/venda marcado como contraprova; e, com a cidade, fora o resultado que nao cita nem a cidade nem o CEP."""
