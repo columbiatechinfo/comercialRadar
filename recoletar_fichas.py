@@ -34,6 +34,27 @@ SQL_DOS_VEREDITOS = """
      where r->>'tipo' = 'foto publicada' and r->>'poi' ~ '^[0-9]+$'"""
 
 
+def pois_das_ligacoes(con, arquivo, horas=24):
+    """Os POIs do Maps das ligacoes do arquivo que precisam da ficha nova (15/09/2026): nunca lidos pelo
+    extrator de 14/09 (sem `resultados_web_estado`), ou com foto sem data lida ha mais de 1 dia — o datador
+    repassa sem ficar em laco no mesmo POI."""
+    ligs = [x.strip() for x in open(arquivo) if x.strip()]
+    with con.cursor() as k:
+        k.execute("""select distinct p.id from radar_comercial.ligacao_poi lp
+                       join radar_comercial.pois p on p.id = lp.poi_id
+                       left join radar_comercial.maps_data m on m.poi_id = p.id
+                      where lp.ligacao = any(%s) and lp.descartado_em is null and p.fundido_em is null
+                        and p.place_id like 'ChIJ%%'
+                        and (m.resultados_web_estado is null
+                             or (m.resultados_web_em < now() - make_interval(hours => %s)
+                                 and exists (select 1 from radar_comercial.images_urls i
+                                              where i.poi_id = p.id and i.data_imagem is null
+                                                and i.url like '%%googleusercontent%%')))""", (ligs, horas))
+        r = [x[0] for x in k.fetchall()]
+    con.commit()
+    return r
+
+
 def _alvos(con, ids, retomar):
     with con.cursor() as k:
         k.execute("""select p.id, p.place_id from radar_comercial.pois p
@@ -53,6 +74,8 @@ async def main(a):
             k.execute(SQL_DOS_VEREDITOS)
             ids = [x[0] for x in k.fetchall()]
         con.commit()
+    elif a.ligacoes_arquivo:
+        ids = pois_das_ligacoes(con, a.ligacoes_arquivo, a.sem_data_apos_horas)
     else:
         ids = [int(x) for x in open(a.arquivo).read().split() if x.strip().isdigit()]
     alvos = _alvos(con, ids, a.retomar)
@@ -147,12 +170,16 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--arquivo")
     p.add_argument("--dos-vereditos", dest="dos_vereditos", action="store_true")
+    p.add_argument("--ligacoes-arquivo", dest="ligacoes_arquivo",
+                   help="os POIs do Maps dessas ligacoes que precisam da ficha nova ou de data nas fotos")
+    p.add_argument("--sem-data-apos-horas", dest="sem_data_apos_horas", type=int, default=24,
+                   help="com --ligacoes-arquivo: repassa o POI com foto sem data lido ha mais de N horas (0 = sempre)")
     p.add_argument("--navegadores", type=int, default=6)
     p.add_argument("--por-ip", dest="por_ip", type=int, default=25)
     p.add_argument("--limite", type=int, default=0)
     p.add_argument("--retomar", action="store_true")
     p.add_argument("--cookie", default="/app/estado/cookie_maps.json")
     a = p.parse_args()
-    if not a.arquivo and not a.dos_vereditos:
-        p.error("--arquivo ou --dos-vereditos")
+    if not a.arquivo and not a.dos_vereditos and not a.ligacoes_arquivo:
+        p.error("--arquivo, --dos-vereditos ou --ligacoes-arquivo")
     asyncio.run(main(a))

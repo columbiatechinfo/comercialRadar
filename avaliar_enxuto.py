@@ -618,6 +618,9 @@ def main(argv=None):
                    help="julga tambem a ligacao sem foto a ate 60 m do hidrometro, so com registros e busca")
     p.add_argument("--prompt-antigo", dest="prompt_antigo", action="store_true",
                    help="rejulga as ligacoes (da --cidade) cujo veredito veio de outro processo que nao o atual")
+    p.add_argument("--listar-fila", dest="listar_fila", default=None,
+                   help="so escreve a fila (a mesma que o julgamento pegaria) neste arquivo e sai — o lote do laco "
+                        "recaptura ficha, fotos, foto de rua e ficha do CNPJ dessas ligacoes antes de julgar")
     p.add_argument("--leve", action="store_true",
                    help="o processo leve de 15/09/2026: foto de rua de frente, fichas em texto, comentarios, saida curta")
     p.add_argument("--aplicar", action="store_true")
@@ -627,6 +630,17 @@ def main(argv=None):
     if a.saida:
         os.makedirs(a.saida, exist_ok=True)
         SAIDA = a.saida
+    if a.listar_fila:
+        con = bc.conectar()
+        try:
+            alvos = al.fila(con, a.limite, False, None, sem_catalogo=True, exigir_busca=a.exigir_busca,
+                            vinculo_novo=a.vinculo_novo, cidade=a.cidade, adiar_grandes=a.adiar_grandes)
+        finally:
+            con.close()
+        with open(a.listar_fila, "w") as f:
+            f.write("".join("%s\n" % x for x in alvos))
+        al._log("   fila: %d ligação(ões) em %s" % (len(alvos), a.listar_fila))
+        return 0
     ligs = list(a.ligacao or [])
     if a.ligacoes_arquivo:
         ligs += [x.strip() for x in open(a.ligacoes_arquivo) if x.strip()]
