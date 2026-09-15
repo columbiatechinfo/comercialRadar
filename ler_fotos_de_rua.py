@@ -22,19 +22,13 @@ import avaliar_enxuto as ae  # noqa: E402
 import avaliar_ligacao as al  # noqa: E402
 import base_comum as bc  # noqa: E402
 import descrever_imagens as di  # noqa: E402
+import fachada_da_seta as fds  # noqa: E402
 
 LARGURA = 1088
-PROMPT = """Esta é uma foto de rua (Street View). A seta verde aponta o imóvel investigado; a coordenada pode ter alguns metros de erro, então considere também os imóveis colados à ponta da seta. O quadro escuro no canto inferior direito é uma planta vista de cima (rua, câmera, cone da visada e o ponto da seta): não é parte do lugar, não liste nada dele.
-
-Examine a FOTO INTEIRA, com atenção a detalhes pequenos, e liste o texto escrito que aparece: placas, letreiros, faixas, banners, adesivos, anúncios pintados em parede ou muro, toldos, telefones, nomes comerciais, placas de aluga/vende. No máximo 15 textos, os mais importantes; texto longo, só o essencial em até 8 palavras. Não liste marca d'água do Google, nome de rua nem a distância da seta.
-
-Liste também sinais de atividade não residencial SEM texto: vitrine com mercadoria, porta de loja aberta, balcão, mesas de bar, oficina com carros ou peças em serviço, pátio com caminhões ou máquinas, material à venda, sucata, marcador de estabelecimento do Google sobre o imóvel. Portão de garagem de casa e porta fechada de casa NÃO são sinal.
-
-Responda SOMENTE um JSON:
-{"textos": [{"texto": "<o que está escrito>", "tipo": "letreiro|placa|faixa|pintura|adesivo|toldo|aluga_vende|outro", "onde": "no_imovel_da_seta|colado_ao_imovel|longe"}],
- "sinais_sem_texto": [{"sinal": "<o que se vê>", "onde": "no_imovel_da_seta|colado_ao_imovel|longe"}],
- "uso_nao_residencial_no_imovel": true|false,
- "resumo": "<até 20 palavras>"}"""
+# A LEITURA POR FACHADA (15/09/2026): a IA lista cada fachada com caixa, textos e sinais; qual e a da seta o
+# codigo decide (`fachada_da_seta`). A leitura antiga ("no imovel da seta / colado / longe") punha a placa do
+# vizinho no imovel.
+PROMPT = fds.PROMPT
 
 
 def _log(m):
@@ -58,11 +52,11 @@ def alvos(con, ligacoes):
     if pois:
         cur.execute("""select poi_id from radar_comercial.poi_evidencia
                         where poi_id = any(%s) and tipo = 'sv_frente' and dados is not null
-                          and (leitura is null or leitura_em < capturado_em)""", (sorted(pois),))
+                          and (leitura is null or leitura_em < capturado_em or not leitura ? 'fachadas')""", (sorted(pois),))
         saida += [("poi_evidencia", r[0]) for r in cur.fetchall()]
     cur.execute("""select ligacao from radar_comercial.ligacao_evidencia
                     where ligacao = any(%s) and tipo = 'sv_frente' and dados is not null
-                      and (leitura is null or leitura_em < capturado_em)""", (sorted(set(ligacoes)),))
+                      and (leitura is null or leitura_em < capturado_em or not leitura ? 'fachadas')""", (sorted(set(ligacoes)),))
     saida += [("ligacao_evidencia", r[0]) for r in cur.fetchall()]
     con.rollback()
     return saida
@@ -95,7 +89,7 @@ def main(argv=None):
         r = None
         for tentativa in (1, 2):
             try:
-                r = di._chat_local(al.MODELO_PADRAO, PROMPT, [img], max_tokens=1500, timeout=600)
+                r = di._chat_local(al.MODELO_PADRAO, PROMPT, [img], max_tokens=3000, timeout=600)
                 break
             except Exception as e:                                  # noqa: BLE001
                 r = {"erro": str(e)[:200]}
@@ -106,7 +100,7 @@ def main(argv=None):
                               % (tabela, coluna), (json.dumps(r, ensure_ascii=False), chave))
                 con.commit()
                 placar["lida"] += 1
-                placar["com_uso"] += 1 if r.get("uso_nao_residencial_no_imovel") else 0
+                placar["com_uso"] += 1 if any(isinstance(f, dict) and f.get("sinal_comercial") for f in r.get("fachadas") or []) else 0
             else:
                 placar["falha"] += 1
             n = sum(placar.values()) - placar["com_uso"]

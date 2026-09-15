@@ -43,6 +43,7 @@ import avaliar_ia as ia
 import avaliar_ligacao as al
 import base_comum as bc
 import checagem_veredito as cv
+import fachada_da_seta as fds
 import descrever_imagens as di
 import dossie_ligacao as dl
 import imagens
@@ -132,7 +133,7 @@ Você recebe: HOJE; o cadastro da instalação; os registros candidatos no ender
 A PERGUNTA É SOBRE O IMÓVEL: há uso não residencial funcionando nele?
 
 Responda, nesta ordem:
-1. Imagens. OLHE A IMAGEM INTEIRA, e não só a ponta da seta: a seta marca a coordenada, que tem metros de erro, e o imóvel pode ocupar boa parte da foto. Uma imagem só MOSTRA uso com SINAL CONCRETO: letreiro, placa, faixa, banner, adesivo ou anúncio pintado na parede ou no muro de QUALQUER negócio (mesmo com nome diferente do registro, mesmo pequeno), telefone ou nome comercial escrito na fachada, marcador de estabelecimento do Google no imóvel, vitrine com mercadoria, porta de loja ou de enrolar aberta com mercadoria ou atendimento, balcão, cardápio, oficina com carros ou peças em serviço, pátio com caminhões, máquinas, sucata ou material de trabalho, carros à venda, portão de galpão industrial. A LEITURA DA FOTO DE RUA, quando vier, foi feita antes só com a imagem e em resolução maior: texto comercial ou sinal marcado "no imóvel da seta" ou "colado ao imóvel" É SINAL — confira na imagem e só descarte se ela mostrar com clareza que é de outro imóvel; "longe" não é sinal. NÃO É SINAL: casa, sobrado, muro, grade, portão fechado de casa, carro na garagem, jardim, telhado, caixa d'água — mesmo que um registro diga que há empresa ali. Nome no letreiro diferente do registro não tira o sinal: nome fantasia muda e o negócio pode ter trocado de dono.
+1. Imagens. OLHE A IMAGEM INTEIRA, e não só a ponta da seta: a seta marca a coordenada, que tem metros de erro, e o imóvel pode ocupar boa parte da foto. Uma imagem só MOSTRA uso com SINAL CONCRETO: letreiro, placa, faixa, banner, adesivo ou anúncio pintado na parede ou no muro de QUALQUER negócio (mesmo com nome diferente do registro, mesmo pequeno), telefone ou nome comercial escrito na fachada, marcador de estabelecimento do Google no imóvel, vitrine com mercadoria, porta de loja ou de enrolar aberta com mercadoria ou atendimento, balcão, cardápio, oficina com carros ou peças em serviço, pátio com caminhões, máquinas, sucata ou material de trabalho, carros à venda, portão de galpão industrial. A LEITURA DA FOTO DE RUA, quando vier, foi feita antes só com a imagem, e a fachada da seta foi decidida pela posição da ponta: texto ou sinal da FACHADA DA SETA É SINAL (confira na imagem). PLACA OU SINAL DE VIZINHO — mesmo colado, mesmo parecendo continuação do imóvel — SÓ É SINAL DESTA INSTALAÇÃO quando a leitura diz que o nome dele aparece em outra fonte; sem isso, não use a placa do vizinho para aprovar nem para dizer o que funciona no imóvel, e não ponha a foto de rua em "quais". NÃO É SINAL: casa, sobrado, muro, grade, portão fechado de casa, carro na garagem, jardim, telhado, caixa d'água — mesmo que um registro diga que há empresa ali. Nome no letreiro DA FACHADA DA SETA diferente do registro não tira o sinal: nome fantasia muda e o negócio pode ter trocado de dono.
 2. Estado do imóvel na imagem mais recente: em uso; abandonado ou sem uso (mato alto, portas ou janelas lacradas, quebradas ou pichadas, ruína, placa de aluga-se ou vende-se, vitrine vazia, fachada deteriorada sem ocupação); ou não dá para ver. Diga a data da imagem em que você viu.
 3. Aderentes: registros no mesmo endereço — rua, número, complemento, bairro. NÚMERO DIFERENTE É OUTRO IMÓVEL, mesmo vizinho; também não é aderente se uma imagem mostra com clareza outro número. Número que não aparece não atrapalha. Com complemento no cadastro: mesmo complemento é desta instalação; sem complemento, com rua e número iguais, também; complemento diferente é outra unidade.
 4. Não combinam: registros que destoam da maioria e desta instalação.
@@ -389,23 +390,23 @@ def montar_leve(con, ligacao):
     cabeca = dados.split("\n\nFOTOS, nesta ordem:")[0]
     cur = con.cursor()
     fotos, rot, refs = [], [], []
-    leitura_rua = None
+    leitura_rua = mira_rua = None
     escolha = poi_da_foto_de_rua(cur, ligacao, ids)
     if escolha and escolha[2]:
-        cur.execute("""select dados, data_imagem, distancia_m, leitura from radar_comercial.poi_evidencia
+        cur.execute("""select dados, data_imagem, distancia_m, leitura, mira_x from radar_comercial.poi_evidencia
                         where poi_id = %s and tipo = 'sv_frente'""", (escolha[0],))
-        b, data, dist, leitura_rua = cur.fetchone()
+        b, data, dist, leitura_rua, mira_rua = cur.fetchone()
         fotos.append(_jpeg_768(b, largura=LARGURA_RUA))
         rot.append("foto de rua de frente (%s): Street View, seta no pin do Maps do registro, câmera a %s m"
                    % (pdat.mes_ano(pdat.data_de_texto(data)), round(dist or 0)))
         refs.append({"poi": escolha[0], "tipo": "sv_frente"})
     elif not escolha:
         # NENHUM REGISTRO A ATE 60 M: a foto de rua tirada no hidrometro (0114, 15/09/2026)
-        cur.execute("""select dados, data_imagem, distancia_m, leitura from radar_comercial.ligacao_evidencia
+        cur.execute("""select dados, data_imagem, distancia_m, leitura, mira_x from radar_comercial.ligacao_evidencia
                         where ligacao = %s and tipo = 'sv_frente' and dados is not null""", (str(ligacao),))
         x = cur.fetchone()
         if x:
-            leitura_rua = x[3]
+            leitura_rua, mira_rua = x[3], x[4]
             fotos.append(_jpeg_768(x[0], largura=LARGURA_RUA))
             rot.append("foto de rua de frente para o hidrômetro (%s): Street View, seta na coordenada do hidrômetro desta "
                        "instalação (nenhum registro com pin do Maps a até 60 m), câmera a %s m" % (pdat.mes_ano(pdat.data_de_texto(x[1])), round(x[2] or 0)))
@@ -425,7 +426,14 @@ def montar_leve(con, ligacao):
     cur.execute("select id, coalesce(cnpj, '') from radar_comercial.pois where id = any(%s)", (list(ids),))
     cnpjs = {c for _i, c in cur.fetchall() if len(c) == 14}
     blocos = []
-    if _texto_da_leitura(leitura_rua):
+    if isinstance(leitura_rua, dict) and leitura_rua.get("fachadas") is not None:
+        # A PLACA DO VIZINHO SO COM O NOME EM OUTRA FONTE (15/09/2026): a fachada da seta sai da ponta da seta,
+        # e a foto em que nada vale para a instalacao leva a marca no rotulo — a checagem tira ela das provas
+        texto_rua, vale_rua = fds.para_julgamento(leitura_rua, mira_rua, *fds.fontes_de_nome(cur, ligacao, ids))
+        blocos.append(texto_rua)
+        if rot and rot[0].startswith("foto de rua"):
+            rot[0] = fds.marcar_rotulo(rot[0], vale_rua)
+    elif _texto_da_leitura(leitura_rua):
         blocos.append(_texto_da_leitura(leitura_rua))
     if coments:
         blocos.append("COMENTÁRIOS RECENTES DE CLIENTES NO GOOGLE (até 2 anos):\n" + "\n".join(

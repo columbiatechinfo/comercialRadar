@@ -73,6 +73,34 @@ SINONIMOS_DE_FONTE = {"serasa": "receita", "casa dos dados": "receita", "cnpj": 
                       "overture": "base estadual"}
 
 
+#: o rotulo da foto de rua em que nada vale para a instalacao (so placa de vizinho sem o nome em outra fonte)
+MARCA_SEM_SINAL_NA_RUA = "sem sinal que valha para esta instalação"
+
+
+def sem_foto_de_vizinho(resposta, fotos):
+    """A PLACA DO VIZINHO SO COM O NOME EM OUTRA FONTE (dono do produto, 15/09/2026). A foto de rua marcada por
+    `fachada_da_seta` sai das imagens que confirmam: a IA que julga ve a placa ao lado e aprovava por ela."""
+    marcadas = {i + 1 for i, rot in enumerate(fotos or []) if MARCA_SEM_SINAL_NA_RUA in str(rot)}
+    f = (resposta or {}).get("fotos")
+    if not marcadas or not isinstance(f, dict):
+        return resposta
+    r, f = dict(resposta), dict(f)
+    quais = []
+    for n in f.get("quais") or []:
+        try:
+            if int(n) in marcadas:
+                continue
+        except (TypeError, ValueError):
+            pass
+        quais.append(n)
+    f["quais"] = quais
+    if not quais:
+        f["confirmam"] = False
+        f["sinal"] = "nenhum (a foto de rua só mostra placa de vizinho sem o nome em outra fonte)"
+    r["fotos"] = f
+    return r
+
+
 def _fonte(f):
     f = str(f or "").strip().lower()
     return SINONIMOS_DE_FONTE.get(f, f)
@@ -505,6 +533,7 @@ def checar_uma(con, lig, v, resposta, ids, processo="enxuto de 12/09/2026", foto
     `fotos`: os rotulos das fotos que a IA viu, na ordem — a regra 6 le a data neles."""
     if v != "aprovado":
         return v, None
+    resposta = sem_foto_de_vizinho(resposta, fotos)
     b = base_da_aprovacao(resposta, processo)
     ctx = Contexto(con, [lig], [_pid(x) for x in b if _pid(x) is not None] + list(ids or []))
     validos, removidos = validar(ctx, lig, b, ids, resposta)

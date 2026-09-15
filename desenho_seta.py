@@ -7,6 +7,8 @@ import numpy as np
 
 #: corte mais alto que o da captura antiga: some o cartao do Maps no canto (so ceu sai junto)
 CORTE_TOPO_EXTRA = 0.06
+#: a altura da ponta da seta, em fracao da imagem: `fachada_da_seta.escolher` procura a fachada nela
+PONTA_REL = 0.52
 
 
 def seta(arr, x_rel, distancia):
@@ -15,7 +17,7 @@ def seta(arr, x_rel, distancia):
     # SETA MAIOR E COM CONTORNO (dono do produto, 15/09/2026): semitransparente, a ponta no alto dos
     # telhados deixava duvida de qual imovel ela marca. A ponta desce ate o meio da foto e a cabeca
     # ganha contorno escuro; a haste continua fina e translucida para nao esconder placa.
-    topo, ponta = int(h * 0.03), int(h * 0.52)
+    topo, ponta = int(h * 0.03), int(h * PONTA_REL)
     haste, cab_l, cab_a = max(12, w // 80), max(48, w // 18), max(60, h // 8)
     cabeca = np.array([[x - cab_l, ponta - cab_a], [x + cab_l, ponta - cab_a], [x, ponta]], np.int32)
     camada = arr.copy()
