@@ -126,9 +126,8 @@ USO NÃO RESIDENCIAL é qualquer atividade que não seja só moradia, inclusive 
 NÃO contam: templo ou igreja, associação ou entidade sem fins lucrativos, escola ou órgão público, condomínio residencial.
 
 Você recebe: HOJE; o cadastro da instalação; os registros candidatos no endereço, cada um com o número que publica e as provas datadas; os comentários recentes de clientes no Google, com a data; em TEXTO, a ficha do CNPJ no Serasa e os resultados da busca na web pelo endereço, quando houve; e imagens numeradas, com o que é e a data:
-- foto de rua de frente para o imóvel (Street View), com seta verde semitransparente apontando a coordenada do registro e a distância da câmera (a coordenada pode ter alguns metros de erro);
-- foto publicada no Google do lugar;
-- quando nenhum registro está a até 60 m, a foto de rua é de frente para o hidrômetro da instalação, com a seta nele.
+- foto de rua (Street View) com seta verde semitransparente apontando o pin do Maps do registro e a distância da câmera — ou, quando nenhum registro com pin está a até 60 m, apontando o hidrômetro da instalação (as coordenadas podem ter alguns metros de erro). No canto inferior direito da foto, a PLANTA VISTA DE CIMA: faixa cinza = a rua, ponto branco = a câmera, cone verde claro = o que a foto mostra, ponto verde = o ponto da seta;
+- foto publicada no Google do lugar.
 
 A PERGUNTA É SOBRE O IMÓVEL: há uso não residencial funcionando nele?
 
@@ -335,14 +334,21 @@ def _metros(la1, lo1, la2, lo2):
 
 
 def poi_da_foto_de_rua(cur, ligacao, ids):
-    """(poi, metros, tem_nova, lat, lng, rua): o registro mais perto do hidrometro (a mesma escolha do dossie),
-    ate `dl.RAIO_DA_FOTO_M`. `tem_nova`: se ele tem a foto de rua de frente recapturada (fov 100)."""
+    """(poi, metros, tem_nova, lat, lng, rua): o registro COM PIN DO MAPS mais perto do hidrometro, ate
+    `dl.RAIO_DA_FOTO_M`. `tem_nova`: se ele tem a foto de rua de frente recapturada (fov 100).
+
+    SO O PIN DO MAPS E LUGAR (dono do produto, 15/09/2026): a coordenada de origem do registro da Receita e o
+    endereco geocodificado e cai na rua — em 15% das fotos a camera ficou a ate 4 m dela. Sem registro com pin
+    a ate 60 m, a foto de rua e a do hidrometro."""
     # pelo indice: `num_ligacao::text = %s` varria a tabela, 0,1 a 0,3 s por ligacao (15/09/2026)
     cur.execute("""select cod_latitude::float, cod_longitude::float, nom_logradouro from resources_root.cadastro_corsan
                     where num_ligacao = %s""", (int(ligacao) if str(ligacao).isdigit() else -1,))
     la, lo, rua = cur.fetchone() or (None, None, None)
-    cur.execute("""select p.id, coalesce(p.maps_lat, p.lat_origem), coalesce(p.maps_lng, p.lng_origem)
-                     from radar_comercial.pois p where p.id = any(%s)""", (list(ids),))
+    # PIN E O LUGAR DO GOOGLE (place_id ChIJ): `maps_lat` tambem guarda a correcao pelo CNEFE e a geocodificacao
+    # da base estadual, que continuam sendo endereco e nao lugar
+    cur.execute("""select p.id, p.maps_lat, p.maps_lng from radar_comercial.pois p
+                    where p.id = any(%s) and p.maps_lat is not null and p.maps_lng is not null
+                      and coalesce(p.place_id, '') like 'ChIJ%%'""", (list(ids),))
     perto = sorted(((_metros(la, lo, pla, plo), pid, pla, plo) for pid, pla, plo in cur.fetchall()), key=lambda x: x[0])
     if not perto or perto[0][0] > dl.RAIO_DA_FOTO_M:
         return None
@@ -390,7 +396,7 @@ def montar_leve(con, ligacao):
                         where poi_id = %s and tipo = 'sv_frente'""", (escolha[0],))
         b, data, dist, leitura_rua = cur.fetchone()
         fotos.append(_jpeg_768(b, largura=LARGURA_RUA))
-        rot.append("foto de rua de frente (%s): Street View, seta na coordenada do registro, câmera a %s m"
+        rot.append("foto de rua de frente (%s): Street View, seta no pin do Maps do registro, câmera a %s m"
                    % (pdat.mes_ano(pdat.data_de_texto(data)), round(dist or 0)))
         refs.append({"poi": escolha[0], "tipo": "sv_frente"})
     elif not escolha:
@@ -402,7 +408,7 @@ def montar_leve(con, ligacao):
             leitura_rua = x[3]
             fotos.append(_jpeg_768(x[0], largura=LARGURA_RUA))
             rot.append("foto de rua de frente para o hidrômetro (%s): Street View, seta na coordenada do hidrômetro desta "
-                       "instalação (nenhum registro a até 60 m), câmera a %s m" % (pdat.mes_ano(pdat.data_de_texto(x[1])), round(x[2] or 0)))
+                       "instalação (nenhum registro com pin do Maps a até 60 m), câmera a %s m" % (pdat.mes_ano(pdat.data_de_texto(x[1])), round(x[2] or 0)))
             refs.append({"poi": None, "ligacao": str(ligacao), "tipo": "sv_hidrometro"})
     # A FOTO DO GOOGLE: do registro com mais avaliacoes que tenha foto do proprio lugar, a mais recente com data
     cur.execute("""select p.id from radar_comercial.pois p left join radar_comercial.maps_data m on m.poi_id = p.id

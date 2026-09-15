@@ -36,7 +36,7 @@ import capturar_evidencia as ce  # noqa: E402
 import frente_da_rua as fr  # noqa: E402
 import streetview_geo as sv  # noqa: E402
 import visada_perpendicular as vp  # noqa: E402
-from desenho_seta import CORTE_TOPO_EXTRA, seta  # noqa: E402
+from desenho_seta import CORTE_TOPO_EXTRA, planta, seta  # noqa: E402
 
 
 def _ja_feitos(desde):
@@ -53,7 +53,9 @@ def _ja_feitos(desde):
 
 
 #: fotos de rua capturadas antes da correcao da mira (15/09/2026) que ficaram com o imovel fora do meio
-CORRECAO_DA_MIRA = "2026-09-15 09:50-03"
+CORRECAO_DA_MIRA = "2026-09-15 11:30-03"
+#: a foto de antes disto nao tem a seta maior nem a planta: e sempre capturada de novo, mesmo com a mira igual
+FORMATO_DA_FOTO = "2026-09-15 11:30-03"
 #: a foto de antes da correcao so e capturada de novo se o panorama escolhido mudou ou a mira girou mais que isto
 MIRA_IGUAL_GRAUS = 8
 MIRA_MEIO = (0.3, 0.7)
@@ -82,8 +84,9 @@ def alvos_das_ligacoes(arquivo, forcar=False):
             # A MIRA ANTIGA DEIXAVA O IMOVEL DE LADO: refaz a descentrada capturada antes da correcao
             # A FOTO DE ANTES DA CORRECAO (15/09/2026, mira no centro e panorama mais recente) volta para a fila
             # com o panorama e a mira que tem: `uma` so captura de novo se a escolha nova for diferente
-            cur.execute("""select pano_id, heading, capturado_em < %s from radar_comercial.poi_evidencia
-                            where poi_id = %s and tipo = 'sv_frente'""", (CORRECAO_DA_MIRA, pid))
+            cur.execute("""select case when capturado_em >= %s then pano_id end, heading, capturado_em < %s
+                             from radar_comercial.poi_evidencia where poi_id = %s and tipo = 'sv_frente'""",
+                        (FORMATO_DA_FOTO, CORRECAO_DA_MIRA, pid))
             pano0, head0, antiga = cur.fetchone() or (None, None, False)
             if forcar or antiga:
                 tem_nova = False
@@ -105,12 +108,12 @@ def alvos_das_ligacoes(arquivo, forcar=False):
     if sem_poi:
         cur.execute("""select c.num_ligacao::text, c.id_empresa::text, c.cod_latitude::float, c.cod_longitude::float,
                               c.nom_logradouro,
-                              e.capturado_em >= %s and not %s, e.pano_id, e.heading
+                              e.capturado_em >= %s and not %s, case when e.capturado_em >= %s then e.pano_id end, e.heading
                          from resources_root.cadastro_corsan c
                          left join radar_comercial.ligacao_evidencia e
                            on e.ligacao = c.num_ligacao::text and e.tipo = 'sv_frente' and e.dados is not null
                         where c.num_ligacao = any(%s::bigint[])""",
-                    (CORRECAO_DA_MIRA, forcar, [int(x) for x in set(sem_poi) if x.isdigit()]))
+                    (CORRECAO_DA_MIRA, forcar, FORMATO_DA_FOTO, [int(x) for x in set(sem_poi) if x.isdigit()]))
         for lig, emp, la, lo, rua, ja_tem, pano0, head0 in cur.fetchall():
             if ja_tem:
                 ja += 1
@@ -180,6 +183,7 @@ async def uma(page, poco, a):
     arr = arr[int(arr.shape[0] * CORTE_TOPO_EXTRA):, :]
     x = fr.x_na_visada(esc["rumo_alvo"], esc["heading"], vp.FOV)
     arr = seta(arr, x if x is not None else 0.5, esc["dist"])
+    arr = planta(arr, (p["lat"], p["lng"]), esc["heading"], vp.FOV, (a["lat"], a["lng"]), esc.get("pe"))
     ok_png, buf = cv2.imencode(".png", arr)
     if not ok_png:
         return {"erro": "png", "metodo": esc["metodo"]}

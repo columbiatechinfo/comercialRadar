@@ -37,9 +37,9 @@ PE_ATE_PANO_MAX_M = 12
 COORD_NA_VIA_M = 2
 #: pontos da via, a partir do pe da perpendicular, em que se procura panorama (15/09/2026)
 PASSOS_NA_VIA_M = (0, 6, 12)
-#: distancia minima da camera ate a fachada, e o que a fachada fica alem da coordenada (15/09/2026)
-FACHADA_MIN_M = 8.0
-FACHADA_ALEM_M = 3.0
+#: panorama a menos disto do alvo nao da rumo confiavel (o GPS erra metros): na mesma data, fica o mais longe.
+#: 5 m descartava o panorama bem em frente do hidrometro de rua estreita (319537, a 4 m) e a foto saia obliqua
+ALVO_MIN_M = 3.0
 
 
 def mover(lat, lng, rumo, metros):
@@ -98,20 +98,22 @@ def metodo_perpendicular(lat, lng, rua):
                 cands[m["pano_id"]] = m
     if not cands:
         return None, "sem panorama ate %d m do pe da perpendicular" % PE_ATE_PANO_MAX_M
-    p = max(cands.values(), key=lambda m: (m.get("data") or "", -sv._dist_m(m["lat"], m["lng"], pe_lat, pe_lng)))
-    # A MIRA SAI DA GEOMETRIA DA VIA, NAO DO RUMO DO PANORAMA ATE A COORDENADA. O GPS do panorama e a linha da
-    # via do OSM erram metros para o lado: na 319464 o panorama ficou a 2,8 m da coordenada, que esta a 6,2 m
-    # do eixo — mirar a coordenada deu a foto ao longo da rua. O quanto o panorama andou AO LONGO da via (a
-    # projecao no eixo) e confiavel; o desvio lateral nao. A camera olha a perpendicular e gira so o que o
-    # avanco ao longo da via pede ate a fachada: atan(avanco / distancia ate a fachada).
-    eixo = (perp + 90) % 360
-    pe_pano = sv._dist_m(pe_lat, pe_lng, p["lat"], p["lng"])
-    avanco = pe_pano * math.cos(math.radians(sv._bearing(pe_lat, pe_lng, p["lat"], p["lng"]) - eixo)) if pe_pano > 0.5 else 0.0
-    fachada = max(FACHADA_MIN_M, float(via.get("distance") or 0) + FACHADA_ALEM_M)
-    alvo = (perp + math.degrees(math.atan2(-avanco, fachada))) % 360
-    return {"metodo": "perpendicular", "pano": p, "heading": alvo, "panoramas_perto": len(cands),
-            "avanco_na_via_m": round(avanco, 1),
-            "rumo_alvo": alvo, "dist": math.hypot(avanco, float(via.get("distance") or 0)),
+    # A SETA NO RUMO REAL E A CAMERA MIRANDO O ALVO (dono do produto, 15/09/2026). Forcar a seta no centro
+    # pela geometria da via fazia a seta mudar de lugar entre uma foto e outra: ela deixava de marcar a
+    # coordenada. O alvo agora e o pin do Maps ou o hidrometro (quem chama escolhe), que ficam a 10-14 m da
+    # camera; o endereco geocodificado da Receita, que caia em cima da rua, nao e mais alvo. Panorama a menos
+    # de ALVO_MIN_M do alvo nao da rumo: na mesma data, fica o que esta mais longe que isso.
+    def _chave(m):
+        return (m.get("data") or "", sv._dist_m(m["lat"], m["lng"], lat, lng) >= ALVO_MIN_M,
+                -sv._dist_m(m["lat"], m["lng"], pe_lat, pe_lng))
+    p = max(cands.values(), key=_chave)
+    dist = sv._dist_m(p["lat"], p["lng"], lat, lng)
+    rumo = sv._bearing(p["lat"], p["lng"], lat, lng)
+    # em cima do alvo o rumo e ruido: a camera olha a perpendicular, e a seta fica onde o rumo cair
+    heading = rumo if dist >= ALVO_MIN_M else perp
+    return {"metodo": "perpendicular", "pano": p, "heading": heading, "panoramas_perto": len(cands),
+            "pe": [pe_lat, pe_lng],
+            "rumo_alvo": rumo, "dist": dist,
             "via": via.get("name") or "", "via_casou_rua": bool(rua and mesma_via(via.get("name"), rua)),
             "coord_ate_via_m": via.get("distance"), "pe_ate_pano_m": sv._dist_m(p["lat"], p["lng"], pe_lat, pe_lng)}, None
 

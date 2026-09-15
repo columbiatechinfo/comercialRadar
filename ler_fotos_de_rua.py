@@ -24,7 +24,7 @@ import base_comum as bc  # noqa: E402
 import descrever_imagens as di  # noqa: E402
 
 LARGURA = 1088
-PROMPT = """Esta é uma foto de rua (Street View). A seta verde aponta o imóvel investigado; a coordenada pode ter alguns metros de erro, então considere também os imóveis colados à ponta da seta.
+PROMPT = """Esta é uma foto de rua (Street View). A seta verde aponta o imóvel investigado; a coordenada pode ter alguns metros de erro, então considere também os imóveis colados à ponta da seta. O quadro escuro no canto inferior direito é uma planta vista de cima (rua, câmera, cone da visada e o ponto da seta): não é parte do lugar, não liste nada dele.
 
 Examine a FOTO INTEIRA, com atenção a detalhes pequenos, e liste o texto escrito que aparece: placas, letreiros, faixas, banners, adesivos, anúncios pintados em parede ou muro, toldos, telefones, nomes comerciais, placas de aluga/vende. No máximo 15 textos, os mais importantes; texto longo, só o essencial em até 8 palavras. Não liste marca d'água do Google, nome de rua nem a distância da seta.
 
