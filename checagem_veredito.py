@@ -105,6 +105,36 @@ def sem_foto_de_vizinho(resposta, fotos):
     return r
 
 
+def sem_ficha_do_maps_vazia(con, resposta, ids, fotos):
+    """A FICHA DO MAPS SO E FONTE COM COMENTARIO DE CLIENTE DATADO OU FOTO REAL DO LUGAR (dono do produto, 15/09/2026).
+    Na 2555907 a ficha "Pedroso entrega de agua mineral" nao tinha comentario e a unica foto era arte de logo: com o
+    MEI, aprovava como 2 fontes. Sem comentario datado nos registros e sem foto publicada que a IA diga mostrar o lugar
+    com sinal, "Google Maps" sai das fontes e os comentarios deixam de confirmar."""
+    provas = pdat.carregar(con, ids or [])
+    comentario = any(p.get("fonte") == "maps" and "avaliação" in str(p.get("o_que") or "") and p.get("data")
+                     for d in provas.values() for p in (d.get("provas") or []))
+    f = (resposta or {}).get("fotos") or {}
+    foto_real = False
+    if isinstance(f, dict) and f.get("confirmam") and imagem_tem_sinal(resposta):
+        for n in f.get("quais") or []:
+            try:
+                foto_real |= str((fotos or [])[int(n) - 1]).lower().startswith("foto publicada")
+            except (TypeError, ValueError, IndexError):
+                pass
+    usou_maps = any(_fonte(x) == "google maps" for x in ((resposta or {}).get("fontes") or [])) or any(
+        _fonte(x) == "google maps" for a in ((resposta or {}).get("aderentes") or []) if isinstance(a, dict)
+        for x in (a.get("fontes") or [])) or bool(((resposta or {}).get("comentarios") or {}).get("confirmam"))
+    if comentario or foto_real or not usou_maps:
+        return resposta, None
+    r = dict(resposta or {})
+    tira = lambda fs: [x for x in (fs or []) if _fonte(x) != "google maps"]   # noqa: E731
+    r["fontes"] = tira(r.get("fontes"))
+    r["aderentes"] = [dict(a, fontes=tira(a.get("fontes"))) if isinstance(a, dict) else a for a in (r.get("aderentes") or [])]
+    if isinstance(r.get("comentarios"), dict):
+        r["comentarios"] = dict(r["comentarios"], confirmam=False)
+    return r, "a ficha do Google Maps não tem comentário de cliente datado nem foto real do lugar: não conta como fonte"
+
+
 def _fonte(f):
     f = str(f or "").strip().lower()
     return SINONIMOS_DE_FONTE.get(f, f)
@@ -574,6 +604,7 @@ def checar_uma(con, lig, v, resposta, ids, processo="enxuto de 12/09/2026", foto
     if v != "aprovado":
         return v, None
     resposta = sem_foto_de_vizinho(resposta, fotos)
+    resposta, ficha_vazia = sem_ficha_do_maps_vazia(con, resposta, ids, fotos)
     # A REDE SOCIAL DA BUSCA E FONTE PROPRIA (dono do produto, 15/09/2026): confirmada pelo codigo — post no endereco
     # com o nome de um registro —, entra nas fontes; a que so a IA citou sai.
     redes = []
@@ -607,7 +638,7 @@ def checar_uma(con, lig, v, resposta, ids, processo="enxuto de 12/09/2026", foto
         if vago:
             v_novo, porque = "revisao_humana", texto
     return v_novo, {"regra": REGRA, "veredito_ia": v, "veredito": v_novo, "porque": porque,
-                    "validos": validos, "removidos": removidos, "redes_sociais": redes,
+                    "validos": validos, "removidos": removidos, "redes_sociais": redes, "ficha_do_maps": ficha_vazia,
                     "em": datetime.datetime.now().isoformat(timespec="seconds")}
 
 
