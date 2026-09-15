@@ -106,7 +106,11 @@ async def main(a):
                         print("   nav%02d poi %s falhou (%d): %s" % (n, poi_id, tentativas[poi_id], str(e)[:80]),
                               flush=True)
                         break
-                    if mp._pagina_vazia(d):
+                    # PAGINA DE ERRO DO MAPS E IP RUIM, como a pagina vazia. `gravar_um` ja
+                    # recusa gravar o titulo de erro, mas devolve 0 em silencio e o POI
+                    # vai para a fila da etapa 4 (`devolver`); aqui ele contava como "ok".
+                    # Medido em 15/09/2026: 35 das 844 fichas ficaram com as fotos antigas.
+                    if mp._pagina_vazia(d) or mp._e_titulo_de_erro(d.get("nome")):
                         placar["vazia"] += 1
                         tentativas[poi_id] = tentativas.get(poi_id, 0) + 1
                         if tentativas[poi_id] < 3:

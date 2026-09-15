@@ -48,7 +48,13 @@ DATA_CNEFE = datetime.date(2022, 8, 1)
 
 
 def hoje():
-    return datetime.date.today()
+    """A data de HOJE no fuso de Sao Paulo. O conteiner roda em UTC: depois das 21 h o
+    `date.today()` ja era amanha, e o prompt de 14/09/2026 saiu dizendo 15/09."""
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.datetime.now(ZoneInfo("America/Sao_Paulo")).date()
+    except Exception:                                          # noqa: BLE001
+        return (datetime.datetime.utcnow() - datetime.timedelta(hours=3)).date()
 
 
 def meses(data, ref=None):
@@ -150,6 +156,35 @@ def _referencia_receita(cur):
                     where referencia ~ '^[0-9]{4}-[0-9]{2}/'""")
     r = cur.fetchone()
     return data_de_texto(r[0]) if r and r[0] else None
+
+
+def comentarios_recentes(con, poi_ids, n=3, ate_meses=MESES_RECENTE):
+    """{poi_id: ["mar/2026 · nota 5: texto", ...]}: os `n` comentarios de cliente mais recentes do Maps,
+    de ate `ate_meses`. A data do Maps e relativa ("uma semana atrás"): ancora no `detalhado_em` do POI,
+    como a prova da avaliacao em `carregar`. Texto cortado em 220 caracteres (15/09/2026)."""
+    ids = sorted({int(x) for x in (poi_ids or []) if str(x).lstrip("#").isdigit()})
+    if not ids:
+        return {}
+    cur = con.cursor()
+    cur.execute("select id, detalhado_em from radar_comercial.pois where id = any(%s)", (ids,))
+    ancora = dict(cur.fetchall())
+    cur.execute("""select poi_id, data, nota, texto from radar_comercial.comentarios
+                    where poi_id = any(%s) and fonte = 'maps' and coalesce(texto, '') <> ''""", (ids,))
+    por = {}
+    for pid, data, nota, texto in cur.fetchall():
+        dias = dias_atras(data)
+        if dias is None or not ancora.get(pid):
+            continue
+        quando = (ancora[pid] - datetime.timedelta(days=dias)).date()
+        if meses(quando) > ate_meses:
+            continue
+        por.setdefault(pid, []).append((quando, nota, " ".join(str(texto).split())[:220]))
+    saida = {}
+    for pid, itens in por.items():
+        itens.sort(key=lambda x: x[0], reverse=True)
+        saida[pid] = ["%s · nota %s: %s" % (mes_ano(datetime.date(q.year, q.month, 1)), nt if nt is not None else "?", t)
+                      for q, nt, t in itens[:n]]
+    return saida
 
 
 def carregar(con, poi_ids, ref=None):

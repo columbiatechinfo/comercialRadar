@@ -53,7 +53,105 @@ import sys
 import base_comum as bc
 import provas_datadas as pdat
 
-REGRA = "checagem do codigo de 14/09/2026 (número e prova recente)"
+REGRA = "checagem do codigo de 15/09/2026 v3 (número, prova recente, 2 fontes, fonte única e imóvel abandonado)"
+
+#: AS FONTES INDEPENDENTES (dono do produto, 14 e 15/09/2026). Cada uma conta uma vez; o Serasa e a
+#: Casa dos Dados SAO a Receita — a IA do teste contou "Receita" e "Serasa" como duas e aprovou.
+#: 15/09/2026 (madrugada): A BUSCA NA WEB E A RECEITA SAO A MESMA FONTE — o que a busca acha no endereco sao
+#: os agregadores de CNPJ (Solutudo, Econodata, Kompass), a Receita republicada.
+FONTES_INDEPENDENTES = {"receita", "google maps", "foto de rua", "instagram", "facebook", "tiktok", "ifood",
+                        "base estadual"}
+#: As fontes que so a IMAGEM prova: nao entram pela lista da IA, so pela imagem com sinal descrito.
+FONTES_DE_IMAGEM = {"foto de rua"}
+#: O que a IA escreve quando nao ha sinal na imagem.
+_SEM_SINAL = ("", "nenhum", "nenhuma", "sem sinal", "não", "nao", "-", "—")
+SINONIMOS_DE_FONTE = {"serasa": "receita", "casa dos dados": "receita", "cnpj": "receita",
+                      "receita federal": "receita", "base da receita": "receita", "busca na web": "receita",
+                      "busca": "receita", "web": "receita", "google": "google maps",
+                      "maps": "google maps", "comentário": "google maps", "comentario": "google maps",
+                      "foto publicada": "google maps", "street view": "foto de rua", "estadual": "base estadual", "foursquare": "base estadual",
+                      "overture": "base estadual"}
+
+
+def _fonte(f):
+    f = str(f or "").strip().lower()
+    return SINONIMOS_DE_FONTE.get(f, f)
+
+
+def fonte_da_imagem(rotulo):
+    r = str(rotulo or "").lower()
+    if r.startswith("foto de rua") or r.startswith("sv_"):
+        return "foto de rua"
+    if r.startswith("foto publicada"):
+        return "google maps"
+    return None
+
+
+def fontes_confirmadas(resposta, fotos=None):
+    """As fontes independentes que confirmam o uso, pela UNIAO do que a IA disse: a lista `fontes`, as
+    fontes dos aderentes confirmados no mesmo numero, as imagens que mostram o uso, os comentarios e as
+    fichas/buscas que confirmam. Normalizada: Serasa e Receita viram uma so (15/09/2026)."""
+    r = resposta or {}
+    fs = {_fonte(x) for x in (r.get("fontes") or [])}
+    for a in r.get("aderentes") or []:
+        if isinstance(a, dict) and a.get("confirmado") and str(a.get("numero") or "") != "diferente":
+            fs |= {_fonte(x) for x in (a.get("fontes") or [])}
+    # A FOTO DE RUA SO PELA IMAGEM COM SINAL (15/09/2026): a IA punha "foto de rua" na lista de fontes
+    # para casa residencial sem letreiro nem nada.
+    fs -= FONTES_DE_IMAGEM
+    f = r.get("fotos") or {}
+    if isinstance(f, dict) and f.get("confirmam") and imagem_tem_sinal(r):
+        for n in f.get("quais") or []:
+            try:
+                fi = fonte_da_imagem((fotos or [])[int(n) - 1])
+            except (TypeError, ValueError, IndexError):
+                fi = None
+            if fi:
+                fs.add(fi)
+    c = r.get("comentarios") or {}
+    if isinstance(c, dict) and c.get("confirmam"):
+        fs.add("google maps")
+    for b in r.get("busca") or []:
+        if isinstance(b, dict) and b.get("confirma"):
+            fs.add(_fonte(b.get("fonte")))
+    return sorted(fs & FONTES_INDEPENDENTES)
+
+
+def imagem_tem_sinal(resposta):
+    """A IA descreveu um sinal concreto de uso na imagem (letreiro, vitrine, porta de loja, patio...)."""
+    f = (resposta or {}).get("fotos") or {}
+    sinal = str(f.get("sinal") or "").strip().lower() if isinstance(f, dict) else ""
+    return bool(f.get("confirmam")) and sinal not in _SEM_SINAL and not sinal.startswith("nenhum")
+
+
+def fonte_unica_basta(ctx, validos, resposta, fotos):
+    """(basta, texto): a unica fonte que aprova sozinha (dono do produto, 15/09/2026) — a fachada no Street
+    View que mostra o uso (de ate 2 anos), ou a foto publicada de menos de 1 ano que mostra o uso; o
+    comentario de menos de 1 ano so com uma imagem que confirma."""
+    r = resposta or {}
+    f = r.get("fotos") or {}
+    if not imagem_tem_sinal(r):
+        return False, "nenhuma imagem mostra sinal de uso"
+    for n in f.get("quais") or []:
+        try:
+            rot = (fotos or [])[int(n) - 1]
+        except (TypeError, ValueError, IndexError):
+            continue
+        tipo, dt = fonte_da_imagem(rot), pdat.data_do_rotulo(rot)
+        if tipo == "foto de rua" and dt and pdat.recente(dt):
+            return True, "a fachada no Street View de %s mostra o uso" % pdat.mes_ano(dt)
+        if tipo == "google maps" and dt and pdat.meses(dt) < 12:
+            return True, "a foto publicada de %s (menos de 1 ano) mostra o uso" % pdat.mes_ano(dt)
+    c = r.get("comentarios") or {}
+    if isinstance(c, dict) and c.get("confirmam"):
+        coments = pdat.comentarios_recentes(ctx.con, validos, n=1, ate_meses=11) if getattr(ctx, "con", None) else {}
+        if any(coments.get(p) for p in validos):
+            return True, "comentário de cliente de menos de 1 ano, com imagem que confirma o uso"
+    return False, "a fonte única não é fachada no Street View nem foto ou comentário de menos de 1 ano"
+
+
+def processo_leve(processo):
+    return "leve" in str(processo or "")
 
 #: Natureza juridica que nao e comercio nem servico: administracao publica (1xxx)
 #: e entidade sem fins lucrativos (3xxx), menos o cartorio (3034), que cobra.
@@ -123,6 +221,7 @@ class Contexto:
     """O que a checagem precisa das ligacoes e dos POIs, lido de uma vez."""
 
     def __init__(self, con, ligacoes, pois):
+        self.con = con                                     # a fonte unica le os comentarios (regra 7)
         cur = con.cursor()
         cur.execute("set statement_timeout = '300s'")
         ligs = sorted({str(x) for x in ligacoes})
@@ -263,8 +362,8 @@ def prova_recente(ctx, validos, resposta=None, fotos=None):
                                                  else ": só a busca na web ou nenhuma prova datada"))
 
 
-def decidir(ctx, validos, perdeu_por_duvida, lig=None, resposta=None, fotos=None):
-    """O veredito final de uma ligacao que a IA aprovou: regras 1, 3, 4 e 6."""
+def decidir(ctx, validos, perdeu_por_duvida, lig=None, resposta=None, fotos=None, processo=None):
+    """O veredito final de uma ligacao que a IA aprovou: regras 1, 3, 4, 6 e, no processo leve, 7."""
     if not validos:
         if perdeu_por_duvida:
             return "revisao_humana", ("o registro que aprovava também é candidato de outra(s) instalação(ões) "
@@ -274,6 +373,18 @@ def decidir(ctx, validos, perdeu_por_duvida, lig=None, resposta=None, fotos=None
     tem, texto = prova_recente(ctx, validos, resposta, fotos)
     if not tem:
         return "revisao_humana", texto
+    # REGRA 7 (15/09/2026), so no processo leve: ao menos 2 fontes independentes confirmam o uso. O
+    # codigo conta, e nao a IA: ela somava Receita e Serasa como duas.
+    if processo_leve(processo):
+        imovel = (resposta or {}).get("imovel") or {}
+        if isinstance(imovel, dict) and str(imovel.get("estado") or "") == "abandonado":
+            return "revisao_humana", "a IA viu o imóvel abandonado ou sem uso: %s" % (imovel.get("por") or "")
+        fs = fontes_confirmadas(resposta, fotos)
+        if len(fs) < 2:
+            basta, texto_unica = fonte_unica_basta(ctx, validos, resposta, fotos)
+            if not basta:
+                return "revisao_humana", ("só %d fonte confirma o uso (%s) e ela não basta sozinha: %s"
+                                          % (len(fs), ", ".join(fs) or "nenhuma", texto_unica))
     if all(ctx.e_mei(p) for p in validos):
         return "revisao_humana", "aprovada só por MEI (%s)" % ", ".join("#%s" % p for p in validos)
     # REGRA 4: a qualificacao SIM com analise humana nao aprova sozinha.
@@ -353,7 +464,7 @@ def revisar(con, aplicar=False, log=print, saida_antes=None):
         if v_ia != "aprovado":
             continue
         v_novo, porque = decidir(ctx, validos[lig], lig in duvida and not validos[lig], lig,
-                                 resposta_de[lig], fotos_de[lig])
+                                 resposta_de[lig], fotos_de[lig], proc)
         placar["%s -> %s" % (v_ia, v_novo)] += 1
         novo_chk = {"regra": REGRA, "veredito_ia": v_ia, "veredito": v_novo, "porque": porque,
                     "validos": validos[lig], "removidos": removidos[lig], "em": agora}
@@ -397,7 +508,7 @@ def checar_uma(con, lig, v, resposta, ids, processo="enxuto de 12/09/2026", foto
     b = base_da_aprovacao(resposta, processo)
     ctx = Contexto(con, [lig], [_pid(x) for x in b if _pid(x) is not None] + list(ids or []))
     validos, removidos = validar(ctx, lig, b, ids, resposta)
-    v_novo, porque = decidir(ctx, validos, False, lig, resposta, fotos)
+    v_novo, porque = decidir(ctx, validos, False, lig, resposta, fotos, processo)
     return v_novo, {"regra": REGRA, "veredito_ia": v, "veredito": v_novo, "porque": porque,
                     "validos": validos, "removidos": removidos,
                     "em": datetime.datetime.now().isoformat(timespec="seconds")}

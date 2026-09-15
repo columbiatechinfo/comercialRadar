@@ -63,6 +63,23 @@ VEREDITOS = ("aprovado", "reprovado", "revisao_humana")
 #: O NOME COMECA COM "enxuto de ": a checagem reconhece o processo por esse
 #: comeco, e um nome fora dele reprovou 6.883 aprovadas em 14/09/2026.
 PROCESSO = "enxuto de 14/09/2026 (número, provas datadas, busca complementar)"
+#: O PROCESSO LEVE (dono do produto, 15/09/2026), com `--leve`. Medido na Spark com 120 simultaneas e 300
+#: aprovadas distintas: 64,5 julgamentos/min contra 21,6 da chamada pesada, sem erro nem JSON invalido.
+#:   - UMA foto de rua, de frente para o imovel (`recapturar_frente`), e a foto do Google mais recente com
+#:     data, as duas em 768 px: o custo do codificador de visao cresce muito mais que o tamanho da imagem;
+#:   - a ficha do Serasa e a busca web vao em TEXTO (o print fica so para a SEEK);
+#:   - os comentarios recentes de cliente entram com a data;
+#:   - a pergunta e sobre o IMOVEL: fachada comercial prova uso mesmo com nome diferente do registro, e o
+#:     estado de conservacao pesa (imovel abandonado);
+#:   - saida curta nos campos de apoio, motivo completo; as 2 fontes o CODIGO conta (checagem, regra 7).
+#: Comeca com "enxuto de " (a checagem reconhece o processo por esse comeco) e tem "leve" (a regra 7).
+PROCESSO_LEVE = "enxuto de 15/09/2026 v3 (leve: foto de rua de frente, fichas em texto, comentários, saída curta, fonte única)"
+#: A FOTO DE RUA DO PROCESSO LEVE e so a captura nova (`recapturar_frente`: de frente, seta, fov 100). A de antes
+#: tinha a mira desenhada e olhava do panorama mais perto — foi para a IA na leve v2 e o dono do produto viu.
+FRENTE_NOVA_DESDE = "2026-09-14 23:00-03"
+LEVE = False
+LARGURA_LEVE = 768
+
 #: `--saida DIR`: grava cada julgamento (e as fotos) numa pasta, para a galeria
 #: de validacao — o lote de conferencia roda sem `--aplicar`.
 SAIDA = None
@@ -92,6 +109,86 @@ Responda SOMENTE um JSON:
 
 ────────────────────────────────────────
 """
+
+
+PROMPT_LEVE = """Você confere se um imóvel cobrado como RESIDENCIAL tem uso NÃO RESIDENCIAL funcionando nele.
+
+USO NÃO RESIDENCIAL é qualquer atividade que não seja só moradia, inclusive as que não parecem loja:
+- comércio: loja, mercado, minimercado, bar, restaurante, lanchonete, padaria, açougue, farmácia, posto, loja de material de construção, depósito de gás ou de bebidas;
+- serviço: salão, barbearia, estética, oficina mecânica ou de moto (inclusive na garagem de casa), borracharia, lava-jato, funilaria, clínica, consultório, escritório, academia, escola ou curso particular, creche particular, lavanderia, pet shop, gráfica, assistência técnica, chaveiro;
+- indústria e produção: fábrica, confecção, marcenaria, serralheria, vidraçaria, marmoraria, metalúrgica, padaria industrial, cozinha de marmita ou de salgados;
+- logística e armazenagem: galpão, depósito, transportadora, pátio com caminhões, ônibus ou máquinas, ferro-velho, sucata, reciclagem;
+- estacionamento ou garagem paga, pátio de venda de carros;
+- hospedagem (hotel, pousada, aluguel por temporada) e agropecuária (criação, horta comercial, agropecuária).
+NÃO contam: templo ou igreja, associação ou entidade sem fins lucrativos, escola ou órgão público, condomínio residencial.
+
+Você recebe: HOJE; o cadastro da instalação; os registros candidatos no endereço, cada um com o número que publica e as provas datadas; os comentários recentes de clientes no Google, com a data; em TEXTO, a ficha do CNPJ no Serasa e os resultados da busca na web pelo endereço, quando houve; e imagens numeradas, com o que é e a data:
+- foto de rua de frente para o imóvel (Street View), com seta verde semitransparente apontando a coordenada do registro e a distância da câmera (a coordenada pode ter alguns metros de erro);
+- foto publicada no Google do lugar.
+
+A PERGUNTA É SOBRE O IMÓVEL: há uso não residencial funcionando nele?
+
+Responda, nesta ordem:
+1. Imagens. Uma imagem só MOSTRA uso com SINAL CONCRETO: letreiro ou placa do negócio, vitrine com mercadoria, porta de loja ou de enrolar aberta com mercadoria ou atendimento, balcão, cardápio, oficina com carros ou peças em serviço, pátio com caminhões, máquinas, sucata ou material de trabalho, carros à venda, portão de galpão industrial. NÃO É SINAL: casa, sobrado, muro, grade, portão fechado de casa, carro na garagem, jardim, telhado, caixa d'água — mesmo que um registro diga que há empresa ali. Nome no letreiro diferente do registro não tira o sinal: nome fantasia muda e o negócio pode ter trocado de dono.
+2. Estado do imóvel na imagem mais recente: em uso; abandonado ou sem uso (mato alto, portas ou janelas lacradas, quebradas ou pichadas, ruína, placa de aluga-se ou vende-se, vitrine vazia, fachada deteriorada sem ocupação); ou não dá para ver. Diga a data da imagem em que você viu.
+3. Aderentes: registros no mesmo endereço — rua, número, complemento, bairro. NÚMERO DIFERENTE É OUTRO IMÓVEL, mesmo vizinho; também não é aderente se uma imagem mostra com clareza outro número. Número que não aparece não atrapalha. Com complemento no cadastro: mesmo complemento é desta instalação; sem complemento, com rua e número iguais, também; complemento diferente é outra unidade.
+4. Não combinam: registros que destoam da maioria e desta instalação.
+5. Fontes que confirmam o uso, cada uma UMA vez:
+ - Receita: o CNPJ da base, a ficha do Serasa e a busca na web são TODOS a mesma fonte (a busca acha a Receita republicada);
+ - Google Maps: a ficha, os comentários e a foto publicada são a mesma fonte;
+ - foto de rua: só com sinal concreto (item 1);
+ - Instagram, Facebook, TikTok, iFood e base estadual: uma fonte cada.
+6. Veredito:
+ - "aprovado" em dois casos só:
+   a) ao menos 2 FONTES DIFERENTES confirmam o uso, com alguma PROVA RECENTE (até 2 anos: imagem com sinal, comentário, CNPJ ativo na base atual, loja no iFood);
+   b) uma fonte só, quando ela é a fachada no Street View com sinal concreto (até 2 anos), ou a foto publicada com sinal concreto de MENOS DE 1 ANO; comentário de menos de 1 ano só vale sozinho com uma imagem que confirma;
+   e, nos dois casos, o imóvel não aparece abandonado.
+ - "revisao_humana": há sinal de uso, mas não fecha a regra acima (uma fonte só que não basta, prova antiga, imagem sem sinal com registro ativo, imóvel abandonado com prova em contrário, dúvida de unidade) — o motivo diz o que faltou e a idade das provas;
+ - "reprovado": nenhum sinal de uso não residencial neste imóvel.
+A DATA PESA: cada prova vale para o dia em que foi tirada, postada ou atualizada; a mais recente vale mais. CNPJ/MEI ativo com atividade não residencial é negócio, mesmo com nome de pessoa — mas é UMA fonte só.
+
+Responda SOMENTE um JSON, curto nos campos de apoio e completo no motivo:
+{"uso": {"nao_residencial": true|false, "o_que": "<atividade, até 8 palavras>"},
+ "imovel": {"estado": "em_uso|abandonado|nao_visto", "por": "<o que se vê e a data da imagem, até 12 palavras>"},
+ "aderentes": [{"poi": <número>, "confirmado": true|false, "numero": "igual|diferente|nao_visto", "prova_recente": "<prova e data, até 8 palavras, ou nenhuma>", "fontes": ["<fontes do item 5>"], "por": "<até 15 palavras>"}],
+ "nao_combinam": [{"poi": <número>, "por": "<até 8 palavras>"}],
+ "fotos": {"confirmam": true|false, "quais": [<número da imagem com sinal>], "sinal": "<o sinal concreto que se vê, ou nenhum>", "o_que_mostram": "<até 20 palavras, com a data>"},
+ "comentarios": {"confirmam": true|false, "por": "<até 15 palavras, com a data>"},
+ "busca": [{"fonte": "Serasa|busca na web", "poi": <número do registro>, "confirma": true|false}] (só as que vieram no texto; nenhuma, lista vazia),
+ "fontes": ["<as fontes diferentes do item 5 que confirmam o uso, cada uma uma vez>"],
+ "motivo": "<o motivo do veredito, em detalhe: o que pesou e por quê>",
+ "veredito": "aprovado|reprovado|revisao_humana"}
+
+────────────────────────────────────────
+"""
+
+
+def _jpeg_768(b, largura=LARGURA_LEVE, q=85):
+    """A foto do processo leve: 768 px de largura, lados em multiplos de 32 (o bloco do Qwen3.5)."""
+    im = Image.open(io.BytesIO(bytes(b))).convert("RGB")
+    if im.width > largura:
+        im = im.resize((largura, int(im.height * largura / im.width)), Image.LANCZOS)
+    w, h = max(32, im.width // 32 * 32), max(32, im.height // 32 * 32)
+    if (w, h) != im.size:
+        im = im.resize((w, h), Image.LANCZOS)
+    s = io.BytesIO()
+    im.save(s, "JPEG", quality=q)
+    return s.getvalue()
+
+
+def _fichas_cnpj_em_texto(cur, cnpjs):
+    """Os blocos "FICHA DO CNPJ ... NO SERASA" ja estruturados (`ficha_cnpj_web.texto_ia`). Vazio enquanto a
+    coleta do Serasa nao grava no banco — a regra nova so a faz quando a base nao traz data e situacao."""
+    if not cnpjs:
+        return []
+    try:
+        cur.execute("""select distinct on (cnpj) texto_ia from radar_comercial.ficha_cnpj_web
+                        where cnpj = any(%s) and texto_ia is not null order by cnpj, consultado_em desc""",
+                    (sorted(cnpjs),))
+        return [r[0] for r in cur.fetchall()]
+    except Exception:                                          # noqa: BLE001
+        cur.connection.rollback()                              # antes da migracao da ficha
+        return []
 
 
 def _jpeg_leve(b, largura=LARGURA_FOTO, q=70):
@@ -150,7 +247,7 @@ def montar(con, ligacao):
     return montar_com_refs(con, ligacao)[:5]
 
 
-def montar_com_refs(con, ligacao):
+def montar_com_refs(con, ligacao, fotos_do_dossie=True):
     """O mesmo que `montar`, e mais DE QUEM E CADA FOTO: [{"poi", "tipo"}], na ordem
     em que foram para a IA. A tela SEEK marca no carrossel a foto que a IA disse
     que mostra o comercio (dono do produto, 13/09/2026)."""
@@ -199,7 +296,10 @@ def montar_com_refs(con, ligacao):
         return None, [], [], [], 0, []
     # AS FOTOS: as quatro de rua do POI mais proximo do medidor e a primeira
     # publicada — as mesmas que o dossie escolhe, sem o texto dele.
-    _t, imgs, tipos, _r = dl.montar(con, ligacao, ia, imagens, busca_web=None)
+    # SEM AS FOTOS DO DOSSIE (`fotos_do_dossie=False`): o processo leve escolhe as proprias e nao le as
+    # imagens duas vezes (15/09/2026: 40 julgamentos/min de ponta a ponta contra 64,5 da IA sozinha).
+    _t, imgs, tipos, _r = (dl.montar(con, ligacao, ia, imagens, busca_web=None) if fotos_do_dossie
+                           else ("", [], [], {}))
     sv = [(b, t) for b, t in zip(imgs, tipos) if t.startswith("sv_")][:4]
     pub = [(b, t) for b, t in zip(imgs, tipos) if not t.startswith("sv_")][:1]
     fotos = [_jpeg_leve(b) for b, t in sv + pub]
@@ -221,10 +321,86 @@ def montar_com_refs(con, ligacao):
     return dados, fotos, rot, ids, len(fontes), refs
 
 
+def _metros(la1, lo1, la2, lo2):
+    import math
+    if None in (la1, lo1, la2, lo2):
+        return 9e9
+    dy = (float(la2) - float(la1)) * 111320
+    dx = (float(lo2) - float(lo1)) * 111320 * math.cos(math.radians(float(la1)))
+    return math.hypot(dx, dy)
+
+
+def poi_da_foto_de_rua(cur, ligacao, ids):
+    """(poi, metros, tem_nova, lat, lng, rua): o registro mais perto do hidrometro (a mesma escolha do dossie),
+    ate `dl.RAIO_DA_FOTO_M`. `tem_nova`: se ele tem a foto de rua de frente recapturada (fov 100)."""
+    cur.execute("""select cod_latitude::float, cod_longitude::float, nom_logradouro from resources_root.cadastro_corsan
+                    where num_ligacao::text = %s""", (str(ligacao),))
+    la, lo, rua = cur.fetchone() or (None, None, None)
+    cur.execute("""select p.id, coalesce(p.maps_lat, p.lat_origem), coalesce(p.maps_lng, p.lng_origem)
+                     from radar_comercial.pois p where p.id = any(%s)""", (list(ids),))
+    perto = sorted(((_metros(la, lo, pla, plo), pid, pla, plo) for pid, pla, plo in cur.fetchall()), key=lambda x: x[0])
+    if not perto or perto[0][0] > dl.RAIO_DA_FOTO_M:
+        return None
+    d, pid, pla, plo = perto[0]
+    cur.execute("""select 1 from radar_comercial.poi_evidencia where poi_id = %s and tipo = 'sv_frente' and fov = 100
+                      and dados is not null and capturado_em >= %s""", (pid, FRENTE_NOVA_DESDE))
+    return pid, d, cur.fetchone() is not None, pla, plo, rua
+
+
+def montar_leve(con, ligacao):
+    """O processo leve: (dados, fotos, rotulos, ids, n_fontes, refs), o mesmo formato de `montar_com_refs`.
+    Os registros saem de `montar_com_refs` sem as fotos do dossie; a foto de rua e SO a captura nova."""
+    dados, _fotos, _rot, ids, n_fontes, _refs = montar_com_refs(con, ligacao, fotos_do_dossie=False)
+    if dados is None:
+        return None, [], [], [], 0, []
+    cabeca = dados.split("\n\nFOTOS, nesta ordem:")[0]
+    cur = con.cursor()
+    fotos, rot, refs = [], [], []
+    escolha = poi_da_foto_de_rua(cur, ligacao, ids)
+    if escolha and escolha[2]:
+        cur.execute("""select dados, data_imagem, distancia_m from radar_comercial.poi_evidencia
+                        where poi_id = %s and tipo = 'sv_frente'""", (escolha[0],))
+        b, data, dist = cur.fetchone()
+        fotos.append(_jpeg_768(b))
+        rot.append("foto de rua de frente (%s): Street View, seta na coordenada do registro, câmera a %s m"
+                   % (pdat.mes_ano(pdat.data_de_texto(data)), round(dist or 0)))
+        refs.append({"poi": escolha[0], "tipo": "sv_frente"})
+    # A FOTO DO GOOGLE: do registro com mais avaliacoes que tenha foto do proprio lugar, a mais recente com data
+    cur.execute("""select p.id from radar_comercial.pois p left join radar_comercial.maps_data m on m.poi_id = p.id
+                    where p.id = any(%s) order by coalesce(m.total_avaliacoes, 0) desc, p.id""", (list(ids),))
+    for (pid,) in cur.fetchall():
+        pub = ia._fotos_do_maps_datadas(cur, pid)[:1]
+        if pub:
+            b0, d0 = pub[0]
+            fotos.append(_jpeg_768(b0))
+            rot.append("foto publicada no Google do lugar (%s)" % (pdat.mes_ano(pdat.data_de_texto(d0)) if d0 else "sem data"))
+            refs.append({"poi": pid, "tipo": "foto publicada"})
+            break
+    coments = pdat.comentarios_recentes(con, ids)
+    cur.execute("select id, coalesce(cnpj, '') from radar_comercial.pois where id = any(%s)", (list(ids),))
+    cnpjs = {c for _i, c in cur.fetchall() if len(c) == 14}
+    blocos = []
+    if coments:
+        blocos.append("COMENTÁRIOS RECENTES DE CLIENTES NO GOOGLE (até 2 anos):\n" + "\n".join(
+            "#%s %s" % (pid, c) for pid in ids for c in coments.get(pid, [])))
+    fichas = _fichas_cnpj_em_texto(cur, cnpjs)
+    consulta, texto = _texto_da_busca(cur, ligacao)
+    if texto:
+        fichas.append("RESULTADO DA BUSCA NA WEB PELO ENDEREÇO%s:\n%s"
+                      % ((" (consulta \"%s\")" % consulta) if consulta else "", texto))
+    if fichas:
+        blocos.append("FICHAS E BUSCA, EM TEXTO:\n\n" + "\n\n".join(fichas))
+    dados = cabeca + ("\n\n" + "\n\n".join(blocos) if blocos else "") + "\n\nIMAGENS, nesta ordem:\n" + (
+        "\n".join("%d. %s" % (i + 1, r) for i, r in enumerate(rot)) or "(nenhuma imagem)")
+    return dados, fotos, rot, ids, n_fontes, refs
+
+
 def uma(poco, ligacao, modelo, placar, trava, aplicar):
     t0 = time.time()
     with poco.pegar() as con:
-        dados, fotos, rot, ids, n_fontes, refs = montar_com_refs(con, ligacao)
+        dados, fotos, rot, ids, n_fontes, refs = (montar_leve if LEVE else montar_com_refs)(con, ligacao)
+    prompt = PROMPT_LEVE if LEVE else PROMPT
+    processo = PROCESSO_LEVE if LEVE else PROCESSO
     if dados is None:
         with trava:
             placar["sem_poi"] += 1
@@ -244,12 +420,12 @@ def uma(poco, ligacao, modelo, placar, trava, aplicar):
     # 14/09/2026, a lista de registros (densa de CNPJ, telefone e numero) da 1,82 a
     # 1,92, e os predios de 130 a 177 POIs passavam do contexto com 2,8 e com 2,0.
     # A folga de 1.000 cobre o molde do chat. 1.000 por foto.
-    teto = max(1500, min(teto, 32768 - int(len(PROMPT + dados) / 1.6) - 1000 * len(fotos) - 1000))
+    teto = max(1500, min(teto, 32768 - int(len(prompt + dados) / 1.6) - 1000 * len(fotos) - 1000))
     try:
         # O TEMPO SEGUE O TAMANHO DA RESPOSTA (14/09/2026): com 120 julgamentos ao
         # mesmo tempo a Spark gera ~3 tokens/s para cada um, e com o motivo sem
         # limite o predio passava dos 40 s por POI e morria em "timed out".
-        r = di._chat_local(modelo, PROMPT + dados, [base64.b64encode(b).decode() for b in fotos],
+        r = di._chat_local(modelo, prompt + dados, [base64.b64encode(b).decode() for b in fotos],
                            max_tokens=teto, timeout=max(al.TIMEOUT, min(7200, max(40 * len(ids), int(teto / 2.5)))))
     except Exception as e:                                     # noqa: BLE001
         with trava:
@@ -273,12 +449,12 @@ def uma(poco, ligacao, modelo, placar, trava, aplicar):
     checagem = None
     if v == "aprovado":
         with poco.pegar() as con:
-            v, checagem = cv.checar_uma(con, ligacao, v, r, ids, fotos=rot)
+            v, checagem = cv.checar_uma(con, ligacao, v, r, ids, processo=processo, fotos=rot)
         if checagem:
             checagem["justificativa_ia"] = r.get("justificativa")
             if v != "aprovado":
                 r["justificativa"] = "[checagem: %s] %s" % (checagem.get("porque"), r.get("motivo") or "")
-    percepcao = {"processo": PROCESSO, "dados": dados, "fotos": rot, "fotos_ref": refs, "resposta": r,
+    percepcao = {"processo": processo, "dados": dados, "fotos": rot, "fotos_ref": refs, "resposta": r,
                  "ids": ids}
     if checagem:
         percepcao["checagem"] = checagem
@@ -330,7 +506,9 @@ def rodar(limite, aplicar, trabalhadores, modelo, ligacoes, cidade, exigir_busca
         if limite:
             alvos = alvos[:limite]
     con.close()
-    al._log("▶ avaliação ENXUTA — até 5 fotos, a página da busca em texto, prompt curto")
+    al._log("▶ avaliação ENXUTA — " + ("LEVE: foto de rua de frente e foto do Google em 768 px, fichas e busca "
+                                        "em texto, comentários, saída curta" if LEVE else
+                                        "até 5 fotos, a página da busca em texto, prompt curto"))
     al._log("   %d ligação(ões) na fila" % len(alvos))
     if not alvos:
         return {"alvos": 0}
@@ -402,7 +580,7 @@ def ligacoes_do_prompt_antigo(cidade, limite=0):
     try:
         cur = con.cursor()
         cur.execute("""select ligacao, id_empresa from radar_comercial.ligacao_veredito
-                        where coalesce(percepcao::jsonb->>'processo', '') <> %s""", (PROCESSO,))
+                        where coalesce(percepcao::jsonb->>'processo', '') <> %s""", (PROCESSO_LEVE if LEVE else PROCESSO,))
         velhas = {}
         for l, emp in cur.fetchall():
             velhas.setdefault(str(emp), set()).add(str(l))
@@ -440,9 +618,12 @@ def main(argv=None):
                    help="julga tambem a ligacao sem foto a ate 60 m do hidrometro, so com registros e busca")
     p.add_argument("--prompt-antigo", dest="prompt_antigo", action="store_true",
                    help="rejulga as ligacoes (da --cidade) cujo veredito veio de outro processo que nao o atual")
+    p.add_argument("--leve", action="store_true",
+                   help="o processo leve de 15/09/2026: foto de rua de frente, fichas em texto, comentarios, saida curta")
     p.add_argument("--aplicar", action="store_true")
     a = p.parse_args(argv)
-    global SAIDA
+    global SAIDA, LEVE
+    LEVE = a.leve
     if a.saida:
         os.makedirs(a.saida, exist_ok=True)
         SAIDA = a.saida

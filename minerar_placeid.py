@@ -786,6 +786,84 @@ def _imagem_da_url(href):
     return unquote(m.group(1)) if m else None
 
 
+CAPA_SRC = r"""() => ((document.querySelector('button[aria-label^="Foto de"] img') || {}).src || '').split('=')[0]"""
+
+
+async def datar_as_que_faltam(pg, d, limite=10):
+    """Abre no visualizador cada foto da ficha que ficou sem data. Devolve [{src, data}].
+
+    `datar_fotos` percorre a galeria a partir de "Mais recentes": as fotos que a
+    GRADE da ficha mostra (capa, "Fotos e videos") muitas vezes nao estao entre as
+    primeiras dali, e quando a capa e Street View ele nem abre a galeria. Medido na
+    recaptura das aprovadas (15/09/2026): 590 fotos do proprio lugar, em 332 POIs,
+    gravadas sem data. Aqui cada uma e clicada na propria grade; a data so vale se
+    a foto aberta for ELA (mesmo id antes do `=`).
+    """
+    datadas = {(o.get("src") or "").split("=")[0] for o in (d.get("fotosComData") or []) if o.get("data")}
+    faltam = []
+    for u in d.get("fotos") or []:
+        chave = u.split("=")[0]
+        if "googleusercontent" in u and chave not in datadas and chave not in faltam:
+            faltam.append(chave)
+    achadas = []
+    if not faltam:
+        return achadas
+    try:
+        await clicar_aba(pg, r"vis[ãa]o geral|overview")
+        await pg.wait_for_timeout(800)
+    except Exception:                                          # noqa: BLE001
+        pass
+
+    # A CAPA PELO BOTAO, AS OUTRAS PELA COPIA VISIVEL (15/09/2026). A mesma foto aparece
+    # 2 ou 3 vezes na pagina, algumas escondidas; `.first` clicava na escondida e o
+    # visualizador nao abria — 128 capas e 88 fotos ficaram sem data na recaptura.
+    capa = await pg.evaluate(CAPA_SRC)
+    capa_primeiro = sorted(faltam[:limite], key=lambda c: c != capa)
+    for chave in capa_primeiro:
+        try:
+            if chave == capa:
+                alvo = pg.locator('button[aria-label^="Foto de"]').first
+            else:
+                alvo = pg.locator('img[src^="%s"]:visible' % chave.replace('"', '\\"')).first
+            if await alvo.count() == 0:
+                continue
+            await alvo.scroll_into_view_if_needed(timeout=3000)
+            await alvo.click(timeout=5000)
+            f = None
+            for _ in range(25):
+                f = await pg.evaluate(FOTO_ABERTA)
+                img = _imagem_da_url(f["href"])
+                if f["data"] and img and img.split("=")[0] == chave:
+                    achadas.append({"src": img, "data": f["data"]})
+                    break
+                await pg.wait_for_timeout(200)
+            await pg.keyboard.press("Escape")
+            await pg.wait_for_timeout(600)
+        except Exception:                                      # noqa: BLE001
+            try:
+                await pg.keyboard.press("Escape")
+            except Exception:                                  # noqa: BLE001
+                pass
+    return achadas
+
+
+def _data_da_miniatura_street_view(url):
+    """"out/2024" do panorama da miniatura de Street View da ficha, pela API de metadados (gratis)."""
+    import re
+    m = re.search(r"panoid=([^&]+)", url or "")
+    if not m:
+        return None
+    try:
+        from capturar_evidencia import _data_do_pano
+        aaaamm = _data_do_pano(m.group(1))
+    except Exception:                                          # noqa: BLE001
+        return None
+    if not aaaamm or len(aaaamm) < 7:
+        return None
+    meses = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"]
+    return "%s/%s" % (meses[int(aaaamm[5:7]) - 1], aaaamm[:4])
+
+
 async def ler_resultados_web(pg):
     """Leva a secao "Resultados da Web" ate a tela e le os cartoes. Nunca levanta."""
     # ROLAR O PAINEL AOS POUCOS, e nao pular direto para o titulo. As secoes de
@@ -1360,7 +1438,20 @@ async def _extrair_do_ponto(pg, alvo, navegar=True):
                         novas.append(_foto_grande(o["src"]))
                         ja.add(chave)
                 d["fotos"] = (novas + list(d.get("fotos") or []))[:60]
-            d["fotosDatadas"] = len(datadas)
+            # AS QUE FICARAM SEM DATA, uma a uma pela grade (15/09/2026), e a
+            # miniatura de Street View pelo panorama.
+            try:
+                faltas = await datar_as_que_faltam(pg, d)
+            except Exception:                                  # noqa: BLE001
+                faltas = []
+            for u in d.get("fotos") or []:
+                if "streetviewpixels" in u:
+                    dt = await asyncio.to_thread(_data_da_miniatura_street_view, u)
+                    if dt:
+                        faltas.append({"src": u, "data": dt})
+            if faltas:
+                d.setdefault("fotosComData", []).extend(faltas)
+            d["fotosDatadas"] = len(datadas) + len(faltas)
 
         d["cobradas"] = len(cobradas)
         return d

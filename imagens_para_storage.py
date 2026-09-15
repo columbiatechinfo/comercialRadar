@@ -66,6 +66,35 @@ def subir_tiles(limite=0):
     return
 
 
+#: Quantas fotos em voo ao mesmo tempo.
+#:
+#: O passo aqui e ESPERA DE REDE, e nao trabalho: baixar do CDN do Google,
+#: reduzir e subir para o Storage. Em serie deu 1,3 foto/s — 15 h para as
+#: 71.514 —, com a maquina parada esperando resposta. Doze em voo cabem
+#: folgado no que o Pillow consome e nao enchem o Storage local.
+#:
+#: VOLTOU EM 15/09/2026. O refactor dos tiles (ba9470b) apagou esta constante e
+#: `_uma_foto` junto com `subir_tiles`, e `--fotos` passou a morrer com
+#: NameError na primeira linha — descoberto ao subir as fotos da recaptura.
+FOTOS_EM_VOO = 12
+
+
+def _uma_foto(iid, url):
+    """(id, caminho, bytes, tipo) ou None. Roda em thread, sem tocar no banco."""
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            bruto = r.read()
+    except Exception:                                          # noqa: BLE001
+        return None
+    corpo, tipo = imagens.padronizar(bruto)
+    ext = "webp" if tipo == "image/webp" else "jpg"
+    caminho = "foto/%02d/%d.%s" % (iid % 100, iid, ext)
+    if not imagens.enviar(caminho, corpo, tipo):
+        return None
+    return iid, caminho, len(corpo), tipo
+
+
 def subir_fotos(limite=0):
     from concurrent.futures import ThreadPoolExecutor
 
