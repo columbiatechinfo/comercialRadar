@@ -35,8 +35,11 @@ OSRM = "http://127.0.0.1:7300"
 FOV = 100
 PE_ATE_PANO_MAX_M = 12
 COORD_NA_VIA_M = 2
-GIRO_MAX = 30
-SOBRA_MAX = 35
+#: pontos da via, a partir do pe da perpendicular, em que se procura panorama (15/09/2026)
+PASSOS_NA_VIA_M = (0, 6, 12)
+#: distancia minima da camera ate a fachada, e o que a fachada fica alem da coordenada (15/09/2026)
+FACHADA_MIN_M = 8.0
+FACHADA_ALEM_M = 3.0
 
 
 def mover(lat, lng, rumo, metros):
@@ -79,22 +82,36 @@ def metodo_perpendicular(lat, lng, rua):
     if (via.get("distance") or 0) < COORD_NA_VIA_M:
         return None, "coordenada em cima da via (%.1f m): sem lado" % (via.get("distance") or 0)
     pe_lng, pe_lat = via["location"]
-    p = sv.metadados_pano(pe_lat, pe_lng, raio=PE_ATE_PANO_MAX_M)
-    if not p:
-        return None, "sem panorama ate %d m do pe da perpendicular" % PE_ATE_PANO_MAX_M
-    # O RUMO GIRA DA PERPENDICULAR PARA A COORDENADA, NO MAXIMO GIRO_MAX (15/09/2026). Paralela a
-    # perpendicular, o panorama a ate 12 m do pe deixava o imovel na borda ou fora (987 de 6.106 fotos);
-    # mirando a coordenada em cheio, a foto virava vista ao longo da rua quando o imovel fica rente a
-    # calcada. Girando ate 30 graus o imovel entra no quadro e a vista continua de frente.
+    # O PANORAMA MAIS RECENTE PERTO DO PE (dono do produto, 15/09/2026).
+    # Girar a camera para a perpendicular da via tirava o imovel do quadro: com a coordenada a 3 m do
+    # panorama, o rumo do pe calculado pelo OSRM erra dezenas de graus (ligacao 319464: a placa KALIVAS
+    # saiu da foto e a seta foi para a borda). O que deixa a foto de frente e o LUGAR da camera, nao o giro:
+    # procura panorama no pe e a 6 e 12 m para cada lado da via, fica o de data mais nova ("sempre preferir
+    # o mais recente") e, na mesma data, o mais perto do pe.
     perp = sv._bearing(pe_lat, pe_lng, lat, lng)
-    alvo = sv._bearing(p["lat"], p["lng"], lat, lng)
-    delta = (alvo - perp + 180) % 360 - 180
-    # E NUNCA DEIXA O IMOVEL A MAIS DE SOBRA_MAX DO CENTRO: com o imovel rente a calcada e o panorama ao lado
-    # (delta de 80 graus), girar so 30 o deixava fora do quadro — teste das 30 do lote 1, 15/09/2026.
-    giro = max(min(abs(delta), GIRO_MAX), abs(delta) - SOBRA_MAX)
-    giro = giro if delta >= 0 else -giro
-    return {"metodo": "perpendicular", "pano": p, "heading": (perp + giro) % 360,
-            "rumo_alvo": sv._bearing(p["lat"], p["lng"], lat, lng), "dist": sv._dist_m(p["lat"], p["lng"], lat, lng),
+    cands = {}
+    for passo in PASSOS_NA_VIA_M:
+        for lado in ((90, -90) if passo else (0,)):
+            la, lo = mover(pe_lat, pe_lng, (perp + lado) % 360, passo) if passo else (pe_lat, pe_lng)
+            m = sv.metadados_pano(la, lo, raio=8 if passo else PE_ATE_PANO_MAX_M)
+            if m and m["pano_id"] not in cands and sv._dist_m(m["lat"], m["lng"], pe_lat, pe_lng) <= PE_ATE_PANO_MAX_M:
+                cands[m["pano_id"]] = m
+    if not cands:
+        return None, "sem panorama ate %d m do pe da perpendicular" % PE_ATE_PANO_MAX_M
+    p = max(cands.values(), key=lambda m: (m.get("data") or "", -sv._dist_m(m["lat"], m["lng"], pe_lat, pe_lng)))
+    # A MIRA SAI DA GEOMETRIA DA VIA, NAO DO RUMO DO PANORAMA ATE A COORDENADA. O GPS do panorama e a linha da
+    # via do OSM erram metros para o lado: na 319464 o panorama ficou a 2,8 m da coordenada, que esta a 6,2 m
+    # do eixo — mirar a coordenada deu a foto ao longo da rua. O quanto o panorama andou AO LONGO da via (a
+    # projecao no eixo) e confiavel; o desvio lateral nao. A camera olha a perpendicular e gira so o que o
+    # avanco ao longo da via pede ate a fachada: atan(avanco / distancia ate a fachada).
+    eixo = (perp + 90) % 360
+    pe_pano = sv._dist_m(pe_lat, pe_lng, p["lat"], p["lng"])
+    avanco = pe_pano * math.cos(math.radians(sv._bearing(pe_lat, pe_lng, p["lat"], p["lng"]) - eixo)) if pe_pano > 0.5 else 0.0
+    fachada = max(FACHADA_MIN_M, float(via.get("distance") or 0) + FACHADA_ALEM_M)
+    alvo = (perp + math.degrees(math.atan2(-avanco, fachada))) % 360
+    return {"metodo": "perpendicular", "pano": p, "heading": alvo, "panoramas_perto": len(cands),
+            "avanco_na_via_m": round(avanco, 1),
+            "rumo_alvo": alvo, "dist": math.hypot(avanco, float(via.get("distance") or 0)),
             "via": via.get("name") or "", "via_casou_rua": bool(rua and mesma_via(via.get("name"), rua)),
             "coord_ate_via_m": via.get("distance"), "pe_ate_pano_m": sv._dist_m(p["lat"], p["lng"], pe_lat, pe_lng)}, None
 

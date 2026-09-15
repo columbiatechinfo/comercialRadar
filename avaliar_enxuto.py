@@ -32,6 +32,7 @@ import base64
 import collections
 import io
 import json
+import re
 import os
 import threading
 import time
@@ -336,8 +337,9 @@ def _metros(la1, lo1, la2, lo2):
 def poi_da_foto_de_rua(cur, ligacao, ids):
     """(poi, metros, tem_nova, lat, lng, rua): o registro mais perto do hidrometro (a mesma escolha do dossie),
     ate `dl.RAIO_DA_FOTO_M`. `tem_nova`: se ele tem a foto de rua de frente recapturada (fov 100)."""
+    # pelo indice: `num_ligacao::text = %s` varria a tabela, 0,1 a 0,3 s por ligacao (15/09/2026)
     cur.execute("""select cod_latitude::float, cod_longitude::float, nom_logradouro from resources_root.cadastro_corsan
-                    where num_ligacao::text = %s""", (str(ligacao),))
+                    where num_ligacao = %s""", (int(ligacao) if str(ligacao).isdigit() else -1,))
     la, lo, rua = cur.fetchone() or (None, None, None)
     cur.execute("""select p.id, coalesce(p.maps_lat, p.lat_origem), coalesce(p.maps_lng, p.lng_origem)
                      from radar_comercial.pois p where p.id = any(%s)""", (list(ids),))
@@ -350,13 +352,19 @@ def poi_da_foto_de_rua(cur, ligacao, ids):
     return pid, d, cur.fetchone() is not None, pla, plo, rua
 
 
+_ROTULO_DA_SETA = re.compile(r"\d{1,3}\s*m")
+
+
 def _texto_da_leitura(leitura):
     """A leitura da foto de rua (`ler_fotos_de_rua`, 0115) em poucas linhas para o julgamento."""
     if not isinstance(leitura, dict):
         return None
     onde = {"no_imovel_da_seta": "no imóvel da seta", "colado_ao_imovel": "colado ao imóvel", "longe": "longe"}
+    # o rotulo da distancia que a propria seta traz ("7 m") e a marca d'agua do Google nao sao texto do lugar
     ts = ['"%s" (%s, %s)' % (t.get("texto"), t.get("tipo") or "?", onde.get(t.get("onde"), t.get("onde") or "?"))
-          for t in (leitura.get("textos") or [])[:15] if isinstance(t, dict) and t.get("texto")]
+          for t in (leitura.get("textos") or [])[:15] if isinstance(t, dict) and t.get("texto")
+          and not _ROTULO_DA_SETA.fullmatch(str(t.get("texto")).strip())
+          and t.get("tipo") != "marca_dagua" and "google" not in str(t.get("texto")).lower()]
     ss = ["%s (%s)" % (x.get("sinal"), onde.get(x.get("onde"), x.get("onde") or "?"))
           for x in (leitura.get("sinais_sem_texto") or [])[:8] if isinstance(x, dict) and x.get("sinal")]
     return "\n".join(["LEITURA DA FOTO DE RUA (feita antes, só com a imagem em resolução maior):",

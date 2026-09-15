@@ -53,7 +53,9 @@ def _ja_feitos(desde):
 
 
 #: fotos de rua capturadas antes da correcao da mira (15/09/2026) que ficaram com o imovel fora do meio
-CORRECAO_DA_MIRA = "2026-09-15 09:02-03"
+CORRECAO_DA_MIRA = "2026-09-15 09:50-03"
+#: a foto de antes da correcao so e capturada de novo se o panorama escolhido mudou ou a mira girou mais que isto
+MIRA_IGUAL_GRAUS = 8
 MIRA_MEIO = (0.3, 0.7)
 
 
@@ -78,17 +80,22 @@ def alvos_das_ligacoes(arquivo, forcar=False):
         pid, _d, tem_nova, la, lo, rua = e
         if tem_nova:
             # A MIRA ANTIGA DEIXAVA O IMOVEL DE LADO: refaz a descentrada capturada antes da correcao
-            cur.execute("""select mira_x, capturado_em < %s from radar_comercial.poi_evidencia
+            # A FOTO DE ANTES DA CORRECAO (15/09/2026, mira no centro e panorama mais recente) volta para a fila
+            # com o panorama e a mira que tem: `uma` so captura de novo se a escolha nova for diferente
+            cur.execute("""select pano_id, heading, capturado_em < %s from radar_comercial.poi_evidencia
                             where poi_id = %s and tipo = 'sv_frente'""", (CORRECAO_DA_MIRA, pid))
-            mx, antiga = cur.fetchone() or (None, False)
-            if forcar or (antiga and (mx is None or not MIRA_MEIO[0] <= mx <= MIRA_MEIO[1])):
+            pano0, head0, antiga = cur.fetchone() or (None, None, False)
+            if forcar or antiga:
                 tem_nova = False
                 descentradas += 1
+        else:
+            pano0 = head0 = None
         if tem_nova:
             ja += 1
         elif pid not in vistos and la is not None:
             vistos.add(pid)
-            alvos.append({"poi": pid, "lat": float(la), "lng": float(lo), "rua": rua, "ligacao": lig})
+            alvos.append({"poi": pid, "lat": float(la), "lng": float(lo), "rua": rua, "ligacao": lig,
+                          "antes": None if forcar or not pano0 else {"pano_id": pano0, "heading": head0}})
     # SEM REGISTRO A ATE 60 M: a foto e tirada no hidrometro (15/09/2026) — a ligacao nao vai mais sem imagem
     cur.execute("""select num_ligacao::text from resources_root.cadastro_corsan c
                     where num_ligacao::text = any(%s) and not exists (select 1 from radar_comercial.ligacao_poi lp
@@ -98,17 +105,19 @@ def alvos_das_ligacoes(arquivo, forcar=False):
     if sem_poi:
         cur.execute("""select c.num_ligacao::text, c.id_empresa::text, c.cod_latitude::float, c.cod_longitude::float,
                               c.nom_logradouro,
-                              exists (select 1 from radar_comercial.ligacao_evidencia e
-                                       where e.ligacao = c.num_ligacao::text and e.tipo = 'sv_frente'
-                                         and e.dados is not null and e.capturado_em >= %s and not %s)
-                         from resources_root.cadastro_corsan c where c.num_ligacao = any(%s::bigint[])""",
+                              e.capturado_em >= %s and not %s, e.pano_id, e.heading
+                         from resources_root.cadastro_corsan c
+                         left join radar_comercial.ligacao_evidencia e
+                           on e.ligacao = c.num_ligacao::text and e.tipo = 'sv_frente' and e.dados is not null
+                        where c.num_ligacao = any(%s::bigint[])""",
                     (CORRECAO_DA_MIRA, forcar, [int(x) for x in set(sem_poi) if x.isdigit()]))
-        for lig, emp, la, lo, rua, ja_tem in cur.fetchall():
+        for lig, emp, la, lo, rua, ja_tem, pano0, head0 in cur.fetchall():
             if ja_tem:
                 ja += 1
             elif la is not None and lo is not None:
                 hidro += 1
-                alvos.append({"poi": None, "ligacao": lig, "id_empresa": emp, "lat": la, "lng": lo, "rua": rua})
+                alvos.append({"poi": None, "ligacao": lig, "id_empresa": emp, "lat": la, "lng": lo, "rua": rua,
+                              "antes": None if forcar or not pano0 else {"pano_id": pano0, "heading": head0}})
     con.close()
     print("   %d ligacoes · %d ja com a foto de rua nova · %d a capturar (%d descentradas refeitas, %d no hidrometro)"
           % (len(ligs), ja, len(alvos), descentradas, hidro), flush=True)
@@ -132,11 +141,32 @@ def gravar_da_ligacao(poco, a, img, **extra):
         con.commit()
 
 
+def confirmar_foto(poco, a):
+    """A foto de antes da correcao que a mira nova repetiria (mesmo panorama, mesma mira) VALE COMO CAPTURADA
+    AGORA: sai da fila da recaptura e da conferencia. A leitura das placas, se ja era desta foto, continua
+    valendo — a imagem e a mesma."""
+    tabela, filtro, vals = (("poi_evidencia", "poi_id = %s", [a["poi"]]) if a.get("poi") is not None else
+                            ("ligacao_evidencia", "ligacao = %s and id_empresa::text = %s", [a["ligacao"], a["id_empresa"]]))
+    with poco.pegar() as con:
+        with con.cursor() as k:
+            k.execute("""update radar_comercial.%s
+                            set capturado_em = now(),
+                                leitura_em = case when leitura is not null and leitura_em >= capturado_em
+                                                  then now() else leitura_em end
+                          where %s and tipo = 'sv_frente'""" % (tabela, filtro), vals)
+        con.commit()
+
+
 async def uma(page, poco, a):
     esc = await asyncio.to_thread(vp.escolher, a["lat"], a["lng"], a.get("rua"))
     if esc.get("erro"):
         return {"erro": esc["erro"]}
     p = esc["pano"]
+    antes = a.get("antes")
+    if antes and antes.get("pano_id") == p["pano_id"] and antes.get("heading") is not None \
+            and vp.dif(float(antes["heading"]), esc["heading"]) <= MIRA_IGUAL_GRAUS:
+        await asyncio.to_thread(confirmar_foto, poco, a)
+        return {"metodo": esc["metodo"], "igual": True, "data": p.get("data")}
     ok = await sv._abrir_por_id(page, p["pano_id"], esc["heading"], vp.FOV)
     if not ok:
         await page.wait_for_timeout(1500)
@@ -182,7 +212,7 @@ async def main(a):
     # nucleo. 12 abas num navegador renderam o mesmo que 8 (36 x 38 POIs/min).
     if a.parte:
         k, n = (int(x) for x in a.parte.split("/"))
-        fila_l = [x for x in fila_l if x["poi"] % n == k]
+        fila_l = [x for x in fila_l if (x["poi"] if x["poi"] is not None else int(x["ligacao"])) % n == k]
     if a.limite:
         fila_l = fila_l[:a.limite]
     print("▶ foto de rua de frente: %d POIs nos alvos, %d ja feitos, %d a capturar, %d abas"
@@ -192,7 +222,7 @@ async def main(a):
     fila = asyncio.Queue()
     for x in fila_l:
         fila.put_nowait(x)
-    placar = {"ok": 0, "perpendicular": 0, "mais de frente": 0, "sem_data": 0, "erro": 0}
+    placar = {"ok": 0, "igual": 0, "perpendicular": 0, "mais de frente": 0, "sem_data": 0, "erro": 0}
     t0 = time.time()
     poco = ce.Poco(min(ce.CONEXOES, a.abas))
     from playwright.async_api import async_playwright
@@ -223,6 +253,8 @@ async def main(a):
                         await ce._aquecer(page)
                 if r.get("erro"):
                     placar["erro"] += 1
+                elif r.get("igual"):
+                    placar["igual"] += 1
                 else:
                     placar["ok"] += 1
                     placar[r["metodo"]] += 1
@@ -230,7 +262,7 @@ async def main(a):
                 rel.write(json.dumps({"poi": alvo["poi"], "ligacao": alvo.get("ligacao"), **r}, ensure_ascii=False,
                                      default=str) + "\n")
                 rel.flush()
-                n_feitos = placar["ok"] + placar["erro"]
+                n_feitos = placar["ok"] + placar["erro"] + placar["igual"]
                 if n_feitos % 20 == 0:
                     ritmo = n_feitos / max(1, time.time() - t0) * 60
                     print("   [%d/%d] %.1f POIs/min · falta ~%.0f min · %s"
