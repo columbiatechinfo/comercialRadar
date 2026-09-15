@@ -76,7 +76,7 @@ PROCESSO = "enxuto de 14/09/2026 (número, provas datadas, busca complementar)"
 #:     estado de conservacao pesa (imovel abandonado);
 #:   - saida curta nos campos de apoio, motivo completo; as 2 fontes o CODIGO conta (checagem, regra 7).
 #: Comeca com "enxuto de " (a checagem reconhece o processo por esse comeco) e tem "leve" (a regra 7).
-PROCESSO_LEVE = "enxuto de 15/09/2026 v4 (leve: foto de rua centrada e do hidrômetro, leitura das placas, fichas em texto, fonte única)"
+PROCESSO_LEVE = "enxuto de 15/09/2026 v5 (leve: foto de rua no pin ou hidrômetro com planta, fachada da seta pelo código, vizinho só com nome, fonte da busca e redes sociais, auditoria das 40)"
 #: A FOTO DE RUA DO PROCESSO LEVE e so a captura nova (`recapturar_frente`: de frente, seta, fov 100). A de antes
 #: tinha a mira desenhada e olhava do panorama mais perto — foi para a IA na leve v2 e o dono do produto viu.
 FRENTE_NOVA_DESDE = "2026-09-14 23:00-03"
@@ -136,7 +136,7 @@ A PERGUNTA É SOBRE O IMÓVEL: há uso não residencial funcionando nele?
 Responda, nesta ordem:
 1. Imagens. OLHE A IMAGEM INTEIRA, e não só a ponta da seta: a seta marca a coordenada, que tem metros de erro, e o imóvel pode ocupar boa parte da foto. Uma imagem só MOSTRA uso com SINAL CONCRETO: letreiro, placa, faixa, banner, adesivo ou anúncio pintado na parede ou no muro de QUALQUER negócio (mesmo com nome diferente do registro, mesmo pequeno), telefone ou nome comercial escrito na fachada, marcador de estabelecimento do Google no imóvel, vitrine com mercadoria, porta de loja ou de enrolar aberta com mercadoria ou atendimento, balcão, cardápio, oficina com carros ou peças em serviço, pátio com caminhões, máquinas, sucata ou material de trabalho, carros à venda, portão de galpão industrial. A LEITURA DA FOTO DE RUA, quando vier, foi feita antes só com a imagem, e a fachada da seta foi decidida pela posição da ponta: texto ou sinal da FACHADA DA SETA É SINAL (confira na imagem). PLACA OU SINAL DE VIZINHO — mesmo colado, mesmo parecendo continuação do imóvel — SÓ É SINAL DESTA INSTALAÇÃO quando a leitura diz que o nome dele aparece em outra fonte; sem isso, não use a placa do vizinho para aprovar nem para dizer o que funciona no imóvel, e não ponha a foto de rua em "quais". NÃO É SINAL: casa, sobrado, muro, grade, portão fechado de casa, carro na garagem, jardim, telhado, caixa d'água — mesmo que um registro diga que há empresa ali. Nome no letreiro DA FACHADA DA SETA diferente do registro não tira o sinal: nome fantasia muda e o negócio pode ter trocado de dono.
 2. Estado do imóvel na imagem mais recente: em uso; abandonado ou sem uso (mato alto, portas ou janelas lacradas, quebradas ou pichadas, ruína, placa de aluga-se ou vende-se, vitrine vazia, fachada deteriorada sem ocupação); ou não dá para ver. Diga a data da imagem em que você viu.
-3. Aderentes: registros no mesmo endereço — rua, número, complemento, bairro. NÚMERO DIFERENTE É OUTRO IMÓVEL, mesmo vizinho; também não é aderente se uma imagem mostra com clareza outro número. Número que não aparece não atrapalha. Com complemento no cadastro: mesmo complemento é desta instalação; sem complemento, com rua e número iguais, também; complemento diferente é outra unidade.
+3. Aderentes: registros no mesmo endereço — rua, número, complemento, bairro. NÚMERO DIFERENTE É OUTRO IMÓVEL, mesmo vizinho; também não é aderente se uma imagem mostra com clareza outro número. Número que não aparece não atrapalha. Com complemento no cadastro: mesmo complemento é desta instalação; sem complemento, com rua e número iguais, também; complemento diferente é outra unidade. Instalação que é uma UNIDADE (LOJA 026, SALA 3, BOX 12): a prova tem de ser do registro DESSA unidade — foto, letreiro e registro de outra loja do mesmo número não sustentam a aprovação.
 4. Não combinam: registros que destoam da maioria e desta instalação.
 5. Fontes que confirmam o uso, cada uma UMA vez:
  - Receita: o CNPJ da base, a ficha do Serasa e a busca na web são TODOS a mesma fonte (a busca acha a Receita republicada) — MENOS o resultado de rede social: cada resultado da busca vem marcado com a fonte ([rede social: Instagram], [site de CNPJ = Receita republicada], [guia de empresas], [site próprio ou outro]);
@@ -150,7 +150,8 @@ Responda, nesta ordem:
    e, nos dois casos, o imóvel não aparece abandonado.
  - "revisao_humana": há sinal de uso, mas não fecha a regra acima (uma fonte só que não basta, prova antiga, imagem sem sinal com registro ativo, imóvel abandonado com prova em contrário, dúvida de unidade) — o motivo diz o que faltou e a idade das provas;
  - "reprovado": nenhum sinal de uso não residencial neste imóvel.
-A DATA PESA: cada prova vale para o dia em que foi tirada, postada ou atualizada; a mais recente vale mais. FOTO DE RUA MAIS ANTIGA QUE AS PROVAS DO GOOGLE OU DAS REDES SOCIAIS NÃO DESMENTE ESSAS PROVAS: o negócio pode ter aberto depois dela — compare as datas e fique com a mais recente. Liste em "aderentes" TODO registro em que você apoia o veredito. CNPJ/MEI ativo com atividade não residencial é negócio, mesmo com nome de pessoa — mas é UMA fonte só.
+A DATA PESA: cada prova vale para o dia em que foi tirada, postada ou atualizada; a mais recente vale mais. FOTO DE RUA MAIS ANTIGA QUE AS PROVAS DO GOOGLE OU DAS REDES SOCIAIS NÃO DESMENTE ESSAS PROVAS: o negócio pode ter aberto depois dela — compare as datas e fique com a mais recente. Liste em "aderentes" TODO registro em que você apoia o veredito.
+CUIDADOS DA AUDITORIA: PLACA DE ALUGA-SE OU VENDE-SE NÃO É SINAL DE USO — é sinal de imóvel vago ou à venda; se a foto com a placa é mais nova que a última prova de atividade (comentário, foto do Google, iFood, post), o imóvel pode ter ficado vago e não aprova. ANÚNCIO DE ALUGUEL OU VENDA DO IMÓVEL na busca ou na rede social é contraprova, não fonte. DATAS: use só as datas escritas no texto; comentário sem data não é prova recente; não cite ficha do Serasa que não veio no texto. Foto de rua anterior à abertura do CNPJ não desmente o CNPJ. ARTE DE DIVULGAÇÃO NÃO É FOTO DO LUGAR: logo, desenho, card de serviços, panfleto ou montagem digital publicados no Google não mostram o imóvel e não contam como imagem com sinal (não ponha em "quais"). Instalação de FUNDOS: a foto da rua não mostra o imóvel dos fundos, e a falta de sinal nela não pesa. Registro com CEP DIFERENTE da instalação pode ser rua homônima de outro bairro: não o confirme sem outra prova do endereço. CNPJ/MEI ativo com atividade não residencial é negócio, mesmo com nome de pessoa — mas é UMA fonte só.
 
 Responda SOMENTE um JSON, curto nos campos de apoio e completo no motivo:
 {"uso": {"nao_residencial": true|false, "o_que": "<atividade, até 8 palavras>"},
@@ -224,7 +225,8 @@ def _texto_da_busca(cur, ligacao):
     if not linhas:
         return None, None
     # A FONTE E A DATA DE CADA RESULTADO (15/09/2026): rede social, site de CNPJ, guia, iFood ou site proprio
-    return linhas[0][1], "\n\n".join(fdb.anotar_texto(t) for _m, _c, t in linhas)[:TEXTO_MAX]
+    cidade, cep = fdb.cidade_e_cep(cur, ligacao)
+    return linhas[0][1], "\n\n".join(fdb.anotar_texto(t, cidade, cep) for _m, _c, t in linhas)[:TEXTO_MAX]
 
 
 def _resultados_web_da_ficha(cur, poi_ids):
@@ -390,6 +392,20 @@ def montar_leve(con, ligacao):
     if dados is None:
         return None, [], [], [], 0, []
     cabeca = dados.split("\n\nFOTOS, nesta ordem:")[0]
+    # O CEP DO REGISTRO DIFERENTE DO DA INSTALACAO (auditoria das 40, 15/09/2026): o iFood da 320537 era da Rua
+    # Esperanca de outro CEP — rua homonima
+    m_cep = re.search(r"INSTALAÇÃO:[^\n]*?CEP:?\s*(\d{5})-?(\d{3})", cabeca)
+    if m_cep:
+        cep_inst = m_cep.group(1) + m_cep.group(2)
+
+        def _marca_cep(mm):
+            linha = mm.group(0)
+            ceps = {a + b for a, b in re.findall(r"(?<![\d-])(\d{5})-(\d{3})(?![\d-])", linha)}
+            if ceps and cep_inst not in ceps:
+                return linha + " · CEP %s DIFERENTE do da instalação (%s-%s): pode ser rua homônima" % (
+                    "/".join(sorted("%s-%s" % (c[:5], c[5:]) for c in ceps)), cep_inst[:5], cep_inst[5:])
+            return linha
+        cabeca = re.sub(r"(?m)^#\d+ \[[^\]]+\][^\n]*$", _marca_cep, cabeca)
     cur = con.cursor()
     fotos, rot, refs = [], [], []
     leitura_rua = mira_rua = None
@@ -435,6 +451,8 @@ def montar_leve(con, ligacao):
         blocos.append(texto_rua)
         if rot and rot[0].startswith("foto de rua"):
             rot[0] = fds.marcar_rotulo(rot[0], vale_rua)
+            if fds.aluga_na_seta(leitura_rua, mira_rua):
+                rot[0] = "%s · %s" % (rot[0], cv.MARCA_ALUGA_NA_RUA)
     elif _texto_da_leitura(leitura_rua):
         blocos.append(_texto_da_leitura(leitura_rua))
     if coments:

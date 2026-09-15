@@ -53,7 +53,7 @@ import sys
 import base_comum as bc
 import provas_datadas as pdat
 
-REGRA = "checagem do codigo de 15/09/2026 v3 (número, prova recente, 2 fontes, fonte única e imóvel abandonado)"
+REGRA = "checagem do codigo de 15/09/2026 v4 (número, complemento, prova recente, 2 fontes, fonte única, rede social, vizinho, aluga/vende)"
 
 #: AS FONTES INDEPENDENTES (dono do produto, 14 e 15/09/2026). Cada uma conta uma vez; o Serasa e a
 #: Casa dos Dados SAO a Receita — a IA do teste contou "Receita" e "Serasa" como duas e aprovou.
@@ -75,6 +75,8 @@ SINONIMOS_DE_FONTE = {"serasa": "receita", "casa dos dados": "receita", "cnpj": 
                       "overture": "base estadual"}
 
 
+#: o rotulo da foto de rua com placa de aluguel ou venda na fachada da seta (auditoria das 40, 15/09/2026)
+MARCA_ALUGA_NA_RUA = "placa de aluga/vende na fachada da seta"
 #: o rotulo da foto de rua em que nada vale para a instalacao (so placa de vizinho sem o nome em outra fonte)
 MARCA_SEM_SINAL_NA_RUA = "sem sinal que valha para esta instalação"
 
@@ -180,6 +182,29 @@ def fonte_unica_basta(ctx, validos, resposta, fotos):
     return False, "a fonte única não é fachada no Street View nem foto ou comentário de menos de 1 ano"
 
 
+def vago_depois_das_provas(ctx, validos, fotos, redes=()):
+    """(vago, texto): A PLACA DE ALUGA/VENDE MAIS NOVA QUE A ULTIMA PROVA DE ATIVIDADE (auditoria das 40, 15/09/2026).
+    Na 310148 a foto de out/2025 mostrava o muro do galpao com "Imobiliaria Vital ALUGA", depois do ultimo comentario
+    do Google (set/2025), e a IA contou a placa como sinal de uso. Prova de atividade: Google, iFood, base estadual e
+    post de rede social datados — o CNPJ ativo e o CNEFE nao dizem se o imovel segue ocupado."""
+    for rot in fotos or []:
+        if MARCA_ALUGA_NA_RUA not in str(rot):
+            continue
+        dt_foto = pdat.data_do_rotulo(rot)
+        if not dt_foto:
+            continue
+        datas = [p["data"] for pid in validos for p in ((ctx.provas.get(pid) or {}).get("provas") or [])
+                 if p.get("fonte") in ("maps", "ifood", "estadual") and p.get("data")]
+        datas += [pdat.data_de_texto(x.get("data")) for x in redes or [] if x.get("data")]
+        datas = [d for d in datas if d]
+        ultima = max(datas) if datas else None
+        if not ultima or dt_foto >= ultima:
+            return True, ("a foto de rua de %s mostra placa de aluguel/venda na fachada da seta, %s"
+                          % (pdat.mes_ano(dt_foto), ("mais nova que a última prova de atividade (%s)" % pdat.mes_ano(ultima))
+                             if ultima else "e não há prova de atividade datada depois dela"))
+    return False, None
+
+
 def processo_leve(processo):
     return "leve" in str(processo or "")
 
@@ -276,6 +301,14 @@ class Contexto:
         for pid, fonte, nome, cat, cnpj, compl in cur.fetchall():
             b = (cnpj or "").zfill(14)[:8] if cnpj else None
             self.poi[pid] = {"fonte": fonte, "nome": nome, "categoria": cat, "basico": b, "complemento": compl}
+        # A UNIDADE NO ENDERECO PUBLICADO (auditoria das 40, 15/09/2026): o registro do Maps ou do iFood nao tem
+        # complemento da Receita, e a loja 14 do Park Mall confirmava a LOJA 026 (2900611)
+        cur.execute("select id, coalesce(endereco, '') from radar_comercial.pois where id = any(%s)", (ids,))
+        for pid, end in cur.fetchall():
+            if pid in self.poi and not self.poi[pid]["complemento"]:
+                m = re.search(r"\b(loja|lj|sala|sl|box|conjunto|conj|bloco|bl|apto|apartamento|ap)\.?\s*(\d+[a-z]?)\b", end.lower())
+                if m:
+                    self.poi[pid]["complemento"] = "%s %s" % (m.group(1).upper(), m.group(2).upper())
             if b:
                 basicos.add(b)
         basicos = sorted(basicos)
@@ -569,6 +602,10 @@ def checar_uma(con, lig, v, resposta, ids, processo="enxuto de 12/09/2026", foto
     ctx = Contexto(con, [lig], [_pid(x) for x in b if _pid(x) is not None] + list(ids or []))
     validos, removidos = validar(ctx, lig, b, ids, resposta)
     v_novo, porque = decidir(ctx, validos, False, lig, resposta, fotos, processo)
+    if v_novo == "aprovado":
+        vago, texto = vago_depois_das_provas(ctx, validos, fotos, redes)
+        if vago:
+            v_novo, porque = "revisao_humana", texto
     return v_novo, {"regra": REGRA, "veredito_ia": v, "veredito": v_novo, "porque": porque,
                     "validos": validos, "removidos": removidos, "redes_sociais": redes,
                     "em": datetime.datetime.now().isoformat(timespec="seconds")}

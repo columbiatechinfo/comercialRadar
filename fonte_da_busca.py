@@ -29,7 +29,14 @@ SITES_DE_CNPJ = ("cnpj", "casadosdados", "econodata", "advdinamico", "informecad
                  "cadastroempresa", "dadosempresa", "consultaempresa", "situacaocadastral", "infoplex", "jusbrasil")
 GUIAS = ("solutudo", "apontador", "guiamais", "telelistas", "benditoguia", "cylex", "hotfrog", "yelp", "tripadvisor",
          "encontra", "guiafacil", "doctoralia", "getninjas", "habitissimo", "enfsolar", "infobel", "empresite",
-         "paginasamarelas", "listamais", "achei", "guiadecanoas", "waze", "moovit", "google.com/maps", "maps.app")
+         "paginasamarelas", "listamais", "achei", "guiadecanoas", "waze", "moovit", "google.com/maps", "maps.app",
+         # auditoria das 40 (15/09/2026): guias que caiam em "site proprio ou outro"
+         "kompass", "applocal", "todosnegocios", "archivo.biz", "informacoesdobrasil", "canoas.net", "guiadotrc",
+         "guiatrc", "empresasdobrasil", "cnpj.services", "brasilnaweb", "encontrasp", "negocios.", "listaonline",
+         "portaldasempresas", "guiamaisbrasil", "infoisinfo", "consultaempresas", "dnb.com", "b2bleads")
+#: anuncio do proprio imovel para alugar ou vender: contraprova (345052, 336770, 2777796)
+_ANUNCIO = re.compile(r"\b(alug[ao]|aluga se|para alugar|aluguel|vende se|a venda|vendo (casa|terreno|apartamento|predio|sala|imovel)|"
+                      r"\d+\s*m2|\d+\s*m²|\d+\s*(dormitorios?|quartos?))\b")
 
 _MES_PT = {"jan": 1, "fev": 2, "mar": 3, "abr": 4, "mai": 5, "jun": 6, "jul": 7, "ago": 8, "set": 9, "out": 10,
            "nov": 11, "dez": 12}
@@ -91,6 +98,14 @@ def data_do_trecho(texto):
     return min(achadas)[1] if achadas else None
 
 
+def cidade_e_cep(cur, ligacao):
+    if not str(ligacao).isdigit():
+        return None, None
+    cur.execute("select cidade, cod_cep from resources_root.cadastro_corsan where num_ligacao = %s", (int(ligacao),))
+    r = cur.fetchone()
+    return (r[0], r[1]) if r else (None, None)
+
+
 def redes_sociais_no_endereco(cur, ligacao, ids):
     """REDE SOCIAL CONFIRMADA E FONTE PROPRIA (dono do produto, 15/09/2026). [{rede, poi, url, data, texto}]: o
     resultado da busca NO ENDERECO da instalacao (`no_endereco` do `buscar_web`: mesma rua e numero) que vem de
@@ -102,6 +117,7 @@ def redes_sociais_no_endereco(cur, ligacao, ids):
                     where ligacao = %s and tipo = 'endereco' and not bloqueado and resultados is not null""", (str(ligacao),))
     linhas = cur.fetchall()
     excluir = palavras_do_endereco(cur, ligacao) if linhas else set()
+    cidade, cep = cidade_e_cep(cur, ligacao) if linhas else (None, None)
     saida, vistos = [], set()
     for (res,) in linhas:
         for x in res or []:
@@ -111,6 +127,9 @@ def redes_sociais_no_endereco(cur, ligacao, ids):
             if tipo != "rede social":
                 continue
             texto = " ".join(("%s %s" % (x.get("titulo") or "", x.get("trecho") or "")).split())
+            # o post de aluguel ou venda do imovel nao e o negocio (345052); o de outra cidade nao e o endereco
+            if e_anuncio(texto) or (cidade and not na_cidade(texto, cidade, cep)):
+                continue
             for pid, nome in nomes:
                 if nome and casar(nome, [(rede, texto)], excluir) and (rede, pid, str(x.get("url"))) not in vistos:
                     vistos.add((rede, pid, str(x.get("url"))))
@@ -120,20 +139,46 @@ def redes_sociais_no_endereco(cur, ligacao, ids):
     return saida
 
 
-def anotar_texto(texto):
-    """O texto da busca (`busca_web.texto`) com a FONTE e a data de cada resultado na linha do titulo."""
+def e_anuncio(texto):
+    """O resultado anuncia o imovel para alugar ou vender."""
+    return bool(_ANUNCIO.search(_normal(texto)))
+
+
+def na_cidade(texto, cidade, cep):
+    """O resultado cita a cidade ou o CEP da instalacao (o filtro antigo aceitava so o bairro)."""
+    t = " %s " % _normal(texto)
+    cid = _normal(cidade)
+    c = re.sub(r"\D", "", str(cep or ""))
+    return (len(cid) > 2 and (" %s " % cid) in t) or (len(c) == 8 and c in re.sub(r"\D", "", str(texto or "")))
+
+
+def anotar_texto(texto, cidade=None, cep=None):
+    """O texto da busca (`busca_web.texto`) com a FONTE e a data de cada resultado na linha do titulo; o anuncio de
+    aluguel/venda marcado como contraprova; e, com a cidade, fora o resultado que nao cita nem a cidade nem o CEP."""
     linhas = str(texto or "").split("\n")
-    saida = []
+    saida, fora, pular = [], 0, False
     for i, l in enumerate(linhas):
+        if pular:
+            pular = False
+            if not re.match(r"^\s*\d+\. ", l):
+                continue
         m = re.match(r"^(\s*\d+\. )(.*) — (\S+)\s*$", l)
         if not m:
             saida.append(l)
             continue
-        tipo, nome = classificar(m.group(3))
         trecho = linhas[i + 1] if i + 1 < len(linhas) else ""
+        if cidade and not na_cidade("%s %s" % (m.group(2), trecho), cidade, cep):
+            fora += 1
+            pular = True
+            continue
+        tipo, nome = classificar(m.group(3))
         dt = data_do_trecho(trecho) if tipo == "rede social" else None
         rot = tipo + ((": " + nome) if nome and tipo != "site de CNPJ" else "") + \
             (" = Receita republicada" if tipo == "site de CNPJ" else "") + \
             ((" · post de %s" % pdat.mes_ano(dt)) if dt else (" · sem data do post" if tipo == "rede social" else ""))
+        if e_anuncio("%s %s" % (m.group(2), trecho)):
+            rot += " · ANÚNCIO DE ALUGUEL/VENDA DO IMÓVEL: contraprova"
         saida.append("%s[%s] %s — %s" % (m.group(1), rot, m.group(2), m.group(3)))
+    if fora:
+        saida.append("(%d resultado(s) sem a cidade nem o CEP da instalação ficaram fora: podem ser de rua homônima em outra cidade)" % fora)
     return "\n".join(saida)

@@ -15,7 +15,7 @@
 # O QUE FAZ, em ordem:
 #   A. (uma vez) CONSOLIDAR AS APROVADAS de 15/09: ficha do CNPJ no Serasa e datas das
 #      fotos que faltaram, e rejulga so as ligacoes em que algo mudou;
-#   C. (uma vez) EVIDENCIAS CORRIGIDAS e rejulgamento de todos os ja julgados;
+#   R. (uma vez) REJULGAMENTO ORDENADO de todos os vereditos (aprovadas, iFood, Maps, resto; SIM antes de SIM_COM);
 #   B. (sempre) O LACO: pega a fila de Canoas (a mesma do julgamento), recaptura TUDO das
 #      ligacoes do lote — ficha do Maps sem vizinhos e com data, fotos no Storage, foto de
 #      rua de frente, leitura das placas, ficha do CNPJ, busca web — e so entao julga, gravando.
@@ -147,25 +147,44 @@ EOF
   log "A. pronto"
 fi
 
-# ── C. evidencias corrigidas e rejulgamento de todos os ja julgados (uma vez, 15/09/2026) ─────
-# A visada (15/09/2026, 09:50: mira pela geometria da via e panorama mais recente; so recaptura quem muda), a
-# foto de rua descentrada (987 de 6.106), a ligacao sem foto (sem registro a 60 m: foto no hidrometro) e as
-# placas que a IA ignorava (leitura so da foto). Dono do produto: "obtem primeiro as evidencias, so entao roda
-# novamente todos os que ja rodaram com prompt corrigido e evidencias corrigidas".
-if [ ! -f $O/C_feito ]; then
-  log "C. evidências corrigidas de todos os já julgados, e só então o rejulgamento"
-  if [ ! -f $O/C_evidencias_feitas ]; then
-    $SQL -c "select ligacao::text from radar_comercial.ligacao_veredito where percepcao::jsonb->>'processo' like 'enxuto de 15/09/2026 v3%' order by 1" > $O/C_ligacoes.txt
+# ── R. o rejulgamento de todos os vereditos, na ordem do dono do produto (15/09/2026) ─────────────
+# Substitui a etapa C (so as 4.453 do processo leve). Entram tambem os 19.506 vereditos de 13/09, que ficavam com
+# as regras antigas (215 das 216 reprovadas com iFood vinham deles). Ordem (`fila_rejulgamento.py`): as aprovadas
+# hoje, as com iFood, as com Google Maps, o resto; em cada grupo SIM antes de SIM_COM_ANALISE_HUMANA. Lotes de 600,
+# cada um com a recaptura no padrao atual (seta, visada, planta, datas), a conferencia e so entao o julgamento.
+# Antes do primeiro lote, a copia dos vereditos (`ligacao_veredito_antes_r`).
+if [ ! -f $O/R_feito ]; then
+  if [ ! -f $O/R_fila_pronta ]; then
+    log "R. rejulgamento ordenado: cópia dos vereditos e a fila"
+    [ -s $O/C_ligacoes.txt ] || $SQL -c "select ligacao::text from radar_comercial.ligacao_veredito where percepcao::jsonb->>'processo' like 'enxuto de 15/09/2026%' order by 1" > $O/C_ligacoes.txt
     [ -s $O/lotes/lote_2.txt ] && sort -u $O/C_ligacoes.txt $O/lotes/lote_2.txt -o $O/C_ligacoes.txt
-    log "   $(wc -l < $O/C_ligacoes.txt) ligações (as julgadas no v3 e o lote 2 interrompido)"
-    preparar C_ligacoes.txt C
-    touch $O/C_evidencias_feitas
+    $SQL -c "create table if not exists radar_comercial.ligacao_veredito_antes_r as select * from radar_comercial.ligacao_veredito" >> $O/lotes/R_fila.log 2>&1
+    limpar radar-orq-fila-r
+    $RUN --name radar-orq-fila-r -e RADAR_CONEXOES=1 -v $REPO:/app:ro -v $O:/o $IMG \
+      python -u fila_rejulgamento.py --etapa-c /o/C_ligacoes.txt --saida /o/R_fila.txt >> $O/lotes/R_fila.log 2>&1
+    if [ -s $O/R_fila.txt ]; then
+      rm -f $O/lotes/R_[0-9][0-9][0-9]
+      split -l 600 -d -a 3 $O/R_fila.txt $O/lotes/R_
+      for f in $O/lotes/R_[0-9][0-9][0-9]; do mv "$f" "$f.txt"; done
+      touch $O/R_fila_pronta
+      log "   $(grep -h '■' $O/lotes/R_fila.log | tail -1 | cut -c3-120) · $(ls $O/lotes/R_[0-9][0-9][0-9].txt | wc -l) lotes"
+    else
+      log "   a fila não saiu: $(tail -2 $O/lotes/R_fila.log | tr '\n' ' ' | cut -c1-200)"
+      exit 1
+    fi
   fi
-  log "   rejulgando as $(wc -l < $O/C_ligacoes.txt) com o prompt v4"
-  julgar C_ligacoes.txt C
+  for arq in $(ls $O/lotes/R_[0-9][0-9][0-9].txt 2>/dev/null | sort); do
+    tag=$(basename $arq .txt)
+    [ -f $O/lotes/$tag.feito ] && continue
+    [ -f $O/PARAR ] && { log "parado pelo arquivo PARAR (etapa R, antes do $tag)"; exit 0; }
+    log "R. $tag: $(wc -l < $arq) ligações — recaptura, conferência e julgamento"
+    preparar lotes/$tag.txt $tag
+    julgar lotes/$tag.txt $tag
+    touch $O/lotes/$tag.feito
+  done
   [ -s $O/lotes/lote_2.txt ] && touch $O/lotes/lote_2.feito
-  touch $O/C_feito
-  log "C. pronto"
+  touch $O/R_feito
+  log "R. pronto"
 fi
 
 # ── B. o laco ────────────────────────────────────────────────────────────────

@@ -21,7 +21,7 @@ provas.
 import re
 import unicodedata
 
-from checagem_veredito import MARCA_SEM_SINAL_NA_RUA
+from checagem_veredito import MARCA_ALUGA_NA_RUA, MARCA_SEM_SINAL_NA_RUA
 from desenho_seta import PONTA_REL
 
 PROMPT = """Esta é uma foto de rua (Street View). Ignore a seta verde, o rótulo de distância e o quadro escuro no canto inferior direito (uma planta vista de cima): não fazem parte da cena.
@@ -31,7 +31,7 @@ Identifique CADA FACHADA de imóvel visível na cena — casa, sobrado, loja, pr
 - uma descrição curta;
 - os TEXTOS escritos NELA — placa, letreiro, faixa, banner, adesivo, anúncio pintado, toldo, telefone, placa de aluga/vende —, transcritos; no máximo 8 por fachada; texto longo, só o essencial em até 8 palavras; número da casa e nome de rua não;
 - os sinais de atividade não residencial SEM texto nela: vitrine com mercadoria, porta de loja aberta, balcão, mesas de bar, oficina com carros ou peças em serviço, pátio com caminhões ou máquinas, material à venda, sucata, marcador de estabelecimento do Google. Portão de garagem, porta fechada de casa e carro na garagem NÃO são sinal;
-- se ela mostra uso não residencial (sinal_comercial);
+- se ela mostra uso não residencial (sinal_comercial). Placa de aluga-se ou vende-se é do tipo aluga_vende e, sozinha, NÃO é uso não residencial;
 - se está encoberta (árvore, poste, veículo ou muro escondendo boa parte dela).
 
 Responda SOMENTE um JSON:
@@ -261,6 +261,29 @@ def _textos(f):
             and not re.fullmatch(r"\d{1,3}\s*m", str(t.get("texto")).strip())]
 
 
+_ALUGA = re.compile(r"\b(aluga|alugo|alugase|aluga se|para alugar|aluguel|vende se|vendese|vendo|a venda|locacao)\b")
+
+
+def _e_aluga(t):
+    return t.get("tipo") == "aluga_vende" or bool(_ALUGA.search(_normal(t.get("texto"))))
+
+
+def _so_contato(t):
+    """Texto que e so telefone, site ou nome de imobiliaria: com placa de aluga/vende, e do anuncio."""
+    if re.search(r"www|http|[.]com|[.]br|@", str(t.get("texto") or "").lower()):
+        return True
+    x = _normal(t.get("texto"))
+    sem = re.sub(r"\b(www|com|br|net|imobiliaria|imoveis|corretor|creci|tel|fone|whatsapp)\b|\d+", " ", x)
+    return not sem.strip() or "imobiliaria" in x or "creci" in x
+
+
+def aluga_na_seta(leitura, mira_x):
+    """Os textos de aluga/vende na fachada da seta (auditoria das 40, 310148)."""
+    alvo, _divisa = escolher_final(leitura, mira_x)
+    return [t["texto"] for t in _textos(alvo)] if alvo and any(_e_aluga(t) for t in _textos(alvo)) and \
+        [t for t in _textos(alvo) if _e_aluga(t)] else []
+
+
 def para_julgamento(leitura, mira_x, pecas, excluir):
     """(texto, vale): a leitura para o julgamento e se ALGUM sinal da foto vale para esta instalacao — o da
     fachada da seta, ou placa de vizinho com o nome em outra fonte."""
@@ -274,6 +297,8 @@ def para_julgamento(leitura, mira_x, pecas, excluir):
     elif alvo:
         c = _caixa(alvo)
         ts = ['"%s" (%s)' % (t["texto"], t.get("tipo") or "?") for t in _textos(alvo)]
+        aluga = [t["texto"] for t in _textos(alvo) if _e_aluga(t)]
+        ts_uso = [t for t in _textos(alvo) if not _e_aluga(t) and not (aluga and _so_contato(t))]
         ss = [str(s) for s in (alvo.get("sinais_sem_texto") or []) if str(s).strip()]
         estado = [e for e, ok in (("cortada pela borda da foto", c[0] <= 5 or c[2] >= 995),
                                   ("encoberta", bool(alvo.get("encoberta")))) if ok]
@@ -281,7 +306,10 @@ def para_julgamento(leitura, mira_x, pecas, excluir):
                       % (alvo.get("descricao") or "?", (" (%s)" % ", ".join(estado)) if estado else "",
                          "; ".join(ts) or "nenhum", "; ".join(ss) or "nenhum",
                          "sim" if alvo.get("sinal_comercial") else "não"))
-        vale = bool(alvo.get("sinal_comercial") and (ts or ss))
+        vale = bool(alvo.get("sinal_comercial") and (ts_uso or ss))
+        if aluga:
+            linhas.append("PLACA DE ALUGA/VENDE NA FACHADA DA SETA: %s — sinal de imóvel vago ou à venda, NÃO de uso"
+                          % "; ".join('"%s"' % x for x in aluga))
     else:
         linhas.append("fachada da seta: a ponta da seta não cai sobre nenhuma fachada identificada")
     com_nome, sem_nome = [], []

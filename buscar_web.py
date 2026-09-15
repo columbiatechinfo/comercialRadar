@@ -268,9 +268,11 @@ def no_endereco(texto, rua, nro, cidade, bairro, cep):
                 for m in re.finditer(r"\b%s\b" % re.escape(chave), t))
     if not perto:
         return False
-    lugar = [x for x in (_norm_end(cidade), _norm_end(bairro)) if len(x) > 2]
+    # A CIDADE OU O CEP, NAO O BAIRRO SO (auditoria das 40, 15/09/2026): "Rua Silva Jardim, 187" de Sao Bernardo do
+    # Campo e "Rua Recife, 461" de Cascavel passavam pelo nome do bairro
+    cid = _norm_end(cidade)
     c = re.sub(r"\D", "", cep or "")
-    return (any(" %s " % x in t for x in lugar)
+    return ((len(cid) > 2 and " %s " % cid in t)
             or (len(c) == 8 and (c in re.sub(r"\D", "", texto or "") or "%s %s" % (c[:5], c[5:]) in t)))
 
 
