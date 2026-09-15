@@ -413,6 +413,8 @@ class Contexto:
         for pid, fonte, nome, cat, cnpj, compl in cur.fetchall():
             b = (cnpj or "").zfill(14)[:8] if cnpj else None
             self.poi[pid] = {"fonte": fonte, "nome": nome, "categoria": cat, "basico": b, "complemento": compl}
+            if b:
+                basicos.add(b)
         # A UNIDADE NO ENDERECO PUBLICADO (auditoria das 40, 15/09/2026): o registro do Maps ou do iFood nao tem
         # complemento da Receita, e a loja 14 do Park Mall confirmava a LOJA 026 (2900611)
         cur.execute("select id, coalesce(endereco, '') from radar_comercial.pois where id = any(%s)", (ids,))
@@ -421,8 +423,6 @@ class Contexto:
                 m = re.search(r"\b(loja|lj|sala|sl|box|conjunto|conj|bloco|bl|apto|apartamento|ap)\.?\s*(\d+[a-z]?)\b", end.lower())
                 if m:
                     self.poi[pid]["complemento"] = "%s %s" % (m.group(1).upper(), m.group(2).upper())
-            if b:
-                basicos.add(b)
         basicos = sorted(basicos)
         cur.execute("""select cnpj_basico, opcao_mei from resources_root.rf_simples
                         where cnpj_basico = any(%s)""", (basicos,))
