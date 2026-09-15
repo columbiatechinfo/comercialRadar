@@ -53,9 +53,9 @@ def _ja_feitos(desde):
 
 
 #: fotos de rua capturadas antes da correcao da mira (15/09/2026) que ficaram com o imovel fora do meio
-CORRECAO_DA_MIRA = "2026-09-15 11:30-03"
+CORRECAO_DA_MIRA = "2026-09-15 10:10-03"
 #: a foto de antes disto nao tem a seta maior nem a planta: e sempre capturada de novo, mesmo com a mira igual
-FORMATO_DA_FOTO = "2026-09-15 11:30-03"
+FORMATO_DA_FOTO = "2026-09-15 10:10-03"
 #: a foto de antes da correcao so e capturada de novo se o panorama escolhido mudou ou a mira girou mais que isto
 MIRA_IGUAL_GRAUS = 8
 MIRA_MEIO = (0.3, 0.7)
