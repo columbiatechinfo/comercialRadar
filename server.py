@@ -4873,7 +4873,9 @@ SO_ADMIN = (
 # padrão de autenticação do resto da API.
 TOKEN_NA_QUERY = ("/api/sv/", "/api/eu/foto", "/api/dossie/", "/api/modelos/",
                   # as fotos e o print da busca na ficha do SEEK, pedidos por <img>
-                  "/api/seek/foto/", "/api/seek/busca/")
+                  "/api/seek/foto/", "/api/seek/busca/",
+                  # a foto de rua do julgamento leve e o print do Serasa (15/09/2026)
+                  "/api/seek/rua/", "/api/seek/ficha/")
 
 
 @app.middleware("http")

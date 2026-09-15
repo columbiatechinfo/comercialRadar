@@ -188,6 +188,62 @@ a.chip{text-decoration:none}
 #decisao .acoes .sep{width:1px;height:22px;background:var(--linha);margin:0 3px;flex:none}
 @media (max-width:1400px){ #decisao .bt.chamado .longo{display:none} }
 
+/* ---- as evidências do julgamento leve (15/09/2026) ----
+ * prioridade baixa, o que a IA disse de cada aderente, a ficha do Serasa, os
+ * comentários, a leitura da foto de rua e as caixas das fachadas no visor */
+.pchip,.par-prio{flex:none;font-family:var(--mono);white-space:nowrap;border-radius:99px;
+  color:#5B6274;border:1px dashed var(--linha2);background:var(--sup2)}
+.pchip{font-size:8.5px;padding:1px 6px}
+.par-prio{font-size:9.5px;padding:3px 10px}
+.ia-chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
+.ia-prova{display:block;font-size:11px;color:var(--fraco);margin-top:3px}
+.ia-prova i,.reg-bloco > i{font-style:normal;font-family:var(--mono);font-size:8.5px;text-transform:uppercase;
+  letter-spacing:.07em;color:var(--tenue);margin-right:5px}
+.reg-bloco{margin-top:8px;min-width:0}
+.reg-bloco > i{display:block;margin:0 0 3px}
+.reg-ficha{display:grid;grid-template-columns:96px minmax(0,1fr);gap:10px;align-items:start}
+.reg-ficha.sem-mini{grid-template-columns:minmax(0,1fr)}
+.reg-mini{display:block;width:96px;height:78px;padding:0;border:1px solid var(--linha);border-radius:var(--r3);
+  overflow:hidden;background:var(--sup3);cursor:zoom-in}
+.reg-mini:hover{border-color:var(--linha2);box-shadow:var(--sombra)}
+.reg-mini:focus-visible{outline:2px solid var(--azul);outline-offset:2px}
+.reg-mini img{display:block;width:100%;height:100%;object-fit:cover;object-position:top}
+.reg-ficha .busca-txt{margin-top:0;max-height:170px;font-size:10.5px}
+.reg-coment{font-size:11px;color:var(--txt);line-height:1.45;padding:2px 0;overflow-wrap:anywhere}
+.reg-coment i{font-style:normal;font-family:var(--mono);font-size:9.5px;color:var(--fraco);margin-right:6px}
+.reg-coment .lk{font-size:10.5px;margin-right:4px}
+.kv-caixa .reg-bloco{margin-top:10px}
+.ia-dados-lk{display:inline-block;margin-top:9px}
+.caixa-txt{padding:4px 13px 10px 26px}
+.caixa-txt .busca-txt{margin-top:2px}
+.prova.serasa{box-shadow:inset 3px 0 0 #0B2E59}
+.fach-lista{display:flex;flex-direction:column;gap:5px;padding:8px 13px 6px 26px}
+.fach{display:grid;grid-template-columns:12px minmax(0,1fr);gap:8px;align-items:baseline;
+  font-size:11.5px;color:var(--txt);line-height:1.45}
+.fach > i{width:11px;height:11px;border-radius:2px;border:2px solid var(--fc);
+  background:color-mix(in srgb,var(--fc) 20%,transparent);transform:translateY(1px)}
+.fach b{font-weight:600;color:var(--tit)}
+.fach em{font-style:normal;color:#8A5410}
+.modal-caixa.largo{width:min(980px,94vw)}
+.ia-dados{white-space:pre-wrap;overflow-wrap:anywhere;font-family:var(--mono);font-size:11px;line-height:1.5;
+  background:var(--sup2);border:1px solid var(--linha);border-radius:var(--r3);padding:10px 12px;color:var(--txt)}
+/* no visor: as caixas acompanham o zoom e o arrasto da imagem */
+.vis-caixas{position:absolute;left:0;top:0;transform-origin:0 0;pointer-events:none;overflow:visible}
+.vis-caixas .cx{fill:var(--fc);fill-opacity:.10;stroke:var(--fc);stroke-width:3}
+.vis-caixas .cx-rot{fill:var(--fc)}
+.vis-caixas text{fill:#fff;font-family:var(--face);font-weight:700}
+.vis-bt.txt{font-family:var(--mono);font-size:11px}
+.vis-bt.on{background:rgba(143,193,255,.26);border-color:#8FC1FF}
+.vis-chave{display:flex;flex-direction:column;gap:3px;max-height:18vh;overflow:auto;color:#DDE5F0;max-width:140ch}
+.vis-chave[hidden]{display:none}
+.vis-chave .fach{color:#DDE5F0;font-size:11.5px}
+.vis-chave .fach b{color:#fff}
+.vis-chave .fach em{color:#FFD9A8}
+.vis-cores{display:flex;flex-wrap:wrap;gap:4px 14px;margin-bottom:2px;font-family:var(--mono);font-size:10px;color:#B8C4D6}
+.vis-cores span{display:flex;align-items:center;gap:5px}
+.vis-cores i{width:11px;height:11px;border-radius:2px;border:2px solid var(--fc);
+  background:color-mix(in srgb,var(--fc) 25%,transparent)}
+
 /* ---- o chamado ---- */
 .ch-caso{display:flex;align-items:baseline;gap:9px;background:var(--sup2);border:1px solid var(--linha);
   border-radius:var(--r2);padding:8px 11px;margin-bottom:14px;font-size:12px;color:var(--fraco);min-width:0}

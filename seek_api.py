@@ -11,6 +11,10 @@ veredito da IA nem no das fontes.
     POST /api/seek/decidir         a decisao oficial, de uma ou de varias
     GET  /api/seek/foto/{id}       a foto publicada do Maps (<img>, token na query)
     GET  /api/seek/busca/{id}      o print da busca web (<img>, token na query)
+    GET  /api/seek/rua/poi/{id}    a foto de rua do julgamento leve, no pin do Maps (`poi_evidencia`)
+    GET  /api/seek/rua/ligacao/{id}  a foto de rua no hidrometro (`ligacao_evidencia`)
+    GET  /api/seek/ficha/{id}      o print da ficha do CNPJ no Serasa (`ficha_cnpj_web`)
+    GET  /api/seek/caso/{ligacao}/dados  o texto integral que a IA recebeu
 
     /api/seek/trava*               a ligacao em analise fica com quem abriu (`seek_trava.py`)
     /api/seek/gestao/*  e /gestao  a gestao das aprovacoes, admin para cima (`seek_gestao.py`)
@@ -103,9 +107,20 @@ def _economias(r):
     return sum(int(x or 0) for x in r)
 
 
+def _e_serasa(x):
+    """A prova da resposta leve que e a ficha do Serasa (`busca[].fonte`, 15/09/2026)."""
+    return str((x or {}).get("fonte") or "").strip().lower() == "serasa"
+
+
 def _busca_confirma(itens):
-    """Se a IA usou ao menos um resultado da busca que CONFIRMA um registro."""
-    return isinstance(itens, list) and any(isinstance(x, dict) and x.get("confirma") is True for x in itens)
+    """Se a IA usou ao menos um resultado da BUSCA NA WEB que CONFIRMA um registro.
+
+    O SERASA NAO ACENDE O VERDE DA BUSCA (15/09/2026): no julgamento leve a IA diz
+    `{fonte: "Serasa"|"busca na web", poi, confirma}`, e a ficha do Serasa e a
+    Receita republicada — a mesma fonte do CNPJ, nao a web. Ligacao em que so o
+    Serasa confirmou ficava com a busca verde na fila e na ficha."""
+    return isinstance(itens, list) and any(isinstance(x, dict) and x.get("confirma") is True and not _e_serasa(x)
+                                           for x in itens)
 
 
 def _url_normal(u):
@@ -125,14 +140,28 @@ def _url_normal(u):
 
 
 def _prova_busca(resp, buscas):
-    """([usados], recusados): os resultados que a IA disse que confirmam um registro,
+    """([usados], recusados, [serasa]): os resultados que a IA disse que confirmam um registro,
     com titulo e endereco da pagina. O numero que ela cita e a posicao na lista do
     motor SO COM OS RESULTADOS NO ENDERECO — a mesma lista de `buscar_web.texto_para_dossie`.
-    O mesmo resultado achado pelos dois motores aparece uma vez, com os dois nomes."""
+    O mesmo resultado achado pelos dois motores aparece uma vez, com os dois nomes.
+
+    A RESPOSTA LEVE (15/09/2026) nao cita motor nem numero: diz so a fonte ("Serasa" ou
+    "busca na web") e o registro. A do Serasa vai para a terceira lista, e a da web entra
+    em `usados` sem titulo — o texto que a IA leu esta em `buscas[].texto_anotado`."""
     por_motor = {b["motor"]: b for b in buscas}
-    usados, chaves, recusados = [], {}, 0
+    usados, chaves, recusados, serasa = [], {}, 0, []
     for x in resp.get("busca") or []:
         if not isinstance(x, dict):
+            continue
+        if x.get("fonte"):
+            if _e_serasa(x):
+                serasa.append({"poi": x.get("poi"), "confirma": x.get("confirma") is True})
+            elif x.get("confirma") is True:
+                if not any(u.get("fonte") and u.get("poi") == x.get("poi") for u in usados):
+                    usados.append({"fonte": str(x.get("fonte")), "motores": [], "numero": None, "poi": x.get("poi"),
+                                   "casa": x.get("casa") or "", "titulo": None, "url": None, "trecho": ""})
+            else:
+                recusados += 1
             continue
         if x.get("confirma") is not True:
             recusados += 1
@@ -160,7 +189,7 @@ def _prova_busca(resp, buscas):
             if k:
                 chaves[k] = u
         usados.append(u)
-    return usados, recusados
+    return usados, recusados, serasa
 
 
 def _prova_fotos(resp, refs):
@@ -178,6 +207,157 @@ def _prova_fotos(resp, refs):
         if 1 <= i <= len(refs or []):
             quais.append(refs[i - 1])
     return {"confirmam": f.get("confirmam") is True, "o_que_mostram": f.get("o_que_mostram") or "", "quais": quais}
+
+
+def _julgamento():
+    """Os modulos do julgamento leve, para a ficha mostrar o que a IA recebeu com as MESMAS regras que o montaram
+    (15/09/2026): a foto de rua escolhida, a fachada da seta, a fonte de cada resultado da busca, as redes sociais
+    e os comentarios. Recalcular aqui do jeito da tela seria contar outra historia que a do veredito.
+
+    A IMAGEM DA API NAO ABRE O cv2 (falta a `libxcb`, o `opencv-python` com tela ganha do headless), e
+    `fachada_da_seta` importa de `desenho_seta` so a altura da ponta da seta — o desenho nao roda aqui. Sem o cv2,
+    entra no lugar um modulo so com `PONTA_REL`, lida do proprio `desenho_seta.py`: a constante continua num lugar so.
+    Import tardio: a rota da fila e as demais nao pagam por isso."""
+    import sys
+    if "desenho_seta" not in sys.modules:
+        try:
+            import desenho_seta  # noqa: F401
+        except Exception:                                      # noqa: BLE001
+            import os
+            import re
+            import types
+            m = types.ModuleType("desenho_seta")
+            with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "desenho_seta.py"), encoding="utf-8") as f:
+                m.PONTA_REL = float(re.search(r"^PONTA_REL\s*=\s*([0-9.]+)", f.read(), re.M).group(1))
+            sys.modules["desenho_seta"] = m
+    import avaliar_enxuto
+    import fachada_da_seta
+    import fonte_da_busca
+    import provas_datadas
+    return avaliar_enxuto, fachada_da_seta, fonte_da_busca, provas_datadas
+
+
+#: A COR DE CADA FACHADA NA FOTO DE RUA, pelo papel que o codigo deu a ela (`fachada_da_seta`, 15/09/2026):
+#: seta = a fachada da ponta da seta; divisa = a ponta na divisa, sem desempate; vizinho_com_nome = placa de vizinho
+#: com o nome em outra fonte (vale); vizinho_sem_nome = placa ou sinal de vizinho sem o nome em fonte nenhuma (nao
+#: vale); sem_sinal = fachada sem texto nem sinal.
+PAPEIS_DA_FACHADA = ("seta", "divisa", "vizinho_com_nome", "vizinho_sem_nome", "sem_sinal")
+
+
+def _leitura_da_rua(fds, ae, leitura, mira_x, pecas, excluir):
+    """A leitura da foto de rua como a tela desenha: cada fachada com a caixa (0-1000), os textos e o papel dela, e o
+    texto que a IA recebeu (`para_julgamento`). A leitura do formato anterior (sem `fachadas`) volta so com o texto."""
+    if not isinstance(leitura, dict):
+        return None
+    if leitura.get("fachadas") is None:
+        return {"fachadas": [], "texto_ia": ae._texto_da_leitura(leitura), "vale": None, "desempate": None,
+                "resumo": leitura.get("resumo"), "mira_x": mira_x, "formato": "anterior"}
+    alvo, divisa = fds.escolher_final(leitura, mira_x)
+    texto, vale = fds.para_julgamento(leitura, mira_x, pecas, excluir)
+    saida = []
+    for f in fds.fachadas(leitura):
+        textos = fds._textos(f)
+        nome_em = []
+        for t in textos:
+            if t.get("tipo") == "aluga_vende":
+                continue
+            fonte = fds.casar(t["texto"], pecas, excluir)
+            if fonte:
+                nome_em.append({"texto": t["texto"], "fonte": fonte})
+        sinais = [str(s) for s in (f.get("sinais_sem_texto") or []) if str(s).strip()]
+        if f is alvo:
+            papel = "seta"
+        elif divisa and any(f is d for d in divisa):
+            papel = "divisa"
+        elif nome_em:
+            papel = "vizinho_com_nome"
+        elif sinais or any(t.get("tipo") != "aluga_vende" for t in textos):
+            papel = "vizinho_sem_nome"
+        else:
+            papel = "sem_sinal"
+        saida.append({"n": f.get("n"), "caixa": fds._caixa(f), "descricao": f.get("descricao") or "",
+                      "textos": [{"texto": t["texto"], "tipo": t.get("tipo"), "aluga": fds._e_aluga(t)} for t in textos],
+                      "sinais_sem_texto": sinais, "sinal_comercial": bool(f.get("sinal_comercial")),
+                      "encoberta": bool(f.get("encoberta")), "papel": papel, "nome_em": nome_em})
+    return {"fachadas": saida, "texto_ia": texto, "vale": vale, "desempate": leitura.get("desempate"),
+            "resumo": leitura.get("resumo"), "mira_x": mira_x, "formato": "fachadas",
+            "aluga_na_seta": fds.aluga_na_seta(leitura, mira_x)}
+
+
+def _foto_de_rua(cur, ligacao, ids, mods, pecas, excluir, julgado_em=None):
+    """A FOTO DE RUA QUE O JULGAMENTO LEVE USA, e so ela (15/09/2026): a de frente do registro com pin do Maps mais
+    perto do hidrometro (`avaliar_enxuto.poi_da_foto_de_rua`), quando ele tem a captura nova; sem registro com pin a
+    ate 60 m, a do hidrometro (`ligacao_evidencia`). Registro com pin e sem a captura nova fica sem foto de rua —
+    como no julgamento. None quando nao ha foto."""
+    ae, fds, _fdb, pdat = mods
+    escolha = ae.poi_da_foto_de_rua(cur, ligacao, ids) if ids else None
+    if escolha and escolha[2]:
+        cur.execute("""select id, data_imagem, distancia_m, leitura, mira_x, capturado_em
+                         from radar_comercial.poi_evidencia where poi_id = %s and tipo = 'sv_frente'""", (escolha[0],))
+        r = cur.fetchone()
+        origem, pid, tipo, rota = "pin", escolha[0], "sv_frente", "/api/seek/rua/poi/%s"
+    elif not escolha:
+        cur.execute("""select id, data_imagem, distancia_m, leitura, mira_x, capturado_em
+                         from radar_comercial.ligacao_evidencia
+                        where ligacao = %s and tipo = 'sv_frente' and (dados is not null or storage_path is not null)""",
+                    (str(ligacao),))
+        r = cur.fetchone()
+        origem, pid, tipo, rota = "hidrometro", None, "sv_hidrometro", "/api/seek/rua/ligacao/%s"
+    else:
+        return None
+    if not r:
+        return None
+    ev, data, dist, leitura, mira_x, cap = r
+    try:
+        # RECAPTURADA DEPOIS DO JULGAMENTO: a IA viu a captura anterior, que a nova substituiu
+        depois = bool(cap and julgado_em and cap > julgado_em)
+    except TypeError:                                          # data com e sem fuso
+        depois = False
+    return {"id": "rua%s%s" % ("p" if pid else "l", ev), "poi_id": pid, "ligacao": None if pid else str(ligacao),
+            "depois_do_julgamento": depois,
+            "fonte": "foto", "tipo": tipo, "origem": origem,
+            "url": (rota % ev) + ("?v=%d" % int(cap.timestamp()) if cap else ""),
+            "quando": data or (cap.strftime("%Y-%m") if cap else None),
+            "mes_ano": pdat.mes_ano(pdat.data_de_texto(data)) if data else None,
+            "distancia_m": round(float(dist)) if dist is not None else None,
+            "capturado_em": cap.isoformat(timespec="minutes") if cap else None, "mira": mira_x is not None,
+            "metros_do_hidrometro": round(float(escolha[1]), 1) if escolha else None,
+            "leitura": _leitura_da_rua(fds, ae, leitura, mira_x, pecas, excluir)}
+
+
+class _Parte:
+    """UMA PARTE OPCIONAL DA FICHA: se quebrar, a ficha sai sem ela e com o aviso. O savepoint desfaz so o que a
+    parte fez — o crachá do usuario (`set_config` local) foi posto antes e continua valendo para o resto."""
+
+    def __init__(self, cur, nome, avisos):
+        self.cur, self.nome, self.avisos = cur, nome, avisos
+
+    def __enter__(self):
+        self.cur.execute("savepoint parte_da_ficha")
+        return self
+
+    def __exit__(self, tipo, erro, _tb):
+        if tipo is None:
+            self.cur.execute("release savepoint parte_da_ficha")
+            return False
+        if issubclass(tipo, HTTPException):
+            return False
+        self.cur.execute("rollback to savepoint parte_da_ficha")
+        self.avisos.append("%s: %s" % (self.nome, str(erro)[:160]))
+        import logging
+        logging.getLogger("seek").exception("ficha: parte %s falhou", self.nome)
+        return True
+
+
+def _tipo_da_imagem(b, padrao):
+    """O tipo pelo comeco dos bytes: a foto de rua e WebP, a captura antiga JPEG, o print do Serasa PNG."""
+    if b[:4] == b"RIFF" and b[8:12] == b"WEBP":
+        return "image/webp"
+    if b[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if b[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    return padrao
 
 
 def _montar_fila(u, cidade: str | None):
@@ -331,48 +511,128 @@ def seek_caso(ligacao: str, u: _auth.Usuario = Depends(_quem)):
                          from radar_comercial.ligacao_veredito where ligacao = %s""", (ligacao,))
         v = cur.fetchone()
         ia = None
-        resp, refs = {}, []
+        resp, refs, processo = {}, [], ""
+        avisos = []
         if v:
             p = v[2] or {}
             resp = p.get("resposta") or {}
-            refs = p.get("fotos_ref") or []
+            refs = [q for q in (p.get("fotos_ref") or []) if isinstance(q, dict)]
             dados = p.get("dados") or ""
+            processo = p.get("processo") or "antigo"
+            fotos_ia = resp.get("fotos") if isinstance(resp.get("fotos"), dict) else {}
             ia = {"veredito": v[0], "motivo": resp.get("motivo") or v[1], "justificativa": v[1],
                   "aderentes": resp.get("aderentes") or [], "nao_combinam": resp.get("nao_combinam") or [],
                   "registros_antigos": resp.get("registros") or [],
-                  "checagem": p.get("checagem"), "processo": p.get("processo") or "antigo",
+                  # a checagem vai inteira: regra, porque, validos, removidos, ficha_do_maps, redes_sociais
+                  "checagem": p.get("checagem"), "processo": processo,
                   "fotos_vistas": p.get("fotos") or [], "modelo": v[3],
                   "avaliado_em": v[4].isoformat(timespec="minutes") if v[4] else None,
                   "texto_busca": dados.split("TEXTO DA BUSCA NA WEB", 1)[1].split(":", 1)[-1].strip()
-                  if "TEXTO DA BUSCA NA WEB" in dados else None}
-        cur.execute("""select id, poi_id, tipo, data_imagem, capturado_em, mira_x is not null
-                         from radar_comercial.poi_evidencia
-                        where poi_id = any(%s) and tipo like 'sv_%%'
-                          and (bytes_tam is not null or storage_path is not null)
-                        order by poi_id, tipo""", (ids,))
-        imagens = [{"id": "sv%s" % i, "poi_id": pid, "fonte": "foto", "tipo": t,
-                    "quando": d or (cap.strftime("%Y-%m") if cap else None), "mira": bool(mira),
-                    "url": "/api/sv/%s/%s" % (pid, t)} for i, pid, t, d, cap, mira in cur.fetchall()]
-        cur.execute("""select id, poi_id, data_imagem from radar_comercial.images_urls
+                  if "TEXTO DA BUSCA NA WEB" in dados else None,
+                  # O JULGAMENTO LEVE (15/09/2026): o uso, o estado do imovel, as fontes que a IA citou, os
+                  # comentarios e o sinal concreto das fotos; a prioridade sai do codigo (revisao so pela Receita)
+                  "uso": resp.get("uso"), "imovel": resp.get("imovel"), "comentarios": resp.get("comentarios"),
+                  "fontes": resp.get("fontes") or [], "sinal": fotos_ia.get("sinal"),
+                  "prioridade": p.get("prioridade"), "tem_dados": bool(dados)}
+        imagens, redes, cidade, cep = [], [], None, None
+        # AS EVIDENCIAS DO JULGAMENTO LEVE, pelas funcoes que o montaram (`_julgamento`). Cada parte e opcional: se
+        # uma quebrar (um modulo do julgamento mudou de forma), a ficha sai sem ela e com o aviso.
+        mods = pecas = excluir = None
+        with _Parte(cur, "módulos do julgamento", avisos):
+            mods = _julgamento()
+            pecas, excluir = mods[1].fontes_de_nome(cur, ligacao, ids)
+        if mods:
+            with _Parte(cur, "foto de rua", avisos):
+                rua = _foto_de_rua(cur, ligacao, ids, mods, pecas, excluir, v[4] if v else None)
+                if rua:
+                    rua["vista_ia"] = any(q.get("tipo") == rua["tipo"] and q.get("poi") == rua["poi_id"] for q in refs)
+                    imagens.append(rua)
+        # A FOTO DO GOOGLE QUE A IA VIU (15/09/2026). No leve, o MESMO FILTRO de `avaliar_ia._fotos_do_maps_datadas`
+        # — so a foto do proprio lugar (`secao`, ou a capa na coleta antiga), a mais recente com data —, aqui sem
+        # baixar os bytes: a funcao devolve imagem e nao id. No processo anterior, a primeira publicada do POI.
+        pid_pub = next((q.get("poi") for q in refs if q.get("tipo") == "foto publicada"), None)
+        vista_maps = None
+        if pid_pub is not None:
+            if "leve" in processo:
+                cur.execute("""select id from radar_comercial.images_urls
+                                where poi_id = %s and url like '%%gps-cs-s%%' and (secao is not null or ordem = 0)
+                                  and (storage_path is not null or dados is not null)
+                                order by data_imagem desc nulls last, ordem limit 1""", (pid_pub,))
+            else:
+                cur.execute("""select id from radar_comercial.images_urls
+                                where poi_id = %s and url like '%%gps-cs-s%%'
+                                  and (bytes_tam is not null or storage_path is not null)
+                                order by ordem nulls last, id limit 1""", (pid_pub,))
+            x = cur.fetchone()
+            vista_maps = x[0] if x else None
+        cur.execute("""select id, poi_id, data_imagem, secao, ordem from radar_comercial.images_urls
                         where poi_id = any(%s) and url like '%%gps-cs-s%%'
-                          and (bytes_tam is not null or storage_path is not null)
-                        order by poi_id, ordem nulls last, id limit 12""", (ids,))
+                          and (bytes_tam is not null or storage_path is not null or id = %s)
+                        order by coalesce(id = %s, false) desc, poi_id, ordem nulls last, id limit 12""",
+                    (ids, vista_maps, vista_maps))
         imagens += [{"id": "mp%s" % i, "poi_id": pid, "fonte": "maps", "tipo": "foto publicada",
-                     "quando": d, "url": "/api/seek/foto/%s" % i} for i, pid, d in cur.fetchall()]
+                     "quando": d, "url": "/api/seek/foto/%s" % i, "secao": secao,
+                     # "lugares tambem pesquisados": a coleta antiga gravava toda imagem da ficha
+                     "do_lugar": secao is not None or ordem == 0, "vista_ia": i == vista_maps}
+                    for i, pid, d, secao, ordem in cur.fetchall()]
+        # A FICHA DO CNPJ NO SERASA (15/09/2026): texto que a IA leu e o print, por registro com CNPJ
+        cnpj_de = {r["poi_id"]: "".join(ch for ch in str(r["cnpj"] or "") if ch.isdigit()) for r in regs}
+        fichas = collections.defaultdict(list)
+        cnpjs = sorted({c for c in cnpj_de.values() if len(c) == 14})
+        if cnpjs:
+            cur.execute("""select id, cnpj, fonte, consultado_em, situacao, data_abertura, texto_ia, storage_path is not null
+                             from radar_comercial.ficha_cnpj_web
+                            where cnpj = any(%s) and not bloqueado and (texto_ia is not null or storage_path is not null)
+                            order by cnpj, consultado_em desc""", (cnpjs,))
+            for fid, cnpj, fonte, em, sit, abertura, texto, tem_print in cur.fetchall():
+                fichas[cnpj].append({"id": fid, "fonte": fonte, "consultado_em": em.isoformat(timespec="minutes") if em else None,
+                                     "situacao": sit, "abertura": abertura.isoformat() if abertura else None,
+                                     "texto_ia": texto, "print": "/api/seek/ficha/%s" % fid if tem_print else None})
+        no_rolo = set()
+        for r in regs:
+            r["fichas_web"] = fichas.get(cnpj_de.get(r["poi_id"]), [])
+            for f in r["fichas_web"] if not r["descartado_em"] else []:
+                if f["print"] and f["id"] not in no_rolo:
+                    no_rolo.add(f["id"])
+                    imagens.append({"id": "fc%s" % f["id"], "poi_id": r["poi_id"], "fonte": "serasa",
+                                    "tipo": "ficha do CNPJ", "quando": (f["consultado_em"] or "")[:10] or None,
+                                    "url": f["print"], "cnpj": cnpj_de.get(r["poi_id"]), "situacao": f["situacao"]})
+        # OS COMENTARIOS DE CLIENTE que a IA recebeu: os 3 mais recentes, de ate 2 anos, com data e nota
+        if mods:
+            with _Parte(cur, "comentários recentes", avisos):
+                coments = mods[3].comentarios_recentes(con, ids)
+                for r in regs:
+                    r["comentarios_recentes"] = coments.get(r["poi_id"], [])
         # A BUSCA WEB NOVA, uma por motor: DuckDuckGo, Yahoo e o Google da reserva.
         # A do Google Maps (12 a 13/09/2026) nao aparece mais.
         cur.execute("""select distinct on (motor) id, consulta, motor, feito_em, no_endereco,
-                              jsonb_array_length(resultados), resultados, dados is not null
+                              jsonb_array_length(resultados), resultados, dados is not null or storage_path is not null,
+                              texto
                          from radar_comercial.busca_web
                         where ligacao = %s and tipo = 'endereco' and not bloqueado
                           and motor = any(%s) and resultados is not null
                         order by motor, feito_em desc""", (ligacao, list(MOTORES_DA_BUSCA)))
-        buscas = [{"id": i, "consulta": q, "motor": m, "feito_em": t.isoformat(timespec="minutes") if t else None,
-                   "no_endereco": n or 0, "total": tot or 0,
-                   "resultados": [r for r in (res or []) if r.get("no_endereco")],
-                   "print": "/api/seek/busca/%s" % i if tem_print else None}
-                  for i, q, m, t, n, tot, res, tem_print in cur.fetchall()]
+        linhas_busca = cur.fetchall()
+        if mods and linhas_busca:
+            with _Parte(cur, "fonte de cada resultado da busca", avisos):
+                cidade, cep = mods[2].cidade_e_cep(cur, ligacao)
+        buscas = []
+        for i, q, m, t, n, tot, res, tem_print, texto in linhas_busca:
+            anotado = None
+            if mods and texto:
+                try:
+                    # O TEXTO QUE A IA LEU: cada resultado com a fonte (rede social, site de CNPJ, guia...) e a data do post
+                    anotado = mods[2].anotar_texto(texto, cidade, cep)
+                except Exception as e:                         # noqa: BLE001
+                    avisos.append("texto anotado da busca: %s" % str(e)[:160])
+            buscas.append({"id": i, "consulta": q, "motor": m, "feito_em": t.isoformat(timespec="minutes") if t else None,
+                           "no_endereco": n or 0, "total": tot or 0,
+                           "resultados": [r for r in (res or []) if r.get("no_endereco")],
+                           "print": "/api/seek/busca/%s" % i if tem_print else None, "texto_anotado": anotado})
         buscas.sort(key=lambda b: MOTORES_DA_BUSCA.index(b["motor"]))
+        if mods:
+            with _Parte(cur, "redes sociais no endereço", avisos):
+                redes = mods[2].redes_sociais_no_endereco(cur, ligacao, ids)
         cur.execute("""select acao, motivo, observacoes, quem_nome, em, lote from radar_comercial.seek_decisao
                         where ligacao = %s order by em desc limit 50""", (ligacao,))
         decisoes = [{"acao": a, "motivo": m, "observacoes": o, "quem": q,
@@ -384,17 +644,40 @@ def seek_caso(ligacao: str, u: _auth.Usuario = Depends(_quem)):
     for f in FONTES[1:-2]:
         vivos = [r for r in regs if r["fonte"] == f and not r["descartado_em"]]
         fontes[f] = {"achou": bool(vivos), "registros": [r for r in regs if r["fonte"] == f]}
-    usados, recusados = _prova_busca(resp, buscas)
+    usados, recusados, serasa = _prova_busca(resp, buscas)
     fontes["busca"] = {"achou": _busca_confirma(resp.get("busca")), "informado": "busca" in resp,
-                       "usados": usados, "recusados": recusados, "buscas": buscas}
+                       "usados": usados, "recusados": recusados, "serasa": serasa, "buscas": buscas,
+                       "redes_sociais": redes}
     pf = _prova_fotos(resp, refs)
     fontes["foto"] = {"achou": bool(pf and pf["confirmam"]), "informado": pf is not None,
                       "o_que_mostram": (pf or {}).get("o_que_mostram") or "", "quais": (pf or {}).get("quais") or [],
+                      "sinal": (resp.get("fotos") or {}).get("sinal") if isinstance(resp.get("fotos"), dict) else None,
                       "vistas": refs}
     return {"ligacao": ligacao, "base": base, "fontes": fontes, "ia": ia, "imagens": imagens,
-            "decisoes": decisoes, "decisao": decisoes[0] if decisoes else None,
+            "decisoes": decisoes, "decisao": decisoes[0] if decisoes else None, "avisos": avisos,
             # SEM DADO no Comercial Radar: a tela mostra a secao vazia, com o aviso.
             "os": None, "impacto": None}
+
+
+@router.get("/api/seek/caso/{ligacao}/dados")
+def seek_caso_dados(ligacao: str, u: _auth.Usuario = Depends(_quem)):
+    """O TEXTO INTEGRAL QUE A IA RECEBEU (`percepcao.dados`) e os rotulos das imagens, na ordem. Fica fora da ficha:
+    sao 3 a 12 mil caracteres que so se leem quando alguem pede."""
+    if not ligacao.isdigit():
+        raise HTTPException(400, "ligacao invalida")
+    con = _con(u)
+    try:
+        cur = con.cursor()
+        cur.execute("""select percepcao::jsonb->>'dados', percepcao::jsonb->'fotos', percepcao::jsonb->>'processo',
+                              modelo, avaliado_em
+                         from radar_comercial.ligacao_veredito where ligacao = %s""", (ligacao,))
+        r = cur.fetchone()
+    finally:
+        con.close()
+    if not r:
+        raise HTTPException(404, "ligação sem julgamento")
+    return {"ligacao": ligacao, "dados": r[0], "fotos": r[1] or [], "processo": r[2], "modelo": r[3],
+            "avaliado_em": r[4].isoformat(timespec="minutes") if r[4] else None}
 
 
 class DecisaoEntrada(BaseModel):
@@ -512,3 +795,34 @@ def seek_busca_print(busca_id: int, u: _auth.Usuario = Depends(_quem)):
     if not b:
         raise HTTPException(404, "sem print")
     return Response(content=b, media_type="image/webp", headers={"Cache-Control": "private, max-age=86400"})
+
+
+# A FOTO DE RUA DO JULGAMENTO LEVE E O PRINT DO SERASA (15/09/2026), por id e pela conexao do usuario. A foto de
+# rua e recapturada na MESMA linha (uma por POI e visada): a URL da ficha leva `?v=<captura>`, e o cache longo
+# nao serve a foto velha depois da recaptura.
+@router.get("/api/seek/rua/poi/{evidencia_id}")
+def seek_rua_poi(evidencia_id: int, u: _auth.Usuario = Depends(_quem)):
+    b = _bytes(u, "poi_evidencia", evidencia_id)
+    if not b:
+        raise HTTPException(404, "sem foto de rua")
+    return Response(content=b, media_type=_tipo_da_imagem(b, "image/webp"),
+                    headers={"Cache-Control": "private, max-age=86400"})
+
+
+@router.get("/api/seek/rua/ligacao/{evidencia_id}")
+def seek_rua_ligacao(evidencia_id: int, u: _auth.Usuario = Depends(_quem)):
+    b = _bytes(u, "ligacao_evidencia", evidencia_id)
+    if not b:
+        raise HTTPException(404, "sem foto de rua")
+    return Response(content=b, media_type=_tipo_da_imagem(b, "image/webp"),
+                    headers={"Cache-Control": "private, max-age=86400"})
+
+
+@router.get("/api/seek/ficha/{ficha_id}")
+def seek_ficha_print(ficha_id: int, u: _auth.Usuario = Depends(_quem)):
+    # `ficha_cnpj_web` nao tem a coluna `dados`: `imagens._buscar` le so o Storage
+    b = _bytes(u, "ficha_cnpj_web", ficha_id)
+    if not b:
+        raise HTTPException(404, "sem print da ficha")
+    return Response(content=b, media_type=_tipo_da_imagem(b, "image/png"),
+                    headers={"Cache-Control": "private, max-age=86400"})

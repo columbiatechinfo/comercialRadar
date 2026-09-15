@@ -98,6 +98,10 @@ var SEEK = (function () {
     {id: 'rejeitar', rot: 'rejeitadas', cor: ACOES.rejeitar.cor}
   ];
 
+  /* PRIORIDADE BAIXA (15/09/2026): o julgamento põe no fim da fila a revisão humana
+   * que só a Receita sustenta e em que nenhuma imagem mostra sinal */
+  var TXT_PRIORIDADE = 'prioridade baixa: revisão só pela Receita e sem sinal nas imagens — vai para o fim da fila';
+
   /* quem pode gravar decisão — o servidor confere de novo (403) */
   var DECIDEM = ['editor', 'supervisor', 'admin', 'root'];
   var ALT_FI = 66;          /* altura fixa da linha da fila: é o que deixa virtualizar */
@@ -127,7 +131,19 @@ var SEEK = (function () {
     ['avaliacao', 'nota no Maps'], ['horario', 'horário'], ['estado_ifood', 'estado no iFood']
   ];
 
-  var VISADAS = {sv_frente: 'frente', sv_fundo: 'fundo', sv_lado_a: 'lado A', sv_lado_b: 'lado B'};
+  var VISADAS = {sv_frente: 'frente', sv_fundo: 'fundo', sv_lado_a: 'lado A', sv_lado_b: 'lado B',
+                 /* a foto de rua tirada no hidrômetro (15/09/2026): sem registro com pin do Maps a até 60 m */
+                 sv_hidrometro: 'hidrômetro'};
+
+  /* A COR DE CADA FACHADA NA FOTO DE RUA (15/09/2026): o papel vem do código
+   * (`fachada_da_seta`), e não da IA — a fachada da seta sai da posição da ponta. */
+  var PAPEIS = {
+    seta:             {rot: 'fachada da seta', cor: '#1F9D62'},
+    divisa:           {rot: 'divisa indefinida', cor: '#E0A800'},
+    vizinho_com_nome: {rot: 'vizinho com o nome em outra fonte', cor: '#F28C28'},
+    vizinho_sem_nome: {rot: 'vizinho com placa ou sinal sem nome', cor: '#D64545'},
+    sem_sinal:        {rot: 'sem sinal', cor: '#98A2B3'}
+  };
 
   /* ===================================================================
    * 2 · ESTADO
@@ -257,7 +273,7 @@ var SEEK = (function () {
           bairro: l[ix.bairro] || '', cidade: l[ix.cidade] || '', qualificacao: l[ix.qualificacao] || '',
           economias: l[ix.economias] || 0, ia: l[ix.ia], checagem: l[ix.checagem],
           avaliado_em: l[ix.avaliado_em], decisao: l[ix.decisao], decidido_em: l[ix.decidido_em],
-          decidido_por: l[ix.decidido_por], f: {}
+          decidido_por: l[ix.decidido_por], prioridade: l[ix.prioridade] || null, f: {}
         };
         FONTES_DADO.forEach(function (f) { c.f[f.id] = !!l[ix['f_' + f.id]]; });
         c.txt = (c.ligacao + ' ' + c.titular + ' ' + c.endereco + ' ' + c.bairro).toLowerCase();
@@ -404,6 +420,7 @@ var SEEK = (function () {
       + (A ? '<span class="dchip" style="--dc:' + A.cor + '" title="decisão oficial: '
              + esc(A.rot) + (c.decidido_por ? ' · ' + esc(c.decidido_por) : '') + '">'
              + esc(A.curto) + '</span>' : '')
+      + (c.prioridade === 'baixa' ? '<span class="pchip" title="' + esc(TXT_PRIORIDADE) + '">↓ baixa</span>' : '')
       + '<span class="mini" title="' + esc(achou ? 'acharam: ' + achou : 'nenhuma fonte achou') + '">'
       + mini + '</span></span>'
       + '<span class="l2">' + esc(c.titular || '—') + '</span>'
@@ -880,8 +897,11 @@ var SEEK = (function () {
       + (mudou ? '<div class="ia-aviso"><b>checagem do código</b>A IA disse <b>'
                  + esc(veredito(ch.veredito_ia).rot) + '</b>; a checagem mudou para <b>' + esc(V.rot) + '</b>'
                  + (ch.porque ? ': ' + esc(ch.porque) : '.') + '</div>' : '')
+      + ((fi.avisos || []).length ? '<div class="ia-aviso"><b>parte da ficha não carregou</b>'
+                                    + esc(fi.avisos.join(' · ')) + '</div>' : '')
+      + oQueAIADisse(ia)
       + '<div class="grupo-cab">aderentes para a IA · ' + ader.length + '</div>'
-      + (ader.length ? '<div class="ia-lista">' + linhasPoi(ader, ctx) + '</div>'
+      + (ader.length ? '<div class="ia-lista">' + linhasAderentes(ader, ctx) + '</div>'
                      : '<div class="sem-dado">A IA não apontou nenhum registro aderente.</div>')
       + (rem.length ? '<div class="grupo-cab">tirados pela checagem do código · ' + rem.length + '</div>'
                       + '<div class="ia-lista">' + linhasPoi(rem, ctx) + '</div>' : '')
@@ -890,14 +910,106 @@ var SEEK = (function () {
                       + (nao.length > 6 ? '<button class="mais" data-abre="ia:nao" data-aberto="'
                           + (todosNao ? '1' : '0') + '">' + (todosNao ? 'mostrar só os 6 primeiros'
                           : 'mostrar os ' + nao.length) + '</button>' : '') : '')
+      + checagemCompleta(ch, ctx)
       + '<div class="grupo-cab">como foi julgada</div><div class="kv-caixa">'
       + kv([['julgada em', quando(ia.avaliado_em)], ['modelo', ia.modelo || '', 1],
             ['processo', ia.processo || ''],
+            ['prioridade na fila', ia.prioridade === 'baixa' ? TXT_PRIORIDADE : ia.prioridade || ''],
             ['fotos que a IA viu', (ia.fotos_vistas || []).length
                ? (ia.fotos_vistas || []).join(' · ') : 'nenhuma']])
+      + (ia.tem_dados ? '<button class="lk ia-dados-lk" data-dados-ia="' + esc(c.ligacao) + '">'
+                        + 'ver o texto que a IA recebeu</button>' : '')
       + '</div>';
     return '<section class="ramo n-ia">' + cab + '<div class="ramo-corpo"><div class="no-corpo">'
       + corpo + '</div></div></section>';
+  }
+
+  /* O QUE A IA DISSE ALÉM DO MOTIVO (julgamento leve, 15/09/2026): o uso, o estado
+   * do imóvel, o sinal concreto nas imagens, os comentários e as fontes que citou. */
+  function oQueAIADisse(ia) {
+    var uso = ia.uso || {}, im = ia.imovel || {}, co = ia.comentarios || {};
+    var ESTADO = {em_uso: 'em uso', abandonado: 'abandonado ou sem uso', nao_visto: 'não dá para ver'};
+    var pares = [
+      ['uso não residencial', ia.uso ? (uso.nao_residencial === true ? 'sim' : uso.nao_residencial === false ? 'não' : '—')
+                                        + (uso.o_que ? ' · ' + uso.o_que : '') : ''],
+      ['estado do imóvel', ia.imovel ? (ESTADO[im.estado] || im.estado || '—') + (im.por ? ' · ' + im.por : '') : ''],
+      ['sinal nas imagens', ia.sinal || ''],
+      ['comentários de clientes', ia.comentarios ? (co.confirmam === true ? 'confirmam' : 'não confirmam')
+                                                   + (co.por ? ' · ' + co.por : '') : ''],
+      ['fontes que a IA citou', (ia.fontes || []).length ? ia.fontes.join(' · ') : '']
+    ];
+    var h = kv(pares);
+    return h ? '<div class="grupo-cab">o que a IA disse</div><div class="kv-caixa">' + h + '</div>' : '';
+  }
+
+  /* os aderentes com o que a IA disse de cada um: confirmado, número, prova recente e fontes */
+  function linhasAderentes(lista, ctx) {
+    var NUM = {igual: ['ok', 'mesmo número'], diferente: ['nao', 'número diferente'], nao_visto: ['cinza', 'número não visto']};
+    return lista.map(function (a) {
+      a = typeof a === 'number' || typeof a === 'string' ? {poi: a} : (a || {});
+      var selos = [];
+      if (a.confirmado === true) { selos.push(['ok', 'confirmado']); }
+      else if (a.confirmado === false) { selos.push(['cinza', 'não confirmado']); }
+      if (a.numero) { selos.push(NUM[a.numero] || ['cinza', 'número ' + a.numero]); }
+      (a.fontes || []).forEach(function (f) { selos.push(['', f]); });
+      return '<div class="ia-lin"><b>#' + esc(a.poi) + '</b><span>'
+        + (ctx.nome[a.poi] ? '<em>' + esc(ctx.nome[a.poi]) + '</em>' + (a.por ? ' — ' : '') : '')
+        + esc(a.por || '')
+        + (selos.length ? '<span class="ia-chips">' + selos.map(function (s) {
+            return '<span class="selo ' + s[0] + '">' + esc(s[1]) + '</span>';
+          }).join('') + '</span>' : '')
+        + (a.prova_recente ? '<span class="ia-prova"><i>prova recente</i>' + esc(a.prova_recente) + '</span>' : '')
+        + '</span></div>';
+    }).join('');
+  }
+
+  /* A CHECAGEM DO CÓDIGO INTEIRA: a regra, o porquê, a ficha do Maps que não conta
+   * como fonte e as redes sociais que o código confirmou */
+  function checagemCompleta(ch, ctx) {
+    if (!ch) { return ''; }
+    var redes = ch.redes_sociais || [];
+    return '<div class="grupo-cab">checagem do código</div><div class="kv-caixa">'
+      + kv([['regra', ch.regra || ''],
+            ['veredito', ch.veredito_ia ? veredito(ch.veredito_ia).rot + ' → ' + veredito(ch.veredito).rot : ''],
+            ['por quê', ch.porque || (ch.veredito ? 'a checagem manteve o veredito' : '')],
+            ['ficha do Google Maps', ch.ficha_do_maps || ''],
+            ['contraprova', ch.contraprova || ''],
+            ['registros válidos', (ch.validos || []).length ? ch.validos.map(function (p) {
+              return '#' + p + (ctx.nome[p] ? ' ' + ctx.nome[p] : '');
+            }).join(' · ') : ''],
+            ['conferida em', quando(ch.em)]])
+      + (redes.length ? '<div class="reg-bloco"><i>redes sociais confirmadas pelo código · ' + redes.length + '</i>'
+                        + redes.map(linhaRede).join('') + '</div>' : '')
+      + '</div>';
+  }
+
+  function linhaRede(x) {
+    var link = linkSeguro(x.url);
+    return '<div class="reg-coment"><i>' + esc(x.rede || 'rede social') + ' · #' + esc(x.poi)
+      + ' · ' + esc(x.data ? quando(x.data) : 'sem data do post') + '</i>'
+      + (link ? '<a class="lk" href="' + esc(link) + '" target="_blank" rel="noopener noreferrer">abrir ↗</a> ' : '')
+      + esc(x.texto || '') + '</div>';
+  }
+
+  /* O TEXTO INTEGRAL QUE A IA RECEBEU, pedido só no clique (3 a 12 mil caracteres) */
+  function abreDadosIA(lig) {
+    $('#modal-tit').textContent = 'O texto que a IA recebeu · ligação ' + lig;
+    $('#modal').querySelector('.modal-caixa').classList.add('largo');
+    $('#modal-corpo').innerHTML = '<div class="sem-dado">carregando…</div>';
+    $('#modal-pe').innerHTML = '<button class="bt p" data-fecha="1">fechar</button>';
+    $('#modal').hidden = false;
+    fetch('/api/seek/caso/' + encodeURIComponent(lig) + '/dados').then(lerJson).then(function (d) {
+      if ($('#modal').hidden) { return; }
+      $('#modal-corpo').innerHTML = kv([['processo', d.processo || ''], ['modelo', d.modelo || '', 1],
+                                        ['julgada em', quando(d.avaliado_em)]])
+        + '<div class="reg-bloco"><i>imagens, na ordem em que foram à IA</i>'
+        + ((d.fotos || []).length ? d.fotos.map(function (f, i) {
+            return '<div class="reg-coment"><i>' + (i + 1) + '.</i>' + esc(f) + '</div>';
+          }).join('') : '<div class="reg-coment">nenhuma</div>') + '</div>'
+        + '<div class="reg-bloco"><i>texto</i><pre class="ia-dados">' + esc(d.dados || '(vazio)') + '</pre></div>';
+    }).catch(function (e) {
+      $('#modal-corpo').innerHTML = '<div class="sem-dado">Não carregou: ' + esc(e.message) + '</div>';
+    });
   }
 
   function cartaoRegistro(r, ctx) {
@@ -927,7 +1039,36 @@ var SEEK = (function () {
       + selos.map(function (s) { return '<span class="selo ' + s[0] + '">' + esc(s[1]) + '</span>'; }).join('')
       + '</div>'
       + (por ? '<div class="reg-por"><b>' + esc(por[0]) + '</b>' + esc(por[1]) + '</div>' : '')
-      + kv(valores) + '</div>';
+      + kv(valores) + fichasDoRegistro(r) + comentariosDoRegistro(r) + '</div>';
+  }
+
+  /* A FICHA DO CNPJ NO SERASA (15/09/2026): o texto que a IA leu e a miniatura do
+   * print, que abre no visor. É a Receita republicada — a mesma fonte do CNPJ. */
+  function fichasDoRegistro(r) {
+    return (r.fichas_web || []).map(function (f) {
+      var mini = f.print && !r.descartado_em
+        ? '<button class="reg-mini" data-img="fc' + esc(f.id) + '" title="abrir o print da ficha">'
+          + '<img loading="lazy" src="' + esc(window.comToken(f.print)) + '" alt="print da ficha do CNPJ no Serasa"></button>'
+        : '';
+      return '<div class="reg-bloco"><i>ficha do CNPJ no ' + esc(f.fonte === 'serasa' ? 'Serasa' : f.fonte || 'web')
+        + (f.situacao ? ' · ' + esc(f.situacao) : '') + (f.abertura ? ' · aberta em ' + esc(quando(f.abertura)) : '')
+        + (f.consultado_em ? ' · consultada em ' + esc(quando(f.consultado_em)) : '') + '</i>'
+        + '<div class="reg-ficha' + (mini ? '' : ' sem-mini') + '">' + mini
+        + (f.texto_ia ? '<pre class="busca-txt">' + esc(f.texto_ia) + '</pre>' : '<div class="reg-por">sem texto lido</div>')
+        + '</div></div>';
+    }).join('');
+  }
+
+  /* os comentários de cliente que a IA recebeu: os 3 mais recentes, de até 2 anos */
+  function comentariosDoRegistro(r) {
+    var cs = r.comentarios_recentes || [];
+    if (!cs.length) { return ''; }
+    return '<div class="reg-bloco"><i>comentários recentes de clientes · até 2 anos · o que a IA leu</i>'
+      + cs.map(function (s) {
+          var k = String(s).indexOf(': ');
+          return '<div class="reg-coment">' + (k > 0 ? '<i>' + esc(String(s).slice(0, k)) + '</i>' + esc(String(s).slice(k + 2))
+                                                      : esc(s)) + '</div>';
+        }).join('') + '</div>';
   }
 
   /* A BUSCA WEB, RESUMIDA NO QUE CONFIRMOU (13/09/2026). DuckDuckGo, Yahoo e o
@@ -944,38 +1085,76 @@ var SEEK = (function () {
     return '';
   }
 
+  /* SERASA SEPARADO DA BUSCA NA WEB (15/09/2026): no julgamento leve a IA diz a fonte
+   * de cada confirmação — "Serasa" é a Receita republicada e não acende o verde da
+   * busca. Abaixo, as redes sociais que o código achou no endereço com o nome de um
+   * registro, e o texto de cada motor com a fonte de cada resultado, como a IA leu. */
   function corpoBusca(d, ctx) {
-    var buscas = d.buscas || [], usados = d.usados || [];
-    if (!buscas.length) {
+    var buscas = d.buscas || [], usados = d.usados || [], serasa = d.serasa || [], redes = d.redes_sociais || [];
+    if (!buscas.length && !serasa.length && !redes.length) {
       return '<div class="sem-dado">A busca web (DuckDuckGo e Yahoo) ainda não rodou para esta ligação.</div>';
     }
-    var resumo = '<div class="prova-resumo">' + esc(buscas.map(function (b) {
+    var h = buscas.length ? '<div class="prova-resumo">' + esc(buscas.map(function (b) {
       return (NOME_MOTOR[b.motor] || b.motor) + ': ' + (b.no_endereco ? b.no_endereco + ' no endereço' : 'nada no endereço');
-    }).join(' · ')) + '</div>';
-    if (!d.informado) {
-      return resumo + '<div class="sem-dado">Julgada antes de a IA dizer quais resultados usou: está na fila '
+    }).join(' · ')) + '</div>' : '';
+    h += '<div class="grupo-cab">busca na web · o que confirmou</div>';
+    if (!buscas.length) {
+      h += '<div class="sem-dado">A busca web ainda não rodou para esta ligação.</div>';
+    } else if (!d.informado) {
+      h += '<div class="sem-dado">Julgada antes de a IA dizer quais resultados usou: está na fila '
         + 'do rejulgamento. Até lá a busca não conta como confirmação.</div>';
-    }
-    if (!usados.length) {
-      return resumo + '<div class="sem-dado">Nenhum resultado confirmou um registro desta ligação'
+    } else if (!usados.length) {
+      h += '<div class="sem-dado">Nenhum resultado da busca na web confirmou um registro desta ligação'
         + (d.recusados ? ' — a IA leu ' + d.recusados + ' e não aceitou (outro negócio no endereço ou sem '
                          + 'dado do registro)' : '') + '.</div>';
+    } else {
+      h += usados.map(function (u) {
+        var nome = ctx.nome[u.poi], link = linkSeguro(u.url);
+        var motores = (u.motores || []).map(function (m) { return NOME_MOTOR[m] || m; }).join(' e ');
+        var trecho = u.trecho ? (u.trecho.length > 160 ? u.trecho.slice(0, 157) + '…' : u.trecho) : '';
+        return '<div class="prova ok">'
+          + '<div class="prova-cab"><span class="selo ok">confirma</span>'
+          + (u.poi ? '<b>#' + esc(u.poi) + (nome ? ' · ' + esc(nome) : '') + '</b>' : '')
+          + '<span class="poi">' + esc(motores || u.fonte || '') + '</span></div>'
+          + (u.titulo ? '<div class="prova-tit">' + (link
+              ? '<a href="' + esc(link) + '" target="_blank" rel="noopener noreferrer">' + esc(u.titulo) + ' ↗</a>'
+              : esc(u.titulo)) + '</div>' : '')
+          + (!u.titulo && u.fonte ? '<div class="prova-trecho">A IA não cita o resultado: o texto que ela leu, com a '
+                                    + 'fonte de cada um, está abaixo.</div>' : '')
+          + (trecho ? '<div class="prova-trecho">' + esc(trecho) + '</div>' : '')
+          + (u.casa ? '<div class="reg-por"><b>o que casa</b>' + esc(u.casa) + '</div>' : '')
+          + '</div>';
+      }).join('');
     }
-    return resumo + usados.map(function (u) {
-      var nome = ctx.nome[u.poi], link = linkSeguro(u.url);
-      var motores = (u.motores || []).map(function (m) { return NOME_MOTOR[m] || m; }).join(' e ');
-      var trecho = u.trecho ? (u.trecho.length > 160 ? u.trecho.slice(0, 157) + '…' : u.trecho) : '';
-      return '<div class="prova ok">'
-        + '<div class="prova-cab"><span class="selo ok">confirma</span>'
-        + (u.poi ? '<b>#' + esc(u.poi) + (nome ? ' · ' + esc(nome) : '') + '</b>' : '')
-        + '<span class="poi">' + esc(motores) + '</span></div>'
-        + (u.titulo ? '<div class="prova-tit">' + (link
-            ? '<a href="' + esc(link) + '" target="_blank" rel="noopener noreferrer">' + esc(u.titulo) + ' ↗</a>'
-            : esc(u.titulo)) + '</div>' : '')
-        + (trecho ? '<div class="prova-trecho">' + esc(trecho) + '</div>' : '')
-        + (u.casa ? '<div class="reg-por"><b>o que casa</b>' + esc(u.casa) + '</div>' : '')
-        + '</div>';
-    }).join('');
+    if (serasa.length) {
+      h += '<div class="grupo-cab">Serasa · ficha do CNPJ · é a Receita republicada, não acende a busca</div>'
+        + serasa.map(function (s) {
+            var nome = ctx.nome[s.poi];
+            return '<div class="prova serasa"><div class="prova-cab"><span class="selo ' + (s.confirma ? 'ok' : 'cinza') + '">'
+              + (s.confirma ? 'confirma' : 'não confirma') + '</span>'
+              + (s.poi ? '<b>#' + esc(s.poi) + (nome ? ' · ' + esc(nome) : '') + '</b>' : '')
+              + '<span class="poi">Serasa</span></div>'
+              + '<div class="prova-trecho">O texto e o print da ficha estão no registro com o CNPJ.</div></div>';
+          }).join('');
+    }
+    h += '<div class="grupo-cab">redes sociais no endereço · ' + redes.length + '</div>'
+      + (redes.length
+          ? '<div class="caixa-txt">' + redes.map(linhaRede).join('') + '</div>'
+          : '<div class="sem-dado">Nenhum post de rede social no endereço com o nome de um registro. Rede social '
+            + 'confirmada pelo código é fonte própria, independente da Receita.</div>');
+    var comTexto = buscas.filter(function (b) { return b.texto_anotado; });
+    if (comTexto.length) {
+      var ab = aberto(S.sel, 'busca:texto', false);
+      h += '<button class="mais" data-abre="busca:texto" data-aberto="' + (ab ? '1' : '0') + '">'
+        + (ab ? 'esconder o texto que a IA leu' : 'ver o texto que a IA leu, com a fonte de cada resultado · '
+               + comTexto.map(function (b) { return NOME_MOTOR[b.motor] || b.motor; }).join(', ')) + '</button>'
+        + (ab ? comTexto.map(function (b) {
+            return '<div class="caixa-txt"><div class="reg-bloco"><i>' + esc(NOME_MOTOR[b.motor] || b.motor)
+              + (b.feito_em ? ' · ' + esc(quando(b.feito_em)) : '') + (b.consulta ? ' · “' + esc(b.consulta) + '”' : '')
+              + '</i><pre class="busca-txt">' + esc(b.texto_anotado) + '</pre></div></div>';
+          }).join('') : '');
+    }
+    return h;
   }
 
   function nomeFoto(q, ctx) {
@@ -1001,11 +1180,44 @@ var SEEK = (function () {
       + (d.achou ? 'identificou o comércio' : 'não identificou') + '</span>'
       + '<span class="poi">a IA viu ' + (d.vistas || []).length + ' de ' + n + ' imagem(ns)</span></div>'
       + (d.o_que_mostram ? '<div class="prova-tit">' + esc(d.o_que_mostram) + '</div>' : '')
+      + (d.sinal ? '<div class="reg-por"><b>sinal concreto</b>' + esc(d.sinal) + '</div>' : '')
       + (quais.length ? '<div class="reg-por"><b>' + (quais.length > 1 ? 'nas fotos' : 'na foto') + '</b>'
                         + esc(quais.join(' · ')) + '</div>' : '')
       + '</div>'
+      + leituraDaRua(fi, ctx)
       + '<div class="fonte-nota">As imagens estão no carrossel do topo' + (d.achou ? '; a que confirma leva o selo verde' : '')
       + '.</div>';
+  }
+
+  /* A LEITURA DA FOTO DE RUA (15/09/2026): cada fachada com a cor do papel que o
+   * código deu a ela, e o texto que a IA recebeu. As caixas aparecem sobre a foto
+   * ampliada, no visor. */
+  function leituraDaRua(fi, ctx) {
+    var rua = (fi.imagens || []).filter(function (x) { return x.fonte === 'foto' && x.leitura; })[0];
+    if (!rua) { return ''; }
+    var L = rua.leitura, fs = L.fachadas || [];
+    return '<div class="grupo-cab">leitura da foto de rua · a fachada da seta é decidida pelo código</div>'
+      + (rua.depois_do_julgamento ? '<div class="ia-aviso"><b>foto recapturada depois do julgamento</b>A IA viu a '
+                                    + 'captura anterior; esta leitura é da foto atual.</div>' : '')
+      + (fs.length ? '<div class="fach-lista">' + fs.map(linhaFachada).join('') + '</div>' : '')
+      + (L.desempate && L.desempate.n !== undefined ? '<div class="reg-por caixa-txt"><b>desempate na divisa</b>'
+          + esc('fachada ' + (L.desempate.n === null ? 'indefinida' : L.desempate.n) + ' · certeza ' + (L.desempate.certeza || '?')
+                + (L.desempate.por ? ' · ' + L.desempate.por : '')) + '</div>' : '')
+      + (L.texto_ia ? '<div class="caixa-txt"><div class="reg-bloco"><i>o texto que a IA recebeu desta foto</i>'
+                      + '<pre class="busca-txt">' + esc(L.texto_ia) + '</pre></div></div>' : '')
+      + '<div class="caixa-txt"><button class="lk" data-img="' + esc(rua.id) + '">ver a foto com as caixas das fachadas</button></div>';
+  }
+
+  function linhaFachada(f) {
+    var p = PAPEIS[f.papel] || PAPEIS.sem_sinal;
+    var ts = (f.textos || []).map(function (t) { return '“' + t.texto + '”' + (t.aluga ? ' (aluga/vende)' : ''); });
+    var nomes = (f.nome_em || []).map(function (x) { return '“' + x.texto + '” em ' + x.fonte; });
+    return '<div class="fach" style="--fc:' + p.cor + '"><i></i><span><b>' + esc(f.n) + ' · ' + esc(p.rot) + '</b> — '
+      + esc(f.descricao || '?') + (f.encoberta ? ' (encoberta)' : '')
+      + (ts.length ? ' · textos: ' + esc(ts.join('; ')) : '')
+      + ((f.sinais_sem_texto || []).length ? ' · sinais: ' + esc(f.sinais_sem_texto.join('; ')) : '')
+      + (nomes.length ? ' · <em>nome em outra fonte: ' + esc(nomes.join('; ')) + '</em>' : '')
+      + '</span></div>';
   }
 
   function noFonte(c, fi, f, ctx) {
@@ -1016,8 +1228,11 @@ var SEEK = (function () {
     var chave = 'f:' + f.id, ab = aberto(c.ligacao, chave, !!d.achou);
     var sit;
     if (f.id === 'busca') {
-      sit = d.achou ? 'confirmou · ' + (d.usados || []).length + ' resultado(s)'
-          : (d.buscas || []).length && !d.informado ? 'a IA ainda não informou' : 'não confirmou';
+      var leve = (d.usados || []).some(function (u) { return u.fonte; });
+      sit = d.achou ? 'confirmou · ' + (d.usados || []).length + (leve ? ' registro(s)' : ' resultado(s)')
+          : (d.buscas || []).length && !d.informado ? 'a IA ainda não informou'
+          : (d.serasa || []).some(function (s) { return s.confirma; }) ? 'não confirmou · só o Serasa'
+          : 'não confirmou';
     } else if (f.id === 'foto') {
       sit = d.achou ? 'identificou o comércio'
           : (fi.imagens || []).length && !d.informado ? 'a IA ainda não informou' : 'não identificou';
@@ -1254,44 +1469,82 @@ var SEEK = (function () {
    * coleta, sozinha, fica com selo neutro. */
   function imagensDaFicha(fi, ctx) {
     var pf = (fi.fontes && fi.fontes.foto) || {}, pb = (fi.fontes && fi.fontes.busca) || {};
-    var confirma = {}, vista = {}, publicadaVista = {};
-    (pf.quais || []).forEach(function (q) { confirma[q.poi + ':' + q.tipo] = 1; });
-    (pf.vistas || []).forEach(function (q) { vista[q.poi + ':' + q.tipo] = 1; });
+    var confirma = {}, vista = {};
+    /* a chave casa a foto do hidrômetro, que não é de POI: {poi: null, tipo: "sv_hidrometro"} */
+    function chave(poi, tipo) { return (poi === null || poi === undefined ? '-' : poi) + ':' + tipo; }
+    (pf.quais || []).forEach(function (q) { confirma[chave(q.poi, q.tipo)] = 1; });
+    (pf.vistas || []).forEach(function (q) { vista[chave(q.poi, q.tipo)] = 1; });
     var lista = (fi.imagens || []).map(function (x) {
       var nome = ctx.nome[x.poi_id] ? ' (' + ctx.nome[x.poi_id] + ')' : '';
-      var tipo = x.fonte === 'maps' ? 'foto publicada' : x.tipo;
-      /* da publicada a IA vê só a primeira do POI */
-      var primeira = x.fonte !== 'maps' || !publicadaVista[x.poi_id];
-      if (x.fonte === 'maps') { publicadaVista[x.poi_id] = 1; }
-      var ok = primeira && !!confirma[x.poi_id + ':' + tipo];
-      var viu = primeira && !!vista[x.poi_id + ':' + tipo];
-      var rot = x.fonte === 'maps' ? 'foto publicada' : 'rua · ' + (VISADAS[x.tipo] || x.tipo);
+      if (x.fonte === 'serasa') {
+        /* O PRINT DA FICHA DO CNPJ NO SERASA: a IA leu o texto dela, e não a imagem */
+        var cnpj = String(x.cnpj || '').replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5');
+        return {id: x.id, url: x.url, fonte: fonte('receita'), rot: 'ficha Serasa', selo: 'ficha Serasa', sel: 'neutro',
+                legenda: 'Print da ficha do CNPJ ' + cnpj + ' no Serasa' + (x.situacao ? ' (' + x.situacao + ')' : '')
+                  + ', do registro #' + x.poi_id + nome + '. A IA recebeu o texto desta ficha; é a Receita republicada.',
+                quando: x.quando ? quando(x.quando) : 'sem data'};
+      }
+      if (x.fonte === 'maps') {
+        /* A PUBLICADA QUE A IA VIU vem marcada pelo servidor, com o mesmo filtro do
+         * julgamento: só a foto do próprio lugar. Foto de "lugares também pesquisados"
+         * nunca leva selo. */
+        var okM = !!x.vista_ia && x.do_lugar !== false && !!confirma[chave(x.poi_id, 'foto publicada')];
+        var viuM = !!x.vista_ia && !okM;
+        var rotM = 'foto publicada';
+        return {
+          id: x.id, url: x.url, fonte: fonte('maps'), rot: rotM,
+          selo: okM ? 'confirma · ' + rotM : viuM ? 'vista pela IA · ' + rotM : x.do_lugar === false ? 'fora do lugar?' : rotM,
+          sel: okM ? 'ok' : 'neutro',
+          legenda: 'Foto publicada no Google Maps do POI #' + x.poi_id + nome + '.'
+            + (x.do_lugar === false ? ' Coleta antiga, fora da capa: pode ser de “lugares também pesquisados” e não '
+                                      + 'prova o lugar.' : '')
+            + (okM ? ' A IA identificou o comércio nesta foto' + (pf.o_que_mostram ? ': ' + pf.o_que_mostram : '.')
+                   : viuM ? ' A IA viu esta foto no julgamento.' : ''),
+          quando: x.quando || 'sem data'
+        };
+      }
+      var hid = x.tipo === 'sv_hidrometro';
+      var ch = chave(hid ? null : x.poi_id, x.tipo);
+      var ok = x.vista_ia === undefined ? !!confirma[ch] : !!x.vista_ia && !!confirma[ch];
+      var viu = !ok && (x.vista_ia === undefined ? !!vista[ch] : !!x.vista_ia);
+      var rot = 'rua · ' + (VISADAS[x.tipo] || x.tipo);
+      /* A LEGENDA DA FOTO DE RUA DO JULGAMENTO LEVE (15/09/2026): de quando é, onde a
+       * seta aponta, a distância da câmera e a planta no canto */
+      var legenda = 'Street View de ' + (x.mes_ano || x.quando || 'data desconhecida')
+        + ' · seta ' + (hid ? 'no hidrômetro desta instalação (nenhum registro com pin do Maps a até 60 m)'
+                            : 'no pin do Maps do POI #' + x.poi_id + nome)
+        + (x.distancia_m !== null && x.distancia_m !== undefined ? ' · câmera a ' + x.distancia_m + ' m' : '')
+        + ' · planta vista de cima no canto.'
+        + (x.depois_do_julgamento ? ' Recapturada depois do julgamento: a IA viu a captura anterior.' : '')
+        + (ok ? ' A IA identificou o comércio nesta foto' + (pf.o_que_mostram ? ': ' + pf.o_que_mostram : '.')
+              : viu ? ' A IA viu esta foto no julgamento.' : '')
+        + (x.leitura && x.leitura.vale !== null && x.leitura.vale !== undefined
+           ? ' Pela leitura, sinal que vale para esta instalação: ' + (x.leitura.vale ? 'sim.' : 'não.') : '');
       return {
-        id: x.id, url: x.url, fonte: x.fonte === 'maps' ? fonte('maps') : fonte('foto'),
-        rot: rot, selo: ok ? 'confirma · ' + rot : rot, sel: ok ? 'ok' : 'neutro',
-        legenda: (x.fonte === 'maps'
-          ? 'Foto publicada no Google Maps do POI #' + x.poi_id + nome + '.'
-          : 'Foto de rua, visada ' + (VISADAS[x.tipo] || x.tipo) + ', tirada do ponto do POI #'
-            + x.poi_id + nome + '.'
-            + (x.mira ? ' A mira verde marca a direção da coordenada do POI.' : ''))
-          + (ok ? ' A IA identificou o comércio nesta foto' + (pf.o_que_mostram ? ': ' + pf.o_que_mostram : '.')
-                : viu ? ' A IA viu esta foto no julgamento.' : ''),
+        id: x.id, url: x.url, fonte: fonte('foto'), rot: rot,
+        selo: ok ? 'confirma · ' + rot : viu ? 'vista pela IA · ' + rot : rot, sel: ok ? 'ok' : 'neutro',
+        legenda: legenda, leitura: x.leitura || null,
         quando: x.quando || 'sem data'
       };
     });
     var bs = pb.buscas || [];
     var motorUsado = {};
     (pb.usados || []).forEach(function (u) { (u.motores || []).forEach(function (m) { motorUsado[m] = (motorUsado[m] || 0) + 1; }); });
+    /* no julgamento leve a IA não diz o motor: com a busca na web confirmada, o
+     * verde vai para os prints dos motores que trouxeram resultado no endereço */
+    var webLeve = !!pb.achou && (pb.usados || []).some(function (u) { return u.fonte; });
     bs.slice().reverse().forEach(function (b) {
       if (!b.print) { return; }
-      var nm = NOME_MOTOR[b.motor] || b.motor, usou = motorUsado[b.motor] || 0;
+      var nm = NOME_MOTOR[b.motor] || b.motor, usou = motorUsado[b.motor] || (webLeve && b.no_endereco ? 1 : 0);
       lista.unshift({id: 'busca' + b.id, url: b.print, fonte: fonte('busca'),
                      rot: 'print · ' + nm, selo: (usou ? 'confirma · ' : '') + 'print · ' + nm,
                      sel: usou ? 'ok' : 'neutro',
                      legenda: 'A página que ' + nm + ' mostrou para a busca pelo endereço: '
                        + (b.consulta || '') + '. ' + (b.no_endereco ? b.no_endereco + ' resultado(s) no endereço'
                                                                     : 'Nenhum resultado no endereço')
-                       + (usou ? '; ' + usou + ' confirmou(aram) um registro para a IA.' : '.'),
+                       + (usou ? (webLeve && !motorUsado[b.motor] ? '; a busca na web confirmou registro(s) para a IA.'
+                                                                   : '; ' + usou + ' confirmou(aram) um registro para a IA.')
+                               : '.'),
                      quando: quando(b.feito_em)});
     });
     return lista;
@@ -1360,7 +1613,7 @@ var SEEK = (function () {
    * setas passam de imagem. O print da busca é alto: abre pela largura,
    * do topo, para dar para ler.
    * =================================================================== */
-  var VIS = {i: -1, z: 1, x: 0, y: 0, fit: 1, arrasto: null};
+  var VIS = {i: -1, z: 1, x: 0, y: 0, fit: 1, arrasto: null, caixas: true};
 
   function visorAberto() { var v = document.getElementById('visor'); return !!(v && !v.hidden); }
 
@@ -1375,15 +1628,19 @@ var SEEK = (function () {
     v.setAttribute('aria-label', 'imagem ampliada');
     v.innerHTML = '<div class="vis-topo"><strong id="vis-tit"></strong><span class="vis-quando" id="vis-quando"></span>'
       + '<span class="cresce"></span>'
+      + '<button class="vis-bt txt" data-vis="caixas" id="vis-caixas-bt" hidden aria-pressed="true"'
+      + ' title="ligar ou desligar as caixas das fachadas (tecla C)">caixas</button>'
       + '<button class="vis-bt" data-vis="menos" title="afastar (tecla −)" aria-label="afastar">−</button>'
       + '<button class="vis-bt num" data-vis="ajustar" id="vis-zoom" title="ajustar à tela (tecla 0)">100%</button>'
       + '<button class="vis-bt" data-vis="mais" title="aproximar (tecla +)" aria-label="aproximar">+</button>'
       + '<button class="vis-bt num" data-vis="real" title="tamanho real (tecla 1)">1:1</button>'
       + '<button class="vis-bt" data-vis="fecha" title="fechar (Esc)" aria-label="fechar">✕</button></div>'
       + '<div class="vis-palco" id="vis-palco"><img id="vis-img" alt="" draggable="false">'
+      + '<svg id="vis-caixas" class="vis-caixas" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"></svg>'
       + '<button class="vis-nav esq" data-vis="ant" aria-label="imagem anterior">‹</button>'
       + '<button class="vis-nav dir" data-vis="prox" aria-label="próxima imagem">›</button></div>'
-      + '<p class="vis-legenda" id="vis-legenda"></p>';
+      + '<p class="vis-legenda" id="vis-legenda"></p>'
+      + '<div class="vis-chave" id="vis-chave" hidden></div>';
     document.body.appendChild(v);
     var palco = v.querySelector('#vis-palco'), img = v.querySelector('#vis-img');
     img.addEventListener('load', visorAjusta);
@@ -1424,7 +1681,45 @@ var SEEK = (function () {
     VIS.z = VIS.fit;
     VIS.x = (W - w * VIS.z) / 2;
     VIS.y = alta ? 0 : (H - h * VIS.z) / 2;
+    visorCaixas();
     visorPinta();
+  }
+
+  /* AS CAIXAS DAS FACHADAS SOBRE A FOTO DE RUA (15/09/2026), em SVG no tamanho
+   * natural da imagem e com a mesma transformação dela: acompanham o zoom e o
+   * arrasto. A cor é o papel que o código deu à fachada (`PAPEIS`). */
+  function visorCaixas() {
+    var svg = $('#vis-caixas'), img = $('#vis-img'), bt = $('#vis-caixas-bt'), chave = $('#vis-chave');
+    var x = S.imgs[VIS.i], L = x && x.leitura, fs = (L && L.fachadas) || [];
+    bt.hidden = !fs.length;
+    bt.classList.toggle('on', VIS.caixas);
+    bt.setAttribute('aria-pressed', VIS.caixas ? 'true' : 'false');
+    chave.hidden = !fs.length;
+    if (!fs.length || !img.naturalWidth) { svg.innerHTML = ''; svg.style.display = 'none'; return; }
+    var w = img.naturalWidth, h = img.naturalHeight, fz = Math.max(14, Math.round(w / 42));
+    svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+    svg.setAttribute('width', w);
+    svg.setAttribute('height', h);
+    svg.innerHTML = fs.map(function (f) {
+      var c = f.caixa || [0, 0, 0, 0], p = PAPEIS[f.papel] || PAPEIS.sem_sinal;
+      var x1 = c[0] * w / 1000, y1 = c[1] * h / 1000;
+      var bw = Math.max(1, (c[2] - c[0]) * w / 1000), bh = Math.max(1, (c[3] - c[1]) * h / 1000);
+      return '<g style="--fc:' + p.cor + '"><title>' + esc(f.n + ' · ' + p.rot + ' · ' + (f.descricao || '')) + '</title>'
+        + '<rect class="cx" x="' + x1.toFixed(1) + '" y="' + y1.toFixed(1) + '" width="' + bw.toFixed(1)
+        + '" height="' + bh.toFixed(1) + '" vector-effect="non-scaling-stroke"></rect>'
+        + '<rect class="cx-rot" x="' + x1.toFixed(1) + '" y="' + y1.toFixed(1) + '" width="' + (fz * 1.7).toFixed(1)
+        + '" height="' + (fz * 1.45).toFixed(1) + '"></rect>'
+        + '<text x="' + (x1 + fz * 0.85).toFixed(1) + '" y="' + (y1 + fz * 1.08).toFixed(1) + '" font-size="' + fz
+        + '" text-anchor="middle">' + esc(f.n) + '</text></g>';
+    }).join('');
+    svg.style.display = VIS.caixas ? '' : 'none';
+    var usados = {};
+    fs.forEach(function (f) { usados[f.papel] = 1; });
+    chave.innerHTML = '<div class="vis-cores">' + Object.keys(PAPEIS).filter(function (k) { return usados[k]; })
+        .map(function (k) {
+          return '<span style="--fc:' + PAPEIS[k].cor + '"><i></i>' + esc(PAPEIS[k].rot) + '</span>';
+        }).join('') + '</div>'
+      + fs.map(linhaFachada).join('');
   }
 
   function visorZoom(z, cx, cy) {
@@ -1439,9 +1734,10 @@ var SEEK = (function () {
   }
 
   function visorPinta() {
-    var img = $('#vis-img');
+    var img = $('#vis-img'), svg = $('#vis-caixas');
     img.style.transform = 'translate(' + VIS.x + 'px,' + VIS.y + 'px) scale(' + VIS.z + ')';
     img.style.visibility = 'visible';
+    if (svg) { svg.style.transform = img.style.transform; }
     $('#vis-zoom').textContent = Math.round(VIS.z * 100) + '%';
   }
 
@@ -1452,6 +1748,11 @@ var SEEK = (function () {
     $('#vis-tit').textContent = rotuloFonte(x.fonte) + ' · ' + x.selo;
     $('#vis-quando').textContent = (x.quando || '') + ' · ligação ' + S.sel + ' · ' + (i + 1) + ' de ' + S.imgs.length;
     $('#vis-legenda').textContent = x.legenda;
+    /* as caixas da foto anterior saem antes de a nova carregar */
+    $('#vis-caixas').innerHTML = '';
+    $('#vis-caixas').style.display = 'none';
+    $('#vis-caixas-bt').hidden = !(x.leitura && (x.leitura.fachadas || []).length);
+    $('#vis-chave').hidden = true;
     img.style.visibility = 'hidden';
     img.alt = x.legenda;
     v.hidden = false;
@@ -1478,6 +1779,7 @@ var SEEK = (function () {
     else if (a === 'real') { visorZoom(1); }
     else if (a === 'ant') { abreVisor(VIS.i - 1); }
     else if (a === 'prox') { abreVisor(VIS.i + 1); }
+    else if (a === 'caixas') { VIS.caixas = !VIS.caixas; visorCaixas(); }
   }
 
   function copiar(txt, rot) {
@@ -1530,8 +1832,10 @@ var SEEK = (function () {
     if (dec && ((dec.acao === 'aprovar') !== (c.ia === 'aprovado'))) {
       ressalvas.push('a decisão oficial (<b>' + esc(ACOES[dec.acao].rot) + '</b>) diverge da IA');
     }
+    var baixa = (ia && ia.prioridade === 'baixa') || (!ia && c.prioridade === 'baixa');
     $('#veredito').innerHTML = '<div class="par ' + V.tom + '">'
       + '<div class="par-cab"><i>veredito da IA · uma das fontes</i><b>' + esc(V.rot) + '</b>'
+      + (baixa ? '<span class="par-prio" title="' + esc(TXT_PRIORIDADE) + '">prioridade baixa</span>' : '')
       + '<span class="par-chip">' + (c.avaliado_em ? 'julgada em ' + esc(quando(c.avaliado_em))
                                                   : 'sem data de julgamento') + '</span></div>'
       + '<p class="par-texto" data-expande="1" tabindex="0" title="clique para ler o motivo inteiro">'
@@ -2052,11 +2356,12 @@ var SEEK = (function () {
     document.addEventListener('keydown', function (ev) {
       if (visorAberto()) {
         var ac = {Escape: 'fecha', ArrowLeft: 'ant', ArrowRight: 'prox', '+': 'mais', '=': 'mais',
-                  '-': 'menos', '0': 'ajustar', '1': 'real'}[ev.key];
+                  '-': 'menos', '0': 'ajustar', '1': 'real', c: 'caixas', C: 'caixas'}[ev.key];
         if (ac) { ev.preventDefault(); acaoVisor(ac); }
         return;
       }
       if (ev.key === 'Escape' && !$('#modal').hidden) {
+        $('#modal').querySelector('.modal-caixa').classList.remove('largo');
         $('#modal').hidden = true; S.pendente = null; S.chamado = null; return;
       }
       if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey) && !$('#modal').hidden) {
@@ -2141,11 +2446,14 @@ var SEEK = (function () {
       }
       if (t.closest('[data-grava]')) { confirmaDecisao(); return; }
       if (t.closest('[data-historico]')) { abreHistorico(); return; }
+      var di = t.closest('[data-dados-ia]');
+      if (di) { abreDadosIA(di.getAttribute('data-dados-ia')); return; }
       if (t.closest('[data-chamado-envia]')) { enviaChamado(); return; }
       if (t.closest('[data-chamado]')) { abreChamado(); return; }
 
       if (t.closest('[data-fecha]') || t.closest('#modal-x') || t.closest('.modal-fundo')) {
         $('#modal').hidden = true;
+        $('#modal').querySelector('.modal-caixa').classList.remove('largo');
         S.pendente = null;
         S.chamado = null;
         return;
