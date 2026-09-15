@@ -173,14 +173,21 @@ if [ ! -f $O/R_feito ]; then
       exit 1
     fi
   fi
+  # O JULGAMENTO CORRE EM PARALELO (dono do produto, 15/09/2026): aqui so a coleta — cada lote preparado ganha
+  # `.evidencias` e o laco segue para o proximo; `julgamento_paralelo.sh` (cron e trava proprios) julga os lotes
+  # prontos, na ordem da fila.
   for arq in $(ls $O/lotes/R_[0-9][0-9][0-9].txt 2>/dev/null | sort); do
     tag=$(basename $arq .txt)
-    [ -f $O/lotes/$tag.feito ] && continue
+    [ -f $O/lotes/$tag.evidencias ] && continue
     [ -f $O/PARAR ] && { log "parado pelo arquivo PARAR (etapa R, antes do $tag)"; exit 0; }
-    log "R. $tag: $(wc -l < $arq) ligações — recaptura, conferência e julgamento"
+    log "R. $tag: $(wc -l < $arq) ligações — recaptura e conferência (o julgamento corre em paralelo)"
     preparar lotes/$tag.txt $tag
-    julgar lotes/$tag.txt $tag
-    touch $O/lotes/$tag.feito
+    touch $O/lotes/$tag.evidencias
+  done
+  log "R. evidências de todos os lotes prontas; esperando o julgamento paralelo"
+  while [ $(ls $O/lotes/R_[0-9][0-9][0-9].feito 2>/dev/null | wc -l) -lt $(ls $O/lotes/R_[0-9][0-9][0-9].txt | wc -l) ]; do
+    [ -f $O/PARAR ] && { log "parado pelo arquivo PARAR (esperando o julgamento da etapa R)"; exit 0; }
+    sleep 120
   done
   [ -s $O/lotes/lote_2.txt ] && touch $O/lotes/lote_2.feito
   touch $O/R_feito
