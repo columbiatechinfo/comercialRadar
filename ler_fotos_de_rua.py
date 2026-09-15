@@ -35,7 +35,7 @@ def _log(m):
     print(m, flush=True)
 
 
-def alvos(con, ligacoes):
+def alvos(con, ligacoes, refazer=False):
     """[(tabela, chave, dados)]: a foto de rua de frente de cada ligacao (a do POI mais perto do hidrometro ou
     a do proprio hidrometro) ainda sem leitura, ou lida antes da captura."""
     cur = con.cursor()
@@ -52,11 +52,13 @@ def alvos(con, ligacoes):
     if pois:
         cur.execute("""select poi_id from radar_comercial.poi_evidencia
                         where poi_id = any(%s) and tipo = 'sv_frente' and dados is not null
-                          and (leitura is null or leitura_em < capturado_em or not leitura ? 'fachadas')""", (sorted(pois),))
+                          and (%s or leitura is null or leitura_em < capturado_em or not leitura ? 'fachadas')""",
+                    (sorted(pois), refazer))
         saida += [("poi_evidencia", r[0]) for r in cur.fetchall()]
     cur.execute("""select ligacao from radar_comercial.ligacao_evidencia
                     where ligacao = any(%s) and tipo = 'sv_frente' and dados is not null
-                      and (leitura is null or leitura_em < capturado_em or not leitura ? 'fachadas')""", (sorted(set(ligacoes)),))
+                      and (%s or leitura is null or leitura_em < capturado_em or not leitura ? 'fachadas')""",
+                    (sorted(set(ligacoes)), refazer))
     saida += [("ligacao_evidencia", r[0]) for r in cur.fetchall()]
     con.rollback()
     return saida
@@ -66,10 +68,11 @@ def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--ligacoes-arquivo", dest="ligacoes_arquivo", required=True)
     p.add_argument("--simultaneas", type=int, default=60)
+    p.add_argument("--refazer", action="store_true", help="le de novo mesmo as fotos ja lidas no formato atual")
     a = p.parse_args(argv)
     ligs = [x.strip() for x in open(a.ligacoes_arquivo) if x.strip()]
     con = bc.conectar()
-    lista = alvos(con, ligs)
+    lista = alvos(con, ligs, a.refazer)
     _log("▶ leitura da foto de rua: %d ligacoes · %d fotos a ler" % (len(ligs), len(lista)))
     if not lista:
         return 0
@@ -82,8 +85,8 @@ def main(argv=None):
         coluna = "poi_id" if tabela == "poi_evidencia" else "ligacao"
         with trava:
             with con.cursor() as k:
-                k.execute("select dados from radar_comercial.%s where %s = %%s and tipo = 'sv_frente'" % (tabela, coluna), (chave,))
-                b = k.fetchone()[0]
+                k.execute("select dados, mira_x from radar_comercial.%s where %s = %%s and tipo = 'sv_frente'" % (tabela, coluna), (chave,))
+                b, mira = k.fetchone()
             con.rollback()
         img = base64.b64encode(ae._jpeg_768(b, largura=LARGURA)).decode()
         r = None
@@ -93,6 +96,16 @@ def main(argv=None):
                 break
             except Exception as e:                                  # noqa: BLE001
                 r = {"erro": str(e)[:200]}
+        # A PONTA NA DIVISA ENTRE DUAS FACHADAS (15/09/2026): pergunta a parte, com o recorte e uma linha vermelha
+        # na direcao da ponta — as caixas da IA erram 3 a 6% nas bordas e o vizinho grande "engolia" a ponta
+        if r and not r.get("erro") and mira is not None:
+            try:
+                d = fds.desempatar(r, mira, bytes(b), lambda pr, jp: di._chat_local(
+                    al.MODELO_PADRAO, pr, [base64.b64encode(jp).decode()], max_tokens=300, timeout=300))
+                if d:
+                    r["desempate"] = d
+            except Exception as e:                              # noqa: BLE001
+                r["desempate"] = {"erro": str(e)[:200]}
         with trava:
             if r and not r.get("erro"):
                 with con.cursor() as k:

@@ -27,7 +27,7 @@ from desenho_seta import PONTA_REL
 PROMPT = """Esta é uma foto de rua (Street View). Ignore a seta verde, o rótulo de distância e o quadro escuro no canto inferior direito (uma planta vista de cima): não fazem parte da cena.
 
 Identifique CADA FACHADA de imóvel visível na cena — casa, sobrado, loja, prédio, galpão, ou o muro/portão da frente de um lote —, da esquerda para a direita. Para cada uma:
-- a caixa que envolve a fachada que aparece, em coordenadas relativas de 0 a 1000 [x1, y1, x2, y2] (0,0 no canto superior esquerdo da foto). Não junte duas fachadas numa caixa só; placa em cima de uma fachada é dela;
+- a caixa que envolve a fachada que aparece, em coordenadas relativas de 0 a 1000 [x1, y1, x2, y2] (0,0 no canto superior esquerdo da foto). A caixa vai da divisa esquerda à divisa direita do lote daquela fachada (muro, parede ou cerca de divisa), inclusive a parte baixa ou recuada do imóvel; caixas de lotes vizinhos se encostam na divisa, sem se sobrepor. Não junte dois lotes numa caixa só; placa em cima de uma fachada é dela;
 - uma descrição curta;
 - os TEXTOS escritos NELA — placa, letreiro, faixa, banner, adesivo, anúncio pintado, toldo, telefone, placa de aluga/vende —, transcritos; no máximo 8 por fachada; texto longo, só o essencial em até 8 palavras; número da casa e nome de rua não;
 - os sinais de atividade não residencial SEM texto nela: vitrine com mercadoria, porta de loja aberta, balcão, mesas de bar, oficina com carros ou peças em serviço, pátio com caminhões ou máquinas, material à venda, sucata, marcador de estabelecimento do Google. Portão de garagem, porta fechada de casa e carro na garagem NÃO são sinal;
@@ -113,6 +113,91 @@ def escolher(leitura, mira_x, ponta_y=PONTA_REL):
     return None
 
 
+#: a ponta a menos disto (em milesimos da largura) da borda da caixa, com outra fachada tambem perto, e DIVISA:
+#: as caixas da IA erram 3 a 6% nas bordas (319537 e 2615312, 15/09/2026)
+DIVISA = 70
+
+# ESCOLHER A OU B COM CERTEZA (15/09/2026): com a opcao "divisa" a IA respondeu divisa nas 19 de 19, ate onde a linha
+# cortava a casa azul em cheio (319537). Forcando A ou B, olhando o nivel do chao: 11 com certeza alta, 8 media.
+PROMPT_DESEMPATE = """Recorte de uma foto de rua (Street View). A linha vertical VERMELHA marca uma direção; ignore a seta verde por cima dela.
+Olhe onde a linha vermelha cruza a FRENTE DOS LOTES NO NÍVEL DO CHÃO — o muro, a grade, o portão ou a parede da frente —, e não o céu nem o telhado.
+Os dois imóveis dos lados dela são:
+A (à esquerda): {a}
+B (à direita): {b}
+Nesse ponto, a linha vermelha está na frente de qual imóvel? Escolha A ou B mesmo que seja perto da divisa, e diga a certeza: "alta" se a linha cai claramente dentro de um deles, "media" se cai perto da divisa mas do lado dele, "baixa" se não dá para ver (árvore, poste ou carro na frente, ou exatamente na divisa).
+Responda SOMENTE um JSON: {{"imovel": "A" ou "B", "certeza": "alta" ou "media" ou "baixa", "por": "<até 12 palavras>"}}"""
+
+
+def _borda(f, x):
+    c = _caixa(f)
+    return 0.0 if c[0] <= x <= c[2] else min(abs(c[0] - x), abs(c[2] - x))
+
+
+def na_divisa(leitura, mira_x):
+    """[esquerda, direita] quando a ponta cai na divisa entre duas fachadas (a escolhida tem a borda a menos de
+    DIVISA da ponta e outra fachada tambem esta a menos de DIVISA), senao None."""
+    if mira_x is None:
+        return None
+    x = float(mira_x) * 1000
+    alvo = escolher(leitura, mira_x)
+    fs = fachadas(leitura)
+    if alvo is not None:
+        c = _caixa(alvo)
+        if min(x - c[0], c[2] - x) > DIVISA:
+            return None
+        outras = [f for f in fs if f is not alvo and _borda(f, x) <= DIVISA]
+        if not outras:
+            return None
+        par = [alvo, min(outras, key=lambda f: _borda(f, x))]
+    else:
+        perto = sorted((f for f in fs if _borda(f, x) <= DIVISA), key=lambda f: _borda(f, x))[:2]
+        if len(perto) < 2:
+            return None
+        par = perto
+    return sorted(par, key=lambda f: _caixa(f)[0] + _caixa(f)[2])
+
+
+def recorte_com_linha(jpeg, mira_x, meia_largura=0.2):
+    """O recorte em volta da ponta com a linha vermelha vertical, em JPEG (para `PROMPT_DESEMPATE`)."""
+    import cv2
+    import numpy as np
+    arr = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
+    h, w = arr.shape[:2]
+    x = int(float(mira_x) * w)
+    x0, x1 = max(0, x - int(meia_largura * w)), min(w, x + int(meia_largura * w))
+    rec = arr[:int(h * 0.8), x0:x1].copy()
+    cv2.line(rec, (x - x0, 0), (x - x0, rec.shape[0] - 1), (0, 0, 255), max(3, w // 500))
+    return cv2.imencode(".jpg", rec, [cv2.IMWRITE_JPEG_QUALITY, 90])[1].tobytes()
+
+
+def desempatar(leitura, mira_x, jpeg, perguntar):
+    """Na divisa, a pergunta a parte com o recorte: devolve o dict gravado em `leitura["desempate"]`, ou None.
+    `perguntar(prompt, jpeg) -> dict` e a chamada a IA (quem chama escolhe o modelo)."""
+    par = na_divisa(leitura, mira_x)
+    if not par:
+        return None
+    a, b = par
+    r = perguntar(PROMPT_DESEMPATE.format(a=a.get("descricao") or "?", b=b.get("descricao") or "?"),
+                  recorte_com_linha(jpeg, mira_x)) or {}
+    esc = str(r.get("imovel") or "").strip().upper()
+    certeza = str(r.get("certeza") or "").strip().lower()
+    # certeza baixa (arvore, poste, carro na frente, ou em cima da divisa) fica indefinida
+    n = None if certeza not in ("alta", "media", "média") else a.get("n") if esc == "A" else b.get("n") if esc == "B" else None
+    return {"entre": [a.get("n"), b.get("n")], "imovel": esc, "certeza": certeza, "n": n, "por": r.get("por")}
+
+
+def escolher_final(leitura, mira_x):
+    """(alvo, divisa): a fachada da seta depois do desempate; na divisa sem desempate (ou "divisa"), alvo None e
+    divisa com as duas fachadas."""
+    par = na_divisa(leitura, mira_x)
+    if not par:
+        return escolher(leitura, mira_x), None
+    d = (leitura or {}).get("desempate") or {}
+    if d.get("n") is not None and d.get("entre") == [par[0].get("n"), par[1].get("n")]:
+        return next(f for f in par if f.get("n") == d["n"]), None
+    return None, par
+
+
 def fontes_de_nome(cur, ligacao, ids):
     """([(fonte, texto)], palavras do endereco): onde procurar o nome visto na placa — nome e telefone dos
     registros, a ficha do Serasa, a busca na web pelo endereco."""
@@ -174,11 +259,14 @@ def _textos(f):
 def para_julgamento(leitura, mira_x, pecas, excluir):
     """(texto, vale): a leitura para o julgamento e se ALGUM sinal da foto vale para esta instalacao — o da
     fachada da seta, ou placa de vizinho com o nome em outra fonte."""
-    alvo = escolher(leitura, mira_x)
+    alvo, divisa = escolher_final(leitura, mira_x)
     linhas = ["LEITURA DA FOTO DE RUA (feita antes, só com a imagem; qual fachada é a da seta foi decidido pela posição "
               "da ponta da seta, não pela IA):"]
     vale = False
-    if alvo:
+    if divisa:
+        linhas.append("fachada da seta: INDEFINIDA — a ponta cai na divisa entre \"%s\" e \"%s\"; placas das duas só valem "
+                      "com o nome em outra fonte" % (divisa[0].get("descricao") or "?", divisa[1].get("descricao") or "?"))
+    elif alvo:
         c = _caixa(alvo)
         ts = ['"%s" (%s)' % (t["texto"], t.get("tipo") or "?") for t in _textos(alvo)]
         ss = [str(s) for s in (alvo.get("sinais_sem_texto") or []) if str(s).strip()]
