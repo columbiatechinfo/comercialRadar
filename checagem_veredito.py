@@ -590,8 +590,12 @@ def revisar(con, aplicar=False, log=print, saida_antes=None):
                           coalesce(percepcao::jsonb->>'processo','antigo'), percepcao::jsonb->'checagem',
                           justificativa, percepcao::jsonb->'fotos'
                      from radar_comercial.ligacao_veredito
-                    where veredito = 'aprovado'
-                       or percepcao::jsonb->'checagem'->>'veredito_ia' = 'aprovado'
+                    where (veredito = 'aprovado'
+                           or percepcao::jsonb->'checagem'->>'veredito_ia' = 'aprovado')
+                      -- AGUARDANDO O REJULGAMENTO (dono do produto, 15/09/2026): o veredito que ainda nao passou pelo
+                      -- metodo novo esta em revisao humana ate ser julgado de novo. Aqui ele nao volta a aprovado nem
+                      -- a reprovado, e a aprovacao antiga da IA nao disputa o registro (regra 2) com as novas.
+                      and not coalesce((percepcao::jsonb->>'aguardando_rejulgamento')::boolean, false)
                     order by ligacao""")
     linhas = cur.fetchall()
     base, info, resposta_de, fotos_de = {}, {}, {}, {}
