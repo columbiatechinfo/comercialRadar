@@ -476,6 +476,23 @@ def montar_leve(con, ligacao):
     return dados, fotos, rot, ids, n_fontes, refs
 
 
+PROCESSO_SEM_STREET_VIEW = "revisão humana direta (sem cobertura do Street View, 15/09/2026)"
+MOTIVO_SEM_STREET_VIEW = ("Sem cobertura do Street View perto do alvo da foto de rua (%s: %s). Por decisão do dono do "
+                          "produto em 15/09/2026, a ligação sem panorama perto vai direto para revisão humana, sem "
+                          "parecer da IA.")
+
+
+def sem_street_view(con, ligacao, ids):
+    """(alvo, motivo) quando o alvo da foto de rua desta ligacao — o pin do Maps (`poi_da_foto_de_rua`) ou o
+    hidrometro — esta em `sem_street_view` (0116); senao None."""
+    with con.cursor() as cur:
+        escolha = poi_da_foto_de_rua(cur, ligacao, ids) if ids else None
+        alvo = "poi:%s" % escolha[0] if escolha else "ligacao:%s" % ligacao
+        cur.execute("select motivo from radar_comercial.sem_street_view where alvo = %s", (alvo,))
+        x = cur.fetchone()
+    return (alvo, x[0]) if x else None
+
+
 def uma(poco, ligacao, modelo, placar, trava, aplicar):
     t0 = time.time()
     with poco.pegar() as con:
@@ -490,6 +507,27 @@ def uma(poco, ligacao, modelo, placar, trava, aplicar):
         with trava:
             placar["sem_imagem_fica_para_o_fim"] += 1
         return
+    # SEM COBERTURA DO STREET VIEW (dono do produto, 15/09/2026): sem foto de rua porque nao ha panorama perto do
+    # alvo, a ligacao vai direto para revisao humana, com prioridade baixa e sem gastar a IA
+    if LEVE and not any(str(x).startswith("foto de rua") for x in rot):
+        with poco.pegar() as con:
+            sem_sv = sem_street_view(con, ligacao, ids)
+        if sem_sv:
+            motivo = MOTIVO_SEM_STREET_VIEW % sem_sv
+            r = {"veredito": "revisao_humana", "motivo": motivo, "justificativa": motivo,
+                 "aderentes": [], "nao_combinam": [], "pois_de_outro_endereco": []}
+            percepcao = {"processo": PROCESSO_SEM_STREET_VIEW, "prioridade": "baixa", "dados": dados, "fotos": rot,
+                         "fotos_ref": refs, "resposta": r, "ids": ids, "sem_street_view": sem_sv[0]}
+            if aplicar:
+                with poco.pegar() as con:
+                    al.gravar(con, ligacao, "revisao_humana", r, percepcao, {"pois": len(ids), "fontes": n_fontes, "ids": ids},
+                              "nenhum (sem Street View)", len(fotos), time.time() - t0)
+            with trava:
+                placar["revisao_humana"] += 1
+                placar["sem_street_view_direto"] += 1
+                al._log("   %-10s %-15s %d POIs · sem Street View (%s): revisão direta, sem IA"
+                        % (ligacao, "revisao_humana", len(ids), sem_sv[0]))
+            return
     # O TETO CRESCE COM OS REGISTROS: a lista de aderentes de um predio grande
     # passa dos 900 tokens. A base subiu para 1.600 em 13/09/2026: o motivo
     # deixou de ter limite de frases, e as fotos e a busca ganharam campo.

@@ -35,7 +35,14 @@ def conferir(arquivo, horas_sem_data=24):
     r = {"ligacoes": len(ligs)}
     r["fichas_maps"] = len(rc.pois_das_ligacoes(con, arquivo, horas_sem_data))
     with contextlib.redirect_stdout(io.StringIO()):
-        r["foto_de_rua"] = len(rf.alvos_das_ligacoes(arquivo))
+        alvos_rua = rf.alvos_das_ligacoes(arquivo)
+    # SEM COBERTURA DO STREET VIEW (0116): recapturar nao resolve, e a ligacao vai para revisao humana sem a IA
+    with con.cursor() as k:
+        k.execute("select alvo from radar_comercial.sem_street_view where alvo = any(%s)",
+                  ([rf.alvo_sem_street_view(a) for a in alvos_rua],))
+        sem_sv = {x[0] for x in k.fetchall()}
+    r["sem_street_view"] = len(sem_sv)
+    r["foto_de_rua"] = sum(1 for a in alvos_rua if rf.alvo_sem_street_view(a) not in sem_sv)
     r["leitura"] = len(lf.alvos(con, ligs))
     r["serasa"] = len(fc.alvos(con, ligs))
     with con.cursor() as k:
@@ -62,9 +69,9 @@ def main(argv=None):
     r = conferir(a.ligacoes_arquivo, a.sem_data_apos_horas)
     falta = sum(r[c] for c in ("fichas_maps", "foto_de_rua", "leitura", "serasa", "busca_web"))
     print("■ conferência: %d ligações · faltam: fichas do Maps %d · foto de rua %d · leitura %d · Serasa %d · "
-          "busca web %d · (POIs com foto do Maps sem data: %d)"
+          "busca web %d · (POIs com foto do Maps sem data: %d) · (sem cobertura do Street View: %d)"
           % (r["ligacoes"], r["fichas_maps"], r["foto_de_rua"], r["leitura"], r["serasa"], r["busca_web"],
-             r["pois_com_foto_sem_data"]), flush=True)
+             r["pois_com_foto_sem_data"], r["sem_street_view"]), flush=True)
     return 0 if falta == 0 else 3
 
 

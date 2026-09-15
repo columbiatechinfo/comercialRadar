@@ -144,6 +144,36 @@ def gravar_da_ligacao(poco, a, img, **extra):
         con.commit()
 
 
+def alvo_sem_street_view(a):
+    """A chave do alvo em `sem_street_view` (0116): o POI do pin ou a ligacao do hidrometro."""
+    return "poi:%s" % a["poi"] if a.get("poi") is not None else "ligacao:%s" % a["ligacao"]
+
+
+def e_sem_panorama(erro):
+    """O erro de `visada_perpendicular.escolher` que diz que NAO HA PANORAMA perto: o ultimo metodo (de frente, ate
+    30 m) nao achou nenhum. "o Maps nao abriu o panorama" e transitorio e nao entra."""
+    return str(erro or "").split("; ")[-1].startswith("sem panorama")
+
+
+def marcar_sem_street_view(poco, a, motivo):
+    """SEM COBERTURA DO STREET VIEW (dono do produto, 15/09/2026): a ligacao vai direto para revisao humana, sem a IA."""
+    with poco.pegar() as con:
+        with con.cursor() as k:
+            k.execute("""insert into radar_comercial.sem_street_view (alvo, id_empresa, lat, lng, motivo)
+                         values (%s, coalesce(%s::uuid, (select id_empresa from radar_comercial.pois where id = %s)), %s, %s, %s)
+                         on conflict (alvo) do update set motivo = excluded.motivo, lat = excluded.lat, lng = excluded.lng,
+                                                          verificado_em = now()""",
+                      (alvo_sem_street_view(a), a.get("id_empresa"), a.get("poi"), a.get("lat"), a.get("lng"), motivo))
+        con.commit()
+
+
+def desmarcar_sem_street_view(poco, a):
+    with poco.pegar() as con:
+        with con.cursor() as k:
+            k.execute("delete from radar_comercial.sem_street_view where alvo = %s", (alvo_sem_street_view(a),))
+        con.commit()
+
+
 def confirmar_foto(poco, a):
     """A foto de antes da correcao que a mira nova repetiria (mesmo panorama, mesma mira) VALE COMO CAPTURADA
     AGORA: sai da fila da recaptura e da conferencia. A leitura das placas, se ja era desta foto, continua
@@ -163,7 +193,10 @@ def confirmar_foto(poco, a):
 async def uma(page, poco, a):
     esc = await asyncio.to_thread(vp.escolher, a["lat"], a["lng"], a.get("rua"))
     if esc.get("erro"):
+        if e_sem_panorama(esc["erro"]):
+            await asyncio.to_thread(marcar_sem_street_view, poco, a, esc["erro"])
         return {"erro": esc["erro"]}
+    await asyncio.to_thread(desmarcar_sem_street_view, poco, a)
     p = esc["pano"]
     antes = a.get("antes")
     if antes and antes.get("pano_id") == p["pano_id"] and antes.get("heading") is not None \
