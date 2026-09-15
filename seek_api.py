@@ -187,10 +187,11 @@ def _montar_fila(u, cidade: str | None):
         cur.execute("""select ligacao, veredito, avaliado_em,
                               percepcao::jsonb->'checagem'->>'porque', id_empresa,
                               percepcao::jsonb->'resposta'->'fotos'->>'confirmam',
-                              percepcao::jsonb->'resposta'->'busca'
+                              percepcao::jsonb->'resposta'->'busca', percepcao::jsonb->>'prioridade'
                          from radar_comercial.ligacao_veredito""")
-        vered, empresas, prova = {}, set(), {}
-        for l, v, t, p, emp, fotos_ok, busca in cur.fetchall():
+        vered, empresas, prova, prioridade = {}, set(), {}, {}
+        for l, v, t, p, emp, fotos_ok, busca, prio in cur.fetchall():
+            prioridade[str(l)] = prio
             vered[str(l)] = (v, t, p)
             empresas.add(str(emp))
             prova[str(l)] = (_busca_confirma(busca), fotos_ok == "true")
@@ -223,9 +224,11 @@ def _montar_fila(u, cidade: str | None):
     finally:
         con.close()
     colunas = ["ligacao", "titular", "endereco", "bairro", "cidade", "qualificacao", "economias",
-               "ia", "checagem", "avaliado_em"] + ["f_" + f for f in FONTES[1:]] + ["decisao", "decidido_em", "decidido_por"]
+               "ia", "checagem", "avaliado_em"] + ["f_" + f for f in FONTES[1:]] + ["decisao", "decidido_em", "decidido_por",
+                                                                                   "prioridade"]
     linhas = []
-    for lig in sorted(cad, key=lambda x: int(x) if x.isdigit() else 0):
+    # PRIORIDADE BAIXA NO FIM (15/09/2026): revisao so pela Receita e sem sinal nas imagens
+    for lig in sorted(cad, key=lambda x: (prioridade.get(x) == "baixa", int(x) if x.isdigit() else 0)):
         r = cad[lig]
         v, t, porque = vered.get(lig, (None, None, None))
         fs = fontes.get(lig, set())
@@ -236,7 +239,7 @@ def _montar_fila(u, cidade: str | None):
                        "cadastur" in fs, "airbnb" in fs,
                        prova.get(lig, (False, False))[0], prova.get(lig, (False, False))[1],
                        d[0] if d else None, d[1].isoformat(timespec="minutes") if d else None,
-                       d[2] if d else None])
+                       d[2] if d else None, prioridade.get(lig)])
     return {"colunas": colunas, "linhas": linhas, "gerado_em": time.strftime("%Y-%m-%dT%H:%M:%S")}
 
 

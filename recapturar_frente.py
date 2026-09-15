@@ -52,7 +52,12 @@ def _ja_feitos(desde):
     return r
 
 
-def alvos_das_ligacoes(arquivo):
+#: fotos de rua capturadas antes da correcao da mira (15/09/2026) que ficaram com o imovel fora do meio
+CORRECAO_DA_MIRA = "2026-09-15 09:02-03"
+MIRA_MEIO = (0.3, 0.7)
+
+
+def alvos_das_ligacoes(arquivo, forcar=False):
     """Os POIs da foto de rua (o mais perto do hidrometro, `avaliar_enxuto.poi_da_foto_de_rua`) das ligacoes do
     arquivo que AINDA NAO TEM a captura nova — o passo antes do julgamento leve (15/09/2026): nenhuma foto com
     a mira antiga vai para a IA."""
@@ -64,20 +69,67 @@ def alvos_das_ligacoes(arquivo):
                      join radar_comercial.pois p on p.id = lp.poi_id
                     where lp.ligacao = any(%s) and lp.descartado_em is null and p.fundido_em is null
                     group by 1""", (ligs,))
-    alvos, vistos, ja = [], set(), 0
+    alvos, vistos, ja, sem_poi, descentradas = [], set(), 0, [], 0
     for lig, ids in cur.fetchall():
         e = ae.poi_da_foto_de_rua(cur, lig, ids)
         if not e:
+            sem_poi.append(lig)
             continue
         pid, _d, tem_nova, la, lo, rua = e
+        if tem_nova:
+            # A MIRA ANTIGA DEIXAVA O IMOVEL DE LADO: refaz a descentrada capturada antes da correcao
+            cur.execute("""select mira_x, capturado_em < %s from radar_comercial.poi_evidencia
+                            where poi_id = %s and tipo = 'sv_frente'""", (CORRECAO_DA_MIRA, pid))
+            mx, antiga = cur.fetchone() or (None, False)
+            if forcar or (antiga and (mx is None or not MIRA_MEIO[0] <= mx <= MIRA_MEIO[1])):
+                tem_nova = False
+                descentradas += 1
         if tem_nova:
             ja += 1
         elif pid not in vistos and la is not None:
             vistos.add(pid)
             alvos.append({"poi": pid, "lat": float(la), "lng": float(lo), "rua": rua, "ligacao": lig})
+    # SEM REGISTRO A ATE 60 M: a foto e tirada no hidrometro (15/09/2026) — a ligacao nao vai mais sem imagem
+    cur.execute("""select num_ligacao::text from resources_root.cadastro_corsan c
+                    where num_ligacao::text = any(%s) and not exists (select 1 from radar_comercial.ligacao_poi lp
+                          where lp.ligacao = c.num_ligacao::text and lp.descartado_em is null)""", (ligs,))
+    sem_poi += [r[0] for r in cur.fetchall()]
+    hidro = 0
+    if sem_poi:
+        cur.execute("""select c.num_ligacao::text, c.id_empresa::text, c.cod_latitude::float, c.cod_longitude::float,
+                              c.nom_logradouro,
+                              exists (select 1 from radar_comercial.ligacao_evidencia e
+                                       where e.ligacao = c.num_ligacao::text and e.tipo = 'sv_frente'
+                                         and e.dados is not null and e.capturado_em >= %s and not %s)
+                         from resources_root.cadastro_corsan c where c.num_ligacao = any(%s::bigint[])""",
+                    (CORRECAO_DA_MIRA, forcar, [int(x) for x in set(sem_poi) if x.isdigit()]))
+        for lig, emp, la, lo, rua, ja_tem in cur.fetchall():
+            if ja_tem:
+                ja += 1
+            elif la is not None and lo is not None:
+                hidro += 1
+                alvos.append({"poi": None, "ligacao": lig, "id_empresa": emp, "lat": la, "lng": lo, "rua": rua})
     con.close()
-    print("   %d ligacoes · %d ja com a foto de rua nova · %d POIs a capturar" % (len(ligs), ja, len(alvos)), flush=True)
+    print("   %d ligacoes · %d ja com a foto de rua nova · %d a capturar (%d descentradas refeitas, %d no hidrometro)"
+          % (len(ligs), ja, len(alvos), descentradas, hidro), flush=True)
     return alvos
+
+
+def gravar_da_ligacao(poco, a, img, **extra):
+    """A foto de rua do hidrometro vai para `ligacao_evidencia` (0114); regrava por cima."""
+    campos = ["id_empresa", "ligacao", "tipo", "dados"]
+    vals = [a["id_empresa"], a["ligacao"], "sv_frente", ce.psycopg2_bin(img)]
+    for k, v in extra.items():
+        if v is not None:
+            campos.append(k)
+            vals.append(v)
+    sets = ", ".join("%s = excluded.%s" % (c, c) for c in campos if c not in ("id_empresa", "ligacao", "tipo"))
+    with poco.pegar() as con:
+        with con.cursor() as k:
+            k.execute("insert into radar_comercial.ligacao_evidencia (%s) values (%s) "
+                      "on conflict (id_empresa, ligacao, tipo) do update set %s, storage_path = null, capturado_em = now()"
+                      % (", ".join(campos), ", ".join(["%s"] * len(campos)), sets), vals)
+        con.commit()
 
 
 async def uma(page, poco, a):
@@ -103,6 +155,14 @@ async def uma(page, poco, a):
         return {"erro": "png", "metodo": esc["metodo"]}
     img = ce._para_webp(buf.tobytes())
     data = p.get("data") or await asyncio.to_thread(ce._data_do_pano, p["pano_id"])
+    if a.get("poi") is None:
+        await asyncio.to_thread(gravar_da_ligacao, poco, a, img, pano_id=p["pano_id"], cam_lat=p["lat"], cam_lng=p["lng"],
+                                heading=float(esc["heading"]), fov=float(vp.FOV), distancia_m=float(esc["dist"]),
+                                largura_px=int(arr.shape[1]), altura_px=int(arr.shape[0]), data_imagem=data,
+                                mira_x=float(x) if x is not None else None)
+        return {"metodo": esc["metodo"], "data": data, "dist": round(esc["dist"], 1), "kb": len(img) // 1024,
+                "px": [int(arr.shape[1]), int(arr.shape[0])], "via": esc.get("via"), "hidrometro": True,
+                "por_que_fallback": esc.get("por_que_fallback")}
     await asyncio.to_thread(ce.gravar, poco, a["poi"], "sv_frente", img,
                             pano_id=p["pano_id"], cam_lat=p["lat"], cam_lng=p["lng"], heading=float(esc["heading"]),
                             pitch=5.0, fov=float(vp.FOV), distancia_m=float(esc["dist"]),
@@ -114,7 +174,7 @@ async def uma(page, poco, a):
 
 
 async def main(a):
-    alvos = alvos_das_ligacoes(a.ligacoes_arquivo) if a.ligacoes_arquivo else json.load(open(a.alvos, encoding="utf-8"))["sv"]
+    alvos = alvos_das_ligacoes(a.ligacoes_arquivo, a.forcar) if a.ligacoes_arquivo else json.load(open(a.alvos, encoding="utf-8"))["sv"]
     feitos_antes = _ja_feitos(a.retomar)
     fila_l = [x for x in alvos if x["poi"] not in feitos_antes]
     # UM NAVEGADOR POR PROCESSO, e varios processos: o processo grafico do Chromium
@@ -202,5 +262,6 @@ if __name__ == "__main__":
     p.add_argument("--limite", type=int, default=0)
     p.add_argument("--retomar", default="")
     p.add_argument("--parte", default="", help="k/n: so os POIs com id %% n == k")
+    p.add_argument("--forcar", action="store_true", help="com --ligacoes-arquivo: refaz a foto mesmo que ja exista a nova")
     p.add_argument("--saida", default="/saida")
     asyncio.run(main(p.parse_args()))

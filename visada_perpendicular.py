@@ -35,6 +35,8 @@ OSRM = "http://127.0.0.1:7300"
 FOV = 100
 PE_ATE_PANO_MAX_M = 12
 COORD_NA_VIA_M = 2
+GIRO_MAX = 30
+SOBRA_MAX = 35
 
 
 def mover(lat, lng, rumo, metros):
@@ -80,7 +82,18 @@ def metodo_perpendicular(lat, lng, rua):
     p = sv.metadados_pano(pe_lat, pe_lng, raio=PE_ATE_PANO_MAX_M)
     if not p:
         return None, "sem panorama ate %d m do pe da perpendicular" % PE_ATE_PANO_MAX_M
-    return {"metodo": "perpendicular", "pano": p, "heading": sv._bearing(pe_lat, pe_lng, lat, lng),
+    # O RUMO GIRA DA PERPENDICULAR PARA A COORDENADA, NO MAXIMO GIRO_MAX (15/09/2026). Paralela a
+    # perpendicular, o panorama a ate 12 m do pe deixava o imovel na borda ou fora (987 de 6.106 fotos);
+    # mirando a coordenada em cheio, a foto virava vista ao longo da rua quando o imovel fica rente a
+    # calcada. Girando ate 30 graus o imovel entra no quadro e a vista continua de frente.
+    perp = sv._bearing(pe_lat, pe_lng, lat, lng)
+    alvo = sv._bearing(p["lat"], p["lng"], lat, lng)
+    delta = (alvo - perp + 180) % 360 - 180
+    # E NUNCA DEIXA O IMOVEL A MAIS DE SOBRA_MAX DO CENTRO: com o imovel rente a calcada e o panorama ao lado
+    # (delta de 80 graus), girar so 30 o deixava fora do quadro — teste das 30 do lote 1, 15/09/2026.
+    giro = max(min(abs(delta), GIRO_MAX), abs(delta) - SOBRA_MAX)
+    giro = giro if delta >= 0 else -giro
+    return {"metodo": "perpendicular", "pano": p, "heading": (perp + giro) % 360,
             "rumo_alvo": sv._bearing(p["lat"], p["lng"], lat, lng), "dist": sv._dist_m(p["lat"], p["lng"], lat, lng),
             "via": via.get("name") or "", "via_casou_rua": bool(rua and mesma_via(via.get("name"), rua)),
             "coord_ate_via_m": via.get("distance"), "pe_ate_pano_m": sv._dist_m(p["lat"], p["lng"], pe_lat, pe_lng)}, None

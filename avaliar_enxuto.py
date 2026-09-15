@@ -73,12 +73,14 @@ PROCESSO = "enxuto de 14/09/2026 (número, provas datadas, busca complementar)"
 #:     estado de conservacao pesa (imovel abandonado);
 #:   - saida curta nos campos de apoio, motivo completo; as 2 fontes o CODIGO conta (checagem, regra 7).
 #: Comeca com "enxuto de " (a checagem reconhece o processo por esse comeco) e tem "leve" (a regra 7).
-PROCESSO_LEVE = "enxuto de 15/09/2026 v3 (leve: foto de rua de frente, fichas em texto, comentários, saída curta, fonte única)"
+PROCESSO_LEVE = "enxuto de 15/09/2026 v4 (leve: foto de rua centrada e do hidrômetro, leitura das placas, fichas em texto, fonte única)"
 #: A FOTO DE RUA DO PROCESSO LEVE e so a captura nova (`recapturar_frente`: de frente, seta, fov 100). A de antes
 #: tinha a mira desenhada e olhava do panorama mais perto — foi para a IA na leve v2 e o dono do produto viu.
 FRENTE_NOVA_DESDE = "2026-09-14 23:00-03"
 LEVE = False
 LARGURA_LEVE = 768
+#: a foto de rua pode ir maior que a do Google: e onde mora a placa pequena (15/09/2026)
+LARGURA_RUA = int(os.environ.get("RADAR_LARGURA_RUA") or LARGURA_LEVE)
 
 #: `--saida DIR`: grava cada julgamento (e as fotos) numa pasta, para a galeria
 #: de validacao — o lote de conferencia roda sem `--aplicar`.
@@ -124,12 +126,13 @@ NÃO contam: templo ou igreja, associação ou entidade sem fins lucrativos, esc
 
 Você recebe: HOJE; o cadastro da instalação; os registros candidatos no endereço, cada um com o número que publica e as provas datadas; os comentários recentes de clientes no Google, com a data; em TEXTO, a ficha do CNPJ no Serasa e os resultados da busca na web pelo endereço, quando houve; e imagens numeradas, com o que é e a data:
 - foto de rua de frente para o imóvel (Street View), com seta verde semitransparente apontando a coordenada do registro e a distância da câmera (a coordenada pode ter alguns metros de erro);
-- foto publicada no Google do lugar.
+- foto publicada no Google do lugar;
+- quando nenhum registro está a até 60 m, a foto de rua é de frente para o hidrômetro da instalação, com a seta nele.
 
 A PERGUNTA É SOBRE O IMÓVEL: há uso não residencial funcionando nele?
 
 Responda, nesta ordem:
-1. Imagens. Uma imagem só MOSTRA uso com SINAL CONCRETO: letreiro ou placa do negócio, vitrine com mercadoria, porta de loja ou de enrolar aberta com mercadoria ou atendimento, balcão, cardápio, oficina com carros ou peças em serviço, pátio com caminhões, máquinas, sucata ou material de trabalho, carros à venda, portão de galpão industrial. NÃO É SINAL: casa, sobrado, muro, grade, portão fechado de casa, carro na garagem, jardim, telhado, caixa d'água — mesmo que um registro diga que há empresa ali. Nome no letreiro diferente do registro não tira o sinal: nome fantasia muda e o negócio pode ter trocado de dono.
+1. Imagens. OLHE A IMAGEM INTEIRA, e não só a ponta da seta: a seta marca a coordenada, que tem metros de erro, e o imóvel pode ocupar boa parte da foto. Uma imagem só MOSTRA uso com SINAL CONCRETO: letreiro, placa, faixa, banner, adesivo ou anúncio pintado na parede ou no muro de QUALQUER negócio (mesmo com nome diferente do registro, mesmo pequeno), telefone ou nome comercial escrito na fachada, marcador de estabelecimento do Google no imóvel, vitrine com mercadoria, porta de loja ou de enrolar aberta com mercadoria ou atendimento, balcão, cardápio, oficina com carros ou peças em serviço, pátio com caminhões, máquinas, sucata ou material de trabalho, carros à venda, portão de galpão industrial. A LEITURA DA FOTO DE RUA, quando vier, foi feita antes só com a imagem e em resolução maior: texto comercial ou sinal marcado "no imóvel da seta" ou "colado ao imóvel" É SINAL — confira na imagem e só descarte se ela mostrar com clareza que é de outro imóvel; "longe" não é sinal. NÃO É SINAL: casa, sobrado, muro, grade, portão fechado de casa, carro na garagem, jardim, telhado, caixa d'água — mesmo que um registro diga que há empresa ali. Nome no letreiro diferente do registro não tira o sinal: nome fantasia muda e o negócio pode ter trocado de dono.
 2. Estado do imóvel na imagem mais recente: em uso; abandonado ou sem uso (mato alto, portas ou janelas lacradas, quebradas ou pichadas, ruína, placa de aluga-se ou vende-se, vitrine vazia, fachada deteriorada sem ocupação); ou não dá para ver. Diga a data da imagem em que você viu.
 3. Aderentes: registros no mesmo endereço — rua, número, complemento, bairro. NÚMERO DIFERENTE É OUTRO IMÓVEL, mesmo vizinho; também não é aderente se uma imagem mostra com clareza outro número. Número que não aparece não atrapalha. Com complemento no cadastro: mesmo complemento é desta instalação; sem complemento, com rua e número iguais, também; complemento diferente é outra unidade.
 4. Não combinam: registros que destoam da maioria e desta instalação.
@@ -347,6 +350,22 @@ def poi_da_foto_de_rua(cur, ligacao, ids):
     return pid, d, cur.fetchone() is not None, pla, plo, rua
 
 
+def _texto_da_leitura(leitura):
+    """A leitura da foto de rua (`ler_fotos_de_rua`, 0115) em poucas linhas para o julgamento."""
+    if not isinstance(leitura, dict):
+        return None
+    onde = {"no_imovel_da_seta": "no imóvel da seta", "colado_ao_imovel": "colado ao imóvel", "longe": "longe"}
+    ts = ['"%s" (%s, %s)' % (t.get("texto"), t.get("tipo") or "?", onde.get(t.get("onde"), t.get("onde") or "?"))
+          for t in (leitura.get("textos") or [])[:15] if isinstance(t, dict) and t.get("texto")]
+    ss = ["%s (%s)" % (x.get("sinal"), onde.get(x.get("onde"), x.get("onde") or "?"))
+          for x in (leitura.get("sinais_sem_texto") or [])[:8] if isinstance(x, dict) and x.get("sinal")]
+    return "\n".join(["LEITURA DA FOTO DE RUA (feita antes, só com a imagem em resolução maior):",
+                       "textos: %s" % ("; ".join(ts) or "nenhum"),
+                       "sinais sem texto: %s" % ("; ".join(ss) or "nenhum"),
+                       "uso não residencial no imóvel, pela leitura: %s"
+                       % ("sim" if leitura.get("uso_nao_residencial_no_imovel") else "não")])
+
+
 def montar_leve(con, ligacao):
     """O processo leve: (dados, fotos, rotulos, ids, n_fontes, refs), o mesmo formato de `montar_com_refs`.
     Os registros saem de `montar_com_refs` sem as fotos do dossie; a foto de rua e SO a captura nova."""
@@ -356,15 +375,27 @@ def montar_leve(con, ligacao):
     cabeca = dados.split("\n\nFOTOS, nesta ordem:")[0]
     cur = con.cursor()
     fotos, rot, refs = [], [], []
+    leitura_rua = None
     escolha = poi_da_foto_de_rua(cur, ligacao, ids)
     if escolha and escolha[2]:
-        cur.execute("""select dados, data_imagem, distancia_m from radar_comercial.poi_evidencia
+        cur.execute("""select dados, data_imagem, distancia_m, leitura from radar_comercial.poi_evidencia
                         where poi_id = %s and tipo = 'sv_frente'""", (escolha[0],))
-        b, data, dist = cur.fetchone()
-        fotos.append(_jpeg_768(b))
+        b, data, dist, leitura_rua = cur.fetchone()
+        fotos.append(_jpeg_768(b, largura=LARGURA_RUA))
         rot.append("foto de rua de frente (%s): Street View, seta na coordenada do registro, câmera a %s m"
                    % (pdat.mes_ano(pdat.data_de_texto(data)), round(dist or 0)))
         refs.append({"poi": escolha[0], "tipo": "sv_frente"})
+    elif not escolha:
+        # NENHUM REGISTRO A ATE 60 M: a foto de rua tirada no hidrometro (0114, 15/09/2026)
+        cur.execute("""select dados, data_imagem, distancia_m, leitura from radar_comercial.ligacao_evidencia
+                        where ligacao = %s and tipo = 'sv_frente' and dados is not null""", (str(ligacao),))
+        x = cur.fetchone()
+        if x:
+            leitura_rua = x[3]
+            fotos.append(_jpeg_768(x[0], largura=LARGURA_RUA))
+            rot.append("foto de rua de frente para o hidrômetro (%s): Street View, seta na coordenada do hidrômetro desta "
+                       "instalação (nenhum registro a até 60 m), câmera a %s m" % (pdat.mes_ano(pdat.data_de_texto(x[1])), round(x[2] or 0)))
+            refs.append({"poi": None, "ligacao": str(ligacao), "tipo": "sv_hidrometro"})
     # A FOTO DO GOOGLE: do registro com mais avaliacoes que tenha foto do proprio lugar, a mais recente com data
     cur.execute("""select p.id from radar_comercial.pois p left join radar_comercial.maps_data m on m.poi_id = p.id
                     where p.id = any(%s) order by coalesce(m.total_avaliacoes, 0) desc, p.id""", (list(ids),))
@@ -380,6 +411,8 @@ def montar_leve(con, ligacao):
     cur.execute("select id, coalesce(cnpj, '') from radar_comercial.pois where id = any(%s)", (list(ids),))
     cnpjs = {c for _i, c in cur.fetchall() if len(c) == 14}
     blocos = []
+    if _texto_da_leitura(leitura_rua):
+        blocos.append(_texto_da_leitura(leitura_rua))
     if coments:
         blocos.append("COMENTÁRIOS RECENTES DE CLIENTES NO GOOGLE (até 2 anos):\n" + "\n".join(
             "#%s %s" % (pid, c) for pid in ids for c in coments.get(pid, [])))
@@ -454,7 +487,12 @@ def uma(poco, ligacao, modelo, placar, trava, aplicar):
             checagem["justificativa_ia"] = r.get("justificativa")
             if v != "aprovado":
                 r["justificativa"] = "[checagem: %s] %s" % (checagem.get("porque"), r.get("motivo") or "")
-    percepcao = {"processo": processo, "dados": dados, "fotos": rot, "fotos_ref": refs, "resposta": r,
+    # PRIORIDADE BAIXA (15/09/2026): revisao so pela Receita e sem sinal nas imagens vai para o fim da fila da SEEK
+    prioridade = None
+    if LEVE and v == "revisao_humana":
+        fs = cv.fontes_confirmadas(r, rot)
+        prioridade = "baixa" if set(fs) <= {"receita"} and not cv.imagem_tem_sinal(r) else "normal"
+    percepcao = {"processo": processo, "prioridade": prioridade, "dados": dados, "fotos": rot, "fotos_ref": refs, "resposta": r,
                  "ids": ids}
     if checagem:
         percepcao["checagem"] = checagem
