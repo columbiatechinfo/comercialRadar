@@ -127,7 +127,8 @@ Na tela: login, fila, uma ficha com fotos e o visor, e `/seek/extrair` com o map
 
 > 14/09/2026. Código em `seek_chamado.py` + `migrations/0110_o_chamado_do_seek.sql` (aplicada no
 > `a2l`). No Hippo: migration 0021 (aplicada), ADR 0005 e branch `feat/integracao-seek` (não
-> publicada). **Nada disto está em produção ainda.**
+> publicada). **Em produção desde 15/09/2026** — tag `producao-2026-09-15.3`, Hippo com a integração no
+> `172.17.0.1:7751` e chave nova nos dois `.env`.
 
 As rotas que a tela usa:
 
