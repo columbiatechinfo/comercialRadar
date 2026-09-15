@@ -105,6 +105,18 @@ preparar() {
   local arq=$1 tag=$2
   recapturar $arq $tag
   if ! conferir $arq $tag; then
+    # SO FALTA FOTO DE RUA SEM PANORAMA (15/09/2026): no R_000 faltaram 2 fotos de 600 — panorama que nao existe — e a
+    # segunda passada gastou ~2,5 min para nada; nos 40 lotes seriam ~1h40. Com todo o resto completo e ate 2% de
+    # fotos faltando, segue sem a segunda passada.
+    local c n_lig n_foto resto
+    c=$(grep -h '■ conferência' $O/lotes/${tag}_conferencia.log | tail -1)
+    n_lig=$(echo "$c" | sed -n 's/.*conferência: \([0-9]*\) ligações.*/\1/p')
+    n_foto=$(echo "$c" | sed -n 's/.*foto de rua \([0-9]*\).*/\1/p')
+    resto=$(echo "$c" | sed -n 's/.*fichas do Maps \([0-9]*\) · foto de rua [0-9]* · leitura \([0-9]*\) · Serasa \([0-9]*\) · busca web \([0-9]*\).*/\1 \2 \3 \4/p')
+    if [ "$resto" = "0 0 0 0" ] && [ -n "$n_foto" ] && [ -n "$n_lig" ] && [ $((n_foto * 50)) -le "$n_lig" ]; then
+      log "   só faltam $n_foto foto(s) de rua (sem panorama): segue sem a segunda passada"
+      return 0
+    fi
     log "   faltou evidência: segunda passada da recaptura"
     recapturar $arq ${tag}_2
     conferir $arq ${tag}_2 || log "   o que restou não se resolve recapturando (sem panorama, sem busca possível): julgando assim"
