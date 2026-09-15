@@ -60,7 +60,9 @@ REGRA = "checagem do codigo de 15/09/2026 v3 (número, prova recente, 2 fontes, 
 #: 15/09/2026 (madrugada): A BUSCA NA WEB E A RECEITA SAO A MESMA FONTE — o que a busca acha no endereco sao
 #: os agregadores de CNPJ (Solutudo, Econodata, Kompass), a Receita republicada.
 FONTES_INDEPENDENTES = {"receita", "google maps", "foto de rua", "instagram", "facebook", "tiktok", "ifood",
-                        "base estadual"}
+                        "base estadual", "youtube", "linkedin", "kwai"}
+#: as redes sociais: so contam confirmadas pelo codigo (`fonte_da_busca.redes_sociais_no_endereco`)
+REDES_SOCIAIS = {"instagram", "facebook", "tiktok", "youtube", "linkedin", "kwai"}
 #: As fontes que so a IMAGEM prova: nao entram pela lista da IA, so pela imagem com sinal descrito.
 FONTES_DE_IMAGEM = {"foto de rua"}
 #: O que a IA escreve quando nao ha sinal na imagem.
@@ -384,6 +386,11 @@ def prova_recente(ctx, validos, resposta=None, fotos=None):
             dt = pdat.data_do_rotulo(rot)
             texto = "foto %s de %s mostra o comércio" % (n, pdat.mes_ano(dt) if dt else "data desconhecida")
             (achadas if dt and pdat.recente(dt) else antigas).append(texto)
+    # o post de rede social confirmado, pela data dele (15/09/2026)
+    for x in (resposta or {}).get("_redes") or []:
+        dt = pdat.data_de_texto(x.get("data"))
+        texto = "post no %s de %s" % (x.get("rede"), pdat.mes_ano(dt) if dt else "data desconhecida")
+        (achadas if dt and pdat.recente(dt) else antigas).append(texto)
     if achadas:
         return True, "; ".join(achadas)
     return False, ("sem prova de até 2 anos" + (": só " + "; ".join(antigas) if antigas
@@ -534,12 +541,36 @@ def checar_uma(con, lig, v, resposta, ids, processo="enxuto de 12/09/2026", foto
     if v != "aprovado":
         return v, None
     resposta = sem_foto_de_vizinho(resposta, fotos)
+    # A REDE SOCIAL DA BUSCA E FONTE PROPRIA (dono do produto, 15/09/2026): confirmada pelo codigo — post no endereco
+    # com o nome de um registro —, entra nas fontes; a que so a IA citou sai.
+    redes = []
+    try:
+        import fonte_da_busca as fdb
+        with con.cursor() as k:
+            redes = fdb.redes_sociais_no_endereco(k, lig, ids)
+    except Exception:                                          # noqa: BLE001
+        redes = []
+    confirmadas = {x["rede"].lower() for x in redes}
+    resposta = dict(resposta or {})
+    resposta["fontes"] = [f for f in (resposta.get("fontes") or []) if _fonte(f) not in REDES_SOCIAIS or _fonte(f) in confirmadas]
+    resposta["fontes"] += sorted(confirmadas)
+    resposta["aderentes"] = [dict(a, fontes=[f for f in (a.get("fontes") or []) if _fonte(f) not in REDES_SOCIAIS or _fonte(f) in confirmadas])
+                             if isinstance(a, dict) else a for a in (resposta.get("aderentes") or [])]
+    resposta["_redes"] = redes
     b = base_da_aprovacao(resposta, processo)
+    if not b:
+        # A IA APROVOU SEM LISTAR ADERENTES (353327, 15/09/2026): a base sai das provas que ela citou — a busca que
+        # confirma o registro e a rede social com o nome dele —, e com um registro so na ligacao, ele
+        b = [x.get("poi") for x in (resposta.get("busca") or []) if isinstance(x, dict) and x.get("confirma") and _pid(x.get("poi"))]
+        b += [x["poi"] for x in redes]
+        if not b and len(ids or []) == 1:
+            b = list(ids)
+        b = list(dict.fromkeys(_pid(x) for x in b if _pid(x) is not None))
     ctx = Contexto(con, [lig], [_pid(x) for x in b if _pid(x) is not None] + list(ids or []))
     validos, removidos = validar(ctx, lig, b, ids, resposta)
     v_novo, porque = decidir(ctx, validos, False, lig, resposta, fotos, processo)
     return v_novo, {"regra": REGRA, "veredito_ia": v, "veredito": v_novo, "porque": porque,
-                    "validos": validos, "removidos": removidos,
+                    "validos": validos, "removidos": removidos, "redes_sociais": redes,
                     "em": datetime.datetime.now().isoformat(timespec="seconds")}
 
 

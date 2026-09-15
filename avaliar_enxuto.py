@@ -44,6 +44,7 @@ import avaliar_ligacao as al
 import base_comum as bc
 import checagem_veredito as cv
 import fachada_da_seta as fds
+import fonte_da_busca as fdb
 import descrever_imagens as di
 import dossie_ligacao as dl
 import imagens
@@ -138,18 +139,18 @@ Responda, nesta ordem:
 3. Aderentes: registros no mesmo endereço — rua, número, complemento, bairro. NÚMERO DIFERENTE É OUTRO IMÓVEL, mesmo vizinho; também não é aderente se uma imagem mostra com clareza outro número. Número que não aparece não atrapalha. Com complemento no cadastro: mesmo complemento é desta instalação; sem complemento, com rua e número iguais, também; complemento diferente é outra unidade.
 4. Não combinam: registros que destoam da maioria e desta instalação.
 5. Fontes que confirmam o uso, cada uma UMA vez:
- - Receita: o CNPJ da base, a ficha do Serasa e a busca na web são TODOS a mesma fonte (a busca acha a Receita republicada);
+ - Receita: o CNPJ da base, a ficha do Serasa e a busca na web são TODOS a mesma fonte (a busca acha a Receita republicada) — MENOS o resultado de rede social: cada resultado da busca vem marcado com a fonte ([rede social: Instagram], [site de CNPJ = Receita republicada], [guia de empresas], [site próprio ou outro]);
  - Google Maps: a ficha, os comentários e a foto publicada são a mesma fonte;
  - foto de rua: só com sinal concreto (item 1);
- - Instagram, Facebook, TikTok, iFood e base estadual: uma fonte cada.
+ - Instagram, Facebook, TikTok, YouTube, LinkedIn, Kwai, iFood e base estadual: uma fonte cada. REDE SOCIAL CONFIRMADA PESA MUITO: o post com o nome do negócio neste endereço (bloco REDES SOCIAIS NO ENDEREÇO) mostra o negócio ativo e é fonte própria, e o post de até 2 anos é PROVA RECENTE pela data dele.
 6. Veredito:
  - "aprovado" em dois casos só:
-   a) ao menos 2 FONTES DIFERENTES confirmam o uso, com alguma PROVA RECENTE (até 2 anos: imagem com sinal, comentário, CNPJ ativo na base atual, loja no iFood);
+   a) ao menos 2 FONTES DIFERENTES confirmam o uso, com alguma PROVA RECENTE (até 2 anos: imagem com sinal, comentário, post de rede social, CNPJ ativo na base atual, loja no iFood);
    b) uma fonte só, quando ela é a fachada no Street View com sinal concreto (até 2 anos), ou a foto publicada com sinal concreto de MENOS DE 1 ANO; comentário de menos de 1 ano só vale sozinho com uma imagem que confirma;
    e, nos dois casos, o imóvel não aparece abandonado.
  - "revisao_humana": há sinal de uso, mas não fecha a regra acima (uma fonte só que não basta, prova antiga, imagem sem sinal com registro ativo, imóvel abandonado com prova em contrário, dúvida de unidade) — o motivo diz o que faltou e a idade das provas;
  - "reprovado": nenhum sinal de uso não residencial neste imóvel.
-A DATA PESA: cada prova vale para o dia em que foi tirada, postada ou atualizada; a mais recente vale mais. CNPJ/MEI ativo com atividade não residencial é negócio, mesmo com nome de pessoa — mas é UMA fonte só.
+A DATA PESA: cada prova vale para o dia em que foi tirada, postada ou atualizada; a mais recente vale mais. FOTO DE RUA MAIS ANTIGA QUE AS PROVAS DO GOOGLE OU DAS REDES SOCIAIS NÃO DESMENTE ESSAS PROVAS: o negócio pode ter aberto depois dela — compare as datas e fique com a mais recente. Liste em "aderentes" TODO registro em que você apoia o veredito. CNPJ/MEI ativo com atividade não residencial é negócio, mesmo com nome de pessoa — mas é UMA fonte só.
 
 Responda SOMENTE um JSON, curto nos campos de apoio e completo no motivo:
 {"uso": {"nao_residencial": true|false, "o_que": "<atividade, até 8 palavras>"},
@@ -222,7 +223,8 @@ def _texto_da_busca(cur, ligacao):
     linhas = sorted(cur.fetchall(), key=lambda r: MOTORES_DA_BUSCA.index(r[0]))
     if not linhas:
         return None, None
-    return linhas[0][1], "\n\n".join(t for _m, _c, t in linhas)[:TEXTO_MAX]
+    # A FONTE E A DATA DE CADA RESULTADO (15/09/2026): rede social, site de CNPJ, guia, iFood ou site proprio
+    return linhas[0][1], "\n\n".join(fdb.anotar_texto(t) for _m, _c, t in linhas)[:TEXTO_MAX]
 
 
 def _resultados_web_da_ficha(cur, poi_ids):
@@ -443,6 +445,12 @@ def montar_leve(con, ligacao):
     if texto:
         fichas.append("RESULTADO DA BUSCA NA WEB PELO ENDEREÇO%s:\n%s"
                       % ((" (consulta \"%s\")" % consulta) if consulta else "", texto))
+    redes = fdb.redes_sociais_no_endereco(cur, ligacao, ids)
+    if redes:
+        fichas.append("REDES SOCIAIS NO ENDEREÇO (fonte própria, independente da Receita; o código conferiu o endereço e o nome "
+                      "do registro no post):\n" + "\n".join(
+                          "- %s, registro #%s, %s: %s" % (x["rede"], x["poi"], ("post de %s" % pdat.mes_ano(pdat.data_de_texto(x["data"])))
+                                                         if x.get("data") else "sem data do post", x["texto"]) for x in redes))
     if fichas:
         blocos.append("FICHAS E BUSCA, EM TEXTO:\n\n" + "\n\n".join(fichas))
     dados = cabeca + ("\n\n" + "\n\n".join(blocos) if blocos else "") + "\n\nIMAGENS, nesta ordem:\n" + (

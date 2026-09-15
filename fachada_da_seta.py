@@ -218,13 +218,18 @@ def fontes_de_nome(cur, ligacao, ids):
                     where ligacao = %s and tipo = 'endereco' and not bloqueado and resultados is not null
                       and texto is not null""", (str(ligacao),))
     pecas += [("busca na web", t) for (t,) in cur.fetchall()]
-    excluir = set()
+    return pecas, palavras_do_endereco(cur, ligacao)
+
+
+def palavras_do_endereco(cur, ligacao):
+    """Rua, bairro e cidade da ligacao: nao identificam o negocio (placa e post trazem o endereco)."""
+    excluir = {"canoas", "rua", "avenida", "travessa", "estrada"}
     if str(ligacao).isdigit():
         cur.execute("""select concat_ws(' ', nom_logradouro, nom_bairro, cidade) from resources_root.cadastro_corsan
                         where num_ligacao = %s""", (int(ligacao),))
         r = cur.fetchone()
-        excluir = set(_normal(r[0] if r else "").split()) | {"canoas", "rua", "avenida", "travessa", "estrada"}
-    return pecas, excluir
+        excluir |= set(_normal(r[0] if r else "").split())
+    return excluir
 
 
 def casar(texto, pecas, excluir=()):
