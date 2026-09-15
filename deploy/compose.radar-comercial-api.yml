@@ -42,6 +42,10 @@ services:
       # "Connection refused" enquanto a pagina carrega normalmente. O pooler
       # tambem escuta na LAN, e e por la que este conteiner chega.
       A2L_DB_HOST: "192.168.3.10"
+      # O CHAMADO NO HIPPO (15/09/2026, ADR 0005 do Hippo, opcao A): a API do Hippo abre o
+      # listener de integracao em 172.17.0.1:7751 (docker0) — nada novo na LAN nem na VPS. A
+      # chave e HIPPO_CHAVE_SERVICO no .env, a mesma de INTEGRACAO_CHAVE_SEEK no .env do Hippo.
+      HIPPO_API_URL: "http://hippo-integracao:7751"
 
       # O DESPACHO DA MINERACAO.
       #
@@ -66,6 +70,8 @@ services:
       # e somente-leitura e /tmp e o unico lugar gravavel.
       DOCKER_CONFIG: "/tmp/.docker"
 
+    extra_hosts:
+      - "hippo-integracao:host-gateway"
     ports:
       # 7740 FORA, 7720 DENTRO. O Dockerfile fixa a porta do uvicorn em
       # 7720 e nao le `PORTA_API`; publicar 7740:7740 abria uma porta em
