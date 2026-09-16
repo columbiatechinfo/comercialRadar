@@ -36,7 +36,10 @@
     const l = document.createElement("link");
     l.rel = "stylesheet";
     l.href = "/static/" + arq;
-    document.head.appendChild(l);
+    // NO COMEÇO DO <head> (16/09/2026): o `tokens.css` define `--linha` e `--roxo` no `:root`, e anexado no fim
+    // sobrescrevia os tokens da SEEK, da gestão e da validação, que têm os mesmos nomes. Antes do estilo da página,
+    // a página vence onde os nomes coincidem e o login continua com o que só existe aqui.
+    document.head.insertBefore(l, document.head.firstChild);
   }
 
   const token = () => sessionStorage.getItem(CHAVE) || "";

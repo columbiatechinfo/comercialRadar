@@ -40,6 +40,16 @@
 -->
 
 <script src="https://cdn.tailwindcss.com"></script>
+<!-- A CASCA DA SEEK (16/09/2026): o índigo do handoff vira o azul da marca A2L e a fonte vira a da SEEK, sem reescrever
+     as classes das 3.400 linhas do painel. Os tons são os dos estados da SEEK (fila, rodando, feita). -->
+<script>
+  tailwind.config = { theme: { extend: {
+    colors: { indigo: { 50: "#EEF5FF", 100: "#DCEBFF", 200: "#B7D3FF", 300: "#8AB8FF", 400: "#4D95FF",
+                        500: "#1A7BFF", 600: "#006DFF", 700: "#0057CC", 800: "#0B3F8F", 900: "#0B2E59" } },
+    fontFamily: { sans: ["-apple-system", "BlinkMacSystemFont", "Segoe UI", "Inter", "Roboto", "Helvetica", "Arial",
+                         "sans-serif"] },
+  } } };
+</script>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
 <link rel="stylesheet" href="/static/mapa.css">
@@ -60,10 +70,20 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-  body { margin:0; font-family:'Inter',ui-sans-serif,system-ui,sans-serif; }
-  a { color:#4f46e5; text-decoration:none; }
-  a:hover { color:#4338ca; }
-  ::selection { background:#e0e7ff; }
+  body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,Helvetica,Arial,sans-serif; }
+  /* A CASCA DA SEEK (16/09/2026): o filete 22/78 de marca no topo, listrado em desenvolvimento, e o logo A2L. */
+  #filete { position:fixed; left:0; right:0; top:0; height:3px; display:flex; z-index:1000; }
+  #filete i { width:22%; background:#F28C28; }
+  #filete b { width:78%; background:#0B2E59; }
+  body.em-homolog #filete i { width:100%; background:repeating-linear-gradient(135deg,#F28C28 0 14px,#0B2E59 14px 28px); }
+  body.em-homolog #filete b { display:none; }
+  .marca-logo svg { display:block; height:22px; width:auto; }
+  .chip-seek { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:10.5px; color:#6B7684;
+    border:1px solid #E4E8EE; border-radius:9999px; padding:2px 9px; background:#F7F9FC; white-space:nowrap; }
+  .chip-seek:hover { color:#2A2E35; border-color:#CFD6E0; }
+  a { color:#006DFF; text-decoration:none; }
+  a:hover { color:#0057CC; }
+  ::selection { background:#DCEBFF; }
   .leaflet-container { font-family:'Inter',sans-serif; }
   .leaflet-top, .leaflet-bottom { z-index:400; }
   * { scrollbar-width:thin; scrollbar-color:#e5e7eb transparent; }
@@ -73,7 +93,7 @@
   *:hover::-webkit-scrollbar-thumb { background:#d1d5db; }
   *::-webkit-scrollbar-thumb:hover { background:#9ca3af; }
   /* O foco de teclado é do sistema, não o anel azul do navegador. */
-  :focus-visible { outline:2px solid #4f46e5; outline-offset:2px; }
+  :focus-visible { outline:2px solid #006DFF; outline-offset:2px; }
 
   /* OS ITENS DA BARRA LATERAL SÃO UMA CLASSE, e não Tailwind repetido.
      São sete botões com a mesma forma, e o JS troca o estado deles; escrever a
@@ -87,13 +107,13 @@
     background:transparent; border:0; cursor:pointer;
   }
   .nav-item svg { width:1.25rem; height:1.25rem; flex:none; color:#9ca3af; }
-  .nav-item:hover:not(:disabled) { background:#f9fafb; color:#4f46e5; }
-  .nav-item:hover:not(:disabled) svg { color:#4f46e5; }
-  .nav-on { background:#eef2ff; color:#4f46e5; }
-  .nav-on svg { color:#4f46e5; }
-  .nav-pronto { background:#eef2ff; color:#4f46e5; }
-  .nav-pronto:hover { background:#e0e7ff; }
-  .nav-pronto svg { color:#4f46e5; }
+  .nav-item:hover:not(:disabled) { background:#f9fafb; color:#006DFF; }
+  .nav-item:hover:not(:disabled) svg { color:#006DFF; }
+  .nav-on { background:#EEF5FF; color:#006DFF; }
+  .nav-on svg { color:#006DFF; }
+  .nav-pronto { background:#EEF5FF; color:#006DFF; }
+  .nav-pronto:hover { background:#DCEBFF; }
+  .nav-pronto svg { color:#006DFF; }
   .nav-off, .nav-item:disabled { color:#d1d5db; cursor:not-allowed; }
   .nav-off svg, .nav-item:disabled svg { color:#d1d5db; }
 
@@ -106,21 +126,23 @@
 </head>
 
 <body>
-<div class="flex h-screen overflow-hidden bg-gray-50 text-gray-900">
+<div id="filete"><i></i><b></b></div>
+<div class="flex h-screen overflow-hidden bg-gray-50 text-gray-900" style="padding-top:3px">
 
   <!-- ───────────────────────── barra lateral ───────────────────────── -->
   <aside class="flex w-72 shrink-0 flex-col gap-y-5 border-r border-gray-200 bg-white px-6 pb-4">
-    <div class="flex h-16 shrink-0 items-center gap-x-2.5">
-      <span class="flex size-7 shrink-0 items-center justify-center rounded-md bg-indigo-600 text-white">
-        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor"
-             stroke-width="2" stroke-linecap="round" aria-hidden="true">
-          <circle cx="12" cy="12" r="2.2" fill="currentColor" stroke="none"/>
-          <path d="M12 12 L18.5 5.5"/><path d="M7.2 7.2a6.8 6.8 0 1 0 9.6 0"/>
-          <path d="M4.4 4.4a10.7 10.7 0 1 0 15.2 0"/>
-        </svg>
-      </span>
-      <span class="flex min-w-0 flex-col justify-center">
-        <span class="text-[12.5px]/[15px] font-semibold tracking-tight text-gray-900 whitespace-nowrap">Comercial Radar</span>
+    <div class="flex h-16 shrink-0 items-center gap-x-3">
+      <span class="marca-logo"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 73.4 28.8" width="56" height="22" role="img" aria-label="A2L Engenharia e Consultoria">
+<g transform="translate(2.40,26.40) scale(0.024000,-0.024000)">
+<path d="M470,1000 L645,1000 L1148,0 L938,0 L557,735 L183,0 L0,0 L0,45 Z" fill="#0B2E59"/>
+<path d="M557,388 L713,80 L402,80 Z" fill="#F28C28"/>
+<path d="M1054,1000 L1725,1000 A284,250 0 0 0 2009,750 A190,341 0 0 0 1819,409 L1436,385 C1400,368 1360,300 1343,237 L1176,233 C1152,380 1240,560 1414,574 L1743,584 A90,112 0 0 1 1723,808 L1150,810 Z" fill="#006DFF"/>
+<path d="M1264,0 L1990,0 L1990,178 L1357,178 Z" fill="#0B2E59"/>
+<path d="M1177,178 L1344,178 L1258,31 Z" fill="#F28C28"/>
+<path d="M2122,1000 L2122,165 A165,165 0 0 1 2287,0 L2858,0 L2858,180 L2315,180 L2315,1000 Z" fill="#0B2E59"/>
+</g></svg></span>
+      <span class="flex min-w-0 flex-col justify-center border-l border-gray-200 pl-3">
+        <span class="text-[12.5px]/[15px] font-semibold tracking-[0.04em] text-gray-900 whitespace-nowrap">EXTRAÇÃO</span>
         <span id="marca-empresa" class="text-[9.5px]/[12px] font-medium uppercase tracking-[0.06em] text-gray-400 whitespace-nowrap"></span>
       </span>
     </div>
@@ -230,7 +252,12 @@
            porque o teto deixa de ser o numero de trabalhadores e volta a ser a
            Spark, que e onde ele deve estar. O campo existe para poder pedir
            MENOS quando a maquina estiver ocupada. -->
-      <label class="mt-1 flex items-center justify-between gap-x-2 rounded-md px-2 py-1 text-[11.5px] text-gray-500"><span title="Medido em 08/09/2026 com 160 POIs: 80 rende 46,2 POI por minuto sem fila no modelo; 120 rende 50,9 mas deixa 45 requisições esperando. Abaixo de 80 sobra máquina — 40 rende 25,1.">Trabalhadores da IA</span><input type="number" id="np-ia-workers" min="1" max="160" value="80" class="w-14 rounded border border-gray-300 px-1.5 py-0.5 text-right text-[11.5px] tabular-nums text-gray-700"></label>
+      <!-- A VALIDACAO E A SEEK (16/09/2026): o "Avaliar com IA" cria a validacao da area; o andamento, lote a
+           lote e etapa a etapa, fica na pagina propria, no visual da SEEK. -->
+      <div class="mt-1 flex flex-wrap gap-1.5 px-2.5">
+        <a class="chip-seek" href="validacao" title="o andamento das validações, lote a lote">validação ↗</a>
+        <a class="chip-seek" href="./" title="a fila de ligações julgadas">SEEK ↗</a>
+      </div>
 
       <button type="button" id="btn-extrair" disabled class="nav-item mt-1">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="size-5 shrink-0"><path d="M12 3v12"></path><path d="M7 10l5 5 5-5"></path><path d="M5 21h14"></path></svg>

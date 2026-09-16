@@ -73,12 +73,25 @@ def criar(b: NovaValidacao, u: _auth.Usuario = Depends(_quem)):
     empresa = u.id_empresa or (b.empresa if u.nivel == "root" else None)
     if not empresa:
         raise HTTPException(400, "escolha a empresa")
-    if not (b.cidade or "").strip():
+    area = (b.area or "").strip() or None
+    cidade = (b.cidade or "").strip()
+    if area:
+        import time
+        import area_utils
+        poligono = area_utils.carregar_area(area)
+        if not poligono:
+            raise HTTPException(400, "desenhe ou escolha a área antes de validar")
+        if area == area_utils.AREA_PADRAO:
+            # A ÁREA DO MOMENTO MUDA a cada desenho: a validação guarda uma cópia com nome próprio.
+            area = "validacao_%s" % time.strftime("%Y%m%d_%H%M%S")
+            area_utils.salvar_area(poligono, area, None if u.id_empresa else empresa)
+        if not cidade:
+            cidade = area_utils.municipio_da_area(poligono)[0] or ""
+    if not cidade:
         raise HTTPException(400, "informe a cidade")
     con = _auth.conectar_como(u)
     try:
-        vid, msg = va.criar(con, empresa, b.cidade.strip(), (b.area or "").strip() or None, pedido_por=u.id,
-                            refazer=bool(b.refazer))
+        vid, msg = va.criar(con, empresa, cidade, area, pedido_por=u.id, refazer=bool(b.refazer))
     except SystemExit as e:
         raise HTTPException(400, str(e))
     finally:

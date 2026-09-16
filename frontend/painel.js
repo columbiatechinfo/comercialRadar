@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const nf = new Intl.NumberFormat("pt-BR");
-  const INDIGO = "#4f46e5";
+  const INDIGO = "#006DFF";  // o azul da marca (casca da SEEK, 16/09/2026)
 
   // O FUNDO É O GOOGLE DE VERDADE, pela Maps JavaScript API — e a máquina é a
   // MESMA da tela anterior, DE PROPÓSITO.
@@ -2604,60 +2604,42 @@
       }
     });
 
-    // ── AVALIAR COM IA ────────────────────────────────────────────────
+    // ── AVALIAR COM IA = A VALIDAÇÃO DA ÁREA (16/09/2026) ────────────────
     //
-    // O NUMERO VEM ANTES DO BOTAO FUNCIONAR. `/api/avaliacao/fila` conta pela
-    // MESMA regra que a corrida usa — categoria marcada, ligacao residencial
-    // ativa, ponto dentro do desenho. Se a tela contasse por um criterio e a
-    // corrida rodasse por outro, o contador mentiria por construcao.
+    // ESTE BOTÃO CHAMAVA O AVALIADOR ANTIGO (`avaliar_ia.py`), que julga POI e
+    // grava em `poi_veredito` — tabela que a SEEK não lê. Agora ele cria a
+    // VALIDAÇÃO da área em uso: as ligações aptas viram lotes e tarefas (fichas
+    // do Maps, fotos, foto de rua, leitura das placas, Serasa, busca web,
+    // conferência e julgamento leve), que os executores das máquinas pegam. O
+    // andamento fica em /validacao; o contador mostra as validações vivas.
     async function fila_ia() {
-      const d = await fetch("/api/avaliacao/fila")
+      const d = await fetch("/api/validacoes?limite=50")
         .then((x) => (x.ok ? x.json() : null)).catch(() => null);
       if (!d) return null;
+      document.body.classList.toggle("em-homolog", d.ambiente === "desenvolvimento");
+      const vivas = (d.validacoes || [])
+        .filter((v) => ["rodando", "pausada", "preparando"].includes(v.estado)).length;
       const n = $("ia-n");
-      if (n) n.textContent = d.alvos > 999 ? "999+" : String(d.alvos);
+      if (n) n.textContent = String(vivas);
       return d;
     }
 
     $("btn-avaliar-ia").addEventListener("click", async () => {
-      const d = await fila_ia();
       $("log-wrap").classList.remove("hidden");
-      if (!d) {
-        linhaLog("nao consegui consultar a fila da avaliacao", "text-amber-400");
-        return;
-      }
-      if (!d.alvos) {
-        // O CAMINHO DE SAIDA E DITO, e nao so a recusa: fila vazia aqui tem
-        // duas causas possiveis e o operador nao tem como adivinhar qual.
-        linhaLog("nenhum POI na fila — marque categorias em 'Categorias para "
-                 + "a IA' e confira que a area tem vinculo com ligacao "
-                 + "residencial ativa", "text-amber-400");
-        return;
-      }
-      const falta = d.alvos - d.julgados;
-      if (!falta) {
-        linhaLog("os " + d.alvos + " POIs da area ja foram julgados",
-                 "text-lime-400");
-        return;
-      }
-      const r = await fetch("/api/jobs", {
+      const r = await fetch("/api/validacoes", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        // ERA 4, FIXO NO CODIGO. Medido em 07/09/2026: com 12 a vazao
-        // sobe 33% porque o teto deixa de ser o numero de trabalhadores e
-        // volta a ser a Spark. O campo permite pedir menos numa maquina
-        // ocupada — o que o numero fixo nao permitia em nenhuma direcao.
-        body: JSON.stringify({ modo: "avaliar_ia", opcoes: {
-          workers: parseInt($("np-ia-workers")?.value) || 80 } }),
+        body: JSON.stringify({ cidade: estado.cidade || "", area: "area_atual" }),
       }).catch(() => null);
       const j = r ? await r.json().catch(() => ({})) : {};
       if (!r || !r.ok) {
-        linhaLog(j.erro || "nao foi possivel iniciar a avaliacao",
+        linhaLog((j && (j.detail || j.erro)) || "não foi possível começar a validação",
                  "text-amber-400");
         return;
       }
-      linhaLog("avaliacao iniciada — " + falta + " POI(s) a julgar de "
-               + d.alvos + " na area", "text-lime-400");
+      linhaLog(j.mensagem || "validação criada", j.id ? "text-lime-400" : "text-amber-400");
+      if (j.id) linhaLog("acompanhe em Validação, no menu ao lado", "text-lime-400");
+      fila_ia();
     });
 
     // ── o score dos vínculos ──────────────────────────────────────────
