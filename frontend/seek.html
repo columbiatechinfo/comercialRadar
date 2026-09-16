@@ -712,6 +712,12 @@ a.chip{text-decoration:none}
 .fila-topo{gap:7px}
 .fila-filtros .fl-sel + .fl-sel{margin-left:0}
 .ffontes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px}
+/* OS RECORTES DE CLASSE NO PAINEL DA DIREITA (16/09/2026): duas colunas cabem no `--lado`, e o bloco
+ * inteiro rola sozinho quando a lista de ramos passa da altura reservada. */
+.lado-classe{padding:8px 10px 6px;border-bottom:1px solid var(--linha);max-height:34vh;overflow:auto;flex:none}
+.lado-classe .ffontes{grid-template-columns:repeat(2,minmax(0,1fr))}
+.lado-classe .ffontes-rot{margin-top:8px}
+.lado-classe .ffontes-rot:first-child{margin-top:0}
 /* nome em cima, contagem embaixo: lado a lado, "DIRETÓRIO 3.123" não cabia
  * em um terço da fila e virava "DI…" */
 .fch{
@@ -1060,10 +1066,6 @@ a.chip{text-decoration:none}
       <div class="fila-filtros dec" id="f-decisao"></div>
       <div class="ffontes-rot"><span class="fl-rot">fontes · achou / não achou</span><button id="f-limpa" hidden>limpar</button></div>
       <div class="ffontes" id="f-fontes"></div>
-      <div class="ffontes-rot"><span class="fl-rot">ramo do negócio</span><button id="f-limpa-seg" hidden>limpar</button></div>
-      <div class="ffontes fclasse" id="f-segmentos"></div>
-      <div class="ffontes-rot"><span class="fl-rot">o que a IA viu nas imagens</span><button id="f-limpa-vis" hidden>limpar</button></div>
-      <div class="ffontes fclasse" id="f-visual"></div>
       <button class="bt p lote" id="f-lote" title="grava a decisão oficial em todas as ligações do recorte"></button>
     </div>
     <div class="fila-lista" id="f-lista" tabindex="0">
@@ -1093,6 +1095,14 @@ a.chip{text-decoration:none}
 
   <!-- o volume e os grupos -->
   <aside id="lado">
+    <!-- OS RECORTES DE CLASSE FICAM AQUI (dono do produto, 16/09/2026): recortam a fila, mas ocupavam a altura
+         dela; deste lado sobra espaço e eles ficam junto do cérebro. -->
+    <div class="lado-classe">
+      <div class="ffontes-rot"><span class="fl-rot">ramo do negócio</span><button id="f-limpa-seg" hidden>limpar</button></div>
+      <div class="ffontes fclasse" id="f-segmentos"></div>
+      <div class="ffontes-rot"><span class="fl-rot">o que a IA viu nas imagens</span><button id="f-limpa-vis" hidden>limpar</button></div>
+      <div class="ffontes fclasse" id="f-visual"></div>
+    </div>
     <div class="lado-tela">
       <canvas id="cer-cv" role="img"
         aria-label="as fontes desta ligação em volume; a mesma leitura está na árvore ao lado"></canvas>
