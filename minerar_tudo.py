@@ -1453,14 +1453,14 @@ def main(argv=None) -> int:
             # de lembrar de dois botões, na ordem certa, é um processo que
             # funciona enquanto alguém lembra. A etapa termina com o vínculo
             # em dia, ou não terminou.
-            # EM DESENVOLVIMENTO, SÓ A CIDADE DA EXTRAÇÃO (16/09/2026). Dev e produção usam o mesmo banco: o
-            # teste de 4 quadras de Chuvisca rodou esta revisão sem cidade e descartou 3.666 vínculos de Canoas
-            # (bairro divergente) com os lotes de Canoas julgando — revertido às 11:47 pelo carimbo, cópia em
-            # `radar_comercial.ligacao_poi_descartes_teste_20260916`. Em produção fica como está, sem cidade.
-            _rev = ["revisar_vinculo.py", "--aplicar"]
-            if os.environ.get("RADAR_AMBIENTE", "").strip() == "desenvolvimento":
-                _rev += ["--cidade", cidade]
-            _tolerante_i9(_rev, "regra do vínculo sobre o que já estava gravado")
+            # SÓ A CIDADE DA EXTRAÇÃO (dono do produto, 16/09/2026). O teste de 4 quadras de Chuvisca rodou esta
+            # revisão sem cidade e descartou 3.666 vínculos de Canoas (bairro divergente) com os lotes de Canoas
+            # julgando — revertido às 11:47 pelo carimbo, cópia em
+            # `radar_comercial.ligacao_poi_descartes_teste_20260916`. Decisão: em produção também, cada extração
+            # revisa só a própria cidade; a regra nova chega a outra cidade quando ela for extraída. O risco que o
+            # comentário de 10/09 acima aponta (Gravataí vivo por omissão) passa a ser o comportamento escolhido.
+            _tolerante_i9(["revisar_vinculo.py", "--aplicar", "--cidade", cidade],
+                          "regra do vínculo sobre o que já estava gravado, na cidade")
             _tolerante_i9(["casar_por_endereco.py", "--cidade", cidade,
                            "--aplicar"],
                           "órfãos pelo endereço publicado (alimenta a fila)")
