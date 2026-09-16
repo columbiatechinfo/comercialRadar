@@ -712,6 +712,25 @@ a.chip{text-decoration:none}
 .fila-topo{gap:7px}
 .fila-filtros .fl-sel + .fl-sel{margin-left:0}
 .ffontes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px}
+/* A LINHA DO TEMPO DO CASO (16/09/2026): decisões e comentários; editar acrescenta, não apaga */
+.lt{position:relative;display:flex;flex-direction:column;gap:14px;padding:4px 0 4px 4px}
+.lt::before{content:"";position:absolute;left:9px;top:10px;bottom:10px;width:1px;background:var(--linha)}
+.lt-item{position:relative;display:grid;grid-template-columns:18px minmax(0,1fr);column-gap:10px}
+.lt-ponto{width:11px;height:11px;margin-top:4px;border-radius:50%;background:var(--sup);
+  border:2px solid var(--lc);position:relative;z-index:1}
+.lt-cab{display:flex;justify-content:space-between;gap:10px;font-size:13px;color:var(--fraco)}
+.lt-cab b{color:var(--tinta);font-weight:600}
+.lt-cab time{font-family:var(--mono);font-size:11px;white-space:nowrap}
+.lt-lote{font-size:10px;color:var(--fraco)}
+.lt-texto{margin-top:6px;padding:9px 12px;border:1px solid var(--linha);border-radius:var(--r2);
+  background:var(--sup);font-size:13px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}
+.lt-editar{margin-top:4px;font-size:11px}
+.lt-editor,.lt-novo{margin-top:8px;display:flex;flex-direction:column;gap:6px}
+.lt-editor textarea,.lt-novo textarea{width:100%;box-sizing:border-box;padding:8px 10px;font:inherit;font-size:13px;
+  border:1px solid var(--linha2);border-radius:var(--r2);resize:vertical}
+.lt-editor small{font-size:11px;color:var(--fraco)}
+.lt-botoes{display:flex;justify-content:flex-end;gap:6px}
+.lt-novo{margin-top:16px;padding-top:12px;border-top:1px solid var(--linha)}
 /* OS RECORTES DE CLASSE NO PAINEL DA DIREITA (16/09/2026): duas colunas cabem no `--lado`, e o bloco
  * inteiro rola sozinho quando a lista de ramos passa da altura reservada. */
 .lado-classe{padding:8px 10px 6px;border-bottom:1px solid var(--linha);max-height:34vh;overflow:auto;flex:none}
@@ -4389,6 +4408,11 @@ var SEEK = (function () {
     var chamado = '<button class="bt p chamado" data-chamado="1" title="Abrir chamado para esta ligação">'
       + 'abrir chamado<span class="longo"> para esta ligação</span></button><i class="sep" aria-hidden="true"></i>';
     var hist = fi && fi.decisoes ? fi.decisoes.length : 0;
+    /* A LINHA DO TEMPO (16/09/2026): decisões + comentários; o texto mostrado é o mais recente, seja da decisão
+     * ou de uma edição posterior, e o link aparece em QUALQUER status */
+    var lt = linhaDoTempo(fi);
+    var comTexto = lt.filter(function (x) { return x.texto; });
+    var ultimoTexto = comTexto.length ? comTexto[comTexto.length - 1].texto : '';
     $('#decisao').innerHTML = (trava
         ? '<div class="dec-estado travado"><b>em análise por ' + esc(trava.quem_nome || 'outro usuário') + '</b>'
           + '<span>a decisão fica bloqueada até a pessoa sair desta ligação</span></div>'
@@ -4396,12 +4420,13 @@ var SEEK = (function () {
           + (dec
               ? '<b>' + esc(ACOES[dec.acao] ? ACOES[dec.acao].rot : dec.acao) + '</b><span>'
                 + esc(dec.quem || '') + (dec.em ? ' · ' + esc(quando(dec.em)) : '')
-                + (dec.motivo ? ' · ' + esc(dec.motivo) : '') + '</span>'
+                + (ultimoTexto ? ' · ' + esc(ultimoTexto) : '') + '</span>'
               : '<b>sem decisão oficial</b><span>a IA diz <b>' + esc(V.rot) + '</b></span>')
           + '</div>')
       + '<div class="dec-curadoria">'
-      + (hist > 1 ? '<button class="lk" data-historico="1">' + hist + ' decisões registradas</button> · '
-         : hist === 1 && dec && dec.motivo ? '<button class="lk" data-historico="1">ver o comentário</button> · ' : '')
+      + (lt.length ? '<button class="lk" data-historico="1">linha do tempo · ' + lt.length
+                     + (comTexto.length ? ' · ver os comentários' : '') + '</button> · '
+         : (podeDecidir() ? '<button class="lk" data-historico="1">comentar</button> · ' : ''))
       + 'a decisão oficial não altera o veredito da IA nem o das fontes</div>'
       + '<div class="cresce"></div><div class="acoes">' + chamado + botoes + '</div>';
   }
@@ -4651,19 +4676,86 @@ var SEEK = (function () {
     });
   }
 
+  /* A LINHA DO TEMPO DO CASO (dono do produto, 16/09/2026): as decisões e os comentários, do mais antigo ao
+   * mais novo. EDITAR NÃO APAGA: a edição entra como item novo que aponta para o que revisou, e o original fica
+   * com o status que tinha. Só quem escreveu vê o "editar". */
+  var VERBO = {aprovar: 'aprovou', rejeitar: 'rejeitou', campo: 'mandou a campo', revisar: 'deixou em revisão'};
+
+  function linhaDoTempo(fi) {
+    var itens = [];
+    if (!fi || fi.erro) { return itens; }
+    (fi.decisoes || []).forEach(function (d) {
+      itens.push({tipo: 'decisao', id: d.id, em: d.em, quem: d.quem, quem_id: d.quem_id, acao: d.acao,
+                  texto: d.motivo || '', lote: d.lote});
+    });
+    (fi.comentarios || []).forEach(function (k) {
+      itens.push({tipo: 'comentario', id: k.id, em: k.em, quem: k.quem, quem_id: k.quem_id, texto: k.texto,
+                  edita_decisao: k.edita_decisao, edita_comentario: k.edita_comentario});
+    });
+    itens.sort(function (a, b) { return a.em < b.em ? -1 : a.em > b.em ? 1 : (a.tipo < b.tipo ? -1 : 1); });
+    return itens;
+  }
+
   function abreHistorico() {
     var fi = ficha();
     if (!fi) { return; }
-    $('#modal-tit').textContent = 'Decisões · ligação ' + S.sel;
-    $('#modal-corpo').innerHTML = (fi.decisoes || []).map(function (d) {
-      return '<div class="hist-lin"><i>' + esc(quando(d.em)) + '</i><div><b>'
-        + esc(ACOES[d.acao] ? ACOES[d.acao].rot : d.acao) + '</b> · ' + esc(d.quem || '')
-        + (d.motivo ? '<span>' + esc(d.motivo) + '</span>' : '')
-        + (d.lote ? '<span class="mono">lote ' + esc(String(d.lote).slice(0, 8)) + '</span>' : '')
+    var itens = linhaDoTempo(fi);
+    var porId = {};
+    itens.forEach(function (x) { porId[x.tipo + ':' + x.id] = x; });
+    var eu = window.EU && window.EU.id ? String(window.EU.id) : null;
+    $('#modal-tit').textContent = 'Linha do tempo · ligação ' + S.sel;
+    var corpo = itens.map(function (x) {
+      var meu = eu && x.quem_id && String(x.quem_id) === eu;
+      var cor = x.tipo === 'decisao' && ACOES[x.acao] ? (ACOES[x.acao].cor || 'var(--azul)') : 'var(--linha2)';
+      var cab;
+      if (x.tipo === 'decisao') {
+        cab = '<b>' + esc(x.quem || 'alguém') + '</b> ' + esc(VERBO[x.acao] || x.acao)
+          + (x.lote ? ' <span class="mono lt-lote">em lote ' + esc(String(x.lote).slice(0, 8)) + '</span>' : '');
+      } else {
+        var alvo = x.edita_decisao ? porId['decisao:' + x.edita_decisao] : x.edita_comentario ? porId['comentario:' + x.edita_comentario] : null;
+        cab = '<b>' + esc(x.quem || 'alguém') + '</b> '
+          + (alvo ? 'editou o comentário de ' + esc(quando(alvo.em)) : 'comentou');
+      }
+      return '<div class="lt-item" data-lt="' + x.tipo + ':' + x.id + '">'
+        + '<i class="lt-ponto" style="--lc:' + cor + '"></i>'
+        + '<div class="lt-conteudo"><div class="lt-cab"><span>' + cab + '</span><time>' + esc(quando(x.em)) + '</time></div>'
+        + (x.texto ? '<div class="lt-texto">' + esc(x.texto) + '</div>' : '')
+        + (meu && x.texto ? '<button class="lk lt-editar" data-editar-lt="' + x.tipo + ':' + x.id + '">editar</button>' : '')
+        + '<div class="lt-editor" data-editor-lt="' + x.tipo + ':' + x.id + '" hidden>'
+        + '<textarea rows="3">' + esc(x.texto || '') + '</textarea>'
+        + '<div class="lt-botoes"><button class="bt p" data-cancela-lt="1">cancelar</button>'
+        + '<button class="bt pri" data-salva-lt="' + x.tipo + ':' + x.id + '">salvar como nova versão</button></div>'
+        + '<small>a versão anterior continua na linha do tempo, com o status que tinha</small></div>'
         + '</div></div>';
-    }).join('') || '<div class="sem-dado">Nenhuma decisão registrada.</div>';
+    }).join('') || '<div class="sem-dado">Nenhuma decisão nem comentário registrado.</div>';
+    var novo = podeDecidir()
+      ? '<div class="lt-novo"><textarea id="lt-novo-txt" rows="3" placeholder="adicionar um comentário…"></textarea>'
+        + '<div class="lt-botoes"><button class="bt pri" data-comenta-lt="1">comentar</button></div></div>'
+      : '';
+    $('#modal-corpo').innerHTML = '<div class="lt">' + corpo + '</div>' + novo;
     $('#modal-pe').innerHTML = '<button class="bt p" data-fecha="1">fechar</button>';
     $('#modal').hidden = false;
+  }
+
+  /* grava o comentário (novo ou edição) e redesenha a ficha e a linha do tempo */
+  function gravaComentario(texto, edita) {
+    var lig = S.sel;
+    texto = (texto || '').trim();
+    if (!texto) { torrada('o comentário está vazio', true); return; }
+    var corpo = {ligacao: lig, texto: texto};
+    if (edita && edita.tipo === 'decisao') { corpo.edita_decisao = edita.id; }
+    if (edita && edita.tipo === 'comentario') { corpo.edita_comentario = edita.id; }
+    fetch('/api/seek/comentar', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(corpo)
+    }).then(lerJson).then(function () {
+      torrada(edita ? 'nova versão do comentário gravada' : 'comentário gravado');
+      delete S.fichas[lig];
+      return carregaFicha(lig);
+    }).then(function () {
+      if (S.sel === lig) { abreHistorico(); }
+    }).catch(function (e) {
+      torrada('o comentário não foi gravado: ' + e.message, true);
+    });
   }
 
   /* ===================================================================
@@ -4992,6 +5084,34 @@ var SEEK = (function () {
         return;
       }
       if (t.closest('[data-grava]')) { confirmaDecisao(); return; }
+      var ed = t.closest('[data-editar-lt]');
+      if (ed) {
+        var chave = ed.getAttribute('data-editar-lt');
+        var caixa = document.querySelector('[data-editor-lt="' + chave + '"]');
+        if (caixa) { caixa.hidden = false; ed.hidden = true; var ta = caixa.querySelector('textarea'); if (ta) { ta.focus(); } }
+        return;
+      }
+      if (t.closest('[data-cancela-lt]')) {
+        var cx = t.closest('.lt-editor');
+        if (cx) {
+          cx.hidden = true;
+          var bt = document.querySelector('[data-editar-lt="' + cx.getAttribute('data-editor-lt') + '"]');
+          if (bt) { bt.hidden = false; }
+        }
+        return;
+      }
+      var sv = t.closest('[data-salva-lt]');
+      if (sv) {
+        var par = sv.getAttribute('data-salva-lt').split(':');
+        var txt = sv.closest('.lt-editor').querySelector('textarea').value;
+        gravaComentario(txt, {tipo: par[0], id: Number(par[1])});
+        return;
+      }
+      if (t.closest('[data-comenta-lt]')) {
+        var nv = document.getElementById('lt-novo-txt');
+        gravaComentario(nv ? nv.value : '', null);
+        return;
+      }
       if (t.closest('[data-historico]')) { abreHistorico(); return; }
       var di = t.closest('[data-dados-ia]');
       if (di) { abreDadosIA(di.getAttribute('data-dados-ia')); return; }

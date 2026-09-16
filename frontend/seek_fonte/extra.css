@@ -13,6 +13,25 @@ a.chip{text-decoration:none}
 .fila-topo{gap:7px}
 .fila-filtros .fl-sel + .fl-sel{margin-left:0}
 .ffontes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px}
+/* A LINHA DO TEMPO DO CASO (16/09/2026): decisões e comentários; editar acrescenta, não apaga */
+.lt{position:relative;display:flex;flex-direction:column;gap:14px;padding:4px 0 4px 4px}
+.lt::before{content:"";position:absolute;left:9px;top:10px;bottom:10px;width:1px;background:var(--linha)}
+.lt-item{position:relative;display:grid;grid-template-columns:18px minmax(0,1fr);column-gap:10px}
+.lt-ponto{width:11px;height:11px;margin-top:4px;border-radius:50%;background:var(--sup);
+  border:2px solid var(--lc);position:relative;z-index:1}
+.lt-cab{display:flex;justify-content:space-between;gap:10px;font-size:13px;color:var(--fraco)}
+.lt-cab b{color:var(--tinta);font-weight:600}
+.lt-cab time{font-family:var(--mono);font-size:11px;white-space:nowrap}
+.lt-lote{font-size:10px;color:var(--fraco)}
+.lt-texto{margin-top:6px;padding:9px 12px;border:1px solid var(--linha);border-radius:var(--r2);
+  background:var(--sup);font-size:13px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}
+.lt-editar{margin-top:4px;font-size:11px}
+.lt-editor,.lt-novo{margin-top:8px;display:flex;flex-direction:column;gap:6px}
+.lt-editor textarea,.lt-novo textarea{width:100%;box-sizing:border-box;padding:8px 10px;font:inherit;font-size:13px;
+  border:1px solid var(--linha2);border-radius:var(--r2);resize:vertical}
+.lt-editor small{font-size:11px;color:var(--fraco)}
+.lt-botoes{display:flex;justify-content:flex-end;gap:6px}
+.lt-novo{margin-top:16px;padding-top:12px;border-top:1px solid var(--linha)}
 /* OS RECORTES DE CLASSE NO PAINEL DA DIREITA (16/09/2026): duas colunas cabem no `--lado`, e o bloco
  * inteiro rola sozinho quando a lista de ramos passa da altura reservada. */
 .lado-classe{padding:8px 10px 6px;border-bottom:1px solid var(--linha);max-height:34vh;overflow:auto;flex:none}

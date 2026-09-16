@@ -639,11 +639,22 @@ def seek_caso(ligacao: str, u: _auth.Usuario = Depends(_quem)):
         if mods:
             with _Parte(cur, "redes sociais no endereço", avisos):
                 redes = mods[2].redes_sociais_no_endereco(cur, ligacao, ids)
-        cur.execute("""select acao, motivo, observacoes, quem_nome, em, lote from radar_comercial.seek_decisao
+        cur.execute("""select id, acao, motivo, observacoes, quem_nome, em, lote, quem
+                         from radar_comercial.seek_decisao
                         where ligacao = %s order by em desc limit 50""", (ligacao,))
-        decisoes = [{"acao": a, "motivo": m, "observacoes": o, "quem": q,
-                     "em": e.isoformat(timespec="minutes"), "lote": str(lo) if lo else None}
-                    for a, m, o, q, e, lo in cur.fetchall()]
+        decisoes = [{"id": i, "acao": a, "motivo": m, "observacoes": o, "quem": q,
+                     "em": e.isoformat(timespec="minutes"), "lote": str(lo) if lo else None,
+                     "quem_id": str(qi) if qi else None}
+                    for i, a, m, o, q, e, lo, qi in cur.fetchall()]
+        # A LINHA DO TEMPO (16/09/2026): os comentários e as edições, que nunca apagam o que veio antes
+        comentarios = []
+        with _Parte(cur, "comentários", avisos):
+            cur.execute("""select id, texto, edita_decisao, edita_comentario, quem, quem_nome, em
+                             from radar_comercial.seek_comentario
+                            where ligacao = %s order by em limit 200""", (ligacao,))
+            comentarios = [{"id": i, "texto": t, "edita_decisao": ed, "edita_comentario": ec,
+                            "quem_id": str(qi) if qi else None, "quem": qn, "em": e.isoformat(timespec="minutes")}
+                           for i, t, ed, ec, qi, qn, e in cur.fetchall()]
     finally:
         con.close()
     fontes = {}
@@ -660,7 +671,7 @@ def seek_caso(ligacao: str, u: _auth.Usuario = Depends(_quem)):
                       "sinal": (resp.get("fotos") or {}).get("sinal") if isinstance(resp.get("fotos"), dict) else None,
                       "vistas": refs}
     return {"ligacao": ligacao, "base": base, "fontes": fontes, "ia": ia, "imagens": imagens,
-            "decisoes": decisoes, "decisao": decisoes[0] if decisoes else None, "avisos": avisos,
+            "decisoes": decisoes, "comentarios": comentarios, "eu": u.id, "decisao": decisoes[0] if decisoes else None, "avisos": avisos,
             # SEM DADO no Comercial Radar: a tela mostra a secao vazia, com o aviso.
             "os": None, "impacto": None}
 
@@ -684,6 +695,61 @@ def seek_caso_dados(ligacao: str, u: _auth.Usuario = Depends(_quem)):
         raise HTTPException(404, "ligação sem julgamento")
     return {"ligacao": ligacao, "dados": r[0], "fotos": r[1] or [], "processo": r[2], "modelo": r[3],
             "avaliado_em": r[4].isoformat(timespec="minutes") if r[4] else None}
+
+
+class ComentarioEntrada(BaseModel):
+    ligacao: str
+    texto: str
+    edita_decisao: int | None = None
+    edita_comentario: int | None = None
+
+
+@router.post("/api/seek/comentar")
+def seek_comentar(e: ComentarioEntrada, u: _auth.Usuario = Depends(_quem)):
+    """Grava um comentário na linha do tempo da ligação (dono do produto, 16/09/2026).
+
+    EDITAR NÃO APAGA: a edição é uma linha NOVA que aponta para a que ela revisa (`edita_decisao` ou
+    `edita_comentario`); a original continua lá, com o status que tinha. Só quem escreveu edita."""
+    if not u.pode("editor"):
+        raise HTTPException(403, "comentar exige nível editor ou acima")
+    lig = (e.ligacao or "").strip()
+    texto = (e.texto or "").strip()
+    if not lig.isdigit():
+        raise HTTPException(400, "ligação inválida")
+    if not texto:
+        raise HTTPException(400, "o comentário está vazio")
+    if len(texto) > 4000:
+        raise HTTPException(400, "o comentário passa de 4.000 caracteres")
+    if e.edita_decisao and e.edita_comentario:
+        raise HTTPException(400, "edita uma coisa só: a decisão ou o comentário")
+    con = _con(u)
+    try:
+        cur = con.cursor()
+        cur.execute("select id_empresa::text from radar_comercial.ligacao_veredito where ligacao = %s", (lig,))
+        r = cur.fetchone()
+        if not r:
+            raise HTTPException(404, "ligação sem julgamento")
+        emp = r[0]
+        # SÓ QUEM ESCREVEU EDITA: confere o autor da linha revisada, na mesma ligação
+        if e.edita_decisao or e.edita_comentario:
+            tabela, alvo = (("seek_decisao", e.edita_decisao) if e.edita_decisao else ("seek_comentario", e.edita_comentario))
+            cur.execute("select quem::text from radar_comercial." + tabela + " where id = %s and ligacao = %s",
+                        (alvo, lig))
+            orig = cur.fetchone()
+            if not orig:
+                raise HTTPException(404, "o registro a editar não existe nesta ligação")
+            if orig[0] != str(u.id):
+                raise HTTPException(403, "só quem escreveu pode editar")
+        cur.execute("""insert into radar_comercial.seek_comentario
+                           (id_empresa, ligacao, texto, edita_decisao, edita_comentario, quem, quem_nome)
+                       values (%s, %s, %s, %s, %s, %s, %s)
+                       returning id, em""",
+                    (emp, lig, texto, e.edita_decisao, e.edita_comentario, u.id, u.nome or u.email))
+        novo = cur.fetchone()
+        con.commit()
+    finally:
+        con.close()
+    return {"id": novo[0], "em": novo[1].isoformat(timespec="minutes"), "ligacao": lig}
 
 
 class DecisaoEntrada(BaseModel):
