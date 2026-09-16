@@ -90,6 +90,11 @@ def _metros(la1, lo1, la2, lo2):
     return math.hypot(dx, dy)
 
 
+#: O BAIRRO DIVERGENTE NAO VETA DE PERTO (dono do produto, 15/09/2026): com rua e numero exatos e o
+#: ponto a ate esta distancia do hidrometro, o nome do bairro que a fonte publica nao derruba o vinculo.
+BAIRRO_DIVERGE_ATE_M = 60
+
+
 def main(argv=None):
     p = argparse.ArgumentParser()
     p.add_argument("--cidade", required=True)
@@ -205,10 +210,18 @@ def main(argv=None):
                 continue
             bl = _bairro_da_ligacao(lig, bai_l, la, lo)
             if not rv._bairro_bate({"bairro_lig": bl, "bairro_poi": bai_p}):
-                recusa[(lig, pid)] = ("endereco exato, mas o bairro diverge: "
-                                      "POI %s, ligacao %s" % (bai_p, bl))
-                placar["par com bairro divergente"] += 1
-                continue
+                # O BAIRRO DO GOOGLE NAO E O DA CORSAN (dono do produto, 15/09/2026). A Corsan escreve
+                # "MARECHAL RONDON" onde o Google escreve "Centro" ou "Igara", e o veto do bairro derrubava
+                # o registro da MESMA porta: 109 ligacoes da fila do rejulgamento, 60 delas com o ponto a ate
+                # 30 m do hidrometro. O veto existe contra a rua homonima de OUTRO bairro, que fica longe —
+                # entao ele passa a valer so quando o ponto tambem esta longe.
+                d_bai = _metros(la, lo, pla, plo)
+                if d_bai is None or d_bai > BAIRRO_DIVERGE_ATE_M:
+                    recusa[(lig, pid)] = ("endereco exato, mas o bairro diverge: "
+                                          "POI %s, ligacao %s" % (bai_p, bl))
+                    placar["par com bairro divergente"] += 1
+                    continue
+                placar["bairro diverge, mas a porta bate a ate %d m" % BAIRRO_DIVERGE_ATE_M] += 1
             if cp and cl and cp != cl:
                 placar["CEP diverge (nao veta mais)"] += 1
             bons.append((lig, la, lo))
