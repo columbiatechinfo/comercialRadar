@@ -1080,6 +1080,10 @@ a.chip{text-decoration:none}
   <aside id="fila">
     <div class="fila-topo">
       <div class="busca"><input id="f-busca" placeholder="ligação, titular, endereço ou bairro" autocomplete="off"></div>
+      <!-- ONDE (16/09/2026): estado, cidade e bairro, em cascata — cada lista conta com os outros recortes valendo -->
+      <div class="fila-filtros" id="f-uf"></div>
+      <div class="fila-filtros" id="f-cid"></div>
+      <div class="fila-filtros" id="f-bai"></div>
       <div class="fila-filtros" id="f-ia"></div>
       <div class="fila-filtros" id="f-qual"></div>
       <div class="fila-filtros dec" id="f-decisao"></div>
@@ -2666,6 +2670,8 @@ var SEEK = (function () {
     fichas: {}, ordemFichas: [], carregando: {},
     sel: null, abertos: {}, mudos: false, rotuloCliente: true, tira: true,
     busca: '', termo: '', fIA: 'todos', fDec: 'todos', fQual: 'todos', fFonte: {},
+    /* ONDE (16/09/2026): estado, cidade e bairro */
+    fUF: 'todos', fCid: 'todos', fBai: 'todos',
     /* os recortes de classe são multiescolha: lista de ids marcados */
     fSeg: [], fVis: [],
     imgs: [], pendente: null, chamado: null,
@@ -2795,6 +2801,7 @@ var SEEK = (function () {
           decidido_por: l[ix.decidido_por], prioridade: l[ix.prioridade] || null, f: {}
         };
         FONTES_DADO.forEach(function (f) { c.f[f.id] = !!l[ix['f_' + f.id]]; });
+        c.uf = l[ix.uf] || '';
         c.seg = l[ix.segmentos] || [];
         c.vis = l[ix.visual] || [];
         c.txt = (c.ligacao + ' ' + c.titular + ' ' + c.endereco + ' ' + c.bairro).toLowerCase();
@@ -2819,6 +2826,9 @@ var SEEK = (function () {
   /* `sem` diz qual recorte ignorar: é assim que cada lista mostra quantas
    * ligações ela traria com os OUTROS recortes valendo */
   function passa(c, sem) {
+    if (sem !== '#uf' && S.fUF !== 'todos' && c.uf !== S.fUF) { return false; }
+    if (sem !== '#cid' && S.fCid !== 'todos' && c.cidade !== S.fCid) { return false; }
+    if (sem !== '#bai' && S.fBai !== 'todos' && c.bairro !== S.fBai) { return false; }
     if (sem !== '#ia' && S.fIA !== 'todos' && c.ia !== S.fIA) { return false; }
     if (sem !== '#dec' && S.fDec !== 'todos' && (c.decisao || 'sem') !== S.fDec) { return false; }
     if (sem !== '#qual' && S.fQual !== 'todos' && c.qualificacao !== S.fQual) { return false; }
@@ -2836,11 +2846,15 @@ var SEEK = (function () {
 
   function filtra() {
     S.termo = S.busca.trim().toLowerCase();
-    var r = {vistos: [], ia: {}, dec: {}, qual: {}, fs: {}, ft: {}, seg: {}, vis: {}, tIA: 0, tDec: 0, tQual: 0};
+    var r = {vistos: [], ia: {}, dec: {}, qual: {}, fs: {}, ft: {}, seg: {}, vis: {}, tIA: 0, tDec: 0, tQual: 0,
+             uf: {}, cid: {}, bai: {}, tUF: 0, tCid: 0, tBai: 0};
     FONTES_DADO.forEach(function (f) { r.fs[f.id] = 0; r.ft[f.id] = 0; });
     for (var i = 0; i < S.casos.length; i++) {
       var c = S.casos[i];
       if (passa(c, null)) { r.vistos.push(c); }
+      if (passa(c, '#uf')) { r.uf[c.uf || '?'] = (r.uf[c.uf || '?'] || 0) + 1; r.tUF++; }
+      if (passa(c, '#cid')) { r.cid[c.cidade] = (r.cid[c.cidade] || 0) + 1; r.tCid++; }
+      if (passa(c, '#bai')) { r.bai[c.bairro] = (r.bai[c.bairro] || 0) + 1; r.tBai++; }
       if (passa(c, '#ia')) { r.ia[c.ia] = (r.ia[c.ia] || 0) + 1; r.tIA++; }
       if (passa(c, '#dec')) { var d = c.decisao || 'sem'; r.dec[d] = (r.dec[d] || 0) + 1; r.tDec++; }
       if (passa(c, '#qual')) { r.qual[c.qualificacao] = (r.qual[c.qualificacao] || 0) + 1; r.tQual++; }
@@ -2871,6 +2885,23 @@ var SEEK = (function () {
   function pintaFila() {
     var r = filtra();
     S.vistos = r.vistos;
+
+    /* ONDE: as opções são as que existem com os outros recortes valendo (a cidade depende do estado, o bairro da
+     * cidade); a escolhida continua na lista mesmo zerada, para não sumir debaixo de quem escolheu */
+    function opLocal(conta, total, escolhida, rotTodos, formata) {
+      var ids = Object.keys(conta).filter(function (k) { return k && conta[k] > 0; });
+      if (escolhida !== 'todos' && ids.indexOf(escolhida) < 0) { ids.push(escolhida); }
+      ids.sort(function (a, b) { return a.localeCompare(b, 'pt-BR'); });
+      return [{id: 'todos', rot: rotTodos, n: total}].concat(ids.map(function (k) {
+        return {id: k, rot: formata ? formata(k) : k, n: conta[k] || 0};
+      }));
+    }
+    $('#f-uf').innerHTML = seletor('f-sel-uf', 'estado', null, S.fUF, opLocal(r.uf, r.tUF, S.fUF, 'todos'));
+    $('#f-cid').innerHTML = seletor('f-sel-cid', 'cidade', null, S.fCid, opLocal(r.cid, r.tCid, S.fCid, 'todas'));
+    $('#f-bai').innerHTML = S.fCid === 'todos'
+      ? seletor('f-sel-bai', 'bairro', null, 'todos', [{id: 'todos', rot: 'escolha a cidade', n: r.tBai}])
+      : seletor('f-sel-bai', 'bairro', null, S.fBai, opLocal(r.bai, r.tBai, S.fBai, 'todos'));
+    $('#f-sel-bai').disabled = S.fCid === 'todos';
 
     var opIA = [{id: 'todos', rot: 'todos', n: r.tIA}];
     Object.keys(VEREDITOS).forEach(function (v) {
@@ -4444,6 +4475,9 @@ var SEEK = (function () {
 
   function descreveFiltros() {
     var f = [];
+    if (S.fUF !== 'todos') { f.push('estado: ' + S.fUF); }
+    if (S.fCid !== 'todos') { f.push('cidade: ' + S.fCid); }
+    if (S.fBai !== 'todos') { f.push('bairro: ' + S.fBai); }
     if (S.fIA !== 'todos') { f.push('IA: ' + veredito(S.fIA).rot); }
     if (S.fQual !== 'todos') { f.push('cadastro: ' + S.fQual.replace(/_/g, ' ').toLowerCase()); }
     if (S.fDec !== 'todos') {
@@ -4956,6 +4990,9 @@ var SEEK = (function () {
 
     document.addEventListener('change', function (ev) {
       var id = ev.target.id;
+      if (id === 'f-sel-uf') { S.fUF = ev.target.value; S.fCid = 'todos'; S.fBai = 'todos'; refiltra(); }
+      if (id === 'f-sel-cid') { S.fCid = ev.target.value; S.fBai = 'todos'; refiltra(); }
+      if (id === 'f-sel-bai') { S.fBai = ev.target.value; refiltra(); }
       if (id === 'f-sel-ia') { S.fIA = ev.target.value; refiltra(); }
       if (id === 'f-sel-qual') { S.fQual = ev.target.value; refiltra(); }
       if (id === 'f-sel-dec') { S.fDec = ev.target.value; refiltra(); }

@@ -368,6 +368,36 @@ EM_DEV = os.environ.get("RADAR_AMBIENTE", "").strip() == "desenvolvimento"
 _SEM_TESTE = "" if EM_DEV else " and percepcao->>'ambiente' is distinct from 'desenvolvimento'"
 
 
+# O ESTADO DE CADA LIGAÇÃO (16/09/2026): a base do cliente não tem UF; ela sai da cidade pela malha do IBGE, lida uma
+# vez por processo. O nome é comparado só por letras e números, sem acento ("ENTRE IJUIS" = "Entre-Ijuís"); a cidade
+# que não casa (ex.: "MAURICIO CARDOSO", que no IBGE é "Doutor Maurício Cardoso") fica com a UF que mais aparece na fila.
+_UF_DA_CIDADE: dict = {}
+
+
+def _chave_cidade(nome):
+    import unicodedata
+    t = unicodedata.normalize("NFKD", str(nome or "")).encode("ascii", "ignore").decode().upper()
+    return "".join(ch for ch in t if ch.isalnum())
+
+
+def _ufs(cur):
+    if not _UF_DA_CIDADE:
+        cur.execute("select nome, uf from resources_root.ibge_malha")
+        for nome, uf in cur.fetchall():
+            # HOMÔNIMOS: "BOM JESUS" existe em cinco estados; guarda todos e decide na fila
+            _UF_DA_CIDADE.setdefault(_chave_cidade(nome), set()).add(uf)
+    return _UF_DA_CIDADE
+
+
+def _uf_da(ufs, comum):
+    """A UF da cidade: a única da malha; entre homônimos, a predominante da fila; sem par na malha, a predominante."""
+    if not ufs:
+        return comum
+    if len(ufs) == 1:
+        return next(iter(ufs))
+    return comum if comum in ufs else sorted(ufs)[0]
+
+
 def _montar_fila(u, cidade: str | None):
     con = _con(u)
     try:
@@ -417,8 +447,24 @@ def _montar_fila(u, cidade: str | None):
         con.close()
     colunas = ["ligacao", "titular", "endereco", "bairro", "cidade", "qualificacao", "economias",
                "ia", "checagem", "avaliado_em"] + ["f_" + f for f in FONTES[1:]] + ["decisao", "decidido_em", "decidido_por",
-                                                                                   "prioridade", "segmentos", "visual"]
+                                                                                   "prioridade", "segmentos", "visual", "uf"]
     linhas = []
+    # A UF pela cidade; a que não casa com a malha fica com a mais comum da fila
+    uf_de, uf_comum = {}, ""
+    try:
+        con_uf = _con(u)
+        try:
+            uf_de = _ufs(con_uf.cursor())
+        finally:
+            con_uf.close()
+        contagem = collections.Counter()
+        for r in cad.values():
+            ufs_da = uf_de.get(_chave_cidade(r[4])) or set()
+            if len(ufs_da) == 1:
+                contagem[next(iter(ufs_da))] += 1
+        uf_comum = contagem.most_common(1)[0][0] if contagem else ""
+    except Exception:                                          # noqa: BLE001
+        pass
     # PRIORIDADE BAIXA NO FIM (15/09/2026): revisao so pela Receita e sem sinal nas imagens
     for lig in sorted(cad, key=lambda x: (prioridade.get(x) == "baixa", int(x) if x.isdigit() else 0)):
         r = cad[lig]
@@ -433,7 +479,8 @@ def _montar_fila(u, cidade: str | None):
                        d[0] if d else None, d[1].isoformat(timespec="minutes") if d else None,
                        d[2] if d else None, prioridade.get(lig),
                        (classe.get(lig) or {}).get("segmentos") or [],
-                       (classe.get(lig) or {}).get("visual") or []])
+                       (classe.get(lig) or {}).get("visual") or [],
+                       _uf_da(uf_de.get(_chave_cidade(r[4])), uf_comum)])
     return {"colunas": colunas, "linhas": linhas, "gerado_em": time.strftime("%Y-%m-%dT%H:%M:%S")}
 
 
