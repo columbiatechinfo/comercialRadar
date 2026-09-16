@@ -133,9 +133,14 @@ def _resumo(t):
         caminho = os.path.join(pasta, "%s_%s%s.log" % (_rotulo(t), t["etapa"], ("_%d" % k) if e.partes > 1 else ""))
         try:
             with open(caminho, encoding="utf-8", errors="replace") as f:
-                marcadas = [x.strip() for x in f if "■" in x or "▶" in x]
-            if marcadas:
-                linhas.append(marcadas[-1][:200])
+                texto = [x.strip() for x in f]
+            # O FECHO ANTES DA ABERTURA (16/09/2026): o julgamento termina com "4 ligação(ões) em 2.0 min", sem ■, e
+            # o placar saía com a linha de abertura (▶) dele.
+            for sinal in ("■", "ligação(ões) em", "▶"):
+                marcadas = [x for x in texto if sinal in x]
+                if marcadas:
+                    linhas.append(marcadas[-1][:200])
+                    break
         except OSError:
             pass
     return " · ".join(linhas)
