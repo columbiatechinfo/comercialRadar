@@ -1,0 +1,71 @@
+/* ==== 99-validacao.css ==== */
+/* 99-validacao.css — a página de validação das cidades e áreas (16/09/2026). Usa os tokens e as peças da SEEK e
+ * da gestão (topo, chip, bt, g-cartao, g-cab, g-in, modal); aqui só o que é da página: a grade lote × etapa. */
+
+body{overflow:auto}
+#torradas{bottom:16px}
+#validacao{padding:calc(var(--filete) + var(--topo) + 16px) 22px 48px;max-width:1520px;margin:0 auto;
+  display:flex;flex-direction:column;gap:16px}
+
+.v-amb{margin-left:14px;font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--laranja-t);border:1px solid #F6CFA5;background:#FEF5EC;border-radius:99px;padding:3px 9px}
+
+/* ---- começar ---- */
+.v-form{display:flex;flex-wrap:wrap;align-items:flex-end;gap:10px 14px;padding:14px 16px}
+.v-in{min-width:220px}
+.v-check{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--txt);height:29px}
+.v-nota{flex-basis:100%;font-size:11.5px;color:var(--fraco);max-width:78ch}
+
+/* ---- as validações ---- */
+.v-vazio{padding:18px 16px;color:var(--fraco);font-size:12.5px}
+.v-val{border-top:1px solid var(--linha)}
+.v-val:first-child{border-top:0}
+.v-cab{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;padding:14px 16px 10px}
+.v-tit{display:flex;flex-direction:column;gap:2px;min-width:0}
+.v-tit strong{font-size:14px;font-weight:600;color:var(--tit)}
+.v-tit span{font-family:var(--mono);font-size:10.5px;color:var(--fraco)}
+.v-estado{font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;border-radius:99px;
+  padding:3px 9px;border:1px solid var(--linha);color:var(--fraco);background:var(--sup2)}
+.v-estado.rodando{color:var(--azul-t);border-color:#B7D3FF;background:#EEF5FF}
+.v-estado.pausada{color:var(--laranja-t);border-color:#F6CFA5;background:#FEF5EC}
+.v-estado.ok{color:#14603D;border-color:#BFE3CF;background:#EEF8F2}
+.v-estado.erro{color:#A82F2F;border-color:#F3C9C9;background:#FDF2F2}
+.v-acoes{margin-left:auto;display:flex;gap:6px}
+.v-barra{margin:0 16px;height:6px;border-radius:99px;background:var(--sup3);overflow:hidden}
+.v-barra i{display:block;height:100%;background:var(--navy);border-radius:99px;transition:width var(--t)}
+.v-ordem{display:flex;flex-wrap:wrap;gap:6px;padding:10px 16px 0}
+.v-ordem span{font-size:11px;color:var(--txt);background:var(--sup2);border:1px solid var(--linha);
+  border-radius:99px;padding:2px 9px;font-variant-numeric:tabular-nums}
+.v-ordem span.fora{color:var(--fraco)}
+
+/* ---- a grade lote × etapa ---- */
+.v-grade-caixa{overflow-x:auto;padding:12px 16px 16px}
+.v-grade{border-collapse:separate;border-spacing:3px;font-size:11.5px}
+.v-grade th{font-family:var(--mono);font-size:9px;text-transform:uppercase;letter-spacing:.07em;color:var(--tenue);
+  font-weight:500;text-align:center;padding:2px 4px 4px;white-space:nowrap;vertical-align:bottom}
+.v-grade th b{display:block;font-family:var(--face);font-size:11.5px;text-transform:none;letter-spacing:0;
+  color:var(--tit);font-weight:600}
+.v-grade th.ia b::after{content:" · Spark";font-family:var(--mono);font-size:9px;color:var(--roxo);font-weight:500}
+.v-grade td.lote{font-family:var(--mono);font-size:10.5px;color:var(--fraco);padding-right:8px;white-space:nowrap}
+.v-cel{display:block;width:100%;min-width:84px;height:26px;border-radius:var(--r3);border:1px solid var(--linha);
+  background:var(--sup2);font-family:var(--mono);font-size:10px;color:var(--fraco);text-align:center;cursor:pointer}
+.v-cel:hover{border-color:var(--linha2)}
+.v-cel.fila{background:#EEF5FF;border-color:#B7D3FF;color:var(--azul-t)}
+.v-cel.rodando{background:#FEF5EC;border-color:#F6CFA5;color:var(--laranja-t);
+  animation:v-pulsa 1.6s ease-in-out infinite}
+.v-cel.ok{background:#EEF8F2;border-color:#BFE3CF;color:#14603D}
+.v-cel.erro{background:#FDF2F2;border-color:#F3C9C9;color:#A82F2F}
+.v-cel.cancelada{background:var(--sup3);color:var(--tenue);text-decoration:line-through}
+@keyframes v-pulsa{50%{background:#FCE7D0}}
+@media (prefers-reduced-motion:reduce){.v-cel.rodando{animation:none}}
+.v-soma td{font-family:var(--mono);font-size:10px;color:var(--fraco);text-align:center;padding-top:4px}
+
+.v-legenda{display:flex;flex-wrap:wrap;gap:6px;margin-left:auto}
+.v-legenda .v-cel{min-width:0;width:auto;height:22px;padding:0 8px;cursor:default;line-height:20px}
+
+/* ---- o detalhe da tarefa ---- */
+.v-det{display:grid;grid-template-columns:max-content 1fr;gap:6px 14px;font-size:12.5px}
+.v-det dt{font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:.07em;color:var(--tenue);
+  padding-top:2px}
+.v-det dd{color:var(--txt);word-break:break-word}
+.v-det dd.mono{font-size:11.5px}

@@ -65,3 +65,23 @@ gestao = ("<!doctype html>\n<html lang=\"pt-BR\">\n<head>\n<meta charset=\"utf-8
 saida_gestao = saida.parent / "gestao.html"
 saida_gestao.write_text(gestao, encoding="utf-8", newline="\n")
 print("ok", saida_gestao, len(gestao.splitlines()), "linhas", len(gestao.encode("utf-8")) // 1024, "KB")
+
+# A VALIDACAO DAS CIDADES E AREAS (16/09/2026): a mesma marca, os tokens da SEEK e as pecas da gestao (cartao,
+# cabecalho, campos), com corpo, estilo e script proprios. Sai em frontend/validacao.html, servida em /validacao.
+validacao = ("<!doctype html>\n<html lang=\"pt-BR\">\n<head>\n<meta charset=\"utf-8\">\n"
+             "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n"
+             "<title>Validação · SEEK · A2L</title>\n"
+             + linhas(7, 699)
+             + (aqui / "extra.css").read_text(encoding="utf-8")
+             + (aqui / "gestao.css").read_text(encoding="utf-8")
+             + (aqui / "validacao.css").read_text(encoding="utf-8")
+             + "</style>\n</head>\n<body>\n"
+             + (aqui / "validacao_corpo.html").read_text(encoding="utf-8").replace("@@LOGO@@", logo)
+             + "\n<!-- login, token em toda chamada a /api/ e o cracha em window.EU -->\n"
+             + "<script src=\"/static/sessao.js\"></script>\n"
+             + "<script>\n"
+             + (aqui / "validacao.js").read_text(encoding="utf-8")
+             + "</script>\n</body>\n</html>\n")
+saida_validacao = saida.parent / "validacao.html"
+saida_validacao.write_text(validacao, encoding="utf-8", newline="\n")
+print("ok", saida_validacao, len(validacao.splitlines()), "linhas", len(validacao.encode("utf-8")) // 1024, "KB")

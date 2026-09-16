@@ -1,0 +1,69 @@
+<!-- VALIDAÇÃO DAS CIDADES E ÁREAS (16/09/2026) — mesma marca e mesmos tokens da SEEK -->
+<div id="filete"><i></i><b></b></div>
+
+<header id="topo">
+  <div class="marca">@@LOGO@@</div>
+  <div class="ident">
+    <strong>VALIDAÇÃO</strong>
+    <span id="id-sub">cidades e áreas · Comercial Radar</span>
+  </div>
+  <span class="v-amb" id="v-amb" hidden></span>
+  <div class="sessao">
+    <a class="chip" href="extrair" title="extração e mapa">extração ↗</a>
+    <a class="chip" href="./" title="a fila de ligações julgadas">SEEK ↗</a>
+    <div class="quem">
+      <span id="quem-nome">—</span>
+      <span id="quem-sub">—</span>
+    </div>
+    <button class="chip" id="chip-sair" title="encerrar a sessão neste navegador">sair</button>
+  </div>
+</header>
+
+<main id="validacao">
+
+  <div class="g-aviso" id="v-aviso" hidden></div>
+
+  <!-- 1 · começar (administrador ou acima) -->
+  <section class="g-cartao" id="v-nova" hidden>
+    <div class="g-cab">
+      <div><h2>Nova validação</h2>
+        <p>fichas do Maps, fotos, foto de rua, leitura das placas, Serasa, busca web, conferência e julgamento das ligações aptas</p></div>
+    </div>
+    <form class="v-form" id="v-form">
+      <div class="g-campo">
+        <label class="fl-rot" for="v-cidade">cidade</label>
+        <input id="v-cidade" class="g-in v-in" required autocomplete="off" placeholder="ex.: CHUVISCA">
+      </div>
+      <div class="g-campo">
+        <label class="fl-rot" for="v-area">área desenhada · opcional</label>
+        <input id="v-area" class="g-in v-in" autocomplete="off" placeholder="sem área: a cidade inteira">
+      </div>
+      <label class="v-check"><input type="checkbox" id="v-refazer"> incluir as já julgadas</label>
+      <button class="bt pri" id="v-criar" type="submit">validar</button>
+      <p class="v-nota">Só entram ligações residenciais ativas, com qualificação SIM ou SIM com análise humana e POI vinculado — na ordem iFood, Google Maps e o resto, SIM antes de SIM com análise.</p>
+    </form>
+  </section>
+
+  <!-- 2 · o andamento -->
+  <section class="g-cartao">
+    <div class="g-cab">
+      <div><h2>Validações</h2>
+        <p id="v-sub">cada lote passa pelas etapas na ordem; lotes diferentes andam em paralelo, nas máquinas livres</p></div>
+      <div class="v-legenda" id="v-legenda"></div>
+      <button class="bt p" id="v-atualiza" type="button">atualizar</button>
+    </div>
+    <div id="v-lista"><p class="v-vazio">carregando…</p></div>
+  </section>
+
+</main>
+
+<div id="modal" hidden>
+  <div class="modal-fundo"></div>
+  <div class="modal-caixa" role="dialog" aria-modal="true">
+    <header><strong id="modal-tit">—</strong><button id="modal-x" aria-label="fechar">✕</button></header>
+    <div id="modal-corpo"></div>
+    <footer id="modal-pe"></footer>
+  </div>
+</div>
+
+<div id="torradas"></div>

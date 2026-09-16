@@ -6601,6 +6601,11 @@ app.include_router(seek_api.router)
 import seek_chamado  # noqa: E402
 app.include_router(seek_chamado.router)
 
+# A VALIDACAO POR CIDADE OU AREA (16/09/2026, docs/PLANO_CIDADE_NOVA.md): fichas, fotos, foto de rua, leitura,
+# Serasa, busca web, conferencia e julgamento em tarefas no banco, pegas pelos executores das maquinas.
+import validacao_api  # noqa: E402
+app.include_router(validacao_api.router)
+
 
 @app.get("/extrair")
 def extrair():

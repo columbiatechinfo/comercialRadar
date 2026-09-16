@@ -50,6 +50,11 @@ TETO = {
     "spark": int(os.environ.get("RADAR_TETO_SPARK") or 180),
     "conexoes": int(os.environ.get("RADAR_TETO_CONEXOES") or 8),
 }
+# O POOLER DE VERDADE (20 sessões para i9, notebook, APIs e painel): antes de soltar uma tarefa, as sessões abertas no
+# banco são contadas — inclusive as dos laços do cron de Canoas, que não passam por aqui. Em 16/09/2026 eram 17 de 20
+# com os laços rodando; em 15/09 um contêiner a mais estourou `EMAXCONNSESSION` e derrubou um julgamento.
+POOL_TOTAL = int(os.environ.get("RADAR_POOL_TOTAL") or 20)
+POOL_FOLGA = int(os.environ.get("RADAR_POOL_FOLGA") or 3)
 TENTATIVAS = 3
 SEM_SINAL_MIN = 3        # tarefa rodando sem sinal do executor por mais que isso volta para a fila
 
@@ -81,7 +86,7 @@ ETAPAS = {
     "storage": Etapa(2, ("fichas",), "local", IMG, conexoes=1,
                      cmd="python -u imagens_para_storage.py --fotos"),
     # TRES PROCESSOS, um navegador cada: o render do Chromium no Xvfb trava num núcleo só (orquestrador de Canoas)
-    "frente": Etapa(3, ("fichas",), "google", IMG, conexoes=2, root=True, partes=3,
+    "frente": Etapa(3, ("fichas",), "google", IMG, conexoes=1, root=True, partes=3,
                     cmd="sh scripts/com_tela.sh python -u recapturar_frente.py --ligacoes-arquivo {arq} --abas 8 "
                         "--parte {k}/3 --saida {pasta}/{lote}_frente"),
     "leitura": Etapa(4, ("frente",), "spark", IMG, conexoes=2, simultaneas=60, precisa_ia=True,
@@ -269,6 +274,8 @@ def pegar(con, maquina, aceitas=None, ambiente=AMBIENTE):
         uso[e.recurso] += 1
         uso["spark_simult"] += simult or 0
         uso["conexoes"] += e.conexoes * e.partes
+    cur.execute("select count(*) from pg_stat_activity where usename = current_user")
+    livres = POOL_TOTAL - POOL_FOLGA - cur.fetchone()[0]
     cur.execute("""select t.id, t.etapa, t.id_validacao, t.id_lote, t.tentativas, v.id_empresa::text, l.n
                      from radar_comercial.validacao_tarefa t
                      join radar_comercial.validacao v on v.id = t.id_validacao
@@ -283,7 +290,7 @@ def pegar(con, maquina, aceitas=None, ambiente=AMBIENTE):
             continue
         if e.recurso == "spark" and uso["spark_simult"] + e.simultaneas > TETO["spark"]:
             continue
-        if uso["conexoes"] + e.conexoes * e.partes > TETO["conexoes"]:
+        if uso["conexoes"] + e.conexoes * e.partes > TETO["conexoes"] or e.conexoes * e.partes > livres:
             continue
         cur.execute("""update radar_comercial.validacao_tarefa
                           set estado = 'rodando', worker = %s, iniciado_em = now(), visto_em = now(),
