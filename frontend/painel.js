@@ -2626,6 +2626,12 @@
 
     $("btn-avaliar-ia").addEventListener("click", async () => {
       $("log-wrap").classList.remove("hidden");
+      // UM PEDIDO POR VEZ (16/09/2026): dois cliques criaram duas validações iguais em Paverama.
+      const botaoIa = $("btn-avaliar-ia");
+      if (botaoIa.dataset.enviando === "1") return;
+      botaoIa.dataset.enviando = "1";
+      botaoIa.disabled = true;
+      setTimeout(() => { botaoIa.dataset.enviando = ""; botaoIa.disabled = false; }, 4000);
       const r = await fetch("/api/validacoes", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

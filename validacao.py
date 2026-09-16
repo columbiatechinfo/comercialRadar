@@ -193,6 +193,20 @@ def criar(con, empresa, cidade, area=None, pedido_por=None, ambiente=AMBIENTE, r
     if area and not poligono:
         raise SystemExit("a área '%s' não existe no banco" % area)
     ligs, cont = ligacoes_para_validar(cur, empresa, cidade, poligono, refazer)
+    # AS MESMAS LIGAÇÕES JÁ EM ANDAMENTO (16/09/2026): dois cliques em "Avaliar com IA" criaram #2 e #3 em Paverama
+    # com as mesmas 8 ligações — cada clique guarda a área com nome próprio, e a trava por área acima não as via.
+    if ligs:
+        cur.execute("""select v.id, array_agg(x.lig order by x.lig)
+                         from radar_comercial.validacao v
+                         join radar_comercial.validacao_lote l on l.id_validacao = v.id
+                         cross join lateral unnest(l.ligacoes) as x(lig)
+                        where v.id_empresa = %s and v.ambiente = %s and v.estado in ('preparando', 'rodando', 'pausada')
+                        group by v.id""", (empresa, ambiente))
+        mesmas = sorted(ligs)
+        for vid_existente, do_existente in cur.fetchall():
+            if sorted(do_existente) == mesmas:
+                con.rollback()
+                return vid_existente, "as mesmas %d ligações já estão na validação #%d" % (len(ligs), vid_existente)
     if not ligs:
         con.rollback()
         return None, "nenhuma ligação para validar (%s)" % ", ".join("%s %d" % kv for kv in cont.items())
