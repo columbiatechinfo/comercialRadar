@@ -53,7 +53,7 @@ import sys
 import base_comum as bc
 import provas_datadas as pdat
 
-REGRA = "checagem do codigo de 15/09/2026 v5 (número, complemento, cada fonte com prova recente, fonte única, rede social, vizinho, ficha do Maps, aluga/vende e anúncio)"
+REGRA = "checagem do codigo de 15/09/2026 v6 (fonte única promove, foto do Google datada, iFood 6m, Maps 12m) · v5 (número, complemento, cada fonte com prova recente, fonte única, rede social, vizinho, ficha do Maps, aluga/vende e anúncio)"
 
 #: AS FONTES INDEPENDENTES (dono do produto, 14 e 15/09/2026). Cada uma conta uma vez; o Serasa e a
 #: Casa dos Dados SAO a Receita — a IA do teste contou "Receita" e "Serasa" como duas e aprovou.
@@ -199,12 +199,29 @@ def imagem_tem_sinal(resposta):
     return bool(f.get("confirmam")) and sinal not in _SEM_SINAL and not sinal.startswith("nenhum")
 
 
+#: Meses em que a loja vista no iFood e a avaliacao de cliente no Google bastam SOZINHAS (dono do produto, 22h de 15/09/2026)
+IFOOD_SOZINHO_MESES = 6
+MAPS_SOZINHO_MESES = 12
+
+
 def fonte_unica_basta(ctx, validos, resposta, fotos):
     """(basta, texto): a unica fonte que aprova sozinha (dono do produto, 15/09/2026) — a fachada no Street
     View que mostra o uso (de ate 2 anos), ou a foto publicada de menos de 1 ano que mostra o uso; o
     comentario de menos de 1 ano so com uma imagem que confirma."""
     r = resposta or {}
     f = r.get("fotos") or {}
+    # O IFOOD E O COMENTARIO RECENTE BASTAM SOZINHOS (dono do produto, 15/09/2026, 22h): o iFood so lista quem
+    # opera, e o comentario de cliente de ate 12 meses diz que alguem foi atendido ali.
+    for pid in validos or []:
+        for p in (ctx.provas.get(pid) or {}).get("provas") or []:
+            if not p.get("data"):
+                continue
+            m = pdat.meses(p["data"])
+            if p.get("fonte") == "ifood" and m <= IFOOD_SOZINHO_MESES:
+                return True, "loja vista no iFood em %s" % pdat.mes_ano(p["data"])
+            if (p.get("fonte") == "maps" and "avaliação" in str(p.get("o_que") or "")
+                    and m <= MAPS_SOZINHO_MESES):
+                return True, "avaliação de cliente no Google em %s" % pdat.mes_ano(p["data"])
     if not imagem_tem_sinal(r):
         return False, "nenhuma imagem mostra sinal de uso"
     for n in f.get("quais") or []:
@@ -265,6 +282,14 @@ def fontes_com_prova_recente(ctx, validos, resposta, fotos):
             f = nomes.get(p.get("fonte"))
             if p.get("fonte") == "maps" and "avaliação" in str(p.get("o_que") or ""):
                 f = "google maps"
+            # A FOTO PUBLICADA DATADA E PROVA DO GOOGLE MAPS (dono do produto, 15/09/2026, 22h): a regra dele diz
+            # "comentario datado OU foto real do lugar", e exigir que a IA descrevesse um letreiro derrubava a
+            # 335172 (Receita ago/2026 + foto do Google ago/2026) como se fosse fonte unica. So nao vale quando a
+            # propria IA descreveu a imagem como arte de divulgacao.
+            if (p.get("fonte") == "maps" and "foto publicada" in str(p.get("o_que") or "")
+                    and not RE_ARTE.search(_sem_acento(json.dumps((resposta or {}).get("fotos") or {},
+                                                                  ensure_ascii=False)))):
+                f = f or "google maps"
             if f and f not in saida:
                 saida[f] = "#%s %s" % (pid, p.get("o_que"))
     fo = (resposta or {}).get("fotos") or {}
@@ -699,7 +724,10 @@ def checar_uma(con, lig, v, resposta, ids, processo="enxuto de 12/09/2026", foto
     """As regras 1, 3, 4, 5 e 6 para UMA ligacao, na hora do veredito. A regra 2
     (um POI, uma instalacao) precisa das outras aprovadas: roda no fim da rodada.
     `fotos`: os rotulos das fotos que a IA viu, na ordem — a regra 6 le a data neles."""
-    if v != "aprovado":
+    if v not in ("aprovado", "revisao_humana"):
+        return v, None
+    promover = v == "revisao_humana"
+    if promover and not processo_leve(processo):
         return v, None
     resposta = sem_foto_de_vizinho(resposta, fotos)
     resposta, ficha_vazia = sem_ficha_do_maps_vazia(con, resposta, ids, fotos)
@@ -730,7 +758,19 @@ def checar_uma(con, lig, v, resposta, ids, processo="enxuto de 12/09/2026", foto
         b = list(dict.fromkeys(_pid(x) for x in b if _pid(x) is not None))
     ctx = Contexto(con, [lig], [_pid(x) for x in b if _pid(x) is not None] + list(ids or []))
     validos, removidos = validar(ctx, lig, b, ids, resposta)
-    v_novo, porque = decidir(ctx, validos, False, lig, resposta, fotos, processo)
+    if promover:
+        # A FONTE UNICA TAMBEM PROMOVE (dono do produto, 15/09/2026, 22h): o codigo so derrubava. A 309179 tinha
+        # o letreiro "FUNILARIA OLIVEIRA" na fachada de out/2025 e a IA mandou para revisao por "falta a segunda
+        # fonte" — a regra dele diz que a fachada com sinal de ate 2 anos basta.
+        basta, texto = fonte_unica_basta(ctx, validos, resposta, fotos) if validos else (False, "sem registro válido")
+        if not basta:
+            return v, None
+        v_novo, porque = decidir(ctx, validos, False, lig, resposta, fotos, processo)
+        if v_novo != "aprovado":
+            return v, None
+        porque = "promovida pela fonte única: %s" % texto
+    else:
+        v_novo, porque = decidir(ctx, validos, False, lig, resposta, fotos, processo)
     # AS CONTRAPROVAS FICAM GRAVADAS (auditoria das aprovadas do R_000): o fim de rodada (`revisar`) refazia a decisao
     # so com `decidir` e reaprovava o que a placa de aluga/vende, a ficha do Maps vazia, a placa do vizinho e a rede
     # social nao confirmada tinham segurado.
@@ -738,7 +778,10 @@ def checar_uma(con, lig, v, resposta, ids, processo="enxuto de 12/09/2026", foto
     contraprova = contraprova or contraprova_de_anuncio(con, ctx, lig, validos, redes)
     if v_novo == "aprovado" and contraprova:
         v_novo, porque = "revisao_humana", contraprova
+    if promover and v_novo != "aprovado":
+        return v, None
     return v_novo, {"regra": REGRA, "veredito_ia": v, "veredito": v_novo, "porque": porque,
+                    "promovida": promover or None,
                     "validos": validos, "removidos": removidos, "redes_sociais": redes, "ficha_do_maps": ficha_vazia,
                     "resposta_checada": resposta, "base": b, "contraprova": contraprova,
                     "em": datetime.datetime.now().isoformat(timespec="seconds")}
