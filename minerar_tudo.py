@@ -1448,8 +1448,14 @@ def main(argv=None) -> int:
             # de lembrar de dois botões, na ordem certa, é um processo que
             # funciona enquanto alguém lembra. A etapa termina com o vínculo
             # em dia, ou não terminou.
-            _tolerante_i9(["revisar_vinculo.py", "--aplicar"],
-                          "regra do vínculo sobre o que já estava gravado")
+            # EM DESENVOLVIMENTO, SÓ A CIDADE DA EXTRAÇÃO (16/09/2026). Dev e produção usam o mesmo banco: o
+            # teste de 4 quadras de Chuvisca rodou esta revisão sem cidade e descartou 3.666 vínculos de Canoas
+            # (bairro divergente) com os lotes de Canoas julgando — revertido às 11:47 pelo carimbo, cópia em
+            # `radar_comercial.ligacao_poi_descartes_teste_20260916`. Em produção fica como está, sem cidade.
+            _rev = ["revisar_vinculo.py", "--aplicar"]
+            if os.environ.get("RADAR_AMBIENTE", "").strip() == "desenvolvimento":
+                _rev += ["--cidade", cidade]
+            _tolerante_i9(_rev, "regra do vínculo sobre o que já estava gravado")
             _tolerante_i9(["casar_por_endereco.py", "--cidade", cidade,
                            "--aplicar"],
                           "órfãos pelo endereço publicado (alimenta a fila)")
