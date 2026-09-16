@@ -1,0 +1,67 @@
+# =============================================================================
+# O EXECUTOR DA VALIDAÇÃO, um por máquina e por ambiente (16/09/2026) — docs/PLANO_CIDADE_NOVA.md
+#
+#   i9, desenvolvimento:
+#     docker compose -p radar-validacao-dev --env-file deploy/validacao.dev.env \
+#       -f deploy/compose.radar-validacao.yml up -d
+#   i9, produção (a partir da tag, em ~/producao/radarComercial):
+#     docker compose -p radar-validacao --env-file deploy/validacao.producao.env \
+#       -f deploy/compose.radar-validacao.yml up -d
+#
+# O QUE ELE FAZ: pega de `validacao_tarefa` as tarefas do seu ambiente que cabem nos tetos globais e roda cada uma
+# num contêiner irmão com nome próprio (`radar-val-<d|p>-<tarefa>-<etapa>`), com as imagens e montagens do
+# orquestrador de Canoas. Ver `validacao.py` e `validacao_executor.py`.
+#
+# A IMAGEM É A DO MINERADOR, com o código montado do repositório (não o copiado nela): o `python`, o `psycopg2` e
+# o `base_comum` já estão lá. O `docker` é o binário do host, montado — medido: roda nesta imagem.
+#
+# O DAEMON PELO PROXY, e não pelo soquete: o executor só cria, inspeciona e remove contêineres. O proxy recusa
+# imagens, volumes, redes e `exec`. Mesma ressalva da API: quem cria contêiner monta o que quiser; o proxy reduz a
+# superfície, não a elimina. Sem `ports:` no proxy — só o executor, na rede deste compose, o alcança.
+#
+# COMO O USUÁRIO 1000 (o `pwuser` da imagem, que é o `a2l` do host): o `.env` do repositório é 600 do a2l, e o
+# executor o repassa às tarefas com `--env-file`, lido deste lado.
+# =============================================================================
+services:
+  executor:
+    image: ${VALIDACAO_IMAGEM:-radar-comercial-minerador-worker}
+    restart: unless-stopped
+    user: "1000:1000"
+    working_dir: /app
+    command: ["python", "-u", "validacao_executor.py"]
+    environment:
+      RADAR_AMBIENTE: ${VALIDACAO_AMBIENTE:?defina producao ou desenvolvimento}
+      RADAR_MAQUINA: ${VALIDACAO_MAQUINA:-i9}
+      RADAR_VALIDACAO_REPO: ${VALIDACAO_REPO:?o repositorio NO HOST}
+      RADAR_VALIDACAO_DADOS: ${VALIDACAO_DADOS:?a pasta dos lotes NO HOST}
+      RADAR_VALIDACAO_ETAPAS: ${VALIDACAO_ETAPAS:-}
+      RADAR_VALIDACAO_VAGAS: ${VALIDACAO_VAGAS:-4}
+      RADAR_VALIDACAO_DB_HOST: ${VALIDACAO_DB_HOST:-192.168.3.10}
+      A2L_DB_HOST: ${VALIDACAO_DB_HOST:-192.168.3.10}
+      RADAR_CONEXOES: "1"
+      DOCKER_HOST: tcp://proxy:2375
+      HOME: /tmp
+      PYTHONUNBUFFERED: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - ${VALIDACAO_REPO}:/app:ro
+      - ${VALIDACAO_DADOS}:${VALIDACAO_DADOS}
+      - /usr/bin/docker:/usr/local/bin/docker:ro
+    depends_on: [proxy]
+    mem_limit: 512m
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+
+  proxy:
+    image: tecnativa/docker-socket-proxy:0.3.0
+    restart: unless-stopped
+    environment:
+      CONTAINERS: "1"
+      POST: "1"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    mem_limit: 64m
+    logging:
+      driver: json-file
+      options: {max-size: "5m", max-file: "2"}

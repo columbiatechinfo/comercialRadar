@@ -783,6 +783,8 @@ def main(argv=None) -> int:
     p.add_argument("--pular-airbnb", dest="pular_airbnb",
                    action="store_true",
                    help="não roda a etapa 7 (Airbnb)")
+    p.add_argument("--sem-validacao", dest="sem_validacao", action="store_true",
+                   help="não cria a validação da área ao terminar (fichas, fotos, busca, julgamento)")
     p.add_argument("--so-diagnostico", dest="so_diagnostico", action="store_true",
                    help="mostra quais etapas rodariam, e SAI sem rodar nenhuma")
     p.add_argument("--produzir-bases", dest="produzir_bases", action="store_true",
@@ -872,6 +874,14 @@ def main(argv=None) -> int:
                 # por causa disto seria trocar um problema pequeno por um caro.
                 _log(f"⚠️  A importação do município falhou (código {rc}). O dataset")
                 _log("   ficou no disco; dá para repetir só esta etapa depois.")
+            # RECEITA E CNEFE VIRAM PONTO (cidade nova ponta a ponta, 16/09/2026). Em Canoas os 58.834 pontos da
+            # Receita e os 17.055 do CNEFE nasceram de `fontes_para_poi.py` rodado à mão; numa cidade nova pela tela
+            # eles não existiam, e o julgamento ficava sem as duas fontes que confirmam CNPJ e porta. São do
+            # MUNICÍPIO, como a base estadual, e repetir não duplica: o índice `pois_sem_duplicata` recusa a cópia.
+            for _fonte_mun in ("receita", "ibge"):
+                _tolerante_i9(["fontes_para_poi.py", "--fonte", _fonte_mun, "--cidade", cidade,
+                               "--municipio", str(cod), "--uf", uf, "--aplicar"],
+                              "%s → ponto" % ("Receita" if _fonte_mun == "receita" else "CNEFE"))
 
     # ── 3 · Cadastur/MTur ─────────────────────────────────────────────────
     _etapa(3, "Cadastur/MTur — o que o Estado registrou")
@@ -1544,6 +1554,20 @@ def main(argv=None) -> int:
     except Exception as _e:                                    # noqa: BLE001
         _log("  ⚠️  tiles não limpos — %s: %s"
              % (type(_e).__name__, str(_e)[:70]))
+
+    # ── a validação da área ───────────────────────────────────────────────
+    #
+    # A EXTRAÇÃO ENCADEIA A VALIDAÇÃO (cidade nova ponta a ponta, 16/09/2026). A rodada terminava no vínculo, e o
+    # resto — fichas do Maps, fotos, foto de rua, leitura das placas, Serasa, busca web, conferência e julgamento —
+    # só rodava pelo cron de Canoas. `validacao.py criar` divide as ligações aptas da área em lotes e tarefas, e os
+    # executores das máquinas (`validacao_executor.py`) pegam dali. O ambiente é o do processo (`RADAR_AMBIENTE`):
+    # a rodada de teste de desenvolvimento cria tarefas que só o executor de desenvolvimento pega.
+    if a.sem_validacao:
+        _log("  validação da área: pulada por --sem-validacao")
+    elif not cidade:
+        _log("  validação da área: pulada — sem município da área")
+    else:
+        _tolerante_i9(["validacao.py", "criar", "--cidade", cidade, "--area", a.area], "validação da área")
 
     _log("─" * 62)
     if _ETAPAS_COM_FALHA:
