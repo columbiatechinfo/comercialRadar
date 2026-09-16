@@ -36,7 +36,7 @@ URL_PUBLICA=https://a2lsolucoes.com/seek
 # embutidos e passa cada um pelo `node --check`.
 conferir_scripts() {
   local falhou=0 pag tmp
-  for pag in "" "gestao" "extrair"; do
+  for pag in "" "gestao" "extrair" "validacao"; do
     tmp=$(mktemp -d)
     curl -s --max-time 20 "$URL_PUBLICA/$pag" -o "$tmp/pagina.html" || true
     python3 - "$tmp" <<'PY'

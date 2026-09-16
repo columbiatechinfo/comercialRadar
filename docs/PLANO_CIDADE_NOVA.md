@@ -25,6 +25,23 @@ Dev e produção usam o mesmo banco `a2l` e a mesma fila `radar_comercial.job`. 
 | 4 · Telas no visual da SEEK | Tokens e componentes compartilhados gerados pelo `montar.py`; casca da extração (filete, logo, topo com chips); painel de validação com andamento por etapa e lote; "Avaliar com IA" vira a validação da área. | frontend |
 | 5 · Teste em dev e publicação | Chuvisca, 4 quadras: extração → vínculo → validação → SEEK de dev. Galeria com prints e números. Publicar reconstrói o worker e sincroniza o notebook a partir da tag. | dev → aprovação → produção |
 
+## Andamento em desenvolvimento (16/09/2026)
+
+| Fase | Estado | Onde |
+|---|---|---|
+| 1 | feita: migrações 0118 e 0119 aplicadas; `gravar` marca `ambiente`; SEEK e gestão de produção escondem o teste (prova em transação desfeita, 12/12); papel `qualificacao` na base | `f494ecf` |
+| 2 | feita: Receita e CNEFE viram ponto na etapa 2; a extração cria a validação ao terminar | `3a5dd9c` |
+| 3 | feita: `validacao.py` (lotes, dependências, tetos), `validacao_executor.py` (um por máquina, contêiner destacado por tarefa), compose com proxy do docker; o teto de conexões conta as sessões reais do banco | `3a5dd9c`, `df610b2` |
+| 4 | casca feita: `/validacao` no visual da SEEK; extração com filete, logo e azul da marca; "Avaliar com IA" cria a validação; `sessao.js` não sobrescreve mais os tokens da SEEK | `df610b2`, `8ebf8a7` |
+| 5 | em curso: Chuvisca, ~4 quadras (`teste_dev_chuvisca_4q`, 40 ligações, 24 residenciais ativas); qualificação original copiada em `radar_comercial.teste_dev_chuvisca_qualificacao` para reverter | — |
+
+### Achados no caminho
+
+- **Receita sem índice.** `resources_root.rf_estabelecimentos` tem 72,8 milhões de linhas (14 GB) e nenhum índice: cada cidade nova varre a tabela inteira no mesmo Postgres que atende a SEEK. Onde quebra: várias cidades em paralelo são várias varreduras de 14 GB. Saída: índice por `municipio` (e situação), criado `concurrently`, com decisão do dono.
+- **iFood e Airbnb resolvem o desafio da Cloudflare** (etapas 5 e 6 da extração). As etapas da validação só detectam o bloqueio. Testes de desenvolvimento rodam com `--pular-ifood --pular-airbnb`; a decisão sobre produção é do dono.
+- **Pooler no limite.** Com os laços de Canoas eram 17 a 19 sessões de 20. O executor mede as sessões reais antes de soltar uma tarefa (`RADAR_POOL_TOTAL`, `RADAR_POOL_FOLGA`).
+- **783 ligações aptas de Canoas com POI vinculado nunca entraram na fila de julgamento**: a fila antiga exigia imagem antes; a validação não exige (a foto de rua é uma etapa).
+
 ## O que não muda
 
 Os laços de Canoas no cron continuam rodando até terminar. Nenhum script de etapa é reescrito: a validação chama os mesmos `recoletar_fichas`, `recapturar_frente`, `ler_fotos_de_rua`, `fichas_cnpj`, `buscar_web`, `conferir_evidencias` e `avaliar_enxuto --leve` com `--ligacoes-arquivo`.
