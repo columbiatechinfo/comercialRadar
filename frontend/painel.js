@@ -2828,6 +2828,81 @@
                + "tela mostra para você confirmar.", "text-lime-400");
     });
 
+    // ── A QUALIFICAÇÃO SOZINHA (16/09/2026) ──────────────────────────────
+    //
+    // Sobe a planilha pelo mesmo envio em pedaços da base, deixa escolher a
+    // coluna da decisão e põe o ENSAIO na fila; só depois de um ensaio da
+    // mesma planilha e coluna o "Aplicar" libera. O resultado (quantas viram
+    // SIM, SIM com análise, NÃO, vazias e os textos não reconhecidos) sai no
+    // log da rodada, em "Rodadas".
+    const QUALIF = { arquivo: null, ensaiado: null };
+    function qualifMsg(txt, cor) {
+      const m = $("qualif-msg");
+      if (!m) return;
+      m.textContent = txt;
+      m.className = "mt-2 text-[11.5px]/[16px] " + (cor || "text-gray-500");
+    }
+    async function qualifEnfileirar(aplicar) {
+      const coluna = $("qualif-coluna").value;
+      if (!QUALIF.arquivo || !coluna) return;
+      if (aplicar && !confirm("Aplicar a qualificação da planilha " + QUALIF.arquivo + " (coluna " + coluna + ")?")) return;
+      $("qualif-ensaiar").disabled = true;
+      $("qualif-aplicar").disabled = true;
+      const r = await fetch("/api/jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ modo: "qualificacao", opcoes: { arquivo: QUALIF.arquivo, coluna, aplicar } }),
+      }).catch(() => null);
+      const j = r ? await r.json().catch(() => ({})) : {};
+      $("qualif-ensaiar").disabled = false;
+      if (!r || !r.ok) {
+        qualifMsg(j.erro || j.detail || "não consegui pôr na fila", "text-amber-700");
+        $("qualif-aplicar").disabled = QUALIF.ensaiado !== QUALIF.arquivo + "|" + coluna;
+        return;
+      }
+      if (!aplicar) QUALIF.ensaiado = QUALIF.arquivo + "|" + coluna;
+      $("qualif-aplicar").disabled = QUALIF.ensaiado !== QUALIF.arquivo + "|" + coluna;
+      qualifMsg((j.mensagem || "na fila") + " — o resultado aparece no log da rodada, em Rodadas.", "text-emerald-700");
+    }
+    $("qualif-arquivo")?.addEventListener("change", async (e) => {
+      const arq = e.target.files && e.target.files[0];
+      if (!arq) return;
+      e.target.value = "";
+      $("qualif-arquivo-rot").textContent = "enviando…";
+      let d;
+      try {
+        d = await subirBase(arq);
+      } catch (err) {
+        $("qualif-arquivo-rot").textContent = "Subir planilha…";
+        qualifMsg("upload falhou: " + err.message, "text-amber-700");
+        return;
+      } finally {
+        $("bases-envio").textContent = "";
+      }
+      $("qualif-arquivo-rot").textContent = arq.name;
+      QUALIF.arquivo = d.arquivo;
+      QUALIF.ensaiado = null;
+      const sel = $("qualif-coluna");
+      const cols = d.colunas || [];
+      const provavel = cols.find((c) => /qualif|apta|decis/i.test(c)) || "";
+      sel.innerHTML = '<option value="">coluna da decisão</option>'
+        + cols.map((c) => '<option' + (c === provavel ? " selected" : "") + ">"
+                   + String(c).replace(/[<>&"]/g, "") + "</option>").join("");
+      sel.disabled = false;
+      $("qualif-ensaiar").disabled = !sel.value;
+      $("qualif-aplicar").disabled = true;
+      $("qualif-envio").textContent = cols.length + " coluna(s)";
+      qualifMsg(cols.some((c) => /^num_ligacao$/i.test(c)) ? "Escolha a coluna e ensaie."
+                : "A planilha precisa da coluna NUM_LIGACAO.", cols.some((c) => /^num_ligacao$/i.test(c)) ? "" : "text-amber-700");
+    });
+    $("qualif-coluna")?.addEventListener("change", () => {
+      const c = $("qualif-coluna").value;
+      $("qualif-ensaiar").disabled = !c;
+      $("qualif-aplicar").disabled = QUALIF.ensaiado !== QUALIF.arquivo + "|" + c;
+    });
+    $("qualif-ensaiar")?.addEventListener("click", () => qualifEnfileirar(false));
+    $("qualif-aplicar")?.addEventListener("click", () => qualifEnfileirar(true));
+
     // ── os dois passos do vínculo ─────────────────────────────────────
     //
     // POR QUE ELES EXISTEM NA TELA, medido em Canoas em 08/09/2026: o

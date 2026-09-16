@@ -308,6 +308,15 @@ def _comando(job: dict) -> list:
             if valor is not True:
                 cmd.append(str(valor))
         return cmd
+    if job["tipo"] == "qualificacao":
+        # A QUALIFICACAO PELA TELA (16/09/2026): o arquivo subiu para o volume `radar-uploads`, que so este
+        # conteiner monta (em /app/uploads). So o nome do arquivo vem do pedido — caminho nenhum.
+        nome = os.path.basename(str(a.get("arquivo") or ""))
+        cmd = [PYTHON, "aplicar_qualificacao.py", "--arquivo", os.path.join("uploads", nome),
+               "--coluna", str(a.get("coluna") or ""), "--tabela", "qualificacao_tela"]
+        if a.get("aplicar") is True:
+            cmd.append("--aplicar")
+        return cmd
     if job["tipo"] == "planilha":
         return [PYTHON, "cadastro_cliente.py", "--importar",
                 str(a.get("arquivo", ""))]

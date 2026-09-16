@@ -18,6 +18,7 @@ reconhecido vira NULL, e NULL não enriquece. Erro de preenchimento custa uma
 ligação de fora da fila cara; um "sim" inventado custa extração paga.
 """
 import argparse
+import re
 import os
 import time
 
@@ -52,21 +53,25 @@ def _log(m):
 #:
 #: A VIRGULA E EXIGIDA nos prefixos de proposito: sem ela, "SIMPLES" comecaria
 #: com "sim" e viraria um sim.
+#: O TEXTO NORMALIZADO ANTES DA DECISAO (dono do produto, 16/09/2026). A primeira regra exigia a virgula e a palavra
+#: "analise": medido no teste, `Sim com revisao humana` ficava VAZIO (fora do cruzamento), `SIM, COM REVISAO HUMANA`
+#: virava SIM puro e ate o codigo oficial `SIM_COM_ANALISE_HUMANA` ficava vazio. Agora caixa, acento, virgula e
+#: sublinhado saem antes; "sim ... humana" (analise ou revisao) e o SIM com analise humana.
+#:
+#: SEM `%` E SEM CHAVES DE PROPOSITO: a expressao entra num SQL montado com `%` aqui e com `.format` no
+#: `materializar_base`, e qualquer um dos dois quebraria.
+_NORMAL = ("btrim(regexp_replace(translate(lower(coalesce(\"{col}\", '')), "
+           "'áàâãäéèêëíìîïóòôõöúùûüç_', 'aaaaaeeeeiiiiooooouuuuc '), '[^a-z0-9]+', ' ', 'g'))")
 STATUS = """
     case
-      when lower(btrim("{col}")) like 'sim,%%analise humana%%'
-        or lower(btrim("{col}")) like 'sim,%%análise humana%%'
-                                                    then 'SIM_COM_ANALISE_HUMANA'
-      when lower(btrim("{col}")) in ('sim','s','1','true','t','y','yes',
-                                     'verdadeiro','v')             then 'SIM'
-      when lower(btrim("{col}")) like 'sim,%%'                     then 'SIM'
-      when lower(btrim("{col}")) in ('nao','não','n','0','false','f','no',
-                                     'falso')                      then 'NAO'
-      when lower(btrim("{col}")) like 'nao,%%'
-        or lower(btrim("{col}")) like 'não,%%'                     then 'NAO'
+      when {n} ~ '^sim .*humana'                                         then 'SIM_COM_ANALISE_HUMANA'
+      when {n} in ('sim','s','1','true','t','y','yes','verdadeiro','v')  then 'SIM'
+      when {n} ~ '^sim '                                                 then 'SIM'
+      when {n} in ('nao','n','0','false','f','no','falso')               then 'NAO'
+      when {n} ~ '^nao '                                                 then 'NAO'
       else null
     end
-"""
+""".replace("{n}", _NORMAL)
 
 #: O QUE VEIO COLADO A DECISAO. Nao muda o destino; explica a decisao, e e o
 #: que alguem vai querer ler ao auditar por que uma ligacao ficou de fora.
@@ -85,9 +90,14 @@ def main(argv=None):
     p = argparse.ArgumentParser()
     p.add_argument("--arquivo", default="/tmp/canoas_v6.csv")
     p.add_argument("--coluna", default="APTA_CRUZAMENTO_COMERCIAL")
-    p.add_argument("--cidade", default="CANOAS")
+    p.add_argument("--cidade", default="",
+                   help="so para o resumo; sem ela, o resumo e das cidades das ligacoes da planilha")
+    # A TABELA CRUA DA CARGA (16/09/2026): a pela tela usa a propria, e a de Canoas fica como estava.
+    p.add_argument("--tabela", default="")
     p.add_argument("--aplicar", action="store_true")
     a = p.parse_args(argv)
+    global TABELA
+    TABELA = re.sub(r"[^a-z0-9_]", "", (a.tabela or TABELA).lower()) or "canoas_v6"
 
     # A CONEXAO E A DO PIPELINE, e nao a do `migrator`. Duas razoes, e as
     # duas foram medidas hoje:
@@ -235,32 +245,48 @@ def main(argv=None):
     # ligacao que JA paga tarifa comercial. Sao 808 ligacoes que passam de "ja
     # paga" para "nao paga" — voltam a ser alvo — e 114 no sentido oposto.
     _log("")
-    _log("atualizando as economias onde a planilha declara...")
-    cur.execute("""
+    # AS ECONOMIAS SAO OPCIONAIS (16/09/2026): a planilha que traz so a decisao gravava a qualificacao e parava com
+    # erro aqui ("column economias_residencial does not exist"). Cada coluna que a planilha nao tem fica como a base.
+    presentes = {c["coluna"] for c in colunas_info}
+    eco = {k: ('nullif(regexp_replace("%s",\'[^0-9]\',\'\',\'g\'),\'\')::smallint' % k) if k in presentes else "null::smallint"
+           for k in ("economias_residencial", "economias_comercial", "economias_industrial", "economias_publica")}
+    if not any(k in presentes for k in eco):
+        _log("a planilha não traz economias: só a qualificação foi atualizada")
+        eco = None
+    else:
+        _log("atualizando as economias onde a planilha declara (%s)..."
+             % ", ".join(k for k in eco if k in presentes))
+    cur.execute("select 1" if eco is None else """
         update resources_root.cadastro_corsan c
            set qtd_eco_res = coalesce(p.res, c.qtd_eco_res),
                qtd_eco_com = coalesce(p.com, c.qtd_eco_com),
                qtd_eco_ind = coalesce(p.ind, c.qtd_eco_ind),
                qtd_eco_pub = coalesce(p.pub, c.qtd_eco_pub)
           from (select nullif(regexp_replace("%s",'[^0-9]','','g'),'')::bigint as lig,
-                       nullif(regexp_replace("economias_residencial",'[^0-9]','','g'),'')::smallint as res,
-                       nullif(regexp_replace("economias_comercial",  '[^0-9]','','g'),'')::smallint as com,
-                       nullif(regexp_replace("economias_industrial", '[^0-9]','','g'),'')::smallint as ind,
-                       nullif(regexp_replace("economias_publica",    '[^0-9]','','g'),'')::smallint as pub
+                       %s as res, %s as com, %s as ind, %s as pub
                   from base_bruta.%s) p
          where c.num_ligacao = p.lig
            and (coalesce(p.res, c.qtd_eco_res) is distinct from c.qtd_eco_res
              or coalesce(p.com, c.qtd_eco_com) is distinct from c.qtd_eco_com
              or coalesce(p.ind, c.qtd_eco_ind) is distinct from c.qtd_eco_ind
              or coalesce(p.pub, c.qtd_eco_pub) is distinct from c.qtd_eco_pub)
-    """ % (lig, TABELA))
-    _log("   %d ligação(ões) com economias corrigidas" % cur.rowcount)
+    """ % ((lig,) + tuple(eco.values()) + (TABELA,)))
+    if eco is not None:
+        _log("   %d ligação(ões) com economias corrigidas" % cur.rowcount)
     con.commit()
 
-    cur.execute("""select coalesce(qualificacao,'(sem decisão)'), count(*)
-                     from resources_root.cadastro_corsan
-                    where upper(coalesce(cidade,'')) = upper(%s)
-                    group by 1 order by 2 desc""", (a.cidade,))
+    # SEM CIDADE, O RESUMO E DAS LIGACOES DA PLANILHA (16/09/2026), por cidade
+    if a.cidade:
+        cur.execute("""select coalesce(qualificacao,'(sem decisão)'), count(*)
+                         from resources_root.cadastro_corsan
+                        where upper(coalesce(cidade,'')) = upper(%s)
+                        group by 1 order by 2 desc""", (a.cidade,))
+    else:
+        cur.execute("""select coalesce(c.cidade,'?') || ' · ' || coalesce(c.qualificacao,'(sem decisão)'), count(*)
+                         from resources_root.cadastro_corsan c
+                         join (select distinct nullif(regexp_replace("%s", '[^0-9]', '', 'g'), '')::bigint as lig
+                                 from base_bruta.%s) p on p.lig = c.num_ligacao
+                        group by 1 order by 2 desc""" % (lig, TABELA))
     _log("   na base agora:")
     for st, q in cur.fetchall():
         _log("      %-26s %7d" % (st, q))

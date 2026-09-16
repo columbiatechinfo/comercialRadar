@@ -3623,7 +3623,7 @@ def iniciar_job(body: dict):
         # motivo: ela trabalha por UF, que é a unidade em que as bases públicas
         # são publicadas. Exigir um retângulo desenhado para produzir a base do
         # Rio Grande do Sul seria pedir um dado que a tarefa não usa.
-        if not poly and modo not in ("cadastur", "base_estadual", "base_cadastur"):
+        if not poly and modo not in ("cadastur", "base_estadual", "base_cadastur", "qualificacao"):
             return JSONResponse({"erro": "Desenhe o polígono da área antes de iniciar."}, status_code=400)
 
         if modo == "planilha":
@@ -4047,6 +4047,28 @@ def iniciar_job(body: dict):
             out_json = json_alvo
             _novo_job("minerar_web", out_json, {"arquivo": json_alvo.name})
 
+        elif modo == "qualificacao":
+            # A QUALIFICACAO DA BASE PELA TELA (dono do produto, 16/09/2026): SIM, SIM com analise humana ou NAO,
+            # por ligacao, sem trocar a tabela. Primeiro o ensaio (conta e mostra o que nao reconheceu), depois
+            # `aplicar`. Vai para a FILA porque o arquivo esta no volume que so o worker monta.
+            arquivo = Path(str(op.get("arquivo") or "")).name
+            coluna = str(op.get("coluna") or "").strip()
+            if not arquivo or not (UPLOADS / arquivo).exists():
+                return JSONResponse({"erro": "Suba a planilha antes."}, status_code=400)
+            if not coluna:
+                return JSONResponse({"erro": "Escolha a coluna da qualificação."}, status_code=400)
+            try:
+                fila = _enfileirar("qualificacao", {"arquivo": arquivo, "coluna": coluna,
+                                                    "aplicar": op.get("aplicar") is True})
+            except HTTPException:
+                raise
+            except Exception as e:                             # noqa: BLE001
+                return JSONResponse({"erro": "nao consegui enfileirar — %s: %s"
+                                             % (type(e).__name__, str(e).splitlines()[0][:180])}, status_code=500)
+            return {**fila, "na_fila": True,
+                    "mensagem": "%s da qualificação na fila (rodada %d)"
+                                % ("aplicação" if op.get("aplicar") is True else "ensaio", fila["id"])}
+
         elif modo == "carregar_base":
             # O `COPY` DA BASE CRUA, como job e não como requisição: são
             # 2.516.709 linhas na base da Corsan, e nenhum navegador segura a
@@ -4250,7 +4272,7 @@ def iniciar_job(body: dict):
 # distinguido. O painel novo só dispara `mineracao`.
 
 #: Os modos que já vivem na fila. Os demais seguem no `Popen` da memória.
-MODOS_NA_FILA = {"mineracao"}
+MODOS_NA_FILA = {"mineracao", "qualificacao"}
 
 _ESTADO_PARA_STATUS = {
     "fila": "na_fila", "rodando": "rodando", "ok": "finalizado",

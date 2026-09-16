@@ -605,6 +605,24 @@
 
         <!-- direita: as seis perguntas -->
         <div class="flex w-[420px] shrink-0 flex-col overflow-y-auto px-6 py-5">
+          <!-- A QUALIFICACAO SOZINHA (16/09/2026): atualiza SIM / SIM com analise humana / NAO por ligacao, sem
+               trocar a base. Ensaio primeiro; o resultado sai no log da rodada. -->
+          <div class="mb-5 rounded-lg border border-indigo-100 bg-indigo-50/40 p-3">
+            <div class="text-[10.5px] font-semibold uppercase tracking-[0.07em] text-indigo-700">Atualizar só a qualificação</div>
+            <p class="mt-0.5 text-[11.5px]/[16px] text-gray-500">Planilha com NUM_LIGACAO e a coluna de decisão: sim · sim com análise (ou revisão) humana · não. Só as ligações da planilha mudam.</p>
+            <label class="mt-2 inline-flex cursor-pointer items-center gap-x-2 rounded-md border border-gray-300 bg-white px-2.5 py-1 text-[12px] font-semibold text-gray-700 hover:bg-gray-50">
+              <span id="qualif-arquivo-rot">Subir planilha…</span>
+              <input type="file" id="qualif-arquivo" accept=".csv,.txt,.tsv" class="hidden">
+            </label>
+            <span id="qualif-envio" class="ml-2 tabular-nums text-[11.5px] text-gray-500"></span>
+            <div class="mt-2 flex flex-wrap items-center gap-2">
+              <select id="qualif-coluna" class="rounded-md border-gray-300 py-1 text-[12.5px]" disabled><option value="">coluna da decisão</option></select>
+              <button type="button" id="qualif-ensaiar" class="rounded-md border border-gray-300 bg-white px-2.5 py-1 text-[12px] font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-40" disabled>Ensaiar</button>
+              <button type="button" id="qualif-aplicar" class="rounded-md bg-indigo-600 px-2.5 py-1 text-[12px] font-semibold text-white hover:bg-indigo-700 disabled:opacity-40" disabled>Aplicar</button>
+            </div>
+            <p id="qualif-msg" class="mt-2 text-[11.5px]/[16px] text-gray-500"></p>
+          </div>
+
           <div class="text-[10.5px] font-semibold uppercase tracking-[0.07em] text-gray-400">Obrigatórias</div>
           <div id="bases-obrigatorias" class="mt-2 flex flex-col gap-y-3"></div>
 
