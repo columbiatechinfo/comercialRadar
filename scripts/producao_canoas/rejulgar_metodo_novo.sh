@@ -56,6 +56,25 @@ select lv.ligacao
 EOF
   quantas=$(grep -c . $O/W_bloco.txt)
   if [ "$quantas" = 0 ]; then
+    # LOTE QUE JA PASSOU PELO METODO NOVO NAO E JULGADO DE NOVO: em 15/09 as 22h57 apareceram os lotes R_040..R_053
+    # com a mesma populacao desta fila (um comando avulso). Sem isto o laco do orquestrador julgaria 8.2 mil
+    # ligacoes outra vez, sem mudar nada, por cinco horas de Spark.
+    for arq in $(ls $L/R_[0-9][0-9][0-9].txt 2>/dev/null | sort); do
+      tag=$(basename $arq .txt)
+      [ -f $L/$tag.feito ] && continue
+      [ -f $L/$tag.evidencias ] || continue
+      faltam=$($SQL <<SQL
+select count(*) from unnest(string_to_array('$(tr '
+' ',' < $arq | sed 's/,$//')', ',')) l(ligacao)
+  join radar_comercial.ligacao_veredito lv on lv.ligacao = l.ligacao
+ where lv.veredito <> 'aprovado' and lv.percepcao->>'processo' not like '%$MARCA%';
+SQL
+)
+      if [ "$faltam" = 0 ]; then
+        touch $L/$tag.feito
+        diga "$tag: todas as ligações já passaram pelo método novo — lote marcado como feito, sem rejulgar"
+      fi
+    done
     touch $O/W_feito
     diga "rejulgamento no método novo terminado: não sobrou ligação com o método anterior"
     exit 0
