@@ -2690,6 +2690,10 @@ var SEEK = (function () {
     return VEREDITOS[v] || {rot: v ? String(v) : 'sem julgamento', cor: '#8FA0BA', tom: 'nulo'};
   }
   function podeDecidir() { return !!(window.EU && DECIDEM.indexOf(window.EU.nivel) >= 0); }
+  /* O QUE É DE CASA (dono do produto, 16/09/2026): a checagem do código, o "como foi julgada" e a leitura da
+   * foto de rua contam COMO a máquina decidiu — servem para auditar o processo, não para decidir o caso. Só
+   * administrador e root veem. */
+  function ehAdmin() { return !!(window.EU && ['admin', 'root'].indexOf(window.EU.nivel) >= 0); }
   /* a trava de OUTRA pessoa nesta ligação; a mesma pessoa em outra aba não bloqueia */
   function travaDeOutro(lig) {
     var t = S.travas[lig];
@@ -3433,15 +3437,17 @@ var SEEK = (function () {
                           + (todosNao ? '1' : '0') + '">' + (todosNao ? 'mostrar só os 6 primeiros'
                           : 'mostrar os ' + nao.length) + '</button>' : '') : '')
       + checagemCompleta(ch, ctx)
-      + '<div class="grupo-cab">como foi julgada</div><div class="kv-caixa">'
-      + kv([['julgada em', quando(ia.avaliado_em)], ['modelo', ia.modelo || '', 1],
-            ['processo', ia.processo || ''],
-            ['prioridade na fila', ia.prioridade === 'baixa' ? TXT_PRIORIDADE : ia.prioridade || ''],
-            ['fotos que a IA viu', (ia.fotos_vistas || []).length
-               ? (ia.fotos_vistas || []).join(' · ') : 'nenhuma']])
-      + (ia.tem_dados ? '<button class="lk ia-dados-lk" data-dados-ia="' + esc(c.ligacao) + '">'
-                        + 'ver o texto que a IA recebeu</button>' : '')
-      + '</div>';
+      + (ehAdmin()
+         ? '<div class="grupo-cab">como foi julgada</div><div class="kv-caixa">'
+           + kv([['julgada em', quando(ia.avaliado_em)], ['modelo', ia.modelo || '', 1],
+                 ['processo', ia.processo || ''],
+                 ['prioridade na fila', ia.prioridade === 'baixa' ? TXT_PRIORIDADE : ia.prioridade || ''],
+                 ['fotos que a IA viu', (ia.fotos_vistas || []).length
+                    ? (ia.fotos_vistas || []).join(' · ') : 'nenhuma']])
+           + (ia.tem_dados ? '<button class="lk ia-dados-lk" data-dados-ia="' + esc(c.ligacao) + '">'
+                             + 'ver o texto que a IA recebeu</button>' : '')
+           + '</div>'
+         : '');
     return '<section class="ramo n-ia">' + cab + '<div class="ramo-corpo"><div class="no-corpo">'
       + corpo + '</div></div></section>';
   }
@@ -3488,7 +3494,7 @@ var SEEK = (function () {
   /* A CHECAGEM DO CÓDIGO INTEIRA: a regra, o porquê, a ficha do Maps que não conta
    * como fonte e as redes sociais que o código confirmou */
   function checagemCompleta(ch, ctx) {
-    if (!ch) { return ''; }
+    if (!ch || !ehAdmin()) { return ''; }
     var redes = ch.redes_sociais || [];
     return '<div class="grupo-cab">checagem do código</div><div class="kv-caixa">'
       + kv([['regra', ch.regra || ''],
@@ -3715,6 +3721,7 @@ var SEEK = (function () {
    * código deu a ela, e o texto que a IA recebeu. As caixas aparecem sobre a foto
    * ampliada, no visor. */
   function leituraDaRua(fi, ctx) {
+    if (!ehAdmin()) { return ''; }
     var rua = (fi.imagens || []).filter(function (x) { return x.fonte === 'foto' && x.leitura; })[0];
     if (!rua) { return ''; }
     var L = rua.leitura, fs = L.fachadas || [];
@@ -5030,6 +5037,8 @@ var SEEK = (function () {
     $('#quem-sub').textContent = (eu.nivel || '—') + (eu.empresa ? ' · ' + eu.empresa : '');
     /* a gestão das aprovações é de administrador para cima; o servidor confere de novo */
     $('#chip-gestao').hidden = ['admin', 'root'].indexOf(eu.nivel) < 0;
+    /* o nível chega depois da ficha em tela: redesenha para aplicar o que é só de administrador */
+    if (S.sel) { pintaArvore(); }
     pintaFila(); pintaArvore();
     ligaCerebro();
     ligaTempoReal();
