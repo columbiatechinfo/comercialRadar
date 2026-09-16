@@ -10,9 +10,11 @@ Agora a divisao do trabalho e:
   - a IA (`PROMPT`, uma imagem, uma tarefa) lista CADA FACHADA com a caixa, os textos e os sinais dela;
   - o CODIGO escolhe a fachada da seta: a caixa que contem a ponta (`mira_x` gravado na captura e a altura da
     ponta em `desenho_seta.PONTA_REL`), e entre varias a menor;
-  - placa de fachada vizinha so vale se o NOME (palavra distintiva, nao "padaria" nem "distribuidora") ou o
+  - placa de fachada vizinha so vale se o NOME (a frase inteira, nao "padaria" nem "distribuidora") ou o
     TELEFONE aparece em outra fonte: nome dos registros, ficha do Serasa, busca na web. Sinal sem texto de
-    vizinho nunca vale — nao ha nome para conferir.
+    vizinho nunca vale — nao ha nome para conferir;
+  - e so com a seta na divisa ou fora de fachada: se a seta cai numa fachada identificada, e ela que decide
+    (VIZINHO ESTRITO, 16/09/2026).
 
 Sem banco aqui alem de `fontes_de_nome`; o julgamento (`avaliar_enxuto.montar_leve`) monta o texto e marca o
 rotulo da foto quando nada nela vale para a instalacao, e a checagem (`checagem_veredito`) tira essa foto das
@@ -51,6 +53,7 @@ delicia delicias caseira caseiro sabor sabores arte artes top mais total prime m
 atendimento qualidade melhor melhores preco precos promocao oferta ofertas horario funcionamento segunda sexta
 sabado domingo feriado cartao cartoes pix aceitamos venda vendas compra compras troca trocas conserto consertos
 instalacao instalacoes manutencao reforma reformas pintura pinturas criacao impressao grafica produtos produto
+facebook instagram tiktok youtube serralheria vidracaria marcenaria
 """.split())
 _FONE = re.compile(r"(?:\(?\d{2}\)?[\s.-]*)?9?\d{4}[\s.-]?\d{4}")
 
@@ -240,18 +243,20 @@ def casar(texto, pecas, excluir=()):
             return fonte
     # o nome inteiro, mesmo feito so de palavras genericas ("Agropecuaria Gaucho" na ficha do Serasa)
     frase = " ".join(w for w in _normal(texto).split() if not w.isdigit())
-    if len(frase) >= 10 and " " in frase:
+    # POR FRASE, NAO POR PALAVRA SOLTA (dono do produto, 16/09/2026): "De Deus para" casava com a busca na web pela
+    # palavra "deus" e "FERRAGEM MULTI+" por "multi", e a placa do vizinho aprovava a casa da seta. Uma palavra so
+    # vale se for longa e distintiva ("AngolaBrasil"); duas ou mais, a frase inteira.
+    # NOME DE RUA NAO E NOME DE LOJA (16/09/2026): "R. Cidade de Santa Fe" casava com a busca na web pelo endereco
+    if not [w for w in frase.split() if len(w) >= 4 and w not in excluir]:
+        return None
+    if " " in frase:
+        casa = len(frase) >= 10
+    else:
+        casa = len(frase) >= 8 and frase not in GENERICAS and frase not in excluir
+    if casa:
         for fonte, t in pecas:
             if (" %s " % frase) in (" %s " % _normal(t)):
                 return fonte
-    distintivas = [w for w in _normal(texto).split()
-                   if len(w) >= 4 and not w.isdigit() and w not in GENERICAS and w not in excluir]
-    if not distintivas:
-        return None
-    for fonte, t in pecas:
-        palavras = set(_normal(t).split())
-        if any(w in palavras for w in distintivas):
-            return fonte
     return None
 
 
@@ -332,9 +337,14 @@ def para_julgamento(leitura, mira_x, pecas, excluir):
             fonte = casar(t["texto"], pecas, excluir)
             (com_nome if fonte else sem_nome).append('"%s"%s' % (t["texto"], (" — o nome aparece em: %s" % fonte) if fonte else ""))
         sem_nome += [str(s) for s in (f.get("sinais_sem_texto") or []) if str(s).strip()]
-    if com_nome:
+    # VIZINHO ESTRITO (dono do produto, 16/09/2026): com a seta numa fachada identificada, e ela que decide. Em Canoas,
+    # 198 fotos de rua "valiam" so pela placa do vizinho com a seta caindo numa casa sem sinal.
+    if com_nome and not alvo:
         linhas.append("placas de VIZINHOS com o nome em outra fonte (valem como sinal desta instalação): " + "; ".join(com_nome))
         vale = True
+    elif com_nome:
+        linhas.append("placas de VIZINHOS com o nome em outra fonte (NÃO são sinal desta instalação: a seta cai em outra "
+                      "fachada): " + "; ".join(com_nome))
     if sem_nome:
         linhas.append("placas e sinais de VIZINHOS sem o nome em nenhuma outra fonte (NÃO são sinal desta instalação): "
                       + "; ".join(sem_nome))
