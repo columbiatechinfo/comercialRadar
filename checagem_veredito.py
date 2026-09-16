@@ -53,7 +53,7 @@ import sys
 import base_comum as bc
 import provas_datadas as pdat
 
-REGRA = "checagem do codigo de 15/09/2026 v6 (fonte única promove, foto do Google datada, iFood 6m, Maps 12m) · v5 (número, complemento, cada fonte com prova recente, fonte única, rede social, vizinho, ficha do Maps, aluga/vende e anúncio)"
+REGRA = "checagem do codigo de 16/09/2026 v7 (fachada da seta com sinal ou rede social + outra fonte, so SIM) · v6 (fonte única promove, foto do Google datada, iFood 6m, Maps 12m) · v5 (número, complemento, cada fonte com prova recente, fonte única, rede social, vizinho, ficha do Maps, aluga/vende e anúncio)"
 
 #: AS FONTES INDEPENDENTES (dono do produto, 14 e 15/09/2026). Cada uma conta uma vez; o Serasa e a
 #: Casa dos Dados SAO a Receita — a IA do teste contou "Receita" e "Serasa" como duas e aprovou.
@@ -567,16 +567,98 @@ def prova_recente(ctx, validos, resposta=None, fotos=None):
                                                  else ": só a busca na web ou nenhuma prova datada"))
 
 
-def decidir(ctx, validos, perdeu_por_duvida, lig=None, resposta=None, fotos=None, processo=None):
-    """O veredito final de uma ligacao que a IA aprovou: regras 1, 3, 4, 6 e, no processo leve, 7."""
+def fachada_ou_rede_basta(ctx, lig, validos, resposta, fotos, ids):
+    """(basta, texto): REGRA 8 (dono do produto, 16/09/2026). Com a IA aprovando e a qualificacao SIM, a fachada da seta
+    com sinal de uso OU a rede social identificada no endereco, de qualquer data, mais outra fonte valida, aprovam sem
+    as regras 6 e 7. Medido em Canoas antes: 3.354 aprovacoes da IA fora de aprovado; com esta regra e as travas que
+    seguem depois (so MEI, aluga/vende, um POI uma instalacao), 65 sobem.
+
+    A fachada e a da SETA, decidida pela posicao da ponta na leitura da foto de rua (`fachada_da_seta`), e nao a que a
+    IA citou: a placa do vizinho so conta com a seta na divisa e o nome em outra fonte. A foto publicada no Google nao
+    dispara (arte de divulgacao e foto de banco de imagens passavam), e o que o texto da IA diz ser igreja, templo,
+    associacao ou escola publica fica de fora."""
+    r = resposta or {}
+    if lig is None or ctx.qualificacao.get(str(lig)) != "SIM" or not validos:
+        return False, None
+    uso = r.get("uso") if isinstance(r.get("uso"), dict) else {}
+    if RE_NAO_COMERCIO.search("%s %s" % (uso.get("o_que") or "", r.get("motivo") or "")):
+        return False, None
+    imovel = r.get("imovel") if isinstance(r.get("imovel"), dict) else {}
+    if str(imovel.get("estado") or "") == "abandonado":
+        return False, None
+    f = r.get("fotos") if isinstance(r.get("fotos"), dict) else {}
+    rua = []
+    if imagem_tem_sinal(r):
+        for n in f.get("quais") or []:
+            try:
+                rot = (fotos or [])[int(n) - 1]
+            except (TypeError, ValueError, IndexError):
+                continue
+            if fonte_da_imagem(rot) == "foto de rua":
+                rua.append(pdat.data_do_rotulo(rot))
+    if rua:
+        vale, onde = _sinal_na_fachada_da_seta(ctx, lig, ids)
+        if vale:
+            datas = [d for d in rua if d]
+            return True, "%s (foto de rua%s) e mais %d registro(s) válido(s)" % (
+                onde, (" de %s" % pdat.mes_ano(max(datas))) if datas else "", len(validos))
+    redes = r.get("_redes") or []
+    rede_pois = {x.get("poi") for x in redes if isinstance(x, dict)}
+    if redes and any(p not in rede_pois for p in validos):
+        return True, "rede social no endereço (%s) e outra fonte válida" % ", ".join(
+            sorted({str(x.get("rede")) for x in redes if isinstance(x, dict)}))
+    return False, None
+
+
+def _sinal_na_fachada_da_seta(ctx, lig, ids):
+    """(vale, texto): a leitura da foto de rua do julgamento leve — a de frente do registro com pin do Maps a ate 60 m,
+    senao a do hidrometro, como `seek_api._foto_de_rua` — mostra uso na fachada da seta, ou a seta cai na divisa e
+    a placa de um vizinho tem o nome em outra fonte. So roda para quem ia cair nas regras 6 e 7."""
+    import avaliar_enxuto as ae                                # ciclo: o avaliar_enxuto importa esta checagem
+    import fachada_da_seta as fds
+    ids = [int(i) for i in (ids or []) if str(i).isdigit()]
+    with ctx.con.cursor() as cur:
+        esc = ae.poi_da_foto_de_rua(cur, lig, ids) if ids else None
+        if esc and esc[2]:
+            cur.execute("""select leitura, mira_x from radar_comercial.poi_evidencia
+                            where poi_id = %s and tipo = 'sv_frente'""", (esc[0],))
+        elif not esc:
+            cur.execute("""select leitura, mira_x from radar_comercial.ligacao_evidencia
+                            where ligacao = %s and tipo = 'sv_frente' and (dados is not null or storage_path is not null)""",
+                        (str(lig),))
+        else:
+            return False, None
+        linha = cur.fetchone()
+        if not linha or not isinstance(linha[0], dict) or linha[0].get("fachadas") is None:
+            return False, None
+        leitura, mira_x = linha
+        alvo, divisa = fds.escolher_final(leitura, mira_x)
+        if alvo:
+            return (True, "a fachada da seta mostra uso") if fds.seta_tem_sinal(alvo) else (False, None)
+        _texto, vale = fds.para_julgamento(leitura, mira_x, *fds.fontes_de_nome(cur, lig, ids))
+        return (True, "a seta cai na divisa e a placa do vizinho tem o nome em outra fonte") if vale else (False, None)
+
+
+def decidir(ctx, validos, perdeu_por_duvida, lig=None, resposta=None, fotos=None, processo=None, ia_aprovou=True,
+            ids=None):
+    """O veredito final de uma ligacao que a IA aprovou: regras 1, 3, 4, 6, 8 e, no processo leve, 7."""
     if not validos:
         if perdeu_por_duvida:
             return "revisao_humana", ("o registro que aprovava também é candidato de outra(s) instalação(ões) "
                                       "e não dá para dizer de qual é")
         return "reprovado", "nenhum registro válido sustenta a aprovação"
+    # REGRA 8 (16/09/2026): a fachada da seta ou a rede social + outra fonte, com a IA aprovando, dispensa as regras
+    # 6 e 7. Calculada so quando uma delas ia derrubar: le a foto de rua no banco.
+    regra8 = []
+
+    def _regra8():
+        if not regra8:
+            regra8.append(fachada_ou_rede_basta(ctx, lig, validos, resposta, fotos, ids) if ia_aprovou else (False, None))
+        return regra8[0][0]
+
     # REGRA 6: sem prova recente a pessoa decide
     tem, texto = prova_recente(ctx, validos, resposta, fotos)
-    if not tem:
+    if not tem and not _regra8():
         return "revisao_humana", texto
     # REGRA 7 (15/09/2026), so no processo leve: ao menos 2 fontes independentes confirmam o uso. O
     # codigo conta, e nao a IA: ela somava Receita e Serasa como duas.
@@ -589,7 +671,7 @@ def decidir(ctx, validos, perdeu_por_duvida, lig=None, resposta=None, fotos=None
         fs = [f for f in fs_ia if f in recentes]
         if len(fs) < 2:
             basta, texto_unica = fonte_unica_basta(ctx, validos, resposta, fotos)
-            if not basta:
+            if not basta and not _regra8():
                 sem = [f for f in fs_ia if f not in recentes]
                 return "revisao_humana", ("só %d fonte com prova de até 2 anos confirma o uso (%s)%s e ela não basta "
                                           "sozinha: %s" % (len(fs), ", ".join(fs) or "nenhuma",
@@ -603,11 +685,16 @@ def decidir(ctx, validos, perdeu_por_duvida, lig=None, resposta=None, fotos=None
     return "aprovado", None
 
 
-def revisar(con, aplicar=False, log=print, saida_antes=None):
+def revisar(con, aplicar=False, log=print, saida_antes=None, saida_mudancas=None, so_veredito=None,
+            so_qualificacao=None):
     """A checagem de TODAS as ligacoes que a IA aprovou, com a exclusividade.
 
     Recomeca sempre do veredito da IA (`percepcao.checagem.veredito_ia`), entao
     rodar de novo nao acumula efeito. Devolve o placar das mudancas.
+
+    `so_veredito` e `so_qualificacao` (16/09/2026): a checagem calcula com TODAS as aprovadas pela IA (a regra 2
+    precisa delas), mas so grava a mudanca das ligacoes com o veredito atual e a qualificacao pedidos — "rodar de novo
+    as que cairam para analise, e nao as reprovadas, so nas SIM".
     """
     cur = con.cursor()
     cur.execute("set statement_timeout = '600s'")
@@ -679,8 +766,12 @@ def revisar(con, aplicar=False, log=print, saida_antes=None):
         v_ia = chk.get("veredito_ia") or v_atual
         if v_ia != "aprovado":
             continue
+        if so_veredito and v_atual not in so_veredito:
+            continue
+        if so_qualificacao and ctx.qualificacao.get(lig) not in so_qualificacao:
+            continue
         v_novo, porque = decidir(ctx, validos[lig], lig in duvida and not validos[lig], lig,
-                                 resposta_de[lig], fotos_de[lig], proc)
+                                 resposta_de[lig], fotos_de[lig], proc, ids=base[lig][1])
         if v_novo == "aprovado" and chk.get("contraprova"):
             v_novo, porque = "revisao_humana", chk["contraprova"]
         placar["%s -> %s" % (v_ia, v_novo)] += 1
@@ -697,10 +788,17 @@ def revisar(con, aplicar=False, log=print, saida_antes=None):
         nova_just = just_ia if v_novo == "aprovado" else "[checagem: %s] %s" % (porque, just_ia or "")
         novo_chk["justificativa_ia"] = just_ia
         mudancas.append((lig, v_atual, v_novo, nova_just, novo_chk, just))
+        # O QUE MUDA, DE QUE PARA QUE (16/09/2026): o ensaio contava as mudanças sem dizer quantas ganham ou perdem
+        placar["muda · %s -> %s" % (v_atual, v_novo)] += 1
     placar.update({"exclusividade · " + k: n for k, n in exclus.items()})
     log("   checagem: %d aprovadas pela IA · %s" % (sum(n for k, n in placar.items() if "->" in k),
                                                     dict(sorted(placar.items()))))
     log("   %d ligação(ões) mudam de veredito ou de nota" % len(mudancas))
+    # A LISTA DO ENSAIO (16/09/2026): para ver exemplos do que mudaria antes de aplicar
+    if saida_mudancas:
+        with open(saida_mudancas, "w", encoding="utf-8") as f:
+            json.dump([{"ligacao": l, "de": va, "para": vn, "porque": c.get("porque")}
+                       for l, va, vn, _nj, c, _ja in mudancas], f, ensure_ascii=False)
     if aplicar and mudancas:
         if saida_antes:
             with open(saida_antes, "w", encoding="utf-8") as f:
@@ -765,12 +863,12 @@ def checar_uma(con, lig, v, resposta, ids, processo="enxuto de 12/09/2026", foto
         basta, texto = fonte_unica_basta(ctx, validos, resposta, fotos) if validos else (False, "sem registro válido")
         if not basta:
             return v, None
-        v_novo, porque = decidir(ctx, validos, False, lig, resposta, fotos, processo)
+        v_novo, porque = decidir(ctx, validos, False, lig, resposta, fotos, processo, ia_aprovou=False)
         if v_novo != "aprovado":
             return v, None
         porque = "promovida pela fonte única: %s" % texto
     else:
-        v_novo, porque = decidir(ctx, validos, False, lig, resposta, fotos, processo)
+        v_novo, porque = decidir(ctx, validos, False, lig, resposta, fotos, processo, ids=ids)
     # AS CONTRAPROVAS FICAM GRAVADAS (auditoria das aprovadas do R_000): o fim de rodada (`revisar`) refazia a decisao
     # so com `decidir` e reaprovava o que a placa de aluga/vende, a ficha do Maps vazia, a placa do vizinho e a rede
     # social nao confirmada tinham segurado.
@@ -791,9 +889,14 @@ def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--aplicar", action="store_true")
     p.add_argument("--antes", default="", help="arquivo JSON para guardar o veredito anterior das que mudam")
+    p.add_argument("--mudancas", default="", help="arquivo JSON com a lista do que mudaria (vale no ensaio)")
+    p.add_argument("--so-veredito", default="", help="só grava a mudança de quem tem hoje estes vereditos (vírgula)")
+    p.add_argument("--so-qualificacao", default="", help="só grava a mudança destas qualificações (vírgula), ex.: SIM")
     a = p.parse_args(argv)
     con = bc.conectar()
-    r = revisar(con, a.aplicar, saida_antes=a.antes or None)
+    r = revisar(con, a.aplicar, saida_antes=a.antes or None, saida_mudancas=a.mudancas or None,
+                so_veredito={x.strip() for x in a.so_veredito.split(",") if x.strip()} or None,
+                so_qualificacao={x.strip().upper() for x in a.so_qualificacao.split(",") if x.strip()} or None)
     con.close()
     return r
 

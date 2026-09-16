@@ -284,6 +284,16 @@ def aluga_na_seta(leitura, mira_x):
         [t for t in _textos(alvo) if _e_aluga(t)] else []
 
 
+def seta_tem_sinal(alvo):
+    """A fachada da seta mostra uso: sinal comercial com texto que nao e so aluga/vende, ou sinal sem texto."""
+    if not alvo:
+        return False
+    aluga = [t["texto"] for t in _textos(alvo) if _e_aluga(t)]
+    ts_uso = [t for t in _textos(alvo) if not _e_aluga(t) and not (aluga and _so_contato(t))]
+    ss = [str(s) for s in (alvo.get("sinais_sem_texto") or []) if str(s).strip()]
+    return bool(alvo.get("sinal_comercial") and (ts_uso or ss))
+
+
 def para_julgamento(leitura, mira_x, pecas, excluir):
     """(texto, vale): a leitura para o julgamento e se ALGUM sinal da foto vale para esta instalacao — o da
     fachada da seta, ou placa de vizinho com o nome em outra fonte."""
@@ -306,7 +316,7 @@ def para_julgamento(leitura, mira_x, pecas, excluir):
                       % (alvo.get("descricao") or "?", (" (%s)" % ", ".join(estado)) if estado else "",
                          "; ".join(ts) or "nenhum", "; ".join(ss) or "nenhum",
                          "sim" if alvo.get("sinal_comercial") else "não"))
-        vale = bool(alvo.get("sinal_comercial") and (ts_uso or ss))
+        vale = seta_tem_sinal(alvo)
         if aluga:
             linhas.append("PLACA DE ALUGA/VENDE NA FACHADA DA SETA: %s — sinal de imóvel vago ou à venda, NÃO de uso"
                           % "; ".join('"%s"' % x for x in aluga))
