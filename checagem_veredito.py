@@ -574,7 +574,7 @@ def fachada_ou_rede_basta(ctx, lig, validos, resposta, fotos, ids):
     seguem depois (so MEI, aluga/vende, um POI uma instalacao), 65 sobem.
 
     A fachada e a da SETA, decidida pela posicao da ponta na leitura da foto de rua (`fachada_da_seta`), e nao a que a
-    IA citou: a placa do vizinho so conta com a seta na divisa e o nome em outra fonte. A foto publicada no Google nao
+    IA citou; a placa do vizinho conta com o nome confirmado em outra fonte. A foto publicada no Google nao
     dispara (arte de divulgacao e foto de banco de imagens passavam), e o que o texto da IA diz ser igreja, templo,
     associacao ou escola publica fica de fora."""
     r = resposta or {}
@@ -612,8 +612,8 @@ def fachada_ou_rede_basta(ctx, lig, validos, resposta, fotos, ids):
 
 def _sinal_na_fachada_da_seta(ctx, lig, ids):
     """(vale, texto): a leitura da foto de rua do julgamento leve — a de frente do registro com pin do Maps a ate 60 m,
-    senao a do hidrometro, como `seek_api._foto_de_rua` — mostra uso na fachada da seta, ou a seta cai na divisa e
-    a placa de um vizinho tem o nome em outra fonte. So roda para quem ia cair nas regras 6 e 7."""
+    senao a do hidrometro, como `seek_api._foto_de_rua` — mostra uso na fachada da seta, ou a placa de um vizinho tem
+    o nome em outra fonte. So roda para quem ia cair nas regras 6 e 7."""
     import avaliar_enxuto as ae                                # ciclo: o avaliar_enxuto importa esta checagem
     import fachada_da_seta as fds
     ids = [int(i) for i in (ids or []) if str(i).isdigit()]
@@ -633,10 +633,10 @@ def _sinal_na_fachada_da_seta(ctx, lig, ids):
             return False, None
         leitura, mira_x = linha
         alvo, divisa = fds.escolher_final(leitura, mira_x)
-        if alvo:
-            return (True, "a fachada da seta mostra uso") if fds.seta_tem_sinal(alvo) else (False, None)
+        if alvo and fds.seta_tem_sinal(alvo):
+            return True, "a fachada da seta mostra uso"
         _texto, vale = fds.para_julgamento(leitura, mira_x, *fds.fontes_de_nome(cur, lig, ids))
-        return (True, "a seta cai na divisa e a placa do vizinho tem o nome em outra fonte") if vale else (False, None)
+        return (True, "a placa do vizinho tem o nome confirmado em outra fonte") if vale else (False, None)
 
 
 def decidir(ctx, validos, perdeu_por_duvida, lig=None, resposta=None, fotos=None, processo=None, ia_aprovou=True,

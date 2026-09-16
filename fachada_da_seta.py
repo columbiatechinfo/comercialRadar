@@ -12,9 +12,7 @@ Agora a divisao do trabalho e:
     ponta em `desenho_seta.PONTA_REL`), e entre varias a menor;
   - placa de fachada vizinha so vale se o NOME (a frase inteira, nao "padaria" nem "distribuidora") ou o
     TELEFONE aparece em outra fonte: nome dos registros, ficha do Serasa, busca na web. Sinal sem texto de
-    vizinho nunca vale — nao ha nome para conferir;
-  - e so com a seta na divisa ou fora de fachada: se a seta cai numa fachada identificada, e ela que decide
-    (VIZINHO ESTRITO, 16/09/2026).
+    vizinho nunca vale — nao ha nome para conferir.
 
 Sem banco aqui alem de `fontes_de_nome`; o julgamento (`avaliar_enxuto.montar_leve`) monta o texto e marca o
 rotulo da foto quando nada nela vale para a instalacao, e a checagem (`checagem_veredito`) tira essa foto das
@@ -337,14 +335,11 @@ def para_julgamento(leitura, mira_x, pecas, excluir):
             fonte = casar(t["texto"], pecas, excluir)
             (com_nome if fonte else sem_nome).append('"%s"%s' % (t["texto"], (" — o nome aparece em: %s" % fonte) if fonte else ""))
         sem_nome += [str(s) for s in (f.get("sinais_sem_texto") or []) if str(s).strip()]
-    # VIZINHO ESTRITO (dono do produto, 16/09/2026): com a seta numa fachada identificada, e ela que decide. Em Canoas,
-    # 198 fotos de rua "valiam" so pela placa do vizinho com a seta caindo numa casa sem sinal.
-    if com_nome and not alvo:
+    # VIZINHO CONFIRMADO VALE (dono do produto, 16/09/2026): "isso passa a ser valido desde que outros dados obtidos
+    # confirmem a fachada do vizinho" — com a seta onde estiver. O que era frouxo era o casamento do nome (`casar`).
+    if com_nome:
         linhas.append("placas de VIZINHOS com o nome em outra fonte (valem como sinal desta instalação): " + "; ".join(com_nome))
         vale = True
-    elif com_nome:
-        linhas.append("placas de VIZINHOS com o nome em outra fonte (NÃO são sinal desta instalação: a seta cai em outra "
-                      "fachada): " + "; ".join(com_nome))
     if sem_nome:
         linhas.append("placas e sinais de VIZINHOS sem o nome em nenhuma outra fonte (NÃO são sinal desta instalação): "
                       + "; ".join(sem_nome))
