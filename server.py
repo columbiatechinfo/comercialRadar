@@ -3091,9 +3091,9 @@ async def base_upload(request: Request, file: UploadFile = File(...),
     restart é upload que se faz duas vezes.
     """
     nome = Path(file.filename or "base.csv").name
-    if not nome.lower().endswith((".csv", ".txt", ".tsv")):
+    if not nome.lower().endswith((".csv", ".txt", ".tsv", ".parquet")):
         return JSONResponse(
-            {"erro": "Envie um .csv (ou .txt/.tsv). Planilha do Excel não "
+            {"erro": "Envie um .csv, .parquet (ou .txt/.tsv). Planilha do Excel não "
                      "serve para uma base deste tamanho: o formato para em "
                      "1.048.576 linhas e a Corsan tem 2.516.709."},
             status_code=400)

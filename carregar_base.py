@@ -73,6 +73,31 @@ def _nome_de_coluna(bruto, usados):
     return s
 
 
+#: PARQUET (dono do produto, 16/09/2026): a base completa da Corsan chegou em Parquet — 2.516.709 linhas em 215 MB,
+#: contra ~700 MB em CSV. O arquivo colunar já traz os nomes e os tipos; `espiar` lê o esquema e as primeiras linhas,
+#: e `carregar` manda lotes de 50 mil linhas para o mesmo `COPY` do CSV, tudo como texto, sem ler o arquivo inteiro.
+PARQUET = "parquet"
+
+
+def _e_parquet(caminho):
+    return str(caminho).lower().endswith(".parquet")
+
+
+def _espiar_parquet(caminho, quantas, com_unicos):
+    import pyarrow.parquet as pq
+    arq = pq.ParquetFile(caminho)
+    cab = [str(c) for c in arq.schema_arrow.names]
+    usados = set()
+    unicos = [_nome_de_coluna(c, usados) for c in cab]
+    amostra = []
+    for lote in arq.iter_batches(batch_size=max(1, quantas)):
+        for linha in lote.to_pylist()[:quantas]:
+            amostra.append({u: ("" if linha.get(c) is None else str(linha.get(c))) for c, u in zip(cab, unicos)})
+        break
+    colunas = [{"arquivo": a, "coluna": u} for a, u in zip(cab, unicos)]
+    return (colunas if com_unicos else cab), PARQUET, amostra
+
+
 def espiar(caminho, quantas=12, com_unicos=True):
     """(colunas, separador, amostra) lendo só o começo. Não carrega a base.
 
@@ -90,6 +115,8 @@ def espiar(caminho, quantas=12, com_unicos=True):
     a coluna de tipo faz o produto inteiro classificar comércio como
     residência.
     """
+    if _e_parquet(caminho):
+        return _espiar_parquet(caminho, quantas, com_unicos)
     with io.open(caminho, encoding="utf-8-sig", errors="replace",
                  newline="") as f:
         inicio = f.read(64 * 1024)
@@ -125,6 +152,31 @@ def carregar(con, caminho, tabela, cab, sep):
                 % (SCHEMA, tabela,
                    ", ".join('"%s" text' % c for c in colunas)))
     con.commit()
+
+    if sep == PARQUET or _e_parquet(caminho):
+        # EM LOTES, COMO TEXTO: cada lote vira CSV em memória (o próprio pyarrow escreve, rápido) e entra pelo mesmo
+        # `COPY`; nulo sai vazio e volta nulo (`null ''`). O pico de memória é o lote, não o arquivo.
+        import pyarrow as pa
+        import pyarrow.compute as pc
+        import pyarrow.csv as pcsv
+        import pyarrow.parquet as pq
+        sql = ("copy %s.%s from stdin with (format csv, header false, delimiter ',', quote '\"', null '')"
+               % (SCHEMA, tabela))
+        arq = pq.ParquetFile(caminho)
+        opcoes = pcsv.WriteOptions(include_header=False, quoting_style="needed")
+        try:
+            for lote in arq.iter_batches(batch_size=50000):
+                texto = pa.Table.from_arrays([pc.cast(col, pa.string()) for col in lote.columns],
+                                             names=colunas)
+                buf = pa.BufferOutputStream()
+                pcsv.write_csv(texto, buf, write_options=opcoes)
+                cur.copy_expert(sql, io.BytesIO(buf.getvalue().to_pybytes()))
+        except Exception:
+            con.rollback()
+            raise
+        con.commit()
+        cur.execute("select count(*) from %s.%s" % (SCHEMA, tabela))
+        return colunas, int(cur.fetchone()[0] or 0)
 
     # `HEADER true` FAZ O POSTGRES PULAR A PRIMEIRA LINHA. Sem isso o
     # cabeçalho vira uma linha de dados com "COD_LATITUDE" no lugar de um
