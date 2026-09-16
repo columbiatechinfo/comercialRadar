@@ -175,10 +175,11 @@ def main(argv=None):
     _log("   %7d sem decisão reconhecível (ficam NULL, não enriquecem)" % vazio)
     _log("   %7d NÃO EXISTEM na base hoje" % faltam)
 
-    cur.execute("""select count(*) from resources_root.cadastro_corsan
-                    where upper(coalesce(cidade,'')) = upper(%s)""",
-                (a.cidade,))
-    _log("   %7d ligações de %s na base hoje" % (cur.fetchone()[0], a.cidade))
+    if a.cidade:
+        cur.execute("""select count(*) from resources_root.cadastro_corsan
+                        where upper(coalesce(cidade,'')) = upper(%s)""",
+                    (a.cidade,))
+        _log("   %7d ligações de %s na base hoje" % (cur.fetchone()[0], a.cidade))
 
     if vazio:
         cur.execute("""
