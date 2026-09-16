@@ -35,6 +35,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import os
 import re
 import statistics
 import tempfile
@@ -195,6 +196,22 @@ def _cidade_ok(cidade, cad, chave):
     return bool(r) and r[0].strip().upper() == cidade.strip().upper()
 
 
+# O TESTE DE DESENVOLVIMENTO FICA FORA DA GESTAO DE PRODUCAO (16/09/2026, docs/PLANO_CIDADE_NOVA.md). Dev e
+# producao usam o mesmo banco; as decisoes e aberturas das ligacoes cujo veredito saiu de um processo de dev
+# (`percepcao.ambiente = 'desenvolvimento'`) nao entram nos numeros. A API de dev mostra tudo. O indice parcial
+# da migracao 0119 guarda so essas linhas, e a consulta nao varre os vereditos.
+EM_DEV = os.environ.get("RADAR_AMBIENTE", "").strip() == "desenvolvimento"
+
+
+def _de_teste(cur, emps):
+    """{(empresa, ligacao)} julgadas por processo de desenvolvimento; vazio na API de dev."""
+    if EM_DEV:
+        return set()
+    cur.execute("""select id_empresa::text, ligacao from radar_comercial.ligacao_veredito
+                    where id_empresa = any(%s::uuid[]) and percepcao->>'ambiente' = 'desenvolvimento'""", (emps,))
+    return set(cur.fetchall())
+
+
 # ───────────────────────────────────────────────────────── resumo ──
 @router.get("/api/seek/gestao/resumo")
 def gestao_resumo(de: str = "", ate: str = "", cidade: str = "", empresa: str = "",
@@ -222,6 +239,7 @@ def gestao_resumo(de: str = "", ate: str = "", cidade: str = "", empresa: str = 
                         where id_empresa = any(%s::uuid[]) and aberta_em >= %s and aberta_em < %s""",
                     (emps, t0, t1))
         aberturas = cur.fetchall()
+        teste = _de_teste(cur, emps)
         ligs = {r[2] for r in decisoes} | {r[1] for r in aberturas}
         cad = _cadastro(cur, emps, ligs)
         quem_ids = sorted({r[4] for r in decisoes if r[4]} | {r[2] for r in aberturas})
@@ -234,9 +252,9 @@ def gestao_resumo(de: str = "", ate: str = "", cidade: str = "", empresa: str = 
     finally:
         con.close()
 
-    cidades = sorted({r[0].strip().upper() for r in cad.values() if r[0].strip()})
-    decisoes = [r for r in decisoes if _cidade_ok(cidade, cad, (r[1], r[2]))]
-    aberturas = [r for r in aberturas if _cidade_ok(cidade, cad, (r[0], r[1]))]
+    cidades = sorted({r[0].strip().upper() for k, r in cad.items() if r[0].strip() and k not in teste})
+    decisoes = [r for r in decisoes if (r[1], r[2]) not in teste and _cidade_ok(cidade, cad, (r[1], r[2]))]
+    aberturas = [r for r in aberturas if (r[0], r[1]) not in teste and _cidade_ok(cidade, cad, (r[0], r[1]))]
 
     ultima = {}
     for r in decisoes:
@@ -336,6 +354,7 @@ def gestao_ligacoes(quem: str = "", de: str = "", ate: str = "", cidade: str = "
     try:
         cur = con.cursor()
         emps, _, _ = _empresas(cur, u, empresa)
+        teste = _de_teste(cur, emps)
         linhas, varridas, fim = [], 0, False
         while len(linhas) < limite and varridas < MAX_VARRIDAS:
             lote = max(limite * 2, 200)
@@ -361,7 +380,7 @@ def gestao_ligacoes(quem: str = "", de: str = "", ate: str = "", cidade: str = "
             vig = _vigentes(cur, emps, ligs)
             for r in bloco:
                 k = (r[1], r[2])
-                if not _cidade_ok(cidade, cad, k):
+                if k in teste or not _cidade_ok(cidade, cad, k):
                     continue
                 v = vig.get(k)
                 eh_vigente = bool(v and v[0] == r[0])
@@ -395,6 +414,8 @@ def gestao_ligacao(ligacao: str, empresa: str = "", u: _auth.Usuario = Depends(_
     try:
         cur = con.cursor()
         emps, _, _ = _empresas(cur, u, empresa)
+        if any(lig == ligacao for _, lig in _de_teste(cur, emps)):
+            raise HTTPException(404, "ligação não encontrada")
         cur.execute("""select id_empresa::text, veredito,
                               coalesce(percepcao->'resposta'->>'motivo', justificativa), avaliado_em
                          from radar_comercial.ligacao_veredito
@@ -503,6 +524,7 @@ def gestao_exportar(e: ExportarEntrada, request: Request, u: _auth.Usuario = Dep
         cur = con.cursor()
         emps, visiveis, unica = _empresas(cur, u, e.empresa)
         nome_emp = {x["id"]: x["nome"] for x in visiveis}
+        teste = _de_teste(cur, emps)
         if formato == "csv":
             texto = io.TextIOWrapper(tmp, encoding="utf-8-sig", newline="")
             escritor = csv.writer(texto, delimiter=";", quoting=csv.QUOTE_MINIMAL)
@@ -566,7 +588,7 @@ def gestao_exportar(e: ExportarEntrada, request: Request, u: _auth.Usuario = Dep
                 ia = {(a, b): (c, d, f) for a, b, c, d, f in cur.fetchall()}
             for i, emp, lig, acao, motivo, quem_nome, em, aberta, lote in bloco:
                 k = (emp, lig)
-                if not _cidade_ok(cidade, cad, k):
+                if k in teste or not _cidade_ok(cidade, cad, k):
                     continue
                 v = vig.get(k)
                 eh_vig = bool(v and v[0] == i)

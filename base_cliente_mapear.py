@@ -67,6 +67,7 @@ COMPLEMENTARES = {
     "bairro": "o bairro",
     "cep": "o CEP",
     "cidade": "a cidade",
+    "qualificacao": "a qualificação do cliente para o cruzamento: SIM, SIM com análise humana ou NÃO",
 }
 AMOSTRA_LINHAS = 12
 TETO_VALORES = 40

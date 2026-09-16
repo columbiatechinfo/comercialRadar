@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import collections
 import gzip
+import os
 import json
 import threading
 import time
@@ -360,6 +361,13 @@ def _tipo_da_imagem(b, padrao):
     return padrao
 
 
+# O TESTE DE DESENVOLVIMENTO FICA FORA DA PRODUCAO (16/09/2026, docs/PLANO_CIDADE_NOVA.md). Dev e producao usam o
+# mesmo banco; o veredito gravado por processo de dev leva `percepcao.ambiente = 'desenvolvimento'`. A API de
+# producao nao lista nem abre esse caso; a de dev mostra tudo.
+EM_DEV = os.environ.get("RADAR_AMBIENTE", "").strip() == "desenvolvimento"
+_SEM_TESTE = "" if EM_DEV else " and percepcao->>'ambiente' is distinct from 'desenvolvimento'"
+
+
 def _montar_fila(u, cidade: str | None):
     con = _con(u)
     try:
@@ -369,7 +377,8 @@ def _montar_fila(u, cidade: str | None):
                               percepcao::jsonb->'resposta'->'fotos'->>'confirmam',
                               percepcao::jsonb->'resposta'->'busca', percepcao::jsonb->>'prioridade',
                               percepcao::jsonb->'classe'
-                         from radar_comercial.ligacao_veredito""")
+                         from radar_comercial.ligacao_veredito
+                        where true""" + _SEM_TESTE)
         vered, empresas, prova, prioridade, classe = {}, set(), {}, {}, {}
         for l, v, t, p, emp, fotos_ok, busca, prio, cls in cur.fetchall():
             prioridade[str(l)] = prio
@@ -476,7 +485,8 @@ def seek_caso(ligacao: str, u: _auth.Usuario = Depends(_quem)):
     con = _con(u)
     try:
         cur = con.cursor()
-        cur.execute("select id_empresa from radar_comercial.ligacao_veredito where ligacao = %s", (ligacao,))
+        cur.execute("select id_empresa from radar_comercial.ligacao_veredito where ligacao = %s" + _SEM_TESTE,
+                    (ligacao,))
         emp = cur.fetchone()
         if not emp:
             raise HTTPException(404, "ligação sem julgamento")

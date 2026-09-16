@@ -49,6 +49,11 @@ PAPEIS = {
     "situacao":     ("sit_ligacao",   "text"),
     "latitude":     ("cod_latitude",  "numeric"),
     "longitude":    ("cod_longitude", "numeric"),
+    # A QUALIFICACAO DO CLIENTE (dono do produto, 16/09/2026): SIM, SIM_COM_ANALISE_HUMANA ou NAO, como coluna da
+    # base. Sem ela `apta_cruzamento` (coluna gerada: qualificacao like 'SIM%') fica falsa e o vinculo descarta
+    # tudo (`regra_vinculo.py`). O texto vira um dos tres status pela mesma regra do `aplicar_qualificacao`, e o
+    # que vem depois da virgula ("NAO, sem economia faturada") vai para `qualificacao_motivo`.
+    "qualificacao": ("qualificacao",  "qualificacao"),
 }
 
 #: O QUE O PRODUTO USA ALÉM DO QUE A TELA PERGUNTA.
@@ -104,6 +109,12 @@ def _limpo(coluna, tipo):
     cada conversão limpa o que sabe limpar e devolve NULL no que não entende.
     """
     c = '"%s"' % coluna
+    if tipo in ("qualificacao", "qualificacao_motivo"):
+        # A MESMA REGRA DA PLANILHA DE CANOAS, importada e nao copiada. O `%%` de la existe para o `%` da
+        # formatacao do SQL de la; aqui a expressao entra pronta, e o `%%` viraria dois curingas.
+        import aplicar_qualificacao as aq
+        modelo = aq.STATUS if tipo == "qualificacao" else aq.MOTIVO
+        return "(%s)" % modelo.replace("%%", "%").format(col=coluna)
     if tipo == "bigint":
         # Só os dígitos, e nulo se sobrar nada. `nullif` evita `''::bigint`.
         return ("nullif(regexp_replace(%s, '[^0-9]', '', 'g'), '')::bigint" % c)
@@ -144,6 +155,8 @@ def plano(cur, base_id):
         origem = (mapa or {}).get(papel)
         if origem:
             destino[col] = (origem, tipo)
+    if "qualificacao" in destino:
+        destino["qualificacao_motivo"] = (destino["qualificacao"][0], "qualificacao_motivo")
     # O casamento por nome cobre o que a tela não pergunta.
     for col, tipo in EXTRAS.items():
         if col not in destino and col in brutas:
@@ -273,6 +286,11 @@ def main(argv=None):
     if vazias:
         _log("PAPÉIS NÃO DECLARADOS: %s"
              % ", ".join(c[0] for c in vazias))
+    if "qualificacao" not in destino:
+        # A TABELA NOVA SUBSTITUI A INTEIRA: sem a coluna declarada, TODAS as ligacoes saem sem qualificacao —
+        # inclusive as de cidades ja qualificadas antes —, `apta_cruzamento` fica falsa e o vinculo descarta tudo.
+        _log("ATENÇÃO: sem a coluna de QUALIFICAÇÃO (SIM / SIM com análise / NÃO) a base")
+        _log("   inteira sai sem qualificação, e o vínculo descarta todas as ligações.")
     faltam = [c for c in EXTRAS if c not in destino]
     if faltam:
         _log("FICAM NULAS (o arquivo não as traz e a tela não as pergunta):")

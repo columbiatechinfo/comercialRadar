@@ -736,6 +736,10 @@ def fila(con, limite, refazer, ligacoes=None, sem_catalogo=False,
 
 
 def gravar(con, ligacao, v, resposta, percepcao, resumo, modelo, n_img, dt):
+    # O TESTE DE DESENVOLVIMENTO LEVA A MARCA (16/09/2026, docs/PLANO_CIDADE_NOVA.md): dev e producao gravam no
+    # mesmo banco, e a SEEK e a gestao de producao nao mostram o veredito com `ambiente = 'desenvolvimento'`.
+    if os.environ.get("RADAR_AMBIENTE", "").strip() == "desenvolvimento" and isinstance(percepcao, dict):
+        percepcao = dict(percepcao, ambiente="desenvolvimento")
     cur = con.cursor()
     cur.execute("""
         insert into radar_comercial.ligacao_veredito

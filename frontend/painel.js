@@ -2115,6 +2115,7 @@
       endereco: "Endereço (logradouro)", tipo_cliente: "Tipo de cliente",
       situacao: "Situação da ligação (ativa, cortada, inativa…)",
       numero: "Número", bairro: "Bairro", cep: "CEP", cidade: "Cidade",
+      qualificacao: "Qualificação (SIM, SIM com análise humana, NÃO)",
     };
     $("bases-obrigatorias").innerHTML =
       (d.obrigatorias || []).map((c) => linha(c, ROT[c] || c, mapa[c])).join("");

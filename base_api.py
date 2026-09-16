@@ -50,7 +50,9 @@ rotas = APIRouter(prefix="/api/base-cliente", tags=["base do cliente"])
 # resultado — ela o inverte.
 OBRIGATORIAS = ("latitude", "longitude", "ligacao", "endereco",
                 "tipo_cliente", "situacao")
-COMPLEMENTARES = ("numero", "bairro", "cep", "cidade")
+# A QUALIFICACAO (16/09/2026) e complementar e nao obrigatoria: a base pode subir sem ela, mas sem ela nenhuma
+# ligacao fica apta ao cruzamento — o `materializar_base` avisa.
+COMPLEMENTARES = ("numero", "bairro", "cep", "cidade", "qualificacao")
 
 
 def _linhas(cur):
