@@ -33,7 +33,8 @@ Dev e produção usam o mesmo banco `a2l` e a mesma fila `radar_comercial.job`. 
 | 2 | feita: Receita e CNEFE viram ponto na etapa 2; a extração cria a validação ao terminar | `3a5dd9c` |
 | 3 | feita: `validacao.py` (lotes, dependências, tetos), `validacao_executor.py` (um por máquina, contêiner destacado por tarefa), compose com proxy do docker; o teto de conexões conta as sessões reais do banco | `3a5dd9c`, `df610b2` |
 | 4 | casca feita: `/validacao` no visual da SEEK; extração com filete, logo e azul da marca; "Avaliar com IA" cria a validação; `sessao.js` não sobrescreve mais os tokens da SEEK | `df610b2`, `8ebf8a7` |
-| 5 | em curso: Chuvisca, ~4 quadras (`teste_dev_chuvisca_4q`, 40 ligações, 24 residenciais ativas); qualificação original copiada em `radar_comercial.teste_dev_chuvisca_qualificacao` para reverter | — |
+| 5 | feito em dev: Chuvisca, ~4 quadras, 18 vínculos, validação #1 com 4 ligações e 8 tarefas em 5 min 10 s, 4 revisão humana, 0 na SEEK de produção; qualificação revertida. Galeria: https://claude.ai/artifact/9Y9tqaP3rEvjHCGi9QvraP | `producao-2026-09-16.6` |
+| produção | pronto para o dono do produto disparar pela tela: `producao-2026-09-16.7` (API), worker da fila reconstruído da tag, executor de produção no i9 (todas as etapas) e no notebook (fotos e conferência); revisão de vínculos só na cidade; índice da Receita por município agendado para 23:30 de 16/09 | `producao-2026-09-16.7` |
 
 ### Achados no caminho
 
