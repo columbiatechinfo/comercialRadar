@@ -882,6 +882,11 @@ def main(argv=None) -> int:
                 _tolerante_i9(["fontes_para_poi.py", "--fonte", _fonte_mun, "--cidade", cidade,
                                "--municipio", str(cod), "--uf", uf, "--aplicar"],
                               "%s → ponto" % ("Receita" if _fonte_mun == "receita" else "CNEFE"))
+            # A SITUAÇÃO CADASTRAL LOGO DEPOIS (16/09/2026): o resolvedor de endereço só aceita POI da Receita com
+            # linha em `receita_data` (regra de 11/09: só o ativo), e quem a preenche não estava na extração. No teste
+            # de Chuvisca os 285 pontos da Receita ficaram fora da normalização e do vínculo.
+            _tolerante_i9(["carregar_receita_data.py", "--cidade", cidade, "--aplicar"],
+                          "situação cadastral da Receita")
 
     # ── 3 · Cadastur/MTur ─────────────────────────────────────────────────
     _etapa(3, "Cadastur/MTur — o que o Estado registrou")

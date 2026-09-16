@@ -44,6 +44,9 @@ def _log(m):
 def main(argv=None):
     p = argparse.ArgumentParser()
     p.add_argument("--aplicar", action="store_true")
+    # SÓ A CIDADE (16/09/2026): a extração de uma cidade nova chama este passo, e sem o recorte ele regravaria a
+    # situação de todos os POIs da Receita da empresa (59 mil em Canoas) a cada cidade.
+    p.add_argument("--cidade", default="", help="só os POIs da Receita desta cidade (sem acento e sem caixa)")
     a = p.parse_args(argv)
 
     con = bc.conectar()
@@ -51,7 +54,10 @@ def main(argv=None):
     cur.execute("set statement_timeout = '1800s'")
     cur.execute("""select id, cnpj from radar_comercial.pois
                     where lower(fonte) = 'receita' and fundido_em is null
-                      and cnpj ~ '^[0-9]{14}$'""")
+                      and cnpj ~ '^[0-9]{14}$'
+                      and (%s = '' or translate(upper(coalesce(cidade, '')), 'ÁÀÂÃÉÊÍÓÔÕÚÜÇ', 'AAAAEEIOOOUUC')
+                                    = translate(upper(%s), 'ÁÀÂÃÉÊÍÓÔÕÚÜÇ', 'AAAAEEIOOOUUC'))""",
+                (a.cidade, a.cidade))
     pois = cur.fetchall()
     _log("%d POIs da Receita com CNPJ de 14 digitos" % len(pois))
 
