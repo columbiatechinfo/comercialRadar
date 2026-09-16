@@ -72,6 +72,25 @@ var SEEK = (function () {
   function achouTxt(f) { return ehProva(f) ? 'confirmou' : 'achou'; }
   var FONTES_DADO = FONTES.slice(1);   /* as que dizem achou/não achou */
 
+  /* A CLASSE DO CASO (dono do produto, 16/09/2026): ramo do negócio e o que a IA viu nas imagens. Os ids são os
+   * mesmos de `classificacao.py`, que grava tudo em `percepcao.classe` na hora do julgamento. */
+  var SEGMENTOS = [
+    {id: 'restaurante', rot: 'restaurante / padaria'}, {id: 'loja', rot: 'loja / varejo'},
+    {id: 'beleza', rot: 'salão / barbearia'}, {id: 'oficina', rot: 'oficina / auto'},
+    {id: 'supermercado', rot: 'supermercado / atacado'}, {id: 'industria', rot: 'indústria'},
+    {id: 'supermat', rot: 'construção'}, {id: 'transporte', rot: 'transporte'},
+    {id: 'servico', rot: 'serviço / escritório'}, {id: 'saude', rot: 'saúde / farmácia'},
+    {id: 'escola', rot: 'escola / curso'}, {id: 'academia', rot: 'academia'},
+    {id: 'posto', rot: 'posto'}, {id: 'hotel', rot: 'hotel / pousada'},
+    {id: 'banca', rot: 'banca'}, {id: 'religioso', rot: 'igreja / associação'},
+    {id: 'outros', rot: 'outros'}
+  ];
+  var VISUAL = [
+    {id: 'fachada_rua', rot: 'fachada na rua'}, {id: 'letreiro', rot: 'letreiro / placa'},
+    {id: 'vitrine', rot: 'vitrine / loja'}, {id: 'foto_google', rot: 'foto do Google'},
+    {id: 'sem_imagem', rot: 'sem imagem'}
+  ];
+
   var VEREDITOS = {
     aprovado:       {rot: 'aprovado', cor: '#1F9D62', tom: 'aprova'},
     revisao_humana: {rot: 'revisão humana', cor: '#F28C28', tom: 'atencao'},
@@ -153,6 +172,8 @@ var SEEK = (function () {
     fichas: {}, ordemFichas: [], carregando: {},
     sel: null, abertos: {}, mudos: false, rotuloCliente: true, tira: true,
     busca: '', termo: '', fIA: 'todos', fDec: 'todos', fQual: 'todos', fFonte: {},
+    /* os recortes de classe são multiescolha: lista de ids marcados */
+    fSeg: [], fVis: [],
     imgs: [], pendente: null, chamado: null,
     /* A TRAVA (14/09/2026): quem está com cada ligação aberta, a aba desta tela e
      * o caso aberto aqui que outra pessoa segura */
@@ -276,6 +297,8 @@ var SEEK = (function () {
           decidido_por: l[ix.decidido_por], prioridade: l[ix.prioridade] || null, f: {}
         };
         FONTES_DADO.forEach(function (f) { c.f[f.id] = !!l[ix['f_' + f.id]]; });
+        c.seg = l[ix.segmentos] || [];
+        c.vis = l[ix.visual] || [];
         c.txt = (c.ligacao + ' ' + c.titular + ' ' + c.endereco + ' ' + c.bairro).toLowerCase();
         if (c.qualificacao) { quals[c.qualificacao] = 1; }
         return c;
@@ -306,13 +329,16 @@ var SEEK = (function () {
       if (S.fFonte[k] === 'sim' && !c.f[k]) { return false; }
       if (S.fFonte[k] === 'nao' && c.f[k]) { return false; }
     }
+    /* MULTIESCOLHA: nada marcado não recorta; marcadas somam (OU dentro do mesmo filtro) */
+    if (sem !== '#seg' && S.fSeg.length && !S.fSeg.some(function (s) { return (c.seg || []).indexOf(s) >= 0; })) { return false; }
+    if (sem !== '#vis' && S.fVis.length && !S.fVis.some(function (s) { return (c.vis || []).indexOf(s) >= 0; })) { return false; }
     if (sem !== '#texto' && S.termo && c.txt.indexOf(S.termo) < 0) { return false; }
     return true;
   }
 
   function filtra() {
     S.termo = S.busca.trim().toLowerCase();
-    var r = {vistos: [], ia: {}, dec: {}, qual: {}, fs: {}, ft: {}, tIA: 0, tDec: 0, tQual: 0};
+    var r = {vistos: [], ia: {}, dec: {}, qual: {}, fs: {}, ft: {}, seg: {}, vis: {}, tIA: 0, tDec: 0, tQual: 0};
     FONTES_DADO.forEach(function (f) { r.fs[f.id] = 0; r.ft[f.id] = 0; });
     for (var i = 0; i < S.casos.length; i++) {
       var c = S.casos[i];
@@ -323,6 +349,12 @@ var SEEK = (function () {
       for (var j = 0; j < FONTES_DADO.length; j++) {
         var id = FONTES_DADO[j].id;
         if (passa(c, id)) { r.ft[id]++; if (c.f[id]) { r.fs[id]++; } }
+      }
+      if (passa(c, '#seg')) {
+        (c.seg || []).forEach(function (s) { r.seg[s] = (r.seg[s] || 0) + 1; });
+      }
+      if (passa(c, '#vis')) {
+        (c.vis || []).forEach(function (s) { r.vis[s] = (r.vis[s] || 0) + 1; });
       }
     }
     return r;
@@ -374,6 +406,21 @@ var SEEK = (function () {
         + '<span>' + esc(f.curto) + '</span><b>' + num(n) + '</b></button>';
     }).join('');
     $('#f-limpa').hidden = !Object.keys(S.fFonte).length;
+
+    function chips(lista, marcadas, conta, atrib, dica) {
+      return lista.map(function (o) {
+        var on = marcadas.indexOf(o.id) >= 0;
+        return '<button class="fch' + (on ? ' on' : '') + '" data-' + atrib + '="' + o.id + '"'
+          + ' title="' + esc(o.rot + ' — ' + dica) + '">'
+          + '<i>' + (on ? '✓' : '·') + '</i><span>' + esc(o.rot) + '</span><b>' + num(conta[o.id] || 0) + '</b></button>';
+      }).join('');
+    }
+    $('#f-segmentos').innerHTML = chips(SEGMENTOS, S.fSeg, r.seg, 'fseg',
+      'clique para incluir este ramo no recorte; várias marcadas somam');
+    $('#f-visual').innerHTML = chips(VISUAL, S.fVis, r.vis, 'fvis',
+      'clique para incluir esta prova visual no recorte; várias marcadas somam');
+    $('#f-limpa-seg').hidden = !S.fSeg.length;
+    $('#f-limpa-vis').hidden = !S.fVis.length;
 
     var lote = $('#f-lote');
     lote.innerHTML = '<span>decidir as filtradas</span><b>' + num(S.vistos.length) + '</b>';
@@ -1895,6 +1942,14 @@ var SEEK = (function () {
     if (S.fDec !== 'todos') {
       f.push('decisão: ' + (DECISOES.filter(function (d) { return d.id === S.fDec; })[0] || {}).rot);
     }
+    if (S.fSeg.length) {
+      f.push('ramo: ' + S.fSeg.map(function (s) {
+        return (SEGMENTOS.filter(function (o) { return o.id === s; })[0] || {rot: s}).rot; }).join(' ou '));
+    }
+    if (S.fVis.length) {
+      f.push('imagem: ' + S.fVis.map(function (s) {
+        return (VISUAL.filter(function (o) { return o.id === s; })[0] || {rot: s}).rot; }).join(' ou '));
+    }
     Object.keys(S.fFonte).forEach(function (k) {
       f.push(fonte(k).curto + ': ' + (S.fFonte[k] === 'sim' ? 'achou' : 'não achou'));
     });
@@ -2322,6 +2377,8 @@ var SEEK = (function () {
       abreDecisao(S.vistos.map(function (c) { return c.ligacao; }), null);
     });
     $('#f-limpa').addEventListener('click', function () { S.fFonte = {}; refiltra(); });
+    $('#f-limpa-seg').addEventListener('click', function () { S.fSeg = []; refiltra(); });
+    $('#f-limpa-vis').addEventListener('click', function () { S.fVis = []; refiltra(); });
 
     document.addEventListener('change', function (ev) {
       var id = ev.target.id;
@@ -2397,6 +2454,14 @@ var SEEK = (function () {
       if (vb) { acaoVisor(vb.getAttribute('data-vis')); return; }
       if (visorAberto()) { return; }
 
+      var fs = t.closest('[data-fseg]'), fv = t.closest('[data-fvis]');
+      if (fs || fv) {
+        var lista = fs ? S.fSeg : S.fVis, id2 = (fs || fv).getAttribute(fs ? 'data-fseg' : 'data-fvis');
+        var i2 = lista.indexOf(id2);
+        if (i2 >= 0) { lista.splice(i2, 1); } else { lista.push(id2); }
+        refiltra();
+        return;
+      }
       var ff = t.closest('[data-ff]');
       if (ff) {
         var id = ff.getAttribute('data-ff'), e = S.fFonte[id];

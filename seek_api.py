@@ -367,11 +367,14 @@ def _montar_fila(u, cidade: str | None):
         cur.execute("""select ligacao, veredito, avaliado_em,
                               percepcao::jsonb->'checagem'->>'porque', id_empresa,
                               percepcao::jsonb->'resposta'->'fotos'->>'confirmam',
-                              percepcao::jsonb->'resposta'->'busca', percepcao::jsonb->>'prioridade'
+                              percepcao::jsonb->'resposta'->'busca', percepcao::jsonb->>'prioridade',
+                              percepcao::jsonb->'classe'
                          from radar_comercial.ligacao_veredito""")
-        vered, empresas, prova, prioridade = {}, set(), {}, {}
-        for l, v, t, p, emp, fotos_ok, busca, prio in cur.fetchall():
+        vered, empresas, prova, prioridade, classe = {}, set(), {}, {}, {}
+        for l, v, t, p, emp, fotos_ok, busca, prio, cls in cur.fetchall():
             prioridade[str(l)] = prio
+            # A CLASSE (16/09/2026): segmento do negócio e o que a IA viu nas imagens, para os filtros da fila
+            classe[str(l)] = cls if isinstance(cls, dict) else {}
             vered[str(l)] = (v, t, p)
             empresas.add(str(emp))
             prova[str(l)] = (_busca_confirma(busca), fotos_ok == "true")
@@ -405,7 +408,7 @@ def _montar_fila(u, cidade: str | None):
         con.close()
     colunas = ["ligacao", "titular", "endereco", "bairro", "cidade", "qualificacao", "economias",
                "ia", "checagem", "avaliado_em"] + ["f_" + f for f in FONTES[1:]] + ["decisao", "decidido_em", "decidido_por",
-                                                                                   "prioridade"]
+                                                                                   "prioridade", "segmentos", "visual"]
     linhas = []
     # PRIORIDADE BAIXA NO FIM (15/09/2026): revisao so pela Receita e sem sinal nas imagens
     for lig in sorted(cad, key=lambda x: (prioridade.get(x) == "baixa", int(x) if x.isdigit() else 0)):
@@ -419,7 +422,9 @@ def _montar_fila(u, cidade: str | None):
                        "cadastur" in fs, "airbnb" in fs,
                        prova.get(lig, (False, False))[0], prova.get(lig, (False, False))[1],
                        d[0] if d else None, d[1].isoformat(timespec="minutes") if d else None,
-                       d[2] if d else None, prioridade.get(lig)])
+                       d[2] if d else None, prioridade.get(lig),
+                       (classe.get(lig) or {}).get("segmentos") or [],
+                       (classe.get(lig) or {}).get("visual") or []])
     return {"colunas": colunas, "linhas": linhas, "gerado_em": time.strftime("%Y-%m-%dT%H:%M:%S")}
 
 
@@ -533,7 +538,8 @@ def seek_caso(ligacao: str, u: _auth.Usuario = Depends(_quem)):
                   # comentarios e o sinal concreto das fotos; a prioridade sai do codigo (revisao so pela Receita)
                   "uso": resp.get("uso"), "imovel": resp.get("imovel"), "comentarios": resp.get("comentarios"),
                   "fontes": resp.get("fontes") or [], "sinal": fotos_ia.get("sinal"),
-                  "prioridade": p.get("prioridade"), "tem_dados": bool(dados)}
+                  "prioridade": p.get("prioridade"), "tem_dados": bool(dados),
+                  "classe": p.get("classe") or {}}
         imagens, redes, cidade, cep = [], [], None, None
         # AS EVIDENCIAS DO JULGAMENTO LEVE, pelas funcoes que o montaram (`_julgamento`). Cada parte e opcional: se
         # uma quebrar (um modulo do julgamento mudou de forma), a ficha sai sem ela e com o aviso.

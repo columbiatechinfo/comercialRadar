@@ -578,8 +578,17 @@ def uma(poco, ligacao, modelo, placar, trava, aplicar):
     if LEVE and v == "revisao_humana":
         fs = cv.fontes_confirmadas(r, rot)
         prioridade = "baixa" if set(fs) <= {"receita"} and not cv.imagem_tem_sinal(r) else "normal"
+    # A CLASSE DO CASO (dono do produto, 16/09/2026): o ramo do negócio e o que a IA viu nas imagens, gravados
+    # no veredito para a SEEK filtrar por eles.
+    classe = None
+    try:
+        import classificacao as cl
+        with poco.pegar() as con:
+            classe = cl.classificar(con, ligacao, r, rot, (checagem or {}).get("validos") or ids)
+    except Exception as e:                                     # noqa: BLE001
+        al._log("   %-10s classe FALHOU: %s" % (ligacao, str(e)[:60]))
     percepcao = {"processo": processo, "prioridade": prioridade, "dados": dados, "fotos": rot, "fotos_ref": refs, "resposta": r,
-                 "ids": ids}
+                 "ids": ids, "classe": classe}
     if checagem:
         percepcao["checagem"] = checagem
     resumo = {"pois": len(ids), "fontes": n_fontes, "ids": ids}
