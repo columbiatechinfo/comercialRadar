@@ -53,7 +53,7 @@ import sys
 import base_comum as bc
 import provas_datadas as pdat
 
-REGRA = "checagem do codigo de 16/09/2026 v7 (fachada da seta com sinal ou rede social + outra fonte, so SIM) · v6 (fonte única promove, foto do Google datada, iFood 6m, Maps 12m) · v5 (número, complemento, cada fonte com prova recente, fonte única, rede social, vizinho, ficha do Maps, aluga/vende e anúncio)"
+REGRA = "checagem do codigo de 16/09/2026 v8 (as 16 regras do dono: Street View sem prazo, iFood nao basta so, rede social ate 2 anos so SIM, sem a trava do so MEI, aluga/vende nao segura com uso visto pela IA, sem registro valido vai para revisao, a mesma empresa vale para todas as ligacoes do mesmo endereco) · v7 (fachada da seta com sinal ou rede social + outra fonte, so SIM) · v6 (fonte única promove, foto do Google datada, iFood 6m, Maps 12m) · v5 (número, complemento, cada fonte com prova recente, fonte única, rede social, vizinho, ficha do Maps, aluga/vende e anúncio)"
 
 #: AS FONTES INDEPENDENTES (dono do produto, 14 e 15/09/2026). Cada uma conta uma vez; o Serasa e a
 #: Casa dos Dados SAO a Receita — a IA do teste contou "Receita" e "Serasa" como duas e aprovou.
@@ -199,28 +199,24 @@ def imagem_tem_sinal(resposta):
     return bool(f.get("confirmam")) and sinal not in _SEM_SINAL and not sinal.startswith("nenhum")
 
 
-#: Meses em que a loja vista no iFood e a avaliacao de cliente no Google bastam SOZINHAS (dono do produto, 22h de 15/09/2026)
-IFOOD_SOZINHO_MESES = 6
+#: Meses em que a avaliacao de cliente no Google basta SOZINHA (dono do produto, 15/09/2026; o iFood deixou de bastar
+#: sozinho em 16/09/2026)
 MAPS_SOZINHO_MESES = 12
 
 
 def fonte_unica_basta(ctx, validos, resposta, fotos):
-    """(basta, texto): a unica fonte que aprova sozinha (dono do produto, 15/09/2026) — a fachada no Street
-    View que mostra o uso (de ate 2 anos), ou a foto publicada de menos de 1 ano que mostra o uso; o
-    comentario de menos de 1 ano so com uma imagem que confirma."""
+    """(basta, texto): a prova forte que aprova sozinha (AS 16 REGRAS (dono do produto, 16/09/2026), regra 8) — a
+    avaliacao de cliente no Google de ate 12 meses, a foto publicada do lugar de menos de 1 ano que mostra o uso, a
+    fachada no Street View que mostra o uso DE QUALQUER DATA, ou o comentario de menos de 1 ano com imagem que confirma.
+    A loja no iFood deixou de bastar sozinha: precisa de outra confirmacao."""
     r = resposta or {}
     f = r.get("fotos") or {}
-    # O IFOOD E O COMENTARIO RECENTE BASTAM SOZINHOS (dono do produto, 15/09/2026, 22h): o iFood so lista quem
-    # opera, e o comentario de cliente de ate 12 meses diz que alguem foi atendido ali.
     for pid in validos or []:
         for p in (ctx.provas.get(pid) or {}).get("provas") or []:
             if not p.get("data"):
                 continue
-            m = pdat.meses(p["data"])
-            if p.get("fonte") == "ifood" and m <= IFOOD_SOZINHO_MESES:
-                return True, "loja vista no iFood em %s" % pdat.mes_ano(p["data"])
             if (p.get("fonte") == "maps" and "avaliação" in str(p.get("o_que") or "")
-                    and m <= MAPS_SOZINHO_MESES):
+                    and pdat.meses(p["data"]) <= MAPS_SOZINHO_MESES):
                 return True, "avaliação de cliente no Google em %s" % pdat.mes_ano(p["data"])
     if not imagem_tem_sinal(r):
         return False, "nenhuma imagem mostra sinal de uso"
@@ -230,8 +226,8 @@ def fonte_unica_basta(ctx, validos, resposta, fotos):
         except (TypeError, ValueError, IndexError):
             continue
         tipo, dt = fonte_da_imagem(rot), pdat.data_do_rotulo(rot)
-        if tipo == "foto de rua" and dt and pdat.recente(dt):
-            return True, "a fachada no Street View de %s mostra o uso" % pdat.mes_ano(dt)
+        if tipo == "foto de rua":
+            return True, "a fachada no Street View%s mostra o uso" % ((" de %s" % pdat.mes_ano(dt)) if dt else "")
         if tipo == "google maps" and dt and pdat.meses(dt) < 12:
             return True, "a foto publicada de %s (menos de 1 ano) mostra o uso" % pdat.mes_ano(dt)
     c = r.get("comentarios") or {}
@@ -239,7 +235,16 @@ def fonte_unica_basta(ctx, validos, resposta, fotos):
         coments = pdat.comentarios_recentes(ctx.con, validos, n=1, ate_meses=11) if getattr(ctx, "con", None) else {}
         if any(coments.get(p) for p in validos):
             return True, "comentário de cliente de menos de 1 ano, com imagem que confirma o uso"
-    return False, "a fonte única não é fachada no Street View nem foto ou comentário de menos de 1 ano"
+    return False, "a prova única não é fachada no Street View, avaliação no Google de até 12 meses, nem foto ou comentário de menos de 1 ano"
+
+
+def ia_viu_uso(resposta):
+    """REGRA 13 (dono do produto, 16/09/2026): a placa ou o anuncio de aluga/vende nao segura a aprovacao quando a IA
+    identificou uso comercial, industrial ou de servico no imovel ("aprova se a IA identificar fim economico")."""
+    uso = (resposta or {}).get("uso")
+    if not isinstance(uso, dict) or uso.get("nao_residencial") is not True:
+        return False
+    return not RE_NAO_COMERCIO.search(str(uso.get("o_que") or ""))
 
 
 def vago_depois_das_provas(ctx, validos, fotos, redes=()):
@@ -300,8 +305,8 @@ def fontes_com_prova_recente(ctx, validos, resposta, fotos):
             except (TypeError, ValueError, IndexError):
                 continue
             fi, dt = fonte_da_imagem(rot), pdat.data_do_rotulo(rot)
-            if fi and dt and pdat.recente(dt) and fi not in saida:
-                saida[fi] = "imagem %s de %s" % (n, pdat.mes_ano(dt))
+            if fi and (fi == "foto de rua" or (dt and pdat.recente(dt))) and fi not in saida:
+                saida[fi] = "imagem %s de %s" % (n, pdat.mes_ano(dt) if dt else "data desconhecida")
     for x in (resposta or {}).get("_redes") or []:
         dt = pdat.data_de_texto(x.get("data"))
         rede = str(x.get("rede") or "").lower()
@@ -419,13 +424,17 @@ class Contexto:
         ligs = sorted({str(x) for x in ligacoes})
         ids = sorted({int(x) for x in pois if str(x).isdigit()})
         cur.execute("""select num_ligacao::text, coalesce(end_ligacao,''), coalesce(nom_bairro,''),
-                              coalesce(qualificacao,''), coalesce(nro::text,'')
+                              coalesce(qualificacao,''), coalesce(nro::text,''), coalesce(nom_logradouro,''),
+                              coalesce(cidade,'')
                          from resources_root.cadastro_corsan where num_ligacao::text = any(%s)""", (ligs,))
-        self.compl_inst, self.qualificacao, self.nro_inst = {}, {}, {}
-        for l, e, b, q, nro in cur.fetchall():
+        self.compl_inst, self.qualificacao, self.nro_inst, self.endereco = {}, {}, {}, {}
+        for l, e, b, q, nro, lgr, cid in cur.fetchall():
             self.compl_inst[l] = complemento_da_instalacao(e, b)
             self.qualificacao[l] = q.upper()
             self.nro_inst[l] = nro
+            # a chave do MESMO ENDERECO (regra 4, 16/09/2026): cidade, rua e numero; sem numero nao ha chave
+            self.endereco[l] = ((_sem_acento(cid).lower().strip(), _sem_acento(lgr).lower().strip(), nro.strip())
+                                if nro.strip() else None)
         # REGRAS 5 E 6: o numero e as provas datadas de cada POI, as mesmas que o prompt mostrou
         self.provas = pdat.carregar(con, ids)
         cur.execute("""select p.id, lower(coalesce(p.fonte,'')), coalesce(p.nome,''), coalesce(p.categoria,''),
@@ -555,7 +564,8 @@ def prova_recente(ctx, validos, resposta=None, fotos=None):
                 continue
             dt = pdat.data_do_rotulo(rot)
             texto = "foto %s de %s mostra o comércio" % (n, pdat.mes_ano(dt) if dt else "data desconhecida")
-            (achadas if dt and pdat.recente(dt) else antigas).append(texto)
+            # REGRA 6 (16/09/2026): a foto de rua do Street View nao tem prazo; as outras provas, 2 anos
+            (achadas if fonte_da_imagem(rot) == "foto de rua" or (dt and pdat.recente(dt)) else antigas).append(texto)
     # o post de rede social confirmado, pela data dele (15/09/2026)
     for x in (resposta or {}).get("_redes") or []:
         dt = pdat.data_de_texto(x.get("data"))
@@ -568,15 +578,10 @@ def prova_recente(ctx, validos, resposta=None, fotos=None):
 
 
 def fachada_ou_rede_basta(ctx, lig, validos, resposta, fotos, ids):
-    """(basta, texto): REGRA 8 (dono do produto, 16/09/2026). Com a IA aprovando e a qualificacao SIM, a fachada da seta
-    com sinal de uso OU a rede social identificada no endereco, de qualquer data, mais outra fonte valida, aprovam sem
-    as regras 6 e 7. Medido em Canoas antes: 3.354 aprovacoes da IA fora de aprovado; com esta regra e as travas que
-    seguem depois (so MEI, aluga/vende, um POI uma instalacao), 65 sobem.
-
-    A fachada e a da SETA, decidida pela posicao da ponta na leitura da foto de rua (`fachada_da_seta`), e nao a que a
-    IA citou; a placa do vizinho conta com o nome confirmado em outra fonte. A foto publicada no Google nao
-    dispara (arte de divulgacao e foto de banco de imagens passavam), e o que o texto da IA diz ser igreja, templo,
-    associacao ou escola publica fica de fora."""
+    """(basta, texto): REGRA 9 (dono do produto, 16/09/2026). Com a IA aprovando e a qualificacao SIM, a rede social
+    no endereco com post dos ultimos 2 anos, mais a empresa cadastrada, aprova sem as regras de prova recente e das 2
+    fontes. O que o texto da IA diz ser igreja, templo, associacao ou escola publica e o imovel abandonado ficam de fora.
+    A fachada no Street View deixou de precisar desta regra: vale sozinha, de qualquer data (`fonte_unica_basta`)."""
     r = resposta or {}
     if lig is None or ctx.qualificacao.get(str(lig)) != "SIM" or not validos:
         return False, None
@@ -586,57 +591,12 @@ def fachada_ou_rede_basta(ctx, lig, validos, resposta, fotos, ids):
     imovel = r.get("imovel") if isinstance(r.get("imovel"), dict) else {}
     if str(imovel.get("estado") or "") == "abandonado":
         return False, None
-    f = r.get("fotos") if isinstance(r.get("fotos"), dict) else {}
-    rua = []
-    if imagem_tem_sinal(r):
-        for n in f.get("quais") or []:
-            try:
-                rot = (fotos or [])[int(n) - 1]
-            except (TypeError, ValueError, IndexError):
-                continue
-            if fonte_da_imagem(rot) == "foto de rua":
-                rua.append(pdat.data_do_rotulo(rot))
-    if rua:
-        vale, onde = _sinal_na_fachada_da_seta(ctx, lig, ids)
-        if vale:
-            datas = [d for d in rua if d]
-            return True, "%s (foto de rua%s) e mais %d registro(s) válido(s)" % (
-                onde, (" de %s" % pdat.mes_ano(max(datas))) if datas else "", len(validos))
-    redes = r.get("_redes") or []
-    rede_pois = {x.get("poi") for x in redes if isinstance(x, dict)}
-    if redes and any(p not in rede_pois for p in validos):
-        return True, "rede social no endereço (%s) e outra fonte válida" % ", ".join(
-            sorted({str(x.get("rede")) for x in redes if isinstance(x, dict)}))
+    redes = [x for x in (r.get("_redes") or []) if isinstance(x, dict)
+             and pdat.data_de_texto(x.get("data")) and pdat.recente(pdat.data_de_texto(x.get("data")))]
+    if redes:
+        return True, "post de rede social no endereço de até 2 anos (%s) e a empresa cadastrada" % ", ".join(
+            sorted({"%s de %s" % (x.get("rede"), pdat.mes_ano(pdat.data_de_texto(x.get("data")))) for x in redes}))
     return False, None
-
-
-def _sinal_na_fachada_da_seta(ctx, lig, ids):
-    """(vale, texto): a leitura da foto de rua do julgamento leve — a de frente do registro com pin do Maps a ate 60 m,
-    senao a do hidrometro, como `seek_api._foto_de_rua` — mostra uso na fachada da seta, ou a placa de um vizinho tem
-    o nome em outra fonte. So roda para quem ia cair nas regras 6 e 7."""
-    import avaliar_enxuto as ae                                # ciclo: o avaliar_enxuto importa esta checagem
-    import fachada_da_seta as fds
-    ids = [int(i) for i in (ids or []) if str(i).isdigit()]
-    with ctx.con.cursor() as cur:
-        esc = ae.poi_da_foto_de_rua(cur, lig, ids) if ids else None
-        if esc and esc[2]:
-            cur.execute("""select leitura, mira_x from radar_comercial.poi_evidencia
-                            where poi_id = %s and tipo = 'sv_frente'""", (esc[0],))
-        elif not esc:
-            cur.execute("""select leitura, mira_x from radar_comercial.ligacao_evidencia
-                            where ligacao = %s and tipo = 'sv_frente' and (dados is not null or storage_path is not null)""",
-                        (str(lig),))
-        else:
-            return False, None
-        linha = cur.fetchone()
-        if not linha or not isinstance(linha[0], dict) or linha[0].get("fachadas") is None:
-            return False, None
-        leitura, mira_x = linha
-        alvo, divisa = fds.escolher_final(leitura, mira_x)
-        if alvo and fds.seta_tem_sinal(alvo):
-            return True, "a fachada da seta mostra uso"
-        _texto, vale = fds.para_julgamento(leitura, mira_x, *fds.fontes_de_nome(cur, lig, ids))
-        return (True, "a placa do vizinho tem o nome confirmado em outra fonte") if vale else (False, None)
 
 
 def decidir(ctx, validos, perdeu_por_duvida, lig=None, resposta=None, fotos=None, processo=None, ia_aprovou=True,
@@ -646,9 +606,10 @@ def decidir(ctx, validos, perdeu_por_duvida, lig=None, resposta=None, fotos=None
         if perdeu_por_duvida:
             return "revisao_humana", ("o registro que aprovava também é candidato de outra(s) instalação(ões) "
                                       "e não dá para dizer de qual é")
-        return "reprovado", "nenhum registro válido sustenta a aprovação"
-    # REGRA 8 (16/09/2026): a fachada da seta ou a rede social + outra fonte, com a IA aprovando, dispensa as regras
-    # 6 e 7. Calculada so quando uma delas ia derrubar: le a foto de rua no banco.
+        # REGRA 16 (16/09/2026): sem registro valido, a pessoa decide — antes era reprovado
+        return "revisao_humana", "nenhum registro válido sustenta a aprovação"
+    # REGRA 9 (16/09/2026): a rede social de ate 2 anos com a empresa cadastrada, so em SIM e com a IA aprovando,
+    # dispensa as regras de prova recente e das 2 fontes. Calculada so quando uma delas ia derrubar.
     regra8 = []
 
     def _regra8():
@@ -677,8 +638,7 @@ def decidir(ctx, validos, perdeu_por_duvida, lig=None, resposta=None, fotos=None
                                           "sozinha: %s" % (len(fs), ", ".join(fs) or "nenhuma",
                                                            ("; sem prova recente própria: " + ", ".join(sem)) if sem else "",
                                                            texto_unica))
-    if all(ctx.e_mei(p) for p in validos):
-        return "revisao_humana", "aprovada só por MEI (%s)" % ", ".join("#%s" % p for p in validos)
+    # REGRA 11 RETIRADA (dono do produto, 16/09/2026): a aprovada so por MEI deixou de ir para revisao
     # REGRA 4: a qualificacao SIM com analise humana nao aprova sozinha.
     if lig is not None and ctx.qualificacao.get(str(lig)) == "SIM_COM_ANALISE_HUMANA":
         return "revisao_humana", "qualificação SIM com análise humana: a decisão é do usuário"
@@ -686,7 +646,7 @@ def decidir(ctx, validos, perdeu_por_duvida, lig=None, resposta=None, fotos=None
 
 
 def revisar(con, aplicar=False, log=print, saida_antes=None, saida_mudancas=None, so_veredito=None,
-            so_qualificacao=None):
+            so_qualificacao=None, so_ligacoes=None):
     """A checagem de TODAS as ligacoes que a IA aprovou, com a exclusividade.
 
     Recomeca sempre do veredito da IA (`percepcao.checagem.veredito_ia`), entao
@@ -741,6 +701,13 @@ def revisar(con, aplicar=False, log=print, saida_antes=None, saida_mudancas=None
         casam = [l for l in ligs if _numeros(cr) and _numeros(ctx.compl_inst.get(l, "")) and
                  not complemento_diverge(ctx.compl_inst.get(l, ""), cr)]
         dono = casam[0] if len(casam) == 1 else None
+        # REGRA 4 (dono do produto, 16/09/2026): a mesma empresa em 2 ou mais ligacoes do MESMO endereco, sem
+        # complemento que decida, vale para todas elas — antes nao valia para nenhuma e todas iam para revisao
+        if not dono:
+            enderecos = {ctx.endereco.get(l) for l in ligs}
+            if len(enderecos) == 1 and None not in enderecos:
+                exclus["poi de várias instalações do mesmo endereço: vale para todas"] += 1
+                continue
         for l in ligs:
             if l == dono:
                 continue
@@ -768,11 +735,13 @@ def revisar(con, aplicar=False, log=print, saida_antes=None, saida_mudancas=None
             continue
         if so_veredito and v_atual not in so_veredito:
             continue
+        if so_ligacoes and lig not in so_ligacoes:
+            continue
         if so_qualificacao and ctx.qualificacao.get(lig) not in so_qualificacao:
             continue
         v_novo, porque = decidir(ctx, validos[lig], lig in duvida and not validos[lig], lig,
                                  resposta_de[lig], fotos_de[lig], proc, ids=base[lig][1])
-        if v_novo == "aprovado" and chk.get("contraprova"):
+        if v_novo == "aprovado" and chk.get("contraprova") and not ia_viu_uso(resposta_de[lig]):
             v_novo, porque = "revisao_humana", chk["contraprova"]
         placar["%s -> %s" % (v_ia, v_novo)] += 1
         novo_chk = {"regra": REGRA, "veredito_ia": v_ia, "veredito": v_novo, "porque": porque,
@@ -874,7 +843,7 @@ def checar_uma(con, lig, v, resposta, ids, processo="enxuto de 12/09/2026", foto
     # social nao confirmada tinham segurado.
     _vago, contraprova = vago_depois_das_provas(ctx, validos, fotos, redes)
     contraprova = contraprova or contraprova_de_anuncio(con, ctx, lig, validos, redes)
-    if v_novo == "aprovado" and contraprova:
+    if v_novo == "aprovado" and contraprova and not ia_viu_uso(resposta):
         v_novo, porque = "revisao_humana", contraprova
     if promover and v_novo != "aprovado":
         return v, None
@@ -892,11 +861,13 @@ def main(argv=None):
     p.add_argument("--mudancas", default="", help="arquivo JSON com a lista do que mudaria (vale no ensaio)")
     p.add_argument("--so-veredito", default="", help="só grava a mudança de quem tem hoje estes vereditos (vírgula)")
     p.add_argument("--so-qualificacao", default="", help="só grava a mudança destas qualificações (vírgula), ex.: SIM")
+    p.add_argument("--so-ligacoes", default="", help="arquivo com as ligações (uma por linha): só elas são decididas")
     a = p.parse_args(argv)
     con = bc.conectar()
     r = revisar(con, a.aplicar, saida_antes=a.antes or None, saida_mudancas=a.mudancas or None,
                 so_veredito={x.strip() for x in a.so_veredito.split(",") if x.strip()} or None,
-                so_qualificacao={x.strip().upper() for x in a.so_qualificacao.split(",") if x.strip()} or None)
+                so_qualificacao={x.strip().upper() for x in a.so_qualificacao.split(",") if x.strip()} or None,
+                so_ligacoes={x.strip() for x in open(a.so_ligacoes, encoding="utf-8") if x.strip()} if a.so_ligacoes else None)
     con.close()
     return r
 

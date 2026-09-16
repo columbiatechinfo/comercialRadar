@@ -10,9 +10,9 @@ Agora a divisao do trabalho e:
   - a IA (`PROMPT`, uma imagem, uma tarefa) lista CADA FACHADA com a caixa, os textos e os sinais dela;
   - o CODIGO escolhe a fachada da seta: a caixa que contem a ponta (`mira_x` gravado na captura e a altura da
     ponta em `desenho_seta.PONTA_REL`), e entre varias a menor;
-  - placa de fachada vizinha so vale se o NOME (a frase inteira, nao "padaria" nem "distribuidora") ou o
-    TELEFONE aparece em outra fonte: nome dos registros, ficha do Serasa, busca na web. Sinal sem texto de
-    vizinho nunca vale — nao ha nome para conferir.
+  - placa de fachada vizinha so vale se o NOME ou o TELEFONE aparece em outra fonte: nome dos registros, ficha do
+    Serasa, busca na web. Desde 16/09/2026 QUEM CONFERE E A IA (o codigo so aponta onde o nome parece aparecer);
+    sinal sem texto de vizinho nunca vale — nao ha nome para conferir.
 
 Sem banco aqui alem de `fontes_de_nome`; o julgamento (`avaliar_enxuto.montar_leve`) monta o texto e marca o
 rotulo da foto quando nada nela vale para a instalacao, e a checagem (`checagem_veredito`) tira essa foto das
@@ -306,7 +306,7 @@ def para_julgamento(leitura, mira_x, pecas, excluir):
     vale = False
     if divisa:
         linhas.append("fachada da seta: INDEFINIDA — a ponta cai na divisa entre \"%s\" e \"%s\"; placas das duas só valem "
-                      "com o nome em outra fonte" % (divisa[0].get("descricao") or "?", divisa[1].get("descricao") or "?"))
+                      "se você confirmar o nome ou o telefone em outra fonte" % (divisa[0].get("descricao") or "?", divisa[1].get("descricao") or "?"))
     elif alvo:
         c = _caixa(alvo)
         ts = ['"%s" (%s)' % (t["texto"], t.get("tipo") or "?") for t in _textos(alvo)]
@@ -325,7 +325,10 @@ def para_julgamento(leitura, mira_x, pecas, excluir):
                           % "; ".join('"%s"' % x for x in aluga))
     else:
         linhas.append("fachada da seta: a ponta da seta não cai sobre nenhuma fachada identificada")
-    com_nome, sem_nome = [], []
+    # A PLACA DO VIZINHO E AVALIADA PELA IA (dono do produto, 16/09/2026): "tem que ser avaliado pela IA e nao estrito
+    # assim". O codigo lista as placas dos vizinhos e aponta onde o nome parece aparecer; quem confere se a placa e deste
+    # estabelecimento e a IA, com os registros, a ficha do Serasa e a busca na web. Sinal sem texto de vizinho nunca vale.
+    placas, sinais = [], []
     for f in fachadas(leitura):
         if f is alvo:
             continue
@@ -333,17 +336,15 @@ def para_julgamento(leitura, mira_x, pecas, excluir):
             if t.get("tipo") == "aluga_vende":
                 continue
             fonte = casar(t["texto"], pecas, excluir)
-            (com_nome if fonte else sem_nome).append('"%s"%s' % (t["texto"], (" — o nome aparece em: %s" % fonte) if fonte else ""))
-        sem_nome += [str(s) for s in (f.get("sinais_sem_texto") or []) if str(s).strip()]
-    # VIZINHO CONFIRMADO VALE (dono do produto, 16/09/2026): "isso passa a ser valido desde que outros dados obtidos
-    # confirmem a fachada do vizinho" — com a seta onde estiver. O que era frouxo era o casamento do nome (`casar`).
-    if com_nome:
-        linhas.append("placas de VIZINHOS com o nome em outra fonte (valem como sinal desta instalação): " + "; ".join(com_nome))
+            placas.append('"%s"%s' % (t["texto"], (" — o nome parece aparecer em: %s" % fonte) if fonte else ""))
+        sinais += [str(s) for s in (f.get("sinais_sem_texto") or []) if str(s).strip()]
+    if placas:
+        linhas.append("placas de VIZINHOS (só são sinal desta instalação se VOCÊ confirmar o nome ou o telefone nos "
+                      "registros, na ficha do Serasa ou na busca na web): " + "; ".join(placas))
         vale = True
-    if sem_nome:
-        linhas.append("placas e sinais de VIZINHOS sem o nome em nenhuma outra fonte (NÃO são sinal desta instalação): "
-                      + "; ".join(sem_nome))
-    linhas.append("sinal na foto de rua que vale para esta instalação: %s" % ("sim" if vale else "não"))
+    if sinais:
+        linhas.append("sinais sem texto de VIZINHOS (NÃO são sinal desta instalação): " + "; ".join(sinais))
+    linhas.append("sinal na foto de rua que pode valer para esta instalação: %s" % ("sim" if vale else "não"))
     return "\n".join(linhas), vale
 
 
