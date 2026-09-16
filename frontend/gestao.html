@@ -1364,7 +1364,10 @@ var GESTAO = (function () {
   }
   /* a SEEK mora na raiz da aplicação, que pode estar sob um prefixo público (/seek) */
   function linkSeek(lig) {
-    var base = window.location.pathname.replace(/gestao\/?$/, '');
+    /* REGEX EM TEXTO, NÃO LITERAL (16/09/2026): o `PrefixoPublico` (server.py) troca "(/gestao" por
+     * "(/seek/gestao" no código servido, e o literal virava `/seek/gestao\/?$/` — regex inválida que derrubava
+     * o script inteiro da gestão na URL pública. */
+    var base = window.location.pathname.replace(new RegExp('gestao/?$'), '');
     return base + '#' + encodeURIComponent(lig);
   }
   function chipAcao(a) {

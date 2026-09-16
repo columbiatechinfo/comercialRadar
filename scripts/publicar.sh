@@ -31,6 +31,34 @@ DEV=$HOME/Documentos/sistemas/radarComercial
 IMG=radar-comercial-api-radar-comercial-api
 URL_PUBLICA=https://a2lsolucoes.com/seek
 
+# OS SCRIPTS COMO O NAVEGADOR RECEBE (16/09/2026): o `PrefixoPublico` reescreve texto de código, e em 15/09 isso
+# quebrou a gestão inteira sem nenhum erro no servidor. Baixa cada página pela URL pública, separa os <script>
+# embutidos e passa cada um pelo `node --check`.
+conferir_scripts() {
+  local falhou=0 pag tmp
+  for pag in "" "gestao" "extrair"; do
+    tmp=$(mktemp -d)
+    curl -s --max-time 20 "$URL_PUBLICA/$pag" -o "$tmp/pagina.html" || true
+    python3 - "$tmp" <<'PY'
+import re, sys, pathlib
+d = pathlib.Path(sys.argv[1])
+html = (d / "pagina.html").read_text(encoding="utf-8", errors="replace")
+for i, corpo in enumerate(re.findall(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>", html, re.S)):
+    (d / ("s%02d.js" % i)).write_text(corpo, encoding="utf-8")
+PY
+    for js in "$tmp"/s*.js; do
+      [ -f "$js" ] || continue
+      if ! node --check "$js" > "$tmp/erro.txt" 2>&1; then
+        echo "  script de /$pag: ERRO DE SINTAXE — $(grep -m1 -i 'error' "$tmp/erro.txt")"
+        falhou=1
+      fi
+    done
+    rm -rf "$tmp"
+  done
+  [ $falhou = 0 ] && echo "  scripts das paginas publicas: sintaxe ok"
+  return $falhou
+}
+
 conferir() {
   local ok=0
   for i in $(seq 1 30); do
@@ -135,7 +163,7 @@ echo "  ensaio: a imagem nova importa o server.py"
 $COMPOSE up -d --no-build radar-comercial-api
 echo "$(date '+%Y-%m-%d %H:%M:%S') $TAG (antes: $ANTES)" >> $HOME/producao/PUBLICACOES.log
 
-if conferir; then
+if conferir && conferir_scripts; then
   echo "■ $TAG no ar"
 else
   echo "■ CONFERÊNCIA FALHOU. Para voltar: bash scripts/publicar.sh --voltar"
