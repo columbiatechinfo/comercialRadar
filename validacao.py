@@ -432,9 +432,18 @@ def main(argv=None):
     con = bc.conectar()
     try:
         if a.cmd == "criar":
-            if not a.empresa:
-                raise SystemExit("sem empresa: --empresa ou CR_TENANT_ID")
-            vid, msg = criar(con, a.empresa, a.cidade, a.area, refazer=a.refazer, lote=a.lote)
+            # A EMPRESA PELA CONEXÃO (16/09/2026): o worker da fila não passa `CR_TENANT_ID` — ele declara o usuário de
+            # serviço do job (`RADAR_USUARIO_SERVICO`), e a empresa sai de `core.empresa_atual()`. Sem isto a extração
+            # de Paverama (job 64) terminou e a validação da área falhou com "sem empresa".
+            empresa = a.empresa
+            if not empresa:
+                cur = con.cursor()
+                cur.execute("select core.empresa_atual()::text")
+                empresa = (cur.fetchone() or [None])[0]
+                con.commit()
+            if not empresa:
+                raise SystemExit("sem empresa: --empresa, CR_TENANT_ID ou RADAR_USUARIO_SERVICO")
+            vid, msg = criar(con, empresa, a.cidade, a.area, refazer=a.refazer, lote=a.lote)
             _log("■ " + msg)
             return 0
         if a.cmd == "status":
