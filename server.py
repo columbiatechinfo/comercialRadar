@@ -1563,6 +1563,53 @@ def _reuso_do_poligono(poly: list, rotulo: str) -> dict:
     }
 
 
+def _envoltoria_da_base(cod: str, empresa: str):
+    """(anel [[lat, lng]], ligacoes) da ENVOLTORIA DA BASE DO CLIENTE no municipio, ou (None, n) sem base.
+
+    A CIDADE INTEIRA E A AREA ONDE O CLIENTE TEM LIGACAO (dono do produto, 17/09/2026): Santa Maria tem 1.780 km² e
+    as 80.925 ligacoes da Corsan cabem em 929 km²; varrer a divisa inteira gastava dias em zona rural sem cliente. E o
+    fecho convexo das ligacoes da empresa dentro da divisa, com ~150 m de margem para o tile da borda, recortado pela
+    propria divisa. A malha e do banco de REFERENCIA e o cadastro do principal (sem JOIN entre os dois): a divisa
+    desce simplificada (~50 m), e o indice espacial do cadastro filtra pela caixa antes do teste de contencao — 1,2 s."""
+    ref = base_comum.conectar_referencia()
+    try:
+        with ref.cursor() as cur:
+            cur.execute("""select st_astext(st_simplifypreservetopology(geom, 0.0005)),
+                                  st_xmin(geom), st_ymin(geom), st_xmax(geom), st_ymax(geom)
+                             from ibge_malha where cod_municipio = %s""", ((cod or "").strip(),))
+            r = cur.fetchone()
+    finally:
+        ref.close()
+    if not r:
+        return None, 0
+    wkt, o, s_, l, n = r
+    con = base_comum.conectar()
+    try:
+        with con.cursor() as cur:
+            cur.execute("set statement_timeout = '60s'")
+            cur.execute("""
+                select count(*),
+                       st_asgeojson(st_intersection(st_buffer(st_convexhull(st_collect(geom::geometry)), 0.0015),
+                                                    st_makevalid(st_geomfromtext(%(wkt)s, 4326))), 6)
+                  from resources_root.cadastro_corsan
+                 where id_empresa = %(emp)s::uuid
+                   and geom && st_makeenvelope(%(o)s, %(s)s, %(l)s, %(n)s, 4326)::geography
+                   and st_within(geom::geometry, st_geomfromtext(%(wkt)s, 4326))""",
+                        {"wkt": wkt, "emp": str(empresa), "o": o, "s": s_, "l": l, "n": n})
+            qtd, gj = cur.fetchone()
+    finally:
+        con.close()
+    if not gj or (qtd or 0) < 3:
+        return None, int(qtd or 0)
+    g = json.loads(gj)
+    coords = g.get("coordinates") or []
+    if g.get("type") == "MultiPolygon":
+        coords = max(coords, key=lambda p: len(p[0])) if coords else []
+    if g.get("type") not in ("Polygon", "MultiPolygon") or not coords:
+        return None, int(qtd)
+    return [[lat, lng] for lng, lat in coords[0]], int(qtd)
+
+
 @app.post("/api/area/municipio")
 def area_do_municipio(cod: str):
     """Usa o polígono do município COMO ÁREA DE TRABALHO.
@@ -1598,9 +1645,16 @@ def area_do_municipio(cod: str):
     tenant, erro = _tenant_para_gravar()
     if erro:
         return JSONResponse({"erro": erro}, status_code=409)
+    # a envoltoria usa a base da empresa de quem pede (do token; o root, a do CR_TENANT_ID)
+    u = _auth.USUARIO_DA_REQUISICAO.get()
+    empresa = u.id_empresa if u is not None and u.id_empresa else tenant
+    envoltoria, ligacoes = _envoltoria_da_base(cod, empresa) if empresa else (None, 0)
+    recorte = "municipio"
+    if envoltoria:
+        poly, recorte = envoltoria, "base do cliente"
     area_utils.salvar_area(poly, tenant=tenant)
-    return JSONResponse({"ok": True, "municipio": nome, "uf": uf,
-                         "vertices": len(poly), "polygon": poly})
+    return JSONResponse({"ok": True, "municipio": nome, "uf": uf, "recorte": recorte,
+                         "ligacoes": ligacoes, "vertices": len(poly), "polygon": poly})
 
 
 @app.get("/api/malha")
