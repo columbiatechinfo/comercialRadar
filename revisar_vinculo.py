@@ -61,7 +61,7 @@ select lp.ligacao, lp.poi_id, lp.mesmo_endereco, lp.mesmo_numero,
        coalesce(p.fonte,''),
        -- 11/09/2026: a ligacao precisa estar marcada SIM, e da Receita so o
        -- estabelecimento ativo conta.
-       coalesce(c.qualificacao,'') like 'SIM%%',
+       coalesce(c.qualificacao,'') like 'SIM%%'{nao},
        lower(coalesce(p.fonte,'')) = 'receita'
          and ltrim(coalesce(rd.situacao_cadastral,''),'0') <> '2',
        c.cod_latitude::float8, c.cod_longitude::float8,
@@ -73,6 +73,7 @@ select lp.ligacao, lp.poi_id, lp.mesmo_endereco, lp.mesmo_numero,
   left join radar_comercial.receita_data rd on rd.poi_id = lp.poi_id
  where lp.descartado_em is null
    and p.fundido_em is null
+   {fora_nao}
    {cidade}
 """
 
@@ -104,6 +105,27 @@ update radar_comercial.ligacao_poi lp
    and lp.descartado_em is null
 """
 
+#: O MESMO DESCARTE, PAR A PAR, quando a ligação NAO fica fora da rodada (dono do produto, 17/09/2026): os pares vêm
+#: para o Python, saem os de ligação NAO (`validacao.ligacoes_nao`) e o motivo é o de `SQL_FUNDIDOS`, letra por letra.
+MOTIVO_FUNDIDO = "o POI foi fundido em outro; quem vale e o sobrevivente, nao a copia"
+SQL_FUNDIDOS_PARES = """
+select lp.ligacao, lp.poi_id
+  from radar_comercial.ligacao_poi lp
+  join radar_comercial.pois p on p.id = lp.poi_id
+ where p.fundido_em is not null
+   and lp.descartado_em is null
+"""
+SQL_FUNDIDOS_POR_PAR = """
+update radar_comercial.ligacao_poi lp
+   set descartado_em = now(),
+       descartado_motivo = v.motivo,
+       descartado_por = 'regra_vinculo'
+  from (values %s) as v(ligacao, poi_id, motivo)
+ where lp.ligacao = v.ligacao
+   and lp.poi_id = v.poi_id::bigint
+   and lp.descartado_em is null
+"""
+
 
 def _familia(motivo):
     """O motivo sem os numeros, para o placar.
@@ -126,11 +148,27 @@ def main(argv=None):
         description="Descarta os vínculos que não passam na regra")
     p.add_argument("--cidade", default="")
     p.add_argument("--aplicar", action="store_true")
+    p.add_argument("--qualificacoes", default="",
+                   help="as qualificações da coleta do processo, separadas por vírgula: SIM e "
+                        "SIM_COM_ANALISE_HUMANA ficam sempre; NAO só quando listado — sem ele, o vínculo de "
+                        "ligação NAO não é tocado (a marcação da IA, 17/09/2026)")
     p.add_argument("--um-poi-por-ligacao", dest="um_poi", action="store_true",
                    help="deixa cada POI numa ligacao so, pelo desempate do "
                         "cabecalho. E o RESERVA da IA: rodar depois da "
                         "avaliacao, para o que ela nao decidiu")
     a = p.parse_args(argv)
+    # A COLETA DA MARCAÇÃO DA IA (dono do produto, 17/09/2026): a ligação NAO só é apta quando o processo marcou o NÃO
+    # para a IA. Sem `--qualificacoes`, a consulta é a de sempre.
+    import validacao as va
+    try:
+        coleta = va.coleta_de(va.ler_qualificacoes(a.qualificacoes, padrao=va.COLETA_SEMPRE))
+    except ValueError as e:
+        p.error(str(e))
+    nao = " or coalesce(c.qualificacao,'') = 'NAO'" if "NAO" in coleta else ""
+    # A LIGAÇÃO NAO FORA DA COLETA FICA INTOCADA (dono do produto, 17/09/2026): sem o NÃO na coleta, o vínculo de
+    # ligação NAO nem entra na leitura — não é aceito, não ganha `aceito_por`, não disputa POI e não é descartado
+    # (antes caía por "a ligacao nao esta marcada SIM"). SIM e SIM com análise humana: as mesmas linhas de sempre.
+    fora_nao = "" if "NAO" in coleta else "and coalesce(c.qualificacao,'') <> 'NAO'"
 
     con = bc.conectar()
     cur = con.cursor()
@@ -141,7 +179,11 @@ def main(argv=None):
     _log("   %d tokens" % rv.carregar_pesos(con, a.cidade))
     filtro = " and upper(coalesce(c.cidade,'')) = upper(%s)" if a.cidade else ""
     _log("lendo os vínculos%s..." % (" de " + a.cidade if a.cidade else ""))
-    cur.execute(SQL.format(cidade=filtro),
+    if nao:
+        _log("   o processo marcou o NÃO para a IA: a ligação NAO também é apta")
+    else:
+        _log("   ligação NAO fica fora desta revisão: sem o NÃO na coleta, o vínculo dela não é tocado")
+    cur.execute(SQL.format(cidade=filtro, nao=nao, fora_nao=fora_nao),
                 (a.cidade,) if a.cidade else ())
 
     # O BAIRRO DA LIGACAO, quando a Corsan nao o escreveu ("BAIRRO NAO
@@ -254,8 +296,23 @@ def main(argv=None):
     # alarme. Entao a medida agora e a pergunta direta ao banco.
     # ── O VINCULO DE POI FUNDIDO, que a consulta principal nao enxerga ──
     _log("descartando vínculos de POI fundido...")
-    cur.execute(SQL_FUNDIDOS)
-    _log("   %d vínculo(s) de POI que virou copia" % cur.rowcount)
+    if not fora_nao:
+        cur.execute(SQL_FUNDIDOS)
+        _log("   %d vínculo(s) de POI que virou copia" % cur.rowcount)
+    else:
+        # A LIGAÇÃO NAO FORA DA COLETA FICA INTOCADA TAMBÉM AQUI (17/09/2026). O UPDATE é global; filtrar dentro dele
+        # pedia um `not exists` por linha contra o cadastro. Os pares vêm para o Python e o descarte é par a par,
+        # em comandos de até 5.000 (uma página por comando: o `rowcount` é o do comando inteiro).
+        cur.execute(SQL_FUNDIDOS_PARES)
+        pares = cur.fetchall()
+        protegidas = va.ligacoes_nao(cur, {l for l, _ in pares})
+        vao = [(l, p, MOTIVO_FUNDIDO) for l, p in pares if l not in protegidas]
+        n = 0
+        for i in range(0, len(vao), 5000):
+            execute_values(cur, SQL_FUNDIDOS_POR_PAR, vao[i:i + 5000], page_size=5000)
+            n += cur.rowcount
+        _log("   %d vínculo(s) de POI que virou copia · %d de ligação NAO ficaram intocados"
+             % (n, len(pares) - len(vao)))
     con.commit()
 
     # ── POR QUE CADA UM QUE FICOU, FICOU ──────────────────────────────────

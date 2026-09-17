@@ -69,3 +69,8 @@ body{overflow:auto}
   padding-top:2px}
 .v-det dd{color:var(--txt);word-break:break-word}
 .v-det dd.mono{font-size:11.5px}
+
+/* ---- a marcação da IA (17/09/2026): as três caixas do formulário e a linha de auditoria do cartão ---- */
+.v-ia-caixas{display:flex;flex-wrap:wrap;gap:0 12px}
+.v-ia{padding:8px 16px 0;font-size:11.5px;color:var(--fraco)}
+.v-ia b{color:var(--txt);font-weight:600}

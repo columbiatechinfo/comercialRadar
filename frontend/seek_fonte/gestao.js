@@ -160,9 +160,9 @@ var GESTAO = (function () {
             'decisão vigente de cada ligação no período, por status')
       + kpi('taxa de aprovação', pct(t.taxa_aprovacao), 'aprovadas ÷ ligações decididas',
             'global: divide pelas ligações decididas, inclusive as que a IA não aprovou')
-      + kpi('qualidade da IA', pct(t.qualidade_ia),
+      + kpi('Aceitação nos Padrões do Cliente', pct(t.qualidade_ia),
             num(t.ia_aprovou.aprovar) + ' confirmadas · ' + num(t.ia_aprovou.rejeitar) + ' rejeitadas',
-            'só as ligações que a IA aprovou: aprovadas pelas pessoas ÷ (aprovadas + rejeitadas); '
+            'nome dado pelo dono do produto (17/09/2026). Só as ligações que a IA aprovou: aprovadas pelas pessoas ÷ (aprovadas + rejeitadas); '
             + 'campo e revisão ainda não dizem se ela acertou e ficam de fora')
       + kpi('tempo de avaliação', dur(t.tempo_mediano_s), 'mediana · média ' + dur(t.tempo_medio_s)
             + ' · ' + num(t.medidas) + ' medidas', 'da abertura do caso à decisão; decisão em lote não entra')

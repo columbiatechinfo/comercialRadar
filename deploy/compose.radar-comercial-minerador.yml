@@ -119,6 +119,11 @@ services:
     # exatamente a mensagem que já custou uma investigação inteira em 29/08.
     shm_size: 2gb
 
+    # INIT, E ELE FALTAVA (17/09/2026). O processo do worker é o PID 1 do contêiner, e PID 1 não recolhe filho órfão.
+    # Navegador que morre deixa processo zumbi para trás: a extração de Santa Maria (job 68) juntou 3.084 chromes
+    # zumbis. O `init` do Docker (tini) vira o PID 1 e recolhe (memória camoufox-precisa-init).
+    init: true
+
     # MEDIDO, e nao arredondado. Em 04/09/2026, 30 trabalhadores de captura
     # sobre 143 POIs levaram o conteiner a 13,8 GiB de pico — o teto de 12 g o
     # teria matado no meio, e a rodada morreria sem erro que apontasse para

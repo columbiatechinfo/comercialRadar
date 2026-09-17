@@ -16,6 +16,7 @@ var VALIDACAO = (function () {
     cnpj: 'Serasa', busca: 'Busca web', conferencia: 'Conferência', julgamento: 'Julgamento'
   };
   var RECURSOS = {google: 'Google · proxy', cnpj: 'navegador', busca: 'navegador', spark: 'IA', local: 'local'};
+  var ROTULO_QUAL = {SIM: 'SIM', SIM_COM_ANALISE_HUMANA: 'SIM com análise humana', NAO: 'NÃO'};
   var ESTADO_VAL = {
     preparando: 'preparando', rodando: 'rodando', pausada: 'pausada', ok: 'concluída', erro: 'com erro',
     cancelada: 'cancelada'
@@ -95,6 +96,16 @@ var VALIDACAO = (function () {
     $('#v-lista').innerHTML = d.validacoes.map(function (v) { return cartao(v, d.etapas); }).join('');
   }
 
+  /* A MARCAÇÃO DA IA (dono do produto, 17/09/2026): quais qualificações a IA pôde tratar, quem marcou e quando. A
+   * validação criada antes das caixas não tem a marcação, e o cartão fica como era. */
+  function marcacaoIa(v) {
+    if (!v.ia_qualificacoes || !v.ia_qualificacoes.length) { return ''; }
+    var quem = v.ia_marcado_por ? 'marcado por ' + esc(v.ia_marcado_por) : (v.ia_marcado_em ? 'marcado' : '');
+    return '<div class="v-ia">IA autorizada: <b>' + esc(v.ia_qualificacoes.map(function (q) {
+      return ROTULO_QUAL[q] || q; }).join(' · ')) + '</b>'
+      + (quem ? ' · ' + quem + (v.ia_marcado_em ? ' em ' + esc(quando(v.ia_marcado_em)) : '') : '') + '</div>';
+  }
+
   function cartao(v, etapas) {
     var feitas = v.tarefas ? Math.round(100 * v.tarefas_feitas / v.tarefas) : 0;
     var acoes = '';
@@ -140,6 +151,7 @@ var VALIDACAO = (function () {
       + '<div class="v-acoes">' + acoes + '</div></div>'
       + '<div class="v-barra"><i style="width:' + feitas + '%"></i></div>'
       + '<div class="v-ordem">' + ordem + '</div>'
+      + marcacaoIa(v)
       + '<div class="v-grade-caixa"><table class="v-grade"><thead>' + cab + '</thead><tbody>' + linhas + soma
       + '</tbody></table></div></div>';
   }
@@ -184,13 +196,20 @@ var VALIDACAO = (function () {
 
   function criar(ev) {
     ev.preventDefault();
+    // A IA SÓ TRATA O QUE FOI MARCADO (dono do produto, 17/09/2026): nenhuma marcada é recusada aqui e no servidor
+    var ia = ['#v-ia-sim', '#v-ia-simcom', '#v-ia-nao'].map(function (s) { return $(s); })
+      .filter(function (cx) { return cx && cx.checked; }).map(function (cx) { return cx.value; });
+    if (!ia.length) {
+      torrada('Marque ao menos uma qualificação que a IA pode tratar', true);
+      return;
+    }
     var bt = $('#v-criar');
     bt.disabled = true;
     bt.textContent = 'criando…';
     fetch('/api/validacoes', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({cidade: $('#v-cidade').value.trim(), area: $('#v-area').value.trim() || null,
-                            refazer: $('#v-refazer').checked})
+                            refazer: $('#v-refazer').checked, ia_qualificacoes: ia})
     }).then(lerJson).then(function (d) {
       torrada(d.mensagem || 'Validação criada', !d.id);
       return carrega();

@@ -268,6 +268,19 @@
            maquina sempre cortou pelo teto dela; faltava o controle. -->
       <label class="mt-1 flex items-center justify-between gap-x-2 rounded-md px-2 py-1 text-[11.5px] text-gray-500"><span>Navegadores em paralelo</span><input type="number" id="np-trabalhadores" min="1" max="30" value="20" class="w-14 rounded border border-gray-300 px-1.5 py-0.5 text-right text-[11.5px] tabular-nums text-gray-700"></label>
 
+      <!-- A IA SO TRATA O QUE FOI MARCADO (dono do produto, 17/09/2026). Vale para a extracao (o vinculo da etapa 8 e
+           a validacao que ela cria no fim) e para o "Avaliar com IA" acima. A coleta traz SIM e SIM com analise
+           humana sempre, e o NAO so quando marcado; a IA so julga o marcado, e o coletado nao marcado vai direto
+           para revisao humana. O padrao e o de antes das caixas: SIM e SIM com analise humana marcados, NAO
+           desmarcado. A escolha vai gravada no job e na validacao, com quem marcou e quando. -->
+      <fieldset id="ia-qualificacoes" class="mt-1 rounded-md px-2 py-1 text-[11.5px] text-gray-500">
+        <legend class="text-[11.5px] text-gray-500">A IA pode tratar as ligações com qualificação</legend>
+        <label class="mt-1 flex items-center gap-x-2"><input type="checkbox" id="ia-q-sim" value="SIM" checked class="size-4 shrink-0 rounded border-gray-300 text-indigo-600 focus:ring-2 focus:ring-indigo-500"><span>SIM</span></label>
+        <label class="mt-1 flex items-center gap-x-2"><input type="checkbox" id="ia-q-simcom" value="SIM_COM_ANALISE_HUMANA" checked class="size-4 shrink-0 rounded border-gray-300 text-indigo-600 focus:ring-2 focus:ring-indigo-500"><span>SIM com análise humana</span></label>
+        <label class="mt-1 flex items-center gap-x-2"><input type="checkbox" id="ia-q-nao" value="NAO" class="size-4 shrink-0 rounded border-gray-300 text-indigo-600 focus:ring-2 focus:ring-indigo-500"><span>NÃO</span></label>
+        <p class="mt-1 text-[10.5px] text-gray-400">a escolha fica gravada no processo</p>
+      </fieldset>
+
       <div class="mt-5 mb-1 px-2.5 text-[10.5px] font-semibold uppercase tracking-[0.07em] text-gray-400">Operação</div>
 
       <a href="/antigo#fila" class="nav-item">

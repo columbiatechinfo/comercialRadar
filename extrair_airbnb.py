@@ -319,6 +319,180 @@ def varrer(proxies, caixa_inicial, paginas, log=print, profundidade=0,
     return tudo
 
 
+# ── o caminho da frota ─────────────────────────────────────────────────────────────────────────────────────────
+#
+# A FROTA ÚNICA DE NAVEGAÇÃO (dono do produto, 17/09/2026): Camoufox VIVO por proxy brasileiro, que passa de caixa em
+# caixa sem abrir navegador novo. UMA TAREFA POR CAIXA; a caixa que satura vira quatro tarefas novas na mesma frota.
+# Medido em 17/09/2026 no centro de Santa Maria (sondas com 2 e 3 navegadores):
+#
+#     primeira página de cada navegador     HTTP 200, sem verificação nenhuma, cartão em 1,7 a 2,2 s
+#     páginas seguintes no mesmo navegador  1,0 a 2,1 s
+#     caixa sem hospedagem                  payload presente com `searchResults` vazio ("nenhuma correspondência")
+#     cursor além do fim                    idem — lista vazia no payload
+#
+# O ID VEM DO PAYLOAD, e não da posição do cartão. `demandStayListing.id` é o base64 de "DemandStayListing:<id do
+# /rooms/>" (conferido contra o href). O casamento por posição do caminho antigo depende de a lista inteira já estar
+# desenhada: no Camoufox, logo depois do primeiro cartão, o payload tinha 18 resultados e a tela tinha 1.
+#
+# LISTA SEM PAYLOAD NÃO É ÁREA VAZIA. Numa sonda, um navegador mostrou 18 cartões e nenhum `searchResults` em duas
+# páginas seguidas — o caminho antigo contaria "0 anúncios" em silêncio. Aqui isso levanta, e a frota repete a caixa
+# em outro navegador.
+#
+# A FROTA NÃO RESOLVE DESAFIO. Se a verificação aparecer, a página espera; se não passar, `Captcha` — a frota fecha o
+# navegador, castiga o IP neste site e repete a caixa em outro.
+DESAFIO = ("just a moment", "verify you are human", "confirme que é humano", "verificando se você é humano",
+           "pressione e segure", "press & hold")
+ESPERA_PRIMEIRA_S = 90             # a primeira página de um navegador é onde a verificação apareceria
+ESPERA_S = 20
+
+IDS_DO_PAYLOAD = r"""() => {
+  for (const s of document.querySelectorAll('script[id^="data-deferred-state"]')) {
+    let d; try { d = JSON.parse(s.textContent || ''); } catch (e) { continue; }
+    let res = null;
+    const cacar = (no, prof) => {
+      if (res || !no || typeof no !== 'object' || prof > 14) return;
+      if (Array.isArray(no)) { for (const x of no.slice(0, 40)) cacar(x, prof + 1); return; }
+      if (Array.isArray(no.searchResults)) { res = no.searchResults; return; }
+      for (const k of Object.keys(no)) cacar(no[k], prof + 1);
+    };
+    cacar(d, 0);
+    if (!res) continue;
+    // a mesma caça do COLHER, então a mesma ordem: o i-ésimo id é o do i-ésimo registro
+    return res.map(r => {
+      try {
+        const m = atob(((r.demandStayListing || {}).id) || '').match(/:(\d+)$/);
+        return m ? m[1] : null;
+      } catch (e) { return null; }
+    });
+  }
+  return null;
+}"""
+
+SCRIPTS = r"""() => Array.from(document.querySelectorAll('script[id^="data-deferred-state"]'))
+  .map(s => s.id + ' ' + Math.round((s.textContent || '').length / 1024) + ' KB').join(', ')"""
+
+
+def _log(msg):
+    print(msg, flush=True)
+
+
+def _motivo(e):
+    return (str(e).splitlines()[0] if str(e) else type(e).__name__)[:140]
+
+
+def _pagina_da_busca(p, espera_s):
+    """[(anuncio_id, registro)] da página de busca aberta, na ordem do payload.
+
+    Espera o PAYLOAD, e não o cartão: é ele que traz a coordenada, e ele chega junto com o HTML. Lista vazia com
+    payload é resposta (área sem hospedagem, cursor além do fim). Desafio que não sai no prazo levanta `Captcha`;
+    cartões sem payload levantam `RuntimeError` — a frota repete em outro navegador."""
+    from frota_navegacao import Captcha
+
+    page = p.page
+    fim = time.time() + espera_s
+    desafio = False
+    while True:
+        itens = page.evaluate(COLHER)
+        if itens is not None:
+            pids = page.evaluate(IDS_DO_PAYLOAD) or []
+            hrefs = None
+            pares = []
+            for i, item in enumerate(itens):
+                aid = pids[i] if i < len(pids) else None
+                if not aid:
+                    # sem id no payload, o do cartão na mesma posição — o jeito do caminho antigo
+                    if hrefs is None:
+                        hrefs = page.evaluate(IDS) or []
+                    aid = hrefs[i] if i < len(hrefs) else None
+                if aid:
+                    pares.append((aid, item))
+            return pares
+        if any(d in p.texto().lower() for d in DESAFIO):
+            desafio = True
+        if time.time() >= fim:
+            break
+        page.wait_for_timeout(1000)
+    if desafio:
+        raise Captcha("verificação na busca não passou em %d s" % espera_s)
+    raise RuntimeError("busca sem payload: %d cartões na tela · scripts: %s"
+                       % (len(page.evaluate(IDS) or []), page.evaluate(SCRIPTS) or "nenhum"))
+
+
+def caixa_frota(p, sw_lat, sw_lng, ne_lat, ne_lng, paginas=15) -> dict:
+    """FUNÇÃO DE TAREFA da frota: UMA caixa, num navegador vivo. Argumentos e retorno só com tipos JSON.
+
+    Devolve {"anuncios": {anuncio_id: registro}, "paginas", "parou", "s", "sessao", "primeira"}. `p` é a `Pagina` da
+    frota (`frota_navegacao`). Cada página da caixa é um endereço (o cursor), então a tarefa começa com navegação limpa
+    — nada depende do que a tarefa anterior deixou na tela. Falha levanta: a frota repete a caixa em outro navegador.
+    Subdividir, juntar e gravar é do script (`varrer_frota`), não daqui."""
+    t0 = time.time()
+    primeira = p.tarefas_anteriores == 0
+    achado = {}
+    lidas, parou = 0, "limite de %d páginas" % paginas
+    for n in range(paginas):
+        url = url_da_caixa(sw_lat, sw_lng, ne_lat, ne_lng, _cursor_da_pagina(n) if n else None)
+        # SEM CASTIGO PELO STATUS: um 403 na primeira página seria a verificação em curso (lição do iFood, 17/09).
+        # Quem decide é a leitura da página, depois da espera.
+        p.ir(url, timeout=120000, http_bloqueio=False)
+        pares = _pagina_da_busca(p, ESPERA_PRIMEIRA_S if (primeira and n == 0) else ESPERA_S)
+        lidas += 1
+        antes = len(achado)
+        for aid, item in pares:
+            achado.setdefault(aid, item)
+        if not pares:
+            parou = "caixa sem hospedagem" if n == 0 else "página %d vazia" % (n + 1)
+            break
+        # PÁGINA QUE NÃO ACRESCENTA É O FIM, como no caminho antigo
+        if len(achado) == antes:
+            parou = "página %d sem novidade" % (n + 1)
+            break
+    return {"anuncios": achado, "paginas": lidas, "parou": parou, "s": round(time.time() - t0, 1),
+            "sessao": p.sessao_id, "primeira": primeira}
+
+
+def varrer_frota(caixa_inicial, paginas, navegadores=3, log=_log, estado=None):
+    """A varredura de `varrer`, pela frota: cada caixa é uma tarefa, e a caixa que satura vira quatro tarefas novas.
+
+    Devolve o mesmo dicionário {anuncio_id: registro}. `estado["buscou"]` tem o mesmo sentido: alguma caixa rodou."""
+    import concurrent.futures as cf
+    from frota_navegacao import Frota
+
+    if estado is None:
+        estado = {}
+    tudo = {}
+    log("  FROTA: %d navegadores Camoufox vivos, proxy BR, castigo por site · uma tarefa por caixa" % navegadores)
+    def enviar(cx):
+        return frota.enviar(caixa_frota, sw_lat=cx[0], sw_lng=cx[1], ne_lat=cx[2], ne_lng=cx[3], paginas=paginas)
+
+    with Frota("airbnb", navegadores=navegadores, tentativas=3, processo="extrair_airbnb", log=log) as frota:
+        pendentes = {enviar(caixa_inicial): (caixa_inicial, 0)}
+        while pendentes:
+            prontos, _ = cf.wait(list(pendentes), return_when=cf.FIRST_COMPLETED)
+            for fut in prontos:
+                cx, prof = pendentes.pop(fut)
+                sw_lat, sw_lng, ne_lat, ne_lng = cx
+                try:
+                    meta = fut.result()
+                except Exception as e:                         # noqa: BLE001
+                    log("  %scaixa %.4f,%.4f..%.4f,%.4f — %s (3 tentativas)"
+                        % ("  " * prof, sw_lat, sw_lng, ne_lat, ne_lng, _motivo(e)))
+                    continue
+                achado = meta["anuncios"]
+                estado["buscou"] = True
+                tudo.update(achado)
+                log("  %scaixa %.4f,%.4f..%.4f,%.4f → %d anúncios · %d página(s), %s · %.1f s · navegador %s%s"
+                    % ("  " * prof, sw_lat, sw_lng, ne_lat, ne_lng, len(achado), meta["paginas"], meta["parou"],
+                       meta["s"], meta["sessao"], " (primeira página dele)" if meta["primeira"] else ""))
+                # SATUROU? O que não coube não aparece em lugar nenhum — dividir é correção, não otimização.
+                lado = max(ne_lat - sw_lat, ne_lng - sw_lng)
+                if len(achado) >= SATURADO and lado > LADO_MINIMO_GRAU and prof < 3:
+                    log("  %s  saturou (>= %d) — dividindo em quatro" % ("  " * prof, SATURADO))
+                    for q in quadrantes(*cx):
+                        pendentes[enviar(q)] = (q, prof + 1)
+        log("  frota: %s" % json.dumps(frota.resumo()))
+    return tudo
+
+
 def gravar(con, achado, poligono, area_ref):
     """Grava tudo; `na_area` diz quem está dentro do desenho."""
     linhas = []
@@ -365,7 +539,12 @@ def main() -> int:
     p.add_argument("--uf")
     p.add_argument("--paginas", type=int, default=15,
                    help="páginas por caixa (padrão 15, que é o teto do Airbnb)")
-    p.add_argument("--sem-proxy", dest="sem_proxy", action="store_true")
+    p.add_argument("--sem-proxy", dest="sem_proxy", action="store_true",
+                   help="só no --caminho-antigo: as sessões saem pelo IP direto (a frota nunca sai sem proxy)")
+    p.add_argument("--navegadores", type=int, default=3,
+                   help="navegadores vivos da frota (padrão 3); uma caixa por tarefa")
+    p.add_argument("--caminho-antigo", dest="caminho_antigo", action="store_true",
+                   help="o caminho de antes da frota: uma StealthySession do Scrapling por caixa")
     p.add_argument("--simular", action="store_true")
     a = p.parse_args()
     if not a.area and not a.cidade:
@@ -392,11 +571,16 @@ def main() -> int:
     print("%s · caixa lat %.4f..%.4f · lng %.4f..%.4f · %d páginas por caixa"
           % (escopo, sw_lat, ne_lat, sw_lng, ne_lng, a.paginas), flush=True)
 
-    proxies = _rodizio(a.sem_proxy)
+    # A FROTA É O PADRÃO desde 17/09/2026 (ver "o caminho da frota"); o caminho antigo só por pedido explícito.
+    proxies = _rodizio(a.sem_proxy) if a.caminho_antigo else None
     t0 = time.time()
     _estado_busca = {}
-    achado = varrer(proxies, (sw_lat, sw_lng, ne_lat, ne_lng), a.paginas,
-                    estado=_estado_busca)
+    if a.caminho_antigo:
+        achado = varrer(proxies, (sw_lat, sw_lng, ne_lat, ne_lng), a.paginas,
+                        estado=_estado_busca)
+    else:
+        achado = varrer_frota((sw_lat, sw_lng, ne_lat, ne_lng), a.paginas,
+                              a.navegadores, estado=_estado_busca)
 
     dentro = sum(1 for r in achado.values()
                  if r.get("lat") is not None

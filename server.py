@@ -3715,6 +3715,16 @@ def iniciar_job(body: dict):
             _novo_job("planilha", out_json, {"arquivo": arquivo.name})
 
         elif modo == "mineracao":
+            # A IA SÓ TRATA O QUE FOI MARCADO (dono do produto, 17/09/2026): as três caixas da tela de extração —
+            # SIM, SIM com análise humana, NÃO — chegam em `ia_qualificacoes`. Conferidas AQUI, antes de congelar a
+            # área: pedido recusado não deixa cópia de polígono para trás. Ausente é o padrão de sempre (SIM e SIM
+            # com análise humana). Vão para os argumentos com quem marcou e quando: o `pedido_por` do job é o
+            # usuário de serviço, e não quem clicou.
+            import validacao as _validacao
+            try:
+                _ia_qualificacoes = _validacao.ler_qualificacoes(op.get("ia_qualificacoes"))
+            except ValueError as e:
+                return JSONResponse({"erro": str(e)}, status_code=400)
             sessao = re.sub(r"[^\w-]", "_", str(op.get("sessao") or "mineracao"))
             # O MINUTO NAO BASTA, e isso quebrou na primeira vez que o
             # painel enfileirou tres areas de uma vez (04/09/2026).
@@ -3819,6 +3829,11 @@ def iniciar_job(body: dict):
                 argumentos["cidade"] = str(op["cidade"])
             if op.get("uf"):
                 argumentos["uf"] = str(op["uf"])
+            # A MARCAÇÃO DA IA VAI COM A RODADA (17/09/2026): `minerar_tudo` a usa no vínculo e a repassa à validação
+            _u_ia = _auth.USUARIO_DA_REQUISICAO.get()
+            argumentos["ia_qualificacoes"] = ",".join(_ia_qualificacoes)
+            argumentos["ia_marcado_por"] = (_u_ia.email or _u_ia.id) if _u_ia else None
+            argumentos["ia_marcado_em"] = datetime.now().astimezone().isoformat(timespec="seconds")
 
             # O ERRO SOBE COMO TEXTO, e nao como 500 mudo.
             #
@@ -5506,8 +5521,11 @@ def empresas_listar(u: _auth.Usuario = Depends(_auth.exige("admin"))):
     con = _auth.conectar_como(u)
     try:
         with con.cursor() as cur:
-            cur.execute("""select id, nome, documento, ativo, criado_em
-                             from core.tb_empresas order by nome""")
+            # AS COLUNAS SAO AS DO CORE (17/09/2026): `name`, `identification_doc` e `ativa`. A rota pedia `nome`,
+            # `documento` e `ativo`, que a tabela nunca teve, e a tela de empresas caia com 500; a resposta mantem os
+            # nomes em portugues que a tela ja le.
+            cur.execute("""select id, name, identification_doc, ativa, criado_em
+                             from core.tb_empresas order by name""")
             return {"empresas": [
                 {"id": str(i), "nome": n, "documento": d, "ativo": a,
                  "criado_em": c.isoformat() if c else None}
@@ -5537,7 +5555,8 @@ def empresas_editar(empresa_id: str, e: EmpresaEntrada,
     con = _auth.conectar_como(u)
     try:
         with con.cursor() as cur:
-            cur.execute("""update core.tb_empresas set nome=%s, documento=%s, ativo=%s
+            cur.execute("""update core.tb_empresas set name=%s, identification_doc=%s, ativa=%s,
+                                   atualizado_em=now()
                             where id=%s returning id""",
                         (e.nome.strip(), e.documento, e.ativo, empresa_id))
             if not cur.fetchone():
@@ -5558,7 +5577,7 @@ def empresas_desativar(empresa_id: str, u: _auth.Usuario = Depends(_auth.exige("
     con = _auth.conectar_como(u)
     try:
         with con.cursor() as cur:
-            cur.execute("update core.tb_empresas set ativo=false where id=%s returning nome",
+            cur.execute("update core.tb_empresas set ativa=false, atualizado_em=now() where id=%s returning name",
                         (empresa_id,))
             r = cur.fetchone()
             if not r:

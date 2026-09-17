@@ -495,6 +495,21 @@ def sem_street_view(con, ligacao, ids):
     return (alvo, x[0]) if x else None
 
 
+#: A IA SÓ JULGA O QUE FOI MARCADO (dono do produto, 17/09/2026). `--qualificacoes` traz as qualificações que a IA
+#: pode julgar, marcadas no processo (validação ou extração); a ligação coletada com outra qualificação vai direto
+#: para revisão humana, sem parecer da IA — como a sem Street View. None (sem o argumento) é o de antes: julga todas.
+QUALIFICACOES_AUTORIZADAS = None
+#: a qualificação de cada ligação do lote, lida uma vez em `rodar`
+QUALIFICACAO_DA_LIGACAO = {}
+#: a validação de onde veio a marcação (`--validacao`), para o motivo
+VALIDACAO = None
+#: os rótulos da tela (`validacao.ROTULO_QUALIFICACAO`), preenchidos em `main`
+ROTULO_QUALIFICACAO = {}
+PROCESSO_IA_NAO_AUTORIZADA = "revisão humana direta (IA não autorizada para a qualificação, 17/09/2026)"
+MOTIVO_IA_NAO_AUTORIZADA = ("A IA não foi autorizada a julgar ligações com qualificação %s %s; a marcação está gravada "
+                            "%s. Vai para revisão humana sem parecer da IA.")
+
+
 def uma(poco, ligacao, modelo, placar, trava, aplicar):
     t0 = time.time()
     with poco.pegar() as con:
@@ -505,6 +520,33 @@ def uma(poco, ligacao, modelo, placar, trava, aplicar):
         with trava:
             placar["sem_poi"] += 1
         return
+    # A IA SÓ JULGA O QUE FOI MARCADO (dono do produto, 17/09/2026): a ligação cuja qualificação não está entre as
+    # marcadas no processo vai direto para revisão humana, sem gastar a IA. A percepção guarda a qualificação e as
+    # autorizadas: `validacao.ligacoes_para_validar` não conta esta revisão como julgamento, e a validação seguinte
+    # com a caixa marcada a julga.
+    if QUALIFICACOES_AUTORIZADAS is not None:
+        qual = QUALIFICACAO_DA_LIGACAO.get(str(ligacao))
+        if qual not in QUALIFICACOES_AUTORIZADAS:
+            motivo = MOTIVO_IA_NAO_AUTORIZADA % (
+                ROTULO_QUALIFICACAO.get(qual, qual or "(sem qualificação)"),
+                ("nesta validação (#%s)" % VALIDACAO) if VALIDACAO else "neste processo",
+                "na validação" if VALIDACAO else "no processo")
+            r = {"veredito": "revisao_humana", "motivo": motivo, "justificativa": motivo,
+                 "aderentes": [], "nao_combinam": [], "pois_de_outro_endereco": []}
+            percepcao = {"processo": PROCESSO_IA_NAO_AUTORIZADA, "prioridade": "normal", "dados": dados, "fotos": rot,
+                         "fotos_ref": refs, "resposta": r, "ids": ids, "ia_nao_autorizada": qual or "sem qualificação",
+                         "qualificacoes_autorizadas": list(QUALIFICACOES_AUTORIZADAS), "validacao": VALIDACAO}
+            if aplicar:
+                with poco.pegar() as con:
+                    al.gravar(con, ligacao, "revisao_humana", r, percepcao,
+                              {"pois": len(ids), "fontes": n_fontes, "ids": ids},
+                              "nenhum (IA não autorizada)", len(fotos), time.time() - t0)
+            with trava:
+                placar["revisao_humana"] += 1
+                placar["ia_nao_autorizada"] += 1
+                al._log("   %-10s %-15s %d POIs · qualificação %s sem autorização para a IA: revisão direta, sem IA"
+                        % (ligacao, "revisao_humana", len(ids), qual or "(nenhuma)"))
+            return
     if al.PULAR_SEM_IMAGEM and not fotos:
         with trava:
             placar["sem_imagem_fica_para_o_fim"] += 1
@@ -660,6 +702,14 @@ def rodar(limite, aplicar, trabalhadores, modelo, ligacoes, cidade, exigir_busca
                     where lp.ligacao = any(%s) and lp.descartado_em is null and p.fundido_em is null
                     group by 1""", ([str(x) for x in fila_],))
     npoi = {str(l): n for l, n in cur.fetchall()}
+    if QUALIFICACOES_AUTORIZADAS is not None:
+        # A QUALIFICAÇÃO DAS LIGAÇÕES DO LOTE, de uma vez (17/09/2026): `uma()` decide por ela se a IA julga
+        cur.execute("""select num_ligacao::text, qualificacao from resources_root.cadastro_corsan
+                        where num_ligacao = any(%s::bigint[])""", ([int(x) for x in fila_ if str(x).isdigit()],))
+        QUALIFICACAO_DA_LIGACAO.update({str(l): q for l, q in cur.fetchall()})
+        al._log("   a IA pode julgar: %s · %d da fila com outra qualificação vão para revisão humana sem IA"
+                % (", ".join(QUALIFICACOES_AUTORIZADAS),
+                   sum(1 for x in fila_ if QUALIFICACAO_DA_LIGACAO.get(str(x)) not in QUALIFICACOES_AUTORIZADAS)))
     con.close()
     grandes = [0]
     t0 = time.time()
@@ -762,9 +812,23 @@ def main(argv=None):
                    help="o processo leve de 15/09/2026: foto de rua de frente, fichas em texto, comentarios, saida curta")
     p.add_argument("--checagem-so-da-fila", dest="checagem_so_da_fila", action="store_true",
                    help="a checagem do fim da rodada so grava as ligacoes desta fila (rejulgamento de um recorte)")
+    p.add_argument("--qualificacoes", default=None,
+                   help="as qualificações que a IA pode julgar, separadas por vírgula (a marcação do processo, "
+                        "17/09/2026); a ligação de outra vai direto para revisão humana. Sem ela, a IA julga todas")
+    p.add_argument("--validacao", type=int, default=None,
+                   help="a validação de onde veio a marcação (vai no motivo da revisão direta)")
     p.add_argument("--aplicar", action="store_true")
     a = p.parse_args(argv)
     global SAIDA, LEVE, CHECAGEM_SO_DA_FILA
+    global QUALIFICACOES_AUTORIZADAS, VALIDACAO
+    if a.qualificacoes is not None:
+        import validacao as va
+        try:
+            QUALIFICACOES_AUTORIZADAS = va.ler_qualificacoes(a.qualificacoes)
+        except ValueError as e:
+            p.error(str(e))
+        ROTULO_QUALIFICACAO.update(va.ROTULO_QUALIFICACAO)
+    VALIDACAO = a.validacao
     LEVE = a.leve
     CHECAGEM_SO_DA_FILA = a.checagem_so_da_fila
     if a.saida:

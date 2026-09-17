@@ -2631,8 +2631,22 @@
       return d;
     }
 
+    // A IA SÓ TRATA O QUE FOI MARCADO (dono do produto, 17/09/2026): as três caixas do painel de extração, no pedido
+    // da extração e no da validação; o servidor confere e grava quem marcou e quando. Tela sem as caixas manda null e
+    // o servidor usa o padrão; nenhuma marcada é recusada aqui e lá — mandaria tudo para revisão humana sem a IA.
+    function iaQualificacoes() {
+      const caixas = ["ia-q-sim", "ia-q-simcom", "ia-q-nao"].map((id) => $(id)).filter(Boolean);
+      if (!caixas.length) return null;
+      return caixas.filter((cx) => cx.checked).map((cx) => cx.value);
+    }
+
     $("btn-avaliar-ia").addEventListener("click", async () => {
       $("log-wrap").classList.remove("hidden");
+      const iaQ = iaQualificacoes();
+      if (iaQ && !iaQ.length) {
+        linhaLog("marque ao menos uma qualificação que a IA pode tratar", "text-amber-400");
+        return;
+      }
       // UM PEDIDO POR VEZ (16/09/2026): dois cliques criaram duas validações iguais em Paverama.
       const botaoIa = $("btn-avaliar-ia");
       if (botaoIa.dataset.enviando === "1") return;
@@ -2642,7 +2656,7 @@
       const r = await fetch("/api/validacoes", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cidade: estado.cidade || "", area: "area_atual" }),
+        body: JSON.stringify({ cidade: estado.cidade || "", area: "area_atual", ia_qualificacoes: iaQ }),
       }).catch(() => null);
       const j = r ? await r.json().catch(() => ({})) : {};
       if (!r || !r.ok) {
@@ -3055,6 +3069,12 @@
         ? estado.areasPendentes
         : [null];                       // sem desenho novo: usa a area salva
       $("log-wrap").classList.remove("hidden");
+      // A MARCAÇÃO DA IA (17/09/2026): a mesma para todas as áreas desta leva
+      const iaQ = iaQualificacoes();
+      if (iaQ && !iaQ.length) {
+        linhaLog("marque ao menos uma qualificação que a IA pode tratar", "text-amber-400");
+        return;
+      }
 
       let enfileiradas = 0;
       for (let i = 0; i < areas.length; i += 1) {
@@ -3063,6 +3083,7 @@
         // maquina que pegar o job corta pelo teto dela.
         const opcoes = { sessao: "painel", reusar: !!reusar,
                          trabalhadores: parseInt($("np-trabalhadores")?.value) || 20 };
+        if (iaQ) opcoes.ia_qualificacoes = iaQ;
         if (areas[i]) opcoes.poligono = areas[i].map(([la, ln]) => [la, ln]);
         const r = await fetch("/api/jobs", {
           method: "POST",
@@ -3093,6 +3114,13 @@
 
     $("btn-extrair").addEventListener("click", async () => {
       if ($("btn-extrair").disabled) return;
+      // NENHUMA QUALIFICAÇÃO MARCADA PARA A IA para antes da pergunta do reaproveitamento (17/09/2026)
+      const iaMarcadas = iaQualificacoes();
+      if (iaMarcadas && !iaMarcadas.length) {
+        $("log-wrap").classList.remove("hidden");
+        linhaLog("marque ao menos uma qualificação que a IA pode tratar", "text-amber-400");
+        return;
+      }
 
       // A PERGUNTA E UMA SO, SOMANDO AS AREAS. Perguntar uma vez por area
       // faria quem desenhou tres responder tres caixas iguais em sequencia — e

@@ -803,9 +803,10 @@ NV_ACEITO = ("1", "2")
 # a busca pelo painel do Maps, que dá precisão de porta.
 PISO_PARA_POI = ("porta", "porta_aprox", "via")
 
-# Cache do código IBGE por UF. A lista de municípios de um estado tem ~4 KB e
-# não muda; buscá-la a cada execução seria uma ida à rede para responder o que
-# já se sabe.
+# A LISTA DE MUNICÍPIOS VEM DA BASE, E NÃO DA WEB (dono do produto, 17/09/2026): "isso deveria ser base baixada e
+# atualizada de tempos em tempos e não consulta web". A malha do IBGE já está no banco de REFERÊNCIA (`ibge_malha`,
+# carregada por `area_utils.garantir_malha`), que é o mesmo caminho que o `minerar_tudo` usa para achar o código do
+# município. O arquivo em `cache_ibge/` continua valendo como segunda opção para quem rodar sem o banco de referência.
 CACHE_IBGE = RAIZ / "cache_ibge"
 
 
@@ -818,16 +819,34 @@ def _codigo_ibge(uf: str, municipio: str) -> str | None:
     — foi exatamente assim que o `tratamento_cnpj` errou uma vez.
     """
     import json
-    import urllib.request
 
     uf = (uf or "").strip().upper()
     if len(uf) != 2 or not municipio:
         return None
+
+    # PRIMEIRO A BASE DE REFERÊNCIA: é o acervo que se atualiza de tempos em tempos, e não um pedido à internet no
+    # meio da rodada. Sem ela, cai no arquivo já baixado; sem os dois, avisa o que fazer em vez de sair pela rede.
+    try:
+        import base_comum as _bc
+        ref = _bc.conectar_referencia()
+        try:
+            with ref.cursor() as cur:
+                cur.execute("select cod_municipio, nome from ibge_malha where uf = %s", (uf,))
+                alvo_ref = _norm(municipio)
+                for cod, nome in cur.fetchall():
+                    if _norm(nome) == alvo_ref:
+                        return str(cod)
+        finally:
+            ref.close()
+    except Exception:                                          # noqa: BLE001
+        pass                                                   # sem banco de referência: tenta o arquivo abaixo
+
     CACHE_IBGE.mkdir(parents=True, exist_ok=True)
     arq = CACHE_IBGE / f"municipios_{uf}.json"
     if arq.exists():
         lista = json.loads(arq.read_text(encoding="utf-8"))
-    else:
+    elif os.environ.get("CADASTUR_IBGE_WEB") == "1":
+        # SÓ COM PEDIDO EXPLÍCITO (uma atualização manual do cache), nunca no meio de uma rodada.
         url = ("https://servicodados.ibge.gov.br/api/v1/localidades/"
                f"estados/{uf}/municipios")
         req = urllib.request.Request(url, headers={
@@ -847,6 +866,10 @@ def _codigo_ibge(uf: str, municipio: str) -> str | None:
             bruto = gzip.decompress(bruto)
         lista = json.loads(bruto.decode("utf-8"))
         arq.write_text(json.dumps(lista, ensure_ascii=False), encoding="utf-8")
+    else:
+        print("!  sem a malha do IBGE para %s: carregue a malha (area_utils.garantir_malha) ou rode uma vez com "
+              "CADASTUR_IBGE_WEB=1 para atualizar %s" % (uf, arq), flush=True)
+        return None
     alvo = _norm(municipio)
     for m in lista:
         if _norm(m.get("nome", "")) == alvo:

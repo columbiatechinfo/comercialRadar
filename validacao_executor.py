@@ -75,7 +75,12 @@ def comando(t, k, nome):
     lote = _rotulo(t)
     arq = "/o/%s.txt" % lote
     log = "/o/%s_%s%s.log" % (lote, t["etapa"], ("_%d" % k) if e.partes > 1 else "")
-    cmd = e.cmd.format(arq=arq, pasta="/o", lote=lote, k=k)
+    # A MARCAÇÃO DA IA DA VALIDAÇÃO (dono do produto, 17/09/2026): o julgamento recebe as qualificações que a IA pode
+    # julgar e a busca web as da coleta; a validação de antes das caixas não tem a chave e fica no padrão. Só sai de
+    # `va.ia_da_validacao` um dos três nomes — o texto entra no `sh -c` do contêiner.
+    marcadas, coleta = va.ia_da_validacao(t.get("parametros"))
+    cmd = e.cmd.format(arq=arq, pasta="/o", lote=lote, k=k, qualificacoes=",".join(marcadas),
+                       coleta=",".join(coleta), validacao=int(t["validacao"]))
     if e.sonda:
         # A SONDA ANTES DA BUSCA (orquestrador): o DuckDuckGo que não responde vira 3 tentativas com 5 min entre elas
         sonda = cmd.split(" --ligacoes-arquivo")[0] + " --sonda"

@@ -1,0 +1,57 @@
+# A FROTA PERMANENTE DE NAVEGAÇÃO — o contêiner que fica no ar com os navegadores quentes.
+#
+#   docker compose --env-file ../.env -f deploy/compose.radar-frota.yml up -d
+#
+# POR QUE UM SERVIÇO, E NÃO UMA BIBLIOTECA NA ETAPA (dono do produto, 17/09/2026, regra 2): o navegador vive até
+# degradar. Preso ao processo da etapa, ele morria no fim dela e a verificação do Cloudflare era paga de novo a cada
+# rodada — 11 a 76 s por navegador. No serviço, a etapa entrega tarefas (`navegacao.tarefa`) e encontra os navegadores
+# já quentes.
+#
+# `init: true` NÃO É DETALHE: navegador em laço sem PID 1 que recolha filho deixa zumbi — 3.084 chromes na extração de
+# Santa Maria (memória camoufox-precisa-init).
+#
+# UM SERVIÇO POR AMBIENTE: dev e produção usam o mesmo banco, e cada um só pega as tarefas do seu `RADAR_AMBIENTE`.
+name: radar-frota
+
+services:
+  frota:
+    image: ${FROTA_IMAGEM:-radar-busca-camoufox}
+    restart: unless-stopped
+    init: true
+    working_dir: /app
+    command: ["python3", "-u", "frota_servico.py"]
+    env_file:
+      - ../.env
+    environment:
+      RADAR_AMBIENTE: ${FROTA_AMBIENTE:?defina producao ou desenvolvimento}
+      RADAR_MAQUINA: ${FROTA_MAQUINA:-i9}
+      # site:vagas[:países] separados por ';' — ex.: "ifood:3:CO,BR;airbnb:3"
+      FROTA_SITES: ${FROTA_SITES:-ifood:3;airbnb:3}
+      # UMA CONEXÃO POR SITE: o laço de despacho usa a conexão da frota daquele site. O pooler tem 20 no total.
+      RADAR_CONEXOES: "1"
+      A2L_DB_HOST: ${FROTA_DB_HOST:-192.168.3.10}
+      RADAR_PRINTS_IFOOD: /capturas/ifood_lista
+      TZ: America/Sao_Paulo
+      PYTHONUNBUFFERED: "1"
+      PYTHONIOENCODING: utf-8
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONPATH: /app
+    volumes:
+      # O CÓDIGO VEM DE FORA, só leitura: publicar é trocar o diretório e reiniciar o serviço, sem reconstruir imagem
+      - ${FROTA_REPO:?o repositorio NO HOST}:/app:ro
+      # os prints da lista (a prova por loja) e o que mais as tarefas gravarem
+      - radar-capturas:/capturas
+    shm_size: ${FROTA_SHM:-4gb}
+    mem_limit: ${FROTA_MEM:-12g}
+    read_only: false            # navegador escreve perfil e cache; mesma exceção do minerador
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=unconfined      # o sandbox do navegador precisa de user namespaces
+    logging:
+      driver: json-file
+      options: {max-size: "20m", max-file: "5"}
+
+volumes:
+  radar-capturas:
+    external: true

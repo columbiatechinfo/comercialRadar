@@ -696,7 +696,7 @@ def _semelhanca(a: dict, b: dict) -> tuple:
 
 
 def suspeitar(base_id: int, area: str = "", aplicar: bool = False,
-              raio: float = RAIO_TELHADO_M) -> dict:
+              raio: float = RAIO_TELHADO_M, qualificacoes: str = "") -> dict:
     import numpy as np
     from scipy.spatial import cKDTree
 
@@ -728,6 +728,15 @@ def suspeitar(base_id: int, area: str = "", aplicar: bool = False,
     cur.execute(SQL_LIGACOES_COM_VINCULO.format(tabela=tabela), (base_id,))
     ligacoes = cur.fetchall()
     _log("   %d ligação(ões) com vínculo por critério" % len(ligacoes))
+    # A LIGAÇÃO NAO FORA DA COLETA FICA INTOCADA (dono do produto, 17/09/2026): sem o NÃO na coleta da rodada, a
+    # suspeita por telhado não cria vínculo em ligação NAO.
+    import validacao as _va
+    if ligacoes and "NAO" not in _va.coleta_de(_va.ler_qualificacoes(qualificacoes, padrao=_va.COLETA_SEMPRE)):
+        _lig_nao = _va.ligacoes_nao(cur, [r[0] for r in ligacoes])
+        if _lig_nao:
+            _log("   %d ligação(ões) NAO ficam fora (a coleta não traz o NÃO)"
+                 % sum(1 for r in ligacoes if r[0] in _lig_nao))
+            ligacoes = [r for r in ligacoes if r[0] not in _lig_nao]
 
     # OS POIS ÓRFÃOS: os que não têm vínculo NENHUM. São o público deste passo,
     # e é o que o torna barato — quem já casou por endereço não entra na conta.
@@ -901,8 +910,17 @@ def main(argv=None) -> int:
     p.add_argument("--base", type=int, default=0)
     p.add_argument("--area", default="")
     p.add_argument("--raio", type=float, default=RAIO_TELHADO_M)
+    p.add_argument("--qualificacoes", default="",
+                   help="as qualificações da coleta da rodada, separadas por vírgula: SIM e SIM_COM_ANALISE_HUMANA "
+                        "sempre; NAO só quando listado — sem ele, a ligação NAO não ganha suspeita (17/09/2026)")
     p.add_argument("--aplicar", action="store_true")
     a = p.parse_args(argv)
+    if a.qualificacoes:
+        import validacao as va
+        try:
+            va.ler_qualificacoes(a.qualificacoes, padrao=va.COLETA_SEMPRE)
+        except ValueError as e:
+            p.error(str(e))
 
     if a.limpar:
         _log("▶ limpando os tiles da sessão")
@@ -917,7 +935,7 @@ def main(argv=None) -> int:
     if not a.base:
         p.error("informe --base <id> (ou --registrar)")
     _log("▶ telhados — o último critério, sobre os POIs órfãos")
-    r = suspeitar(a.base, a.area, a.aplicar, a.raio)
+    r = suspeitar(a.base, a.area, a.aplicar, a.raio, a.qualificacoes)
     return 1 if r.get("erro") else 0
 
 

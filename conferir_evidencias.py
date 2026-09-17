@@ -67,7 +67,9 @@ def main(argv=None):
     p.add_argument("--sem-data-apos-horas", dest="sem_data_apos_horas", type=int, default=24)
     a = p.parse_args(argv)
     r = conferir(a.ligacoes_arquivo, a.sem_data_apos_horas)
-    falta = sum(r[c] for c in ("fichas_maps", "foto_de_rua", "leitura", "serasa", "busca_web"))
+    # A FICHA DO MAPS SAIU DA CONTA (17/09/2026): a etapa `fichas` da validação foi removida, então o número segue
+    # no relatório como informação, mas não segura o lote nem pede recaptura.
+    falta = sum(r[c] for c in ("foto_de_rua", "leitura", "serasa", "busca_web"))
     print("■ conferência: %d ligações · faltam: fichas do Maps %d · foto de rua %d · leitura %d · Serasa %d · "
           "busca web %d · (POIs com foto do Maps sem data: %d) · (sem cobertura do Street View: %d)"
           % (r["ligacoes"], r["fichas_maps"], r["foto_de_rua"], r["leitura"], r["serasa"], r["busca_web"],

@@ -73,6 +73,9 @@ import area_utils
 
 # QUEM ENTRA NESTA ETAPA — a peneira em SQL, para não trazer POI que já está
 # atendido só para descobrir isso depois de abrir o navegador.
+#: O nome que a Receita dá ao MEI sem nome fantasia: CNPJ formatado na frente. Não existe no Maps.
+NOME_DE_CNPJ = r'^[0-9]{2}\.[0-9]{3}\.[0-9]{3}'
+
 SQL = """
     select p.id, p.nome, p.cidade, p.uf
       from radar_comercial.pois p
@@ -163,7 +166,7 @@ def _log(m: str) -> None:
 
 
 def alvos(cur, cidade: str, limite: int, fontes: list, nome_min: int,
-          poligono=None) -> list:
+          poligono=None, ligacoes=None) -> list:
     """Os POIs, no formato de `item` que `buscar_linha` espera.
 
     `poligono` RECORTA PELA AREA SELECIONADA. A regra e uma so: se veio um
@@ -172,6 +175,19 @@ def alvos(cur, cidade: str, limite: int, fontes: list, nome_min: int,
     manual, e so o que cai dentro do desenho. Sem poligono, cai no filtro por
     cidade — a cidade toda."""
     filtros, valores = "", [nome_min]
+    # NOME QUE É CNPJ NÃO CASA NO MAPS (dono do produto, 17/09/2026). A Receita nomeia o MEI sem nome fantasia com o
+    # próprio CNPJ na frente — "43.887.171 TAINAH PAULA RODRIGUE". Buscar isso no Google Maps gasta navegador e IP
+    # para voltar "esgotado" sempre: medido no ensaio da etapa de fichas, foram 4 de 20 alvos assim.
+    filtros += " and coalesce(p.nome,'') !~ %s"
+    valores.append(NOME_DE_CNPJ)
+    # O LOTE DA VALIDAÇÃO (dono do produto, 17/09/2026): "somente os itens de outras fontes que acharem par no
+    # cadastro do cliente". Com a lista de ligações do lote, só entra o POI com vínculo VIVO com uma delas — o que
+    # veio do Maps já está fora pelo `fonte <> 'maps'` das duas consultas.
+    if ligacoes:
+        filtros += (" and exists (select 1 from radar_comercial.ligacao_poi lp"
+                    "              where lp.poi_id = p.id and lp.descartado_em is null"
+                    "                and lp.ligacao = any(%s))")
+        valores.append([str(x) for x in ligacoes])
     if poligono:
         anel = list(poligono)
         if anel and anel[0] != anel[-1]:
@@ -202,6 +218,11 @@ def alvos(cur, cidade: str, limite: int, fontes: list, nome_min: int,
             for i, n, c, u in cur.fetchall()]
 
 
+# SÓ MEDIR (dono do produto, 17/09/2026): abre o Maps e conta o que achou, mas NÃO escreve. Serve para medir a etapa
+# antes de ela subir, sem mexer no acervo de uma cidade que já está julgada.
+SO_MEDIR = False
+
+
 def gravar(con, cur, item: dict, rec: dict) -> tuple:
     """Grava o painel do Maps num POI. Devolve (notas, campos_gravados).
 
@@ -210,6 +231,13 @@ def gravar(con, cur, item: dict, rec: dict) -> tuple:
     — ou de outra cidade — vira o telefone do POI. O divergente não se perde,
     fica em `ia_resposta` com o nome que o painel devolveu.
     """
+    # SÓ MEDIR: conta o que o painel trouxe e não escreve (dono do produto, 17/09/2026). Devolve o MESMO formato do
+    # caminho normal — (notas, gravados), duas listas —, senão o placar conta letra por letra.
+    if SO_MEDIR:
+        achados = [c for c in ("telefone", "website_url", "website", "cnpj", "nota", "avaliacoes", "maps_url",
+                               "instagram", "facebook", "categoria")
+                   if (rec or {}).get(c)]
+        return [], achados
     import ferramenta_maps as fm
 
     notas, campos, valores, gravados = [], [], [], []
@@ -411,17 +439,26 @@ async def _colher(lista, cidade, uf, trabalhadores, con, cur, usar_proxy,
     return placar
 
 
+def _ligacoes_do_arquivo(caminho):
+    return [l.strip() for l in open(caminho, encoding="utf-8") if l.strip()] if caminho else None
+
+
 def rodar(cidade="", uf="", limite=0, fontes=None, nome_min=12,
-          trabalhadores=4, sem_proxy=False, aplicar=False, area="") -> dict:
+          trabalhadores=4, sem_proxy=False, aplicar=False, area="", ligacoes_arquivo="") -> dict:
     con = bc.conectar()
     cur = con.cursor()
     poligono = area_utils.carregar_area(area) if area else None
     if poligono:
         _log("   recorte pela area %r: so POIs dentro do desenho" % area)
-    lista = alvos(cur, cidade, limite, fontes or [], nome_min, poligono)
-    _log("   %d POIs sem telefone, sem CNPJ, sem rede social e que não vieram"
-         % len(lista))
-    _log("   do Google — os únicos que ainda têm o que ganhar aqui")
+    ligs = _ligacoes_do_arquivo(ligacoes_arquivo)
+    if ligs:
+        _log("   lote da validação: %d ligação(ões) — só POI de outra fonte com par no cadastro entra" % len(ligs))
+    lista = alvos(cur, cidade, limite, fontes or [], nome_min, poligono, ligs)
+    if EVIDENCIA:
+        _log("   %d POIs de outra fonte, sem ficha do Maps e de categoria que a IA julga" % len(lista))
+    else:
+        _log("   %d POIs sem telefone, sem CNPJ, sem rede social e que não vieram" % len(lista))
+        _log("   do Google — os únicos que ainda têm o que ganhar aqui")
     if not lista:
         con.close()
         return {"alvos": 0}
@@ -433,8 +470,8 @@ def rodar(cidade="", uf="", limite=0, fontes=None, nome_min=12,
         uf = ufs.most_common(1)[0][0] if ufs else ""
     _log("   UF alvo: %s" % (uf or "(qualquer — o painel de outra cidade passa)"))
 
-    if not aplicar:
-        _log("   (ensaio: nada buscado nem gravado. Use --aplicar)")
+    if not aplicar and not SO_MEDIR:
+        _log("   (ensaio: nada buscado nem gravado. Use --aplicar, ou --so-medir para medir sem escrever)")
         for a in lista[:5]:
             _log("      %s · %s/%s" % (a["nome"][:42], a["cidade"] or "?",
                                        a["uf"] or "?"))
@@ -474,14 +511,19 @@ def main(argv=None) -> int:
                    help="busca EVIDENCIA para a IA (nota, comentarios com "
                         "data, fotos publicadas) em vez de dado identificador "
                         "— e colhe a ficha inteira do lugar casado")
+    p.add_argument("--ligacoes-arquivo", dest="ligacoes_arquivo", default="",
+                   help="o lote da validação: só POI de outra fonte com vínculo vivo com estas ligações")
+    p.add_argument("--so-medir", dest="so_medir", action="store_true",
+                   help="busca no Maps e conta o que achou, sem escrever nada")
     p.add_argument("--aplicar", action="store_true")
     a = p.parse_args(argv)
-    global EVIDENCIA
+    global EVIDENCIA, SO_MEDIR
     EVIDENCIA = bool(a.evidencia)
+    SO_MEDIR = bool(a.so_medir)
     _log("▶ Maps, painel do estabelecimento%s"
          % (" · " + a.cidade if a.cidade else ""))
     rodar(a.cidade, a.uf, a.limite, a.fonte, a.nome_minimo, a.trabalhadores,
-          a.sem_proxy, aplicar=a.aplicar, area=a.area)
+          a.sem_proxy, aplicar=a.aplicar, area=a.area, ligacoes_arquivo=a.ligacoes_arquivo)
     return 0
 
 

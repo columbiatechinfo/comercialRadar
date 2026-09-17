@@ -42,6 +42,14 @@ RUN pip install --no-cache-dir -r requirements.txt
 # a busca da etapa 4 morreram exatamente assim.
 RUN python -m playwright install chromium chromium-headless-shell
 
+# O CAMOUFOX NA IMAGEM DO WORKER (17/09/2026). A frota única de navegação (`frota_navegacao.py`) passa a rodar TODO
+# acesso a site de coleta por ele — decisão do dono do produto, regra por regra. Até aqui só a `radar-busca-camoufox`,
+# construída por cima desta, o tinha; o worker que roda a extração não.
+#
+# O Firefox do Camoufox vai para o cache do USUÁRIO (`~/.cache/camoufox`), e quem roda o processo é o `pwuser`: por
+# isso o `HOME` dele no `fetch` e o `chown`. Sem isso o pacote existe e o navegador "não está instalado".
+RUN pip install --no-cache-dir "camoufox[geoip]==0.5.6"  && HOME=/home/pwuser python3 -m camoufox fetch  && chown -R pwuser:pwuser /home/pwuser/.cache
+
 # ── NODE, E ELE FALTAVA ─────────────────────────────────────────────────────
 #
 # A etapa 1 da captura NAO e Python: `minerar_captura.py` chama

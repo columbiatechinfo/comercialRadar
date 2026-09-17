@@ -211,6 +211,23 @@ def do_municipio(cidade: str = "", limite: int = 0,
     ligados = cur.rowcount
     con.commit()
 
+    # O PRINT DA LISTA VIRA EVIDÊNCIA DO PONTO (dono do produto, 17/09/2026): quem abrir o POI vê a imagem em que a
+    # loja aparecia na lista daquela praça, com data. SÓ O CAMINHO no Storage, e `dados` nulo de propósito — há
+    # consultas que contam "evidência com bytes" como foto capturada, e este print não é foto do lugar.
+    cur.execute("""
+        insert into radar_comercial.poi_evidencia (id_empresa, poi_id, tipo, storage_path, url_origem, capturado_em)
+        select m.id_empresa, m.poi_id, 'ifood_lista', m.bruto->'print_lista'->>'storage_path',
+               'https://www.ifood.com.br/inicio', m.visto_em
+          from radar_comercial.ifood_merchant m
+         where m.poi_id is not null
+           and m.bruto->'print_lista'->>'storage_path' is not null
+        on conflict (id_empresa, poi_id, tipo)
+        do update set storage_path = excluded.storage_path, capturado_em = excluded.capturado_em
+    """)
+    com_print = cur.rowcount
+    con.commit()
+    _log("   %d ponto(s) com o print da lista do iFood como evidência" % com_print)
+
     # AS QUE SOBRARAM, SEPARADAS POR MOTIVO — porque os motivos são dois e
     # pedem condutas opostas. Na primeira versão este relatório dizia que as
     # 630 restantes eram cópias recusadas pelo índice; eram lojas de OUTRAS

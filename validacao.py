@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """validacao.py — a validação de uma cidade ou área desenhada, por tarefas no banco (dono do produto, 16/09/2026).
 
-O QUE ERA. Tudo o que vem depois do vínculo — recoleta das fichas do Maps, fotos para o Storage, foto de rua de
+O QUE ERA. Tudo o que vem depois do vínculo — fotos para o Storage, foto de rua de
 frente, leitura das placas, ficha do CNPJ no Serasa, busca web, conferência e o julgamento leve — rodava só pelo
 `scripts/producao_canoas/orquestrador_julgamento.sh`, no cron do i9, com Canoas fixo e o estado em arquivos. Uma
 cidade nova não rodava pela tela, e o notebook ficava parado.
@@ -19,7 +19,7 @@ tarefa por etapa. Os comandos são OS MESMOS do orquestrador de Canoas — nenhu
         Spark — a soma das chamadas simultâneas declaradas pelas tarefas de IA;
         conexões do pooler — são 20 no total para i9, notebook, API e painel.
 
-    python validacao.py criar --cidade CHUVISCA --area teste_chuvisca
+    python validacao.py criar --cidade CHUVISCA --area teste_chuvisca [--ia-qualificacoes SIM,SIM_COM_ANALISE_HUMANA,NAO]
     python validacao.py status [--id N]
     python validacao.py pausar|retomar|cancelar --id N
 """
@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import datetime
 import json
 import os
 import re
@@ -80,30 +81,114 @@ class Etapa:
 # `{arq}` é o arquivo do lote e `{pasta}` a pasta da validação, os dois vistos de dentro do contêiner (/o);
 # `{k}` é a parte (0..partes-1).
 ETAPAS = {
-    "fichas": Etapa(1, (), "google", IMG, conexoes=2, root=True, escreve_repo=True,
-                    cmd="sh scripts/com_tela.sh python -u recoletar_fichas.py --ligacoes-arquivo {arq} "
-                        "--sem-data-apos-horas 24 --navegadores 8 --por-ip 25"),
-    "storage": Etapa(2, ("fichas",), "local", IMG, conexoes=1,
+    # A ETAPA `fichas` SAIU EM 17/09/2026, por decisão do dono do produto, e o motivo está medido.
+    #
+    # Ela recoletava a ficha do Maps das ligações do lote. Para o POI que VEIO do Maps isso é refazer o que a etapa 4
+    # da extração já fez, um por um, pelo id. Sobrava o POI de outra fonte — e buscá-lo no Maps POR NOME custa caro e
+    # rende pouco: no ensaio de 17/09 (10 ligações, 20 POIs, sem gravar), 25,2 s por POI e só 2 acertos em 20. Em
+    # Canoas o alvo seria de 24.103 POIs, ~42 h de navegador com 8 em paralelo para achar algo em 1 de cada 8.
+    #
+    # O julgamento não ficou sem prova: 97,9% das ligações julgadas tinham foto de rua e 99,99% tinham busca web.
+    # `recoletar_fichas.py` continua no repositório para uso à mão.
+    "storage": Etapa(2, (), "local", IMG, conexoes=1,
                      cmd="python -u imagens_para_storage.py --fotos"),
     # TRES PROCESSOS, um navegador cada: o render do Chromium no Xvfb trava num núcleo só (orquestrador de Canoas)
-    "frente": Etapa(3, ("fichas",), "google", IMG, conexoes=1, root=True, partes=3,
+    "frente": Etapa(3, (), "google", IMG, conexoes=1, root=True, partes=3,
                     cmd="sh scripts/com_tela.sh python -u recapturar_frente.py --ligacoes-arquivo {arq} --abas 8 "
                         "--parte {k}/3 --saida {pasta}/{lote}_frente"),
     "leitura": Etapa(4, ("frente",), "spark", IMG, conexoes=2, simultaneas=60, precisa_ia=True,
                      cmd="python -u ler_fotos_de_rua.py --ligacoes-arquivo {arq} --simultaneas 60"),
-    "cnpj": Etapa(5, ("fichas",), "cnpj", IMGQ, conexoes=1, shm="2g",
+    "cnpj": Etapa(5, (), "cnpj", IMGQ, conexoes=1, shm="2g",
                   cmd="python3 -u fichas_cnpj.py --ligacoes-arquivo {arq} --navegadores 3 --aplicar"),
-    "busca": Etapa(6, ("fichas",), "busca", IMGQ, conexoes=2, shm="8g", sonda=True,
-                   cmd="python3 -u buscar_web.py --ligacoes-arquivo {arq} --trabalhadores 16 --aplicar"),
+    # A MARCAÇÃO DA IA DEPOIS DE `--ligacoes-arquivo` (17/09/2026): a sonda do executor é o comando cortado ali
+    "busca": Etapa(6, (), "busca", IMGQ, conexoes=2, shm="8g", sonda=True,
+                   cmd="python3 -u buscar_web.py --ligacoes-arquivo {arq} --trabalhadores 16 --aplicar "
+                       "--qualificacoes {coleta}"),
     "conferencia": Etapa(7, ("storage", "leitura", "cnpj", "busca"), "local", IMG, conexoes=2,
                          cmd="python -u conferir_evidencias.py --ligacoes-arquivo {arq} --sem-data-apos-horas 24"),
+    # a IA só julga as qualificações marcadas na validação; as outras vão direto para revisão humana (17/09/2026)
     "julgamento": Etapa(8, ("conferencia",), "spark", IMG, conexoes=4, simultaneas=120, precisa_ia=True,
                         tolerante=False,
                         cmd="python -u avaliar_enxuto.py --leve --ligacoes-arquivo {arq} --julgar-sem-foto "
-                            "--trabalhadores 120 --aplicar"),
+                            "--trabalhadores 120 --aplicar --qualificacoes {qualificacoes} --validacao {validacao}"),
 }
-RECAPTURA = ("fichas", "storage", "frente", "leitura", "cnpj", "busca")
+RECAPTURA = ("storage", "frente", "leitura", "cnpj", "busca")
+#: Quem não depende de ninguém volta direto para a fila numa segunda passada; o resto espera a sua vez.
+SEM_DEPENDENCIA = tuple(n for n, e in ETAPAS.items() if not e.depende)
 GRUPOS = ("iFood", "Google Maps", "o resto")
+
+
+# ──────────────────────────────────────────────────────────────── as qualificações que a IA pode tratar ──
+# A IA SÓ TRATA O QUE FOI MARCADO (dono do produto, 17/09/2026). A tela de extração e a de validação ganharam três
+# caixas — "A IA pode tratar as ligações com qualificação: SIM · SIM com análise humana · NÃO" — e a escolha fica
+# gravada no processo (argumentos do job, parâmetros da validação), com quem marcou e quando. Dela saem duas regras:
+#   COLETA (vínculo da etapa 8, ligações da validação, busca web): SIM e SIM com análise humana sempre; o NÃO só
+#       quando marcado;
+#   JULGAMENTO: a IA só julga a qualificação marcada; a coletada e não marcada vai direto para revisão humana, sem
+#       parecer da IA (`avaliar_enxuto --qualificacoes`).
+# O PADRÃO — SIM e SIM com análise humana marcados, NÃO de fora — é exatamente o comportamento de antes das caixas.
+QUALIFICACOES = ("SIM", "SIM_COM_ANALISE_HUMANA", "NAO")
+IA_PADRAO = ("SIM", "SIM_COM_ANALISE_HUMANA")
+COLETA_SEMPRE = ("SIM", "SIM_COM_ANALISE_HUMANA")
+ROTULO_QUALIFICACAO = {"SIM": "SIM", "SIM_COM_ANALISE_HUMANA": "SIM com análise humana", "NAO": "NÃO"}
+
+
+def ler_qualificacoes(valor, padrao=IA_PADRAO):
+    """As qualificações marcadas, na ordem de `QUALIFICACOES` e sem repetição. `valor` é a lista da tela ou o texto
+    separado por vírgula da linha de comando; ausente (None ou texto vazio) é `padrao`.
+
+    NADA PASSA SEM SER UM DOS TRÊS: o texto vai para dentro do `sh -c` do executor e decide o que a IA julga. Nome
+    desconhecido, ou a lista sem nenhuma marcada, levanta ValueError — "nenhuma" na tela é quase sempre engano, e
+    mandaria a validação inteira para revisão humana em silêncio."""
+    if valor is None or (isinstance(valor, str) and not valor.strip()):
+        return tuple(padrao)
+    if isinstance(valor, str):
+        itens = valor.split(",")
+    elif isinstance(valor, (list, tuple, set, frozenset)):
+        itens = list(valor)
+    else:
+        raise ValueError("qualificações em formato desconhecido: %r" % (valor,))
+    vistas = set()
+    for x in itens:
+        q = _sem_acento(str(x)).replace(" ", "_")
+        if not q:
+            continue
+        if q not in QUALIFICACOES:
+            raise ValueError("qualificação desconhecida: %r (as possíveis: %s)" % (x, ", ".join(QUALIFICACOES)))
+        vistas.add(q)
+    if not vistas:
+        raise ValueError("marque ao menos uma qualificação que a IA pode tratar")
+    return tuple(q for q in QUALIFICACOES if q in vistas)
+
+
+def coleta_de(marcadas):
+    """O que se COLETA para as `marcadas`: SIM e SIM com análise humana sempre, e o NÃO só quando marcado."""
+    marcadas = set(marcadas or ())
+    return tuple(q for q in QUALIFICACOES if q in COLETA_SEMPRE or q in marcadas)
+
+
+def ia_da_validacao(parametros):
+    """(marcadas, coleta) de uma validação. A criada antes de 17/09/2026 não tem a chave e fica no padrão."""
+    marcadas = ler_qualificacoes((parametros or {}).get("ia_qualificacoes"))
+    return marcadas, coleta_de(marcadas)
+
+
+def ligacoes_nao(cur, ligacoes):
+    """As ligações com qualificação NAO entre `ligacoes`, num conjunto.
+
+    A LIGAÇÃO NAO FORA DA COLETA FICA INTOCADA (dono do produto, 17/09/2026): a rodada cuja coleta não traz o NÃO
+    (extração sem a caixa, o botão "Revisar vínculos", `revisar_vinculo`, `casar_por_endereco`, `cruzar_ligacao` ou
+    `telhados` sem `--qualificacoes` com NAO) não cria, não aceita, não reescreve e não descarta vínculo de ligação
+    NAO — a ligação fica fora do conjunto que a rodada revisa. Eram 6.139 vínculos vivos de ligação NAO nesse dia.
+
+    PELO ÍNDICE E EM PYTHON: `num_ligacao = any(bigint[])` usa a chave da tabela, e quem chama tira o conjunto da
+    própria lista — um `not exists` por linha contra o cadastro inteiro já deixou a fila 13 minutos parada."""
+    nums = sorted({int(x) for x in ligacoes if str(x).isdigit()})
+    if not nums:
+        return set()
+    cur.execute("""select num_ligacao::text from resources_root.cadastro_corsan
+                    where num_ligacao = any(%s::bigint[]) and qualificacao = 'NAO'""", (nums,))
+    return {r[0] for r in cur.fetchall()}
 
 
 def _log(m):
@@ -128,25 +213,35 @@ def _dentro(lat, lng, pol):
 
 
 # ───────────────────────────────────────────────────────────────────────────────────────── as ligações ──
-def ligacoes_para_validar(cur, empresa, cidade, poligono=None, refazer=False):
+def ligacoes_para_validar(cur, empresa, cidade, poligono=None, refazer=False, qualificacoes=None):
     """(ordenadas, contagem) — as ligações aptas da cidade (ou da área) com POI vinculado.
 
     A MESMA REGRA DA FILA DO JULGAMENTO (`avaliar_ligacao.SQL_FILA`): residencial, ativa, apta ao cruzamento
     (SIM ou SIM com análise humana) e com vínculo não descartado. SEM o corte "tem imagem" de lá: aqui a foto de
-    rua é uma das etapas, e a ligação sem foto nenhuma é julgada com `--julgar-sem-foto`."""
+    rua é uma das etapas, e a ligação sem foto nenhuma é julgada com `--julgar-sem-foto`.
+
+    AS QUALIFICAÇÕES DA COLETA (dono do produto, 17/09/2026): `qualificacoes` é o conjunto de coleta do processo
+    (`coleta_de`). No padrão — SIM e SIM com análise humana — a consulta é a de sempre, por `apta_cruzamento` (e o
+    índice parcial `ix_corsan_apta`); com o NÃO marcado, ela pede `qualificacao = any(...)`, e o NÃO entra na fila
+    depois do SIM com análise humana."""
     cont = collections.Counter()
+    coleta = tuple(qualificacoes) if qualificacoes else COLETA_SEMPRE
+    if set(coleta) == set(COLETA_SEMPRE):
+        filtro_q, args_q = "apta_cruzamento", ()
+    else:
+        filtro_q, args_q = "qualificacao = any(%s)", (list(coleta),)
     base = """select num_ligacao::text, cod_latitude::float8, cod_longitude::float8, qualificacao
                 from resources_root.cadastro_corsan
-               where id_empresa = %s and apta_cruzamento
+               where id_empresa = %s and """ + filtro_q + """
                  and upper(categoria) = 'RESIDENCIAL' and upper(coalesce(sit_ligacao, '')) = 'ATIVA'"""
     if poligono:
         lats = [p[0] for p in poligono]
         lngs = [p[1] for p in poligono]
         cur.execute(base + " and geom && ST_MakeEnvelope(%s, %s, %s, %s, 4326)",
-                    (empresa, min(lngs), min(lats), max(lngs), max(lats)))
+                    (empresa,) + args_q + (min(lngs), min(lats), max(lngs), max(lats)))
         linhas = [r for r in cur.fetchall() if r[1] is not None and _dentro(r[1], r[2], poligono)]
     else:
-        cur.execute(base + " and upper(cidade) = %s", (empresa, _sem_acento(cidade)))
+        cur.execute(base + " and upper(cidade) = %s", (empresa,) + args_q + (_sem_acento(cidade),))
         linhas = cur.fetchall()
     cont["aptas na %s" % ("área" if poligono else "cidade")] = len(linhas)
     ligs = [r[0] for r in linhas]
@@ -158,7 +253,11 @@ def ligacoes_para_validar(cur, empresa, cidade, poligono=None, refazer=False):
     fontes = {l: set(fs or []) for l, fs in cur.fetchall()}
     julgadas = set()
     if not refazer:
-        cur.execute("select ligacao from radar_comercial.ligacao_veredito where ligacao = any(%s)", (ligs,))
+        # A REVISÃO DIRETA POR "IA NÃO AUTORIZADA" NÃO É JULGAMENTO (dono do produto, 17/09/2026): a ligação que foi
+        # para revisão humana só porque a qualificação dela não estava marcada volta na validação seguinte, e a IA a
+        # julga se lá a caixa estiver marcada. Até 17/09/2026 nenhum veredito tinha a chave: o conjunto é o de sempre.
+        cur.execute("""select ligacao from radar_comercial.ligacao_veredito
+                        where ligacao = any(%s) and (percepcao::jsonb->>'ia_nao_autorizada') is null""", (ligs,))
         julgadas = {r[0] for r in cur.fetchall()}
     fila = []
     for lig in ligs:
@@ -170,17 +269,27 @@ def ligacoes_para_validar(cur, empresa, cidade, poligono=None, refazer=False):
             continue
         fs = fontes[lig]
         g = 0 if "ifood" in fs else 1 if "maps" in fs else 2
-        q = 0 if qual.get(lig) == "SIM" else 1
+        # o NÃO, quando marcado, vem depois do SIM com análise humana (17/09/2026)
+        q = 0 if qual.get(lig) == "SIM" else 2 if qual.get(lig) == "NAO" else 1
         fila.append((g, q, int(lig) if lig.isdigit() else 0, lig))
-        cont["%s · %s" % (GRUPOS[g], "SIM" if q == 0 else "SIM com análise")] += 1
+        cont["%s · %s" % (GRUPOS[g], ("SIM", "SIM com análise", "NÃO")[q])] += 1
     fila.sort()
     return [x[-1] for x in fila], cont
 
 
 # ──────────────────────────────────────────────────────────────────────────────────────────── criar ──
-def criar(con, empresa, cidade, area=None, pedido_por=None, ambiente=AMBIENTE, refazer=False, lote=LOTE):
-    """Cria a validação, os lotes e as tarefas. Devolve (id, mensagem). Uma validação ativa por cidade e área."""
+def criar(con, empresa, cidade, area=None, pedido_por=None, ambiente=AMBIENTE, refazer=False, lote=LOTE,
+          ia_qualificacoes=None, ia_marcado_por=None, ia_marcado_em=None):
+    """Cria a validação, os lotes e as tarefas. Devolve (id, mensagem). Uma validação ativa por cidade e área.
+
+    `ia_qualificacoes` (17/09/2026): as qualificações que a IA pode julgar, marcadas na tela; ausente é o padrão (SIM
+    e SIM com análise humana). Vão para `parametros` com a coleta que sai delas, quem marcou e quando — a auditoria."""
     import area_utils
+    try:
+        marcadas = ler_qualificacoes(ia_qualificacoes)
+    except ValueError as e:
+        raise SystemExit(str(e))
+    coleta = coleta_de(marcadas)
     cur = con.cursor()
     cur.execute("""select id from radar_comercial.validacao
                     where id_empresa = %s and ambiente = %s and upper(cidade) = %s
@@ -192,7 +301,7 @@ def criar(con, empresa, cidade, area=None, pedido_por=None, ambiente=AMBIENTE, r
     poligono = area_utils.carregar_area(area) if area else None
     if area and not poligono:
         raise SystemExit("a área '%s' não existe no banco" % area)
-    ligs, cont = ligacoes_para_validar(cur, empresa, cidade, poligono, refazer)
+    ligs, cont = ligacoes_para_validar(cur, empresa, cidade, poligono, refazer, qualificacoes=coleta)
     # AS MESMAS LIGAÇÕES JÁ EM ANDAMENTO (16/09/2026): dois cliques em "Avaliar com IA" criaram #2 e #3 em Paverama
     # com as mesmas 8 ligações — cada clique guarda a área com nome próprio, e a trava por área acima não as via.
     if ligs:
@@ -214,7 +323,12 @@ def criar(con, empresa, cidade, area=None, pedido_por=None, ambiente=AMBIENTE, r
                                                           estado, parametros, progresso)
                    values (%s, %s, %s, %s, %s, %s, 'rodando', %s, %s) returning id""",
                 (empresa, pedido_por, ambiente, _sem_acento(cidade), area, len(ligs),
-                 json.dumps({"lote": lote, "refazer": refazer, "tetos": TETO}),
+                 json.dumps({"lote": lote, "refazer": refazer, "tetos": TETO,
+                             # A MARCAÇÃO DA IA, PARA AUDITORIA (17/09/2026): quais, a coleta, quem marcou e quando
+                             "ia_qualificacoes": list(marcadas), "coleta_qualificacoes": list(coleta),
+                             "ia_marcado_por": ia_marcado_por or None,
+                             "ia_marcado_em": ia_marcado_em or datetime.datetime.now().astimezone().isoformat(
+                                 timespec="seconds")}),
                  json.dumps({"ordem": dict(cont)}, ensure_ascii=False)))
     vid = cur.fetchone()[0]
     for n, i in enumerate(range(0, len(ligs), lote)):
@@ -229,8 +343,9 @@ def criar(con, empresa, cidade, area=None, pedido_por=None, ambiente=AMBIENTE, r
                         (empresa, vid, id_lote, ambiente, nome, e.ordem, e.precisa_ia, e.simultaneas,
                          "fila" if not e.depende else "espera"))
     con.commit()
-    return vid, "validação #%d: %d ligações em %d lote(s) · %s" % (
-        vid, len(ligs), (len(ligs) + lote - 1) // lote, ", ".join("%s %d" % kv for kv in cont.items()))
+    return vid, "validação #%d: %d ligações em %d lote(s) · %s%s" % (
+        vid, len(ligs), (len(ligs) + lote - 1) // lote, ", ".join("%s %d" % kv for kv in cont.items()),
+        "" if marcadas == IA_PADRAO else " · a IA pode tratar: %s" % ", ".join(ROTULO_QUALIFICACAO[q] for q in marcadas))
 
 
 # ─────────────────────────────────────────────────────────────────────────────────────────── avançar ──
@@ -290,7 +405,7 @@ def pegar(con, maquina, aceitas=None, ambiente=AMBIENTE):
         uso["conexoes"] += e.conexoes * e.partes
     cur.execute("select count(*) from pg_stat_activity where usename = current_user")
     livres = POOL_TOTAL - POOL_FOLGA - cur.fetchone()[0]
-    cur.execute("""select t.id, t.etapa, t.id_validacao, t.id_lote, t.tentativas, v.id_empresa::text, l.n
+    cur.execute("""select t.id, t.etapa, t.id_validacao, t.id_lote, t.tentativas, v.id_empresa::text, l.n, v.parametros
                      from radar_comercial.validacao_tarefa t
                      join radar_comercial.validacao v on v.id = t.id_validacao
                      join radar_comercial.validacao_lote l on l.id = t.id_lote
@@ -298,7 +413,7 @@ def pegar(con, maquina, aceitas=None, ambiente=AMBIENTE):
                       and (cardinality(%s::text[]) = 0 or t.etapa = any(%s::text[]))
                     order by t.id_validacao, l.n, t.ordem
                     limit 200""", (ambiente, list(aceitas or []), list(aceitas or [])))
-    for tid, etapa, vid, id_lote, tent, empresa, n in cur.fetchall():
+    for tid, etapa, vid, id_lote, tent, empresa, n, parametros in cur.fetchall():
         e = ETAPAS[etapa]
         if e.recurso in ("google", "cnpj", "busca") and uso[e.recurso] >= TETO[e.recurso]:
             continue
@@ -315,8 +430,9 @@ def pegar(con, maquina, aceitas=None, ambiente=AMBIENTE):
         cur.execute("select ligacoes from radar_comercial.validacao_lote where id = %s", (id_lote,))
         ligacoes = cur.fetchone()[0]
         con.commit()
+        # os `parametros` levam a marcação da IA (17/09/2026): o executor monta o julgamento e a busca com ela
         return {"id": tid, "etapa": etapa, "validacao": vid, "lote": n, "id_lote": id_lote, "empresa": empresa,
-                "tentativas": tent + 1, "ligacoes": ligacoes}
+                "tentativas": tent + 1, "ligacoes": ligacoes, "parametros": parametros or {}}
     con.commit()
     return None
 
@@ -333,7 +449,8 @@ def _so_falta_foto_sem_panorama(resumo):
     if not m:
         return False
     n_lig, fichas, foto, leitura, serasa, busca = (int(x) for x in m.groups())
-    return fichas == leitura == serasa == busca == 0 and foto * 50 <= n_lig
+    # `fichas` FICOU FORA DA CONTA em 17/09/2026: a etapa que a buscava saiu, então uma segunda passada não a traria.
+    return leitura == serasa == busca == 0 and foto * 50 <= n_lig
 
 
 def encerrar(con, tarefa, codigo, resumo="", erro=None):
@@ -353,9 +470,10 @@ def encerrar(con, tarefa, codigo, resumo="", erro=None):
     elif tarefa["etapa"] == "conferencia" and erro is None:
         if tentativas < 2 and not _so_falta_foto_sem_panorama(resumo):
             cur.execute("""update radar_comercial.validacao_tarefa
-                              set estado = case when etapa = 'fichas' then 'fila' else 'espera' end,
+                              set estado = case when etapa = any(%s) then 'fila' else 'espera' end,
                                   worker = null, terminado_em = null
-                            where id_lote = %s and etapa = any(%s)""", (tarefa["id_lote"], list(RECAPTURA)))
+                            where id_lote = %s and etapa = any(%s)""",
+                        (list(SEM_DEPENDENCIA), tarefa["id_lote"], list(RECAPTURA)))
             cur.execute("""update radar_comercial.validacao_tarefa
                               set estado = 'espera', worker = null, codigo_saida = %s, resumo = %s, visto_em = now()
                             where id = %s""", (codigo, "faltou evidência, segunda passada: " + resumo, tarefa["id"]))
@@ -383,12 +501,12 @@ def encerrar(con, tarefa, codigo, resumo="", erro=None):
 # ───────────────────────────────────────────────────────────────────────────────────────────── status ──
 def status(con, vid=None, ambiente=AMBIENTE, limite=20):
     cur = con.cursor()
-    cur.execute("""select id, cidade, area, ligacoes, estado, criado_em, terminado_em, erro, progresso
+    cur.execute("""select id, cidade, area, ligacoes, estado, criado_em, terminado_em, erro, progresso, parametros
                      from radar_comercial.validacao
                     where ambiente = %s and (%s::bigint is null or id = %s)
                     order by id desc limit %s""", (ambiente, vid, vid, limite))
-    vals = [dict(zip(("id", "cidade", "area", "ligacoes", "estado", "criado_em", "terminado_em", "erro", "progresso"),
-                     r)) for r in cur.fetchall()]
+    vals = [dict(zip(("id", "cidade", "area", "ligacoes", "estado", "criado_em", "terminado_em", "erro", "progresso",
+                      "parametros"), r)) for r in cur.fetchall()]
     if not vals:
         return []
     cur.execute("""select t.id_validacao, l.n, t.etapa, t.estado, t.worker, t.tentativas, t.resumo, t.erro,
@@ -437,6 +555,10 @@ def main(argv=None):
     c.add_argument("--empresa", default=os.environ.get("CR_TENANT_ID", ""))
     c.add_argument("--refazer", action="store_true", help="inclui as ligações que já têm veredito")
     c.add_argument("--lote", type=int, default=LOTE)
+    c.add_argument("--ia-qualificacoes", dest="ia_qualificacoes", default=None,
+                   help="as qualificações que a IA pode tratar, separadas por vírgula (padrão: SIM,SIM_COM_ANALISE_HUMANA)")
+    c.add_argument("--ia-marcado-por", dest="ia_marcado_por", default=None, help="quem marcou (auditoria)")
+    c.add_argument("--ia-marcado-em", dest="ia_marcado_em", default=None, help="quando marcou, em ISO (auditoria)")
     s = sub.add_parser("status")
     s.add_argument("--id", type=int, default=None)
     for acao in ("pausar", "retomar", "cancelar"):
@@ -457,7 +579,9 @@ def main(argv=None):
                 con.commit()
             if not empresa:
                 raise SystemExit("sem empresa: --empresa, CR_TENANT_ID ou RADAR_USUARIO_SERVICO")
-            vid, msg = criar(con, empresa, a.cidade, a.area, refazer=a.refazer, lote=a.lote)
+            vid, msg = criar(con, empresa, a.cidade, a.area, refazer=a.refazer, lote=a.lote,
+                             ia_qualificacoes=a.ia_qualificacoes, ia_marcado_por=a.ia_marcado_por,
+                             ia_marcado_em=a.ia_marcado_em)
             _log("■ " + msg)
             return 0
         if a.cmd == "status":

@@ -785,6 +785,15 @@ def main(argv=None) -> int:
                    help="não roda a etapa 7 (Airbnb)")
     p.add_argument("--sem-validacao", dest="sem_validacao", action="store_true",
                    help="não cria a validação da área ao terminar (fichas, fotos, busca, julgamento)")
+    # A MARCAÇÃO DA IA (dono do produto, 17/09/2026): as qualificações que a IA pode tratar, das caixas da tela de
+    # extração, pelos argumentos do job. Dela sai a COLETA do vínculo (SIM e SIM com análise humana sempre; o NÃO só
+    # marcado), e ela vai inteira para a validação da área. Sem os argumentos, o padrão de sempre.
+    p.add_argument("--ia-qualificacoes", dest="ia_qualificacoes", default="SIM,SIM_COM_ANALISE_HUMANA",
+                   help="qualificações que a IA pode tratar, separadas por vírgula (SIM, SIM_COM_ANALISE_HUMANA, NAO)")
+    p.add_argument("--ia-marcado-por", dest="ia_marcado_por", default="",
+                   help="quem marcou as qualificações na tela (auditoria)")
+    p.add_argument("--ia-marcado-em", dest="ia_marcado_em", default="",
+                   help="quando marcou, em ISO (auditoria)")
     p.add_argument("--so-diagnostico", dest="so_diagnostico", action="store_true",
                    help="mostra quais etapas rodariam, e SAI sem rodar nenhuma")
     p.add_argument("--produzir-bases", dest="produzir_bases", action="store_true",
@@ -797,6 +806,13 @@ def main(argv=None) -> int:
     a = p.parse_args(argv)
     global _DE_ETAPA
     _DE_ETAPA = max(1, min(int(a.de_etapa or 1), TOTAL_ETAPAS))
+    # A MARCAÇÃO INVÁLIDA PARA AQUI, antes das horas de captura, e não na validação do fim (17/09/2026)
+    import validacao as _validacao
+    try:
+        ia_marcadas = _validacao.ler_qualificacoes(a.ia_qualificacoes)
+    except ValueError as _e:
+        p.error(str(_e))
+    ia_coleta = _validacao.coleta_de(ia_marcadas)
 
     poly = area_utils.carregar_area(a.area)
     if not poly:
@@ -824,6 +840,10 @@ def main(argv=None) -> int:
     # acima nao precisa de arquivo — ele nao muda nada e cabe na tela.
     _caminho_log = _espelhar_log(a.sessao)
     _log("📝 log desta rodada em %s" % _caminho_log)
+    _log("  a IA pode tratar: %s · coleta do vínculo: %s%s" % (
+        ", ".join(ia_marcadas), ", ".join(ia_coleta),
+        (" · marcado por %s em %s" % (a.ia_marcado_por or "?", a.ia_marcado_em or "?"))
+        if (a.ia_marcado_por or a.ia_marcado_em) else ""))
 
     # O CÓDIGO DO MUNICÍPIO NÃO DEPENDE DAS BASES PÚBLICAS.
     #
@@ -1426,8 +1446,10 @@ def main(argv=None) -> int:
         # 9 poder pular quem divide ligação com um irmão já informado, sem
         # copiar nada de um POI para o outro.
         if _idbase:
+            # a ligação NAO só entra no cruzamento com o NÃO na coleta desta extração (17/09/2026)
             _tolerante_i9(["cruzar_ligacao.py", "--base", str(_idbase),
-                           "--cidade", cidade, "--area", a.area, "--aplicar"],
+                           "--cidade", cidade, "--area", a.area, "--aplicar",
+                           "--qualificacoes", ",".join(ia_coleta)],
                           "vínculo por ligação")
 
             # ── A REGRA FECHA A ETAPA, e não fica esperando um botão ──────
@@ -1459,10 +1481,14 @@ def main(argv=None) -> int:
             # `radar_comercial.ligacao_poi_descartes_teste_20260916`. Decisão: em produção também, cada extração
             # revisa só a própria cidade; a regra nova chega a outra cidade quando ela for extraída. O risco que o
             # comentário de 10/09 acima aponta (Gravataí vivo por omissão) passa a ser o comportamento escolhido.
-            _tolerante_i9(["revisar_vinculo.py", "--aplicar", "--cidade", cidade],
+            # A COLETA DA MARCAÇÃO DA IA (dono do produto, 17/09/2026): sem o NÃO marcado nesta extração, a ligação NAO
+            # fica fora da revisão e do casamento — o vínculo dela não é criado, aceito nem descartado; com o NÃO
+            # marcado, a NAO é revisada como a SIM.
+            _tolerante_i9(["revisar_vinculo.py", "--aplicar", "--cidade", cidade,
+                           "--qualificacoes", ",".join(ia_coleta)],
                           "regra do vínculo sobre o que já estava gravado, na cidade")
             _tolerante_i9(["casar_por_endereco.py", "--cidade", cidade,
-                           "--aplicar"],
+                           "--aplicar", "--qualificacoes", ",".join(ia_coleta)],
                           "órfãos pelo endereço publicado (alimenta a fila)")
         else:
             _log("  vínculo por ligação pulado — nenhuma base do cliente confirmada")
@@ -1505,7 +1531,7 @@ def main(argv=None) -> int:
         _tolerante_i9(["telhados.py", "--registrar", "--aplicar"],
                       "catálogo dos tiles")
         _tolerante_i9(["telhados.py", "--base", str(_idbase),
-                       "--area", a.area, "--aplicar"],
+                       "--area", a.area, "--aplicar", "--qualificacoes", ",".join(ia_coleta)],
                       "suspeita por telhado")
     else:
         _log("  pulado — sem base do cliente não há ligação a suspeitar")
@@ -1578,7 +1604,11 @@ def main(argv=None) -> int:
     elif not cidade:
         _log("  validação da área: pulada — sem município da área")
     else:
-        _tolerante_i9(["validacao.py", "criar", "--cidade", cidade, "--area", a.area], "validação da área")
+        # A MARCAÇÃO DA IA SEGUE PARA A VALIDAÇÃO (17/09/2026): quais, quem marcou e quando ficam nos parâmetros dela
+        _tolerante_i9(["validacao.py", "criar", "--cidade", cidade, "--area", a.area,
+                       "--ia-qualificacoes", ",".join(ia_marcadas)]
+                      + (["--ia-marcado-por", a.ia_marcado_por] if a.ia_marcado_por else [])
+                      + (["--ia-marcado-em", a.ia_marcado_em] if a.ia_marcado_em else []), "validação da área")
 
     _log("─" * 62)
     if _ETAPAS_COM_FALHA:

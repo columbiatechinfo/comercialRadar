@@ -118,7 +118,22 @@ def main(argv=None):
     p.add_argument("--mover", action="store_true",
                    help="ALEM de vincular, move a coordenada do POI casado "
                         "para a porta da ligacao (nao e o padrao)")
+    p.add_argument("--qualificacoes", default="",
+                   help="as qualificações da coleta do processo, separadas por vírgula: SIM e "
+                        "SIM_COM_ANALISE_HUMANA ficam sempre; NAO só quando listado — sem ele, o vínculo de "
+                        "ligação NAO não é tocado (a marcação da IA, 17/09/2026)")
     a = p.parse_args(argv)
+    # A COLETA DA MARCAÇÃO DA IA (dono do produto, 17/09/2026): a ligação NAO só casa quando o processo marcou o NÃO
+    # para a IA. Sem `--qualificacoes`, a consulta é a de sempre.
+    import validacao as va
+    try:
+        coleta = va.coleta_de(va.ler_qualificacoes(a.qualificacoes, padrao=va.COLETA_SEMPRE))
+    except ValueError as e:
+        p.error(str(e))
+    nao = " or coalesce(qualificacao,'') = 'NAO'" if "NAO" in coleta else ""
+    # A LIGAÇÃO NAO FORA DA COLETA FICA INTOCADA (dono do produto, 17/09/2026): sem o NÃO na coleta, a ligação NAO nem
+    # é lida — não casa, não revive vínculo descartado, não ganha motivo de recusa e não é relabelada da fila do teto.
+    fora_nao = "" if "NAO" in coleta else " and coalesce(qualificacao,'') <> 'NAO'"
 
     con = bc.conectar()
     cur = con.cursor()
@@ -128,9 +143,9 @@ def main(argv=None):
         select num_ligacao::text, coalesce(nom_logradouro,''),
                coalesce(nro,''), cod_latitude::float8, cod_longitude::float8,
                coalesce(cod_cep,''), coalesce(nom_bairro,''),
-               coalesce(qualificacao,'') like 'SIM%%'
+               coalesce(qualificacao,'') like 'SIM%%'""" + nao + """
           from resources_root.cadastro_corsan
-         where """ + _sa("coalesce(cidade,'')") + " = " + _sa("%s"),
+         where """ + _sa("coalesce(cidade,'')") + " = " + _sa("%s") + fora_nao,
                 (a.cidade,))
     porta = defaultdict(list)
     n_lig = 0
@@ -352,7 +367,7 @@ def main(argv=None):
            and ligacao in (select num_ligacao::text
                              from resources_root.cadastro_corsan
                             where """ + _sa("coalesce(cidade,'')") + " = "
-                + _sa("%s") + """)""", (a.cidade,))
+                + _sa("%s") + fora_nao + """)""", (a.cidade,))
     _log("%d pares da antiga fila do teto sem motivo específico, relabelados"
          % cur.rowcount)
     con.commit()

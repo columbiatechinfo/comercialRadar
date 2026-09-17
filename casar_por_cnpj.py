@@ -47,8 +47,18 @@ def main(argv=None):
     p.add_argument("--cidade", required=True)
     p.add_argument("--base", type=int, default=1)
     p.add_argument("--fonte", default="ifood", help="a fonte cujas lojas casam pelo CNPJ (padrao: ifood)")
+    p.add_argument("--qualificacoes", default="",
+                   help="as qualificações da coleta, separadas por vírgula: SIM e SIM_COM_ANALISE_HUMANA ficam "
+                        "sempre; NAO só quando listado (a marcação da IA, 17/09/2026)")
     p.add_argument("--aplicar", action="store_true")
     a = p.parse_args(argv)
+    # A COLETA DA MARCAÇÃO DA IA (dono do produto, 17/09/2026): sem `--qualificacoes`, a ligação apta é a de sempre
+    import validacao as va
+    try:
+        coleta = va.coleta_de(va.ler_qualificacoes(a.qualificacoes, padrao=va.COLETA_SEMPRE))
+    except ValueError as e:
+        p.error(str(e))
+    nao = " or coalesce(qualificacao,'') = 'NAO'" if "NAO" in coleta else ""
     con = bc.conectar()
     cur = con.cursor()
     cur.execute("set statement_timeout = '300s'")
@@ -79,7 +89,7 @@ def main(argv=None):
         vinc[pid].add(str(lig))
 
     cur.execute("""select num_ligacao::text, coalesce(nom_logradouro,''), coalesce(nro,''), coalesce(nom_bairro,''),
-                          coalesce(qualificacao,'') like 'SIM%%'
+                          coalesce(qualificacao,'') like 'SIM%%'""" + nao + """
                      from resources_root.cadastro_corsan where upper(coalesce(cidade,'')) = %s""", (a.cidade.upper(),))
     apta, porta = {}, collections.defaultdict(list)
     for lig, logr, nro, bai, ok in cur.fetchall():

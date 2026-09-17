@@ -410,7 +410,7 @@ class Telhado:
 
 def cruzar(base_id: int, cidade: str, aplicar: bool, raio: float,
            limite: int, area: str = "", tipos_over: str = "",
-           situacao: str = "") -> dict:
+           situacao: str = "", qualificacoes: str = "") -> dict:
     con = bc.conectar()
     cur = con.cursor()
     # RECORTE PELA AREA. Mesma regra da etapa 9: com poligono, so ligacoes e
@@ -585,6 +585,16 @@ def cruzar(base_id: int, cidade: str, aplicar: bool, raio: float,
     _par_lig = [cidade, tipos] + ([situacao] if _sit else [])
     cur.execute(_sql_lig, _par_lig)
     ligs = cur.fetchall()
+    # A LIGAÇÃO NAO FORA DA COLETA FICA INTOCADA (dono do produto, 17/09/2026): sem o NÃO na coleta da rodada, a
+    # ligação NAO sai daqui — o upsert não cria vínculo dela nem reescreve o que ela já tem (`gerado_em` inclusive).
+    # SIM e SIM com análise humana seguem o cruzamento de sempre: cada ligação decide só com os próprios candidatos.
+    import validacao as _va
+    if ligs and "NAO" not in _va.coleta_de(_va.ler_qualificacoes(qualificacoes, padrao=_va.COLETA_SEMPRE)):
+        _lig_nao = _va.ligacoes_nao(cur, [r[0] for r in ligs])
+        if _lig_nao:
+            _n_antes = len(ligs)
+            ligs = [r for r in ligs if r[0] not in _lig_nao]
+            _log("   %d ligação(ões) NAO ficam fora do cruzamento (a coleta não traz o NÃO)" % (_n_antes - len(ligs)))
 
     _sql_poi = (
         "select p.id, coalesce(p.fonte,''), coalesce(p.nome,''), "
@@ -888,10 +898,18 @@ def main(argv=None) -> int:
                         "Sem ela, os tipos_comerciais declarados da base.")
     p.add_argument("--situacao", default="",
                    help="filtra sit_ligacao da base (ex.: Ativa).")
+    p.add_argument("--qualificacoes", default="",
+                   help="as qualificações da coleta da rodada, separadas por vírgula: SIM e SIM_COM_ANALISE_HUMANA "
+                        "sempre; NAO só quando listado — sem ele, a ligação NAO não é tocada (17/09/2026)")
     a = p.parse_args(argv)
+    import validacao as va
+    try:
+        va.ler_qualificacoes(a.qualificacoes, padrao=va.COLETA_SEMPRE)
+    except ValueError as e:
+        p.error(str(e))
     _log("▶ vínculo ancorado na ligação · %s" % a.cidade)
     saida = cruzar(a.base, a.cidade, a.aplicar, a.raio, a.limite, a.area,
-                   a.tipos, a.situacao)
+                   a.tipos, a.situacao, a.qualificacoes)
     for k, v in sorted(saida.items()):
         if isinstance(v, int):
             _log("      %-26s %7d" % (k, v))

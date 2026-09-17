@@ -323,6 +323,224 @@ def uma_ficha(sessao, anuncio_id, com_print=True):
     return saida
 
 
+# ── o caminho da frota ─────────────────────────────────────────────────────────────────────────────────────────
+#
+# A FROTA ÚNICA DE NAVEGAÇÃO (dono do produto, 17/09/2026): a mesma frota do `extrair_airbnb` — site "airbnb", cookie
+# por IP no banco —, com UMA TAREFA POR ANÚNCIO (ficha, print e avaliações) num Camoufox que vive de anúncio em anúncio.
+# Ela substitui os lotes de 8 a 15 com um IP cada: quanto um IP aguenta passa a ser decidido pela degradação
+# (bloqueio, verificação não passada, vazio em sequência), e não por um número sorteado.
+#
+# Medido em 17/09/2026 em anúncios do centro de Santa Maria:
+#
+#     ficha                     HTTP 200 já na primeira página do navegador, sem verificação; h1 e payload em ~1,8 s
+#     preço                     sem datas a ficha diz "Adicione datas para ver os preços" e não tem "Total": o
+#                               `preco_total` fica o da busca (o `coalesce` da gravação não apaga)
+#     anúncio fora do ar        HTTP 200, "Ocorreu um erro" e nenhum payload
+#     aviso de cookies          cobre o terço de baixo do print
+#
+# O CORPO DAS AVALIAÇÕES SOME A PARTIR DA SEGUNDA FICHA DO NAVEGADOR. No Camoufox, a escuta lê o `StaysPdpReviewsQuery`
+# da primeira ficha; nas seguintes, `Network.getResponseBody` falha com NS_ERROR_INVALID_CONTENT_ENCODING (32 de 38
+# respostas, 12 anúncios, 3 navegadores — com `gzip` e com `br`). Para a página a resposta chega inteira; só a leitura
+# pelo protocolo quebra. Num navegador que vive centenas de fichas, isso seria "sem avaliações" em quase todas, em
+# silêncio. Por isso a resposta que não se deixou ler é PEDIDA DE NOVO pelo `fetch` da própria página, com os mesmos
+# cabeçalhos da aplicação: medido, 68 avaliações só pela escuta, 184 com o pedido refeito.
+DESAFIO = ("just a moment", "verify you are human", "confirme que é humano", "verificando se você é humano",
+           "pressione e segure", "press & hold")
+PAGINA_DE_ERRO = ("ocorreu um erro", "não conseguimos encontrar")
+SEM_DATAS = "adicione datas para ver os preços"
+ESPERA_PRIMEIRA_S = 90             # a primeira página de um navegador é onde a verificação apareceria
+ESPERA_S = 20
+
+REFAZER = r"""async ([u, h]) => {
+  try {
+    const r = await fetch(u, {headers: h, credentials: 'include'});
+    if (!r.ok) return {st: r.status};
+    return {st: r.status, corpo: await r.json()};
+  } catch (e) { return {erro: String(e).slice(0, 120)}; }
+}"""
+
+IMAGENS_PRONTAS = """() => Array.from(document.images)
+  .filter(i => { const r = i.getBoundingClientRect(); return r.top < innerHeight && r.bottom > 0 && r.width > 40; })
+  .every(i => i.complete)"""
+
+
+def _log(msg):
+    print(msg, flush=True)
+
+
+def _motivo(e):
+    return (str(e).splitlines()[0] if str(e) else type(e).__name__)[:140]
+
+
+def _esperar_ficha(p, espera_s):
+    """O dicionário do DA_FICHA, esperando o payload. Com `erro` quando a página é a de erro do Airbnb ou o prazo
+    acaba sem payload. Verificação que não sai no prazo levanta `Captcha`."""
+    from frota_navegacao import Captcha
+
+    page = p.page
+    fim = time.time() + espera_s
+    desafio = False
+    while True:
+        f = page.evaluate(DA_FICHA) or {}
+        if not f.get("erro"):
+            return f
+        corpo = p.texto().lower()
+        if any(x in corpo for x in PAGINA_DE_ERRO):
+            f["erro"] = "página de erro do Airbnb"
+            return f
+        if any(d in corpo for d in DESAFIO):
+            desafio = True
+        if time.time() >= fim:
+            break
+        page.wait_for_timeout(1000)
+    if desafio:
+        raise Captcha("verificação na ficha não passou em %d s" % espera_s)
+    return f
+
+
+def _recusar_cookies_opcionais(page):
+    """O aviso de cookies cobre o terço de baixo do print. Escolhe "Somente o necessário" — a opção que recusa os
+    opcionais — e a escolha fica no cookie do site, que a frota guarda por IP: nas fichas seguintes o aviso não volta.
+    Só clica no botão VISÍVEL; qualquer falha aqui é ignorada (o print sai com o aviso, como no caminho antigo)."""
+    try:
+        botao = page.get_by_role("button", name="Somente o necessário")
+        if botao.count() and botao.first.is_visible():
+            botao.first.click(timeout=5000)
+            page.wait_for_timeout(600)
+    except Exception:                                          # noqa: BLE001
+        pass
+
+
+def ficha_frota(p, anuncio_id, com_print=True, pasta=PRINTS) -> dict:
+    """FUNÇÃO DE TAREFA da frota: a ficha de UM anúncio num navegador vivo — o mesmo dicionário de `uma_ficha`.
+
+    Argumentos e retorno só com tipos JSON; o print é gravado em `pasta` e volta como caminho em `print_ficha`. `p` é a
+    `Pagina` da frota (`frota_navegacao`). A tarefa começa com navegação limpa para a ficha; nada depende do que a
+    tarefa anterior deixou na tela. Falha levanta: a frota repete o anúncio em outro navegador. Juntar e gravar é do
+    script (`rodar_frota`), não daqui."""
+    page = p.page
+    corpos, perdidas, vistas = [], [], [0]
+    saida = {"anuncio_id": anuncio_id}
+
+    def ouvir(resp):
+        u = resp.url
+        if not ("/api/" in u or "graphql" in u.lower()) or resp.status != 200:
+            return
+        avaliacao = "Reviews" in u
+        if avaliacao:
+            vistas[0] += 1
+        try:
+            corpos.append(resp.json())
+        except Exception:                                      # noqa: BLE001
+            if avaliacao:
+                try:
+                    h = {k: v for k, v in resp.request.all_headers().items()
+                         if k.lower().startswith("x-") or k.lower() in ("accept", "content-type")}
+                except Exception:                              # noqa: BLE001
+                    h = {}
+                perdidas.append((u, h))
+
+    page.on("response", ouvir)
+    try:
+        # SEM CASTIGO PELO STATUS: um 403 na primeira página seria a verificação em curso (lição do iFood, 17/09).
+        p.ir("https://www.airbnb.com.br/rooms/%s" % anuncio_id, timeout=120000, http_bloqueio=False)
+        f = _esperar_ficha(p, ESPERA_PRIMEIRA_S if p.tarefas_anteriores == 0 else ESPERA_S)
+        saida.update(f)
+        if f.get("erro"):
+            # conta na sequência que degrada o navegador: três seguidas e a frota troca de IP
+            p.marcar("vazio", "ficha sem payload (%s)" % f["erro"])
+            return saida
+        saida.update(numeros(saida.get("resumo_curto"), saida.get("frases")))
+        # O PREÇO É DO QUADRO DE RESERVA, que chega depois do payload. Sem datas ele não existe: não se espera à toa.
+        preco = None
+        fim = time.time() + 6
+        while time.time() < fim:
+            preco = page.evaluate(PRECO)
+            if preco or SEM_DATAS in p.texto().lower():
+                break
+            page.wait_for_timeout(700)
+        saida["preco_total"] = preco
+        if com_print:
+            # A CAPTURA DA FICHA, como no caminho antigo: é ela que vai ao assistente e vira rua e número
+            _recusar_cookies_opcionais(page)
+            fim = time.time() + 5
+            while time.time() < fim and not page.evaluate(IMAGENS_PRONTAS):
+                page.wait_for_timeout(500)
+            os.makedirs(pasta, exist_ok=True)
+            caminho = os.path.join(pasta, "%s.png" % anuncio_id)
+            try:
+                page.screenshot(path=caminho, full_page=False)
+                saida["print_ficha"] = caminho
+            except Exception:                                  # noqa: BLE001
+                saida["print_ficha"] = None
+
+        # As avaliações têm rota própria (ver `uma_ficha`). Falha aqui não perde a ficha, como no caminho antigo.
+        try:
+            antes = vistas[0]
+            p.ir("https://www.airbnb.com.br/rooms/%s/reviews" % anuncio_id, timeout=60000, http_bloqueio=False)
+            fim = time.time() + 8
+            while time.time() < fim and vistas[0] == antes:
+                page.wait_for_timeout(500)
+            page.wait_for_timeout(800)
+            # a rolagem do caminho antigo, mas só enquanto ela ainda traz resposta nova
+            for _ in range(4):
+                antes = vistas[0]
+                page.evaluate("window.scrollBy(0, 1200)")
+                page.wait_for_timeout(1600)
+                if vistas[0] == antes:
+                    break
+        except Exception:                                      # noqa: BLE001
+            pass
+        # O PEDIDO REFEITO: a resposta que a escuta não conseguiu ler (ver o cabeçalho desta seção)
+        refeitas = set()
+        for u, h in list(perdidas):
+            if u in refeitas or len(refeitas) >= 4:
+                continue
+            refeitas.add(u)
+            try:
+                r = page.evaluate(REFAZER, [u, h]) or {}
+            except Exception:                                  # noqa: BLE001
+                continue
+            if r.get("corpo") is not None:
+                corpos.append(r["corpo"])
+        saida["avaliacoes"] = avaliacoes_de(corpos)
+        return saida
+    finally:
+        page.remove_listener("response", ouvir)
+
+
+def rodar_frota(a, ids):
+    """Uma tarefa por anúncio na frota do site "airbnb". Devolve (fichas, mortos, t0), como os lotes do caminho antigo."""
+    from frota_navegacao import Frota
+
+    fichas, mortos = [], []
+    t0 = time.time()
+    print("  FROTA: %d navegadores Camoufox vivos, proxy BR, castigo por site · uma tarefa por anúncio"
+          % a.navegadores, flush=True)
+    with Frota("airbnb", navegadores=a.navegadores, tentativas=3, processo="detalhar_airbnb", log=_log) as frota:
+        futuros = [(i, frota.enviar(ficha_frota, anuncio_id=i, com_print=not a.sem_print, pasta=a.pasta_prints))
+                   for i in ids]
+        for n, (anuncio_id, fut) in enumerate(futuros, 1):
+            try:
+                f = fut.result()
+            except Exception as e:                             # noqa: BLE001
+                print("  %-16s %s (3 tentativas)" % (anuncio_id, _motivo(e)), flush=True)
+                continue
+            if f.get("erro") or not f.get("titulo"):
+                mortos.append(anuncio_id)
+                print("  %-16s sem payload — SEM_RETORNO" % anuncio_id, flush=True)
+            else:
+                fichas.append(f)
+                print("  %-16s %-40s %d comodidades · %d fotos · %d avaliações%s"
+                      % (anuncio_id, str(f.get("titulo"))[:40], len(f.get("comodidades") or []),
+                         len(f.get("fotos") or []), len(f.get("avaliacoes") or []),
+                         " · print" if f.get("print_ficha") else ""), flush=True)
+            if n % 20 == 0:
+                print("    %d de %d · %.1f min" % (n, len(ids), (time.time() - t0) / 60), flush=True)
+        print("  frota: %s" % json.dumps(frota.resumo()), flush=True)
+    return fichas, mortos, t0
+
+
 def linha_para_banco(f):
     local = f.get("local_subtitulo") or ""      # "Canoas, Rio Grande do Sul, Brasil"
     partes = [p.strip() for p in local.split(",")]
@@ -356,13 +574,25 @@ def main() -> int:
     p.add_argument("--sem-proxy", dest="sem_proxy", action="store_true")
     p.add_argument("--simular", action="store_true")
     p.add_argument("--trabalhadores", type=int, default=6,
-                   help="lotes em paralelo; cada um tem a sua sessao e o seu IP")
+                   help="só no --caminho-antigo: lotes em paralelo; cada um tem a sua sessao e o seu IP")
+    p.add_argument("--navegadores", type=int, default=3,
+                   help="navegadores vivos da frota (padrão 3); um anúncio por tarefa")
+    p.add_argument("--caminho-antigo", dest="caminho_antigo", action="store_true",
+                   help="o caminho de antes da frota: lotes de 8 a 15 anúncios, uma StealthySession do Scrapling cada")
+    p.add_argument("--ids", default=None,
+                   help="detalha estes anúncios (separados por vírgula) em vez dos pendentes do banco")
+    p.add_argument("--pasta-prints", dest="pasta_prints", default=PRINTS,
+                   help="onde o caminho da frota grava o print da ficha (padrão %s)" % PRINTS)
     a = p.parse_args()
 
     con = bc.conectar()
-    with con.cursor() as k:
-        k.execute(PENDENTES, {"fora": a.fora, "area": a.area})
-        ids = [r[0] for r in k.fetchall()]
+    if a.ids:
+        # anúncios escolhidos a dedo (teste, reprocesso): a fila de pendentes não é consultada
+        ids = [x.strip() for x in a.ids.split(",") if x.strip()]
+    else:
+        with con.cursor() as k:
+            k.execute(PENDENTES, {"fora": a.fora, "area": a.area})
+            ids = [r[0] for r in k.fetchall()]
     if a.limite:
         ids = ids[:a.limite]
 
@@ -375,6 +605,16 @@ def main() -> int:
         con.close()
         return 0
 
+    # A FROTA É O PADRÃO desde 17/09/2026 (ver "o caminho da frota"); os lotes do Scrapling só por pedido explícito.
+    if a.caminho_antigo:
+        fichas, mortos, t0 = _caminho_antigo(a, ids)
+    else:
+        fichas, mortos, t0 = rodar_frota(a, ids)
+    return _fechar(a, con, fichas, mortos, t0)
+
+
+def _caminho_antigo(a, ids):
+    """Os lotes de antes da frota: 8 a 15 anúncios por StealthySession do Scrapling, um IP por lote."""
     proximo = _rodizio(a.sem_proxy)
     from scrapling.fetchers import StealthySession
 
@@ -461,7 +701,11 @@ def main() -> int:
     with concurrent.futures.ThreadPoolExecutor(
             max_workers=max(1, a.trabalhadores)) as piscina:
         list(piscina.map(um_lote, lotes))
+    return fichas, mortos, t0
 
+
+def _fechar(a, con, fichas, mortos, t0):
+    """O fecho, igual para os dois caminhos: relatório, simulação ou gravação."""
     print("%s%d detalhados · %d sem retorno · %.1f min"
           % (chr(10), len(fichas), len(mortos), (time.time() - t0) / 60), flush=True)
 

@@ -39,8 +39,18 @@
         <input id="v-area" class="g-in v-in" autocomplete="off" placeholder="sem área: a cidade inteira">
       </div>
       <label class="v-check"><input type="checkbox" id="v-refazer"> incluir as já julgadas</label>
+      <!-- A IA SÓ TRATA O QUE FOI MARCADO (dono do produto, 17/09/2026): padrão SIM e SIM com análise humana; a escolha
+           fica gravada na validação, com quem marcou e quando -->
+      <div class="g-campo" role="group" aria-labelledby="v-ia-rot">
+        <span class="fl-rot" id="v-ia-rot">a IA pode tratar as ligações com qualificação</span>
+        <div class="v-ia-caixas">
+          <label class="v-check"><input type="checkbox" id="v-ia-sim" value="SIM" checked> SIM</label>
+          <label class="v-check"><input type="checkbox" id="v-ia-simcom" value="SIM_COM_ANALISE_HUMANA" checked> SIM com análise humana</label>
+          <label class="v-check"><input type="checkbox" id="v-ia-nao" value="NAO"> NÃO</label>
+        </div>
+      </div>
       <button class="bt pri" id="v-criar" type="submit">validar</button>
-      <p class="v-nota">Só entram ligações residenciais ativas, com qualificação SIM ou SIM com análise humana e POI vinculado — na ordem iFood, Google Maps e o resto, SIM antes de SIM com análise.</p>
+      <p class="v-nota">Só entram ligações residenciais ativas, com qualificação SIM ou SIM com análise humana (e NÃO, se marcado) e POI vinculado — na ordem iFood, Google Maps e o resto, SIM antes de SIM com análise. A IA só julga as qualificações marcadas; as outras vão direto para revisão humana. A escolha fica gravada na validação.</p>
     </form>
   </section>
 

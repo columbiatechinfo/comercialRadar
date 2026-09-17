@@ -53,7 +53,7 @@ import sys
 import base_comum as bc
 import provas_datadas as pdat
 
-REGRA = "checagem do codigo de 16/09/2026 v8 (as 16 regras do dono: Street View sem prazo, iFood nao basta so, rede social ate 2 anos so SIM, sem a trava do so MEI, aluga/vende nao segura com uso visto pela IA, sem registro valido vai para revisao, a mesma empresa vale para todas as ligacoes do mesmo endereco) · v7 (fachada da seta com sinal ou rede social + outra fonte, so SIM) · v6 (fonte única promove, foto do Google datada, iFood 6m, Maps 12m) · v5 (número, complemento, cada fonte com prova recente, fonte única, rede social, vizinho, ficha do Maps, aluga/vende e anúncio)"
+REGRA = "checagem do codigo de 16/09/2026 v8 (as 16 regras do dono: Street View sem prazo, iFood nao basta so, rede social ate 1 ano, sem a trava do so MEI, aluga/vende nao segura com uso visto pela IA, sem registro valido vai para revisao, a mesma empresa vale para todas as ligacoes do mesmo endereco) · v7 (fachada da seta com sinal ou rede social + outra fonte, so SIM) · v6 (fonte única promove, foto do Google datada, iFood 6m, Maps 12m) · v5 (número, complemento, cada fonte com prova recente, fonte única, rede social, vizinho, ficha do Maps, aluga/vende e anúncio)"
 
 #: AS FONTES INDEPENDENTES (dono do produto, 14 e 15/09/2026). Cada uma conta uma vez; o Serasa e a
 #: Casa dos Dados SAO a Receita — a IA do teste contou "Receita" e "Serasa" como duas e aprovou.
@@ -577,13 +577,22 @@ def prova_recente(ctx, validos, resposta=None, fotos=None):
                                                  else ": só a busca na web ou nenhuma prova datada"))
 
 
+# REGRA 9, O PRAZO (dono do produto, 17/09/2026): o post de rede social caiu de 2 anos para 1 ano. O prazo geral
+# das outras provas (regra 6) continua em 2 anos — quem manda nele é `provas_datadas.MESES_RECENTE`.
+MESES_REDE_SOCIAL = 12
+
+
 def fachada_ou_rede_basta(ctx, lig, validos, resposta, fotos, ids):
-    """(basta, texto): REGRA 9 (dono do produto, 16/09/2026). Com a IA aprovando e a qualificacao SIM, a rede social
-    no endereco com post dos ultimos 2 anos, mais a empresa cadastrada, aprova sem as regras de prova recente e das 2
+    """(basta, texto): REGRA 9 (dono do produto, 16/09/2026). Com a IA aprovando e a qualificacao SIM (ou NAO, desde
+    17/09/2026, quando a caixa NAO deixou a IA julgar), a rede social
+    no endereco com post do ultimo ANO (era 2 anos ate 17/09/2026), mais a empresa cadastrada, aprova sem as regras
+    de prova recente e das 2
     fontes. O que o texto da IA diz ser igreja, templo, associacao ou escola publica e o imovel abandonado ficam de fora.
     A fachada no Street View deixou de precisar desta regra: vale sozinha, de qualquer data (`fonte_unica_basta`)."""
     r = resposta or {}
-    if lig is None or ctx.qualificacao.get(str(lig)) != "SIM" or not validos:
+    # O NAO SEGUE AS REGRAS DO SIM (dono do produto, 17/09/2026): com a caixa NÃO marcada, a IA julga o NAO, e a
+    # aprovação dele passa pelas mesmas 16 regras do SIM — inclusive esta. A regra 4 continua só do SIM com análise.
+    if lig is None or ctx.qualificacao.get(str(lig)) not in ("SIM", "NAO") or not validos:
         return False, None
     uso = r.get("uso") if isinstance(r.get("uso"), dict) else {}
     if RE_NAO_COMERCIO.search("%s %s" % (uso.get("o_que") or "", r.get("motivo") or "")):
@@ -592,9 +601,10 @@ def fachada_ou_rede_basta(ctx, lig, validos, resposta, fotos, ids):
     if str(imovel.get("estado") or "") == "abandonado":
         return False, None
     redes = [x for x in (r.get("_redes") or []) if isinstance(x, dict)
-             and pdat.data_de_texto(x.get("data")) and pdat.recente(pdat.data_de_texto(x.get("data")))]
+             and pdat.data_de_texto(x.get("data"))
+             and (pdat.meses(pdat.data_de_texto(x.get("data"))) or 999) <= MESES_REDE_SOCIAL]
     if redes:
-        return True, "post de rede social no endereço de até 2 anos (%s) e a empresa cadastrada" % ", ".join(
+        return True, "post de rede social no endereço de até 1 ano (%s) e a empresa cadastrada" % ", ".join(
             sorted({"%s de %s" % (x.get("rede"), pdat.mes_ano(pdat.data_de_texto(x.get("data")))) for x in redes}))
     return False, None
 

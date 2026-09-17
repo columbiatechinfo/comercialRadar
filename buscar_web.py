@@ -113,6 +113,7 @@ NAVEGADOR_WEB = "camoufox"
 BUSCAS_POR_SESSAO = 50
 #: Largura da pagina que vai para o modelo: densidade normal (decisao de 11/09).
 LARGURA = 1366
+#: O ALVO PADRÃO DA BUSCA: a coleta sem o NÃO marcado para a IA (`--qualificacoes`, 17/09/2026).
 ALVO = ("SIM", "SIM_COM_ANALISE_HUMANA")
 #: BUSCA PELO NOME DO POI: DESLIGADA. Uma busca por instalacao, pelo endereco
 #: normalizado + "empresa" (dono do produto, 11/09/2026) — a busca por nome
@@ -540,7 +541,7 @@ def ligacoes_com_imagem(cur):
 
 
 def fila(con, cidade=None, limite=0, ligacoes=None, fatia=None, refazer_bing=False, refazer=False,
-         reserva_google=False):
+         reserva_google=False, qualificacoes=ALVO):
     """As ligacoes do alvo com consulta por fazer, e as consultas de cada uma.
 
     Alvo: residencial ATIVA, qualificada SIM ou SIM_COM_ANALISE_HUMANA, com
@@ -557,11 +558,13 @@ def fila(con, cidade=None, limite=0, ligacoes=None, fatia=None, refazer_bing=Fal
     """
     cur = con.cursor()
     cur.execute("set statement_timeout = '300s'")
+    # AS QUALIFICAÇÕES DA COLETA (dono do produto, 17/09/2026): SIM e SIM com análise humana sempre; o NAO só quando
+    # o processo o marcou para a IA. `in (...)` e `= any(...)` são a mesma condição para o Postgres.
     cur.execute("""select num_ligacao::text, coalesce(end_ligacao,''), coalesce(nom_logradouro,''),
                           coalesce(nro,''), coalesce(nom_bairro,''), qualificacao, cidade, coalesce(cod_cep,'')
                      from resources_root.cadastro_corsan
-                    where qualificacao in ('SIM','SIM_COM_ANALISE_HUMANA')
-                      and upper(categoria)='RESIDENCIAL' and upper(sit_ligacao)='ATIVA'""")
+                    where qualificacao = any(%s)
+                      and upper(categoria)='RESIDENCIAL' and upper(sit_ligacao)='ATIVA'""", (list(qualificacoes),))
     quero = sem_acento(cidade) if cidade else None
     so = {str(x) for x in ligacoes} if ligacoes else None
     lig = {}
@@ -1035,6 +1038,9 @@ def main(argv=None):
                    help="arquivo com uma ligacao por linha")
     p.add_argument("--chromium", action="store_true",
                    help="DuckDuckGo e Yahoo pelo Chromium frio do Scrapling, e nao pelo Camoufox quente")
+    p.add_argument("--qualificacoes", default="",
+                   help="as qualificações da coleta, separadas por vírgula: SIM e SIM_COM_ANALISE_HUMANA ficam "
+                        "sempre; NAO só quando listado (a marcação da IA da validação, 17/09/2026)")
     p.add_argument("--aplicar", action="store_true")
     a = p.parse_args(argv)
     global NAVEGADOR_WEB
@@ -1050,9 +1056,17 @@ def main(argv=None):
         ligs += [x.strip() for x in open(a.ligacoes_arquivo) if x.strip()]
     if not a.cidade and not ligs:
         p.error("diga --cidade, --ligacao ou --ligacoes-arquivo")
+    # A COLETA DA MARCAÇÃO DA IA (dono do produto, 17/09/2026): sem `--qualificacoes`, o alvo de sempre (`ALVO`)
+    qualificacoes = ALVO
+    if a.qualificacoes:
+        import validacao as va
+        try:
+            qualificacoes = va.coleta_de(va.ler_qualificacoes(a.qualificacoes, padrao=ALVO))
+        except ValueError as e:
+            p.error(str(e))
     con = bc.conectar()
     itens = fila(con, a.cidade, a.limite, ligs or None, fatia, refazer_bing=a.refazer_bing, refazer=a.refazer,
-                 reserva_google=a.reserva_google)
+                 reserva_google=a.reserva_google, qualificacoes=qualificacoes)
     con.close()
     if a.contar:
         por_motor = {}

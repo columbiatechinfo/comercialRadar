@@ -40,10 +40,14 @@ def _saida(v):
         lote["etapas"][t["etapa"]] = {k: _iso(t[k]) for k in ("estado", "worker", "tentativas", "resumo", "erro",
                                                               "iniciado_em", "terminado_em")}
     feitas = sum(1 for t in v["tarefas"] if t["estado"] in ("ok", "cancelada"))
+    # A MARCAÇÃO DA IA (17/09/2026), para a tela mostrar a auditoria; a validação de antes das caixas vem sem ela
+    par = v.get("parametros") or {}
     return {"id": v["id"], "cidade": v["cidade"], "area": v["area"], "ligacoes": v["ligacoes"], "estado": v["estado"],
             "criado_em": _iso(v["criado_em"]), "terminado_em": _iso(v["terminado_em"]), "erro": v["erro"],
             "ordem": (v["progresso"] or {}).get("ordem") or {}, "por_etapa": v["por_etapa"],
-            "tarefas": len(v["tarefas"]), "tarefas_feitas": feitas, "lotes": [lotes[n] for n in sorted(lotes)]}
+            "tarefas": len(v["tarefas"]), "tarefas_feitas": feitas, "lotes": [lotes[n] for n in sorted(lotes)],
+            "ia_qualificacoes": par.get("ia_qualificacoes"), "ia_marcado_por": par.get("ia_marcado_por"),
+            "ia_marcado_em": par.get("ia_marcado_em")}
 
 
 @router.get("/api/validacoes")
@@ -64,6 +68,8 @@ class NovaValidacao(BaseModel):
     area: str | None = None
     refazer: bool = False
     empresa: str | None = None
+    # as qualificações que a IA pode tratar (17/09/2026); ausente é o padrão, SIM e SIM com análise humana
+    ia_qualificacoes: list[str] | None = None
 
 
 @router.post("/api/validacoes")
@@ -73,6 +79,12 @@ def criar(b: NovaValidacao, u: _auth.Usuario = Depends(_quem)):
     empresa = u.id_empresa or (b.empresa if u.nivel == "root" else None)
     if not empresa:
         raise HTTPException(400, "escolha a empresa")
+    # A IA SÓ TRATA O QUE FOI MARCADO (dono do produto, 17/09/2026): conferido ANTES de guardar a cópia da área, para o
+    # pedido recusado não deixar rastro.
+    try:
+        ia_qualificacoes = va.ler_qualificacoes(b.ia_qualificacoes)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     area = (b.area or "").strip() or None
     cidade = (b.cidade or "").strip()
     if area:
@@ -91,7 +103,9 @@ def criar(b: NovaValidacao, u: _auth.Usuario = Depends(_quem)):
         raise HTTPException(400, "informe a cidade")
     con = _auth.conectar_como(u)
     try:
-        vid, msg = va.criar(con, empresa, cidade, area, pedido_por=u.id, refazer=bool(b.refazer))
+        vid, msg = va.criar(con, empresa, cidade, area, pedido_por=u.id, refazer=bool(b.refazer),
+                            ia_qualificacoes=ia_qualificacoes, ia_marcado_por=u.email or u.id,
+                            ia_marcado_em=datetime.now().astimezone().isoformat(timespec="seconds"))
     except SystemExit as e:
         raise HTTPException(400, str(e))
     finally:
