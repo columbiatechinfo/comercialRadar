@@ -748,6 +748,8 @@ def main(argv=None) -> int:
     # `required` deixa de valer com `--so-diagnostico`: pedir o nome da sessao
     # para NAO rodar sessao nenhuma e obrigar a inventar um valor descartavel.
     p.add_argument("--sessao", default="")
+    p.add_argument("--sem-colheita", dest="sem_colheita", action="store_true",
+                   help="etapa 4 sem varrer de novo: só o detalhe da fila desta sessão")
     p.add_argument("--zoom", type=int, default=19)
     p.add_argument("--workers", type=int, default=10)
     p.add_argument("--capture-workers", dest="capture_workers", type=int, default=10)
@@ -992,6 +994,12 @@ def main(argv=None) -> int:
     # vez de ignorado em silencio.
     cmd = ["minerar_placeid.py", "--area", a.area, "--sessao", a.sessao,
            "--workers", str(a.workers)]
+    # RETOMAR SÓ O DETALHE (dono do produto, 17/09/2026): a varredura de Santa Maria gravou 4.323 placeIds e a rodada
+    # foi parada antes das fichas. Repetir a varredura seriam outras 3 h 37 min para achar o que já está no banco;
+    # `--sem-colheita` faz a etapa 4 pegar a fila de detalhe da MESMA sessão e seguir dali.
+    if a.sem_colheita:
+        cmd.append("--sem-colheita")
+        _log("  retomando só o detalhe: a varredura desta sessão já gravou os placeIds")
     if a.no_proxy:
         _log("  ⚠️  --no-proxy nao vale para a etapa 4: a colheita do placeId")
         _log("     roda sempre com rodizio de IP. A flag segue valendo para as")
