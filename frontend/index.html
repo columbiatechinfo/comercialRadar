@@ -255,15 +255,11 @@
            fontes deixaram de ser alternativas.
            DESMARCADA por padrão, e o rótulo diz o que se perde: a caixa é para
            destravar um teste, não para virar o jeito normal de rodar. -->
-      <!-- QUANTOS NAVEGADORES. O encanamento sempre existiu: o job aceita
-           `trabalhadores` e o worker corta pelo teto da maquina
-           (`RADAR_MAX_TRABALHADORES`, 30 no i9) registrando no log quando
-           corta. O que faltava era o controle aqui — quem dispara nao tinha
-           como pedir menos numa maquina ocupada nem mais numa ociosa. -->
-      <label class="opt inline">Navegadores em paralelo
-        <input type="number" id="op-trabalhadores" min="1" max="30" value="20">
-        <small>(a máquina corta no teto dela se você pedir mais; o log diz
-        quando cortou)</small></label>
+      <!-- O CAMPO "NAVEGADORES EM PARALELO" SAIU EM 17/09/2026, por decisao do dono do produto: "deve ser o
+           maximo sustentavel de cada maquina". Quem sabe esse maximo e a maquina que pega o job — ela ja o tem no
+           `RADAR_MAX_TRABALHADORES` (30 no i9, 30 no notebook) e agora o APLICA sozinha quando o job nao pede
+           numero nenhum. Pedir menos numa maquina ocupada deixou de fazer sentido quando os navegadores passaram a
+           sair por proxy, um IP cada: a ocupacao deixou de ser disputa. -->
 
       <label class="opt"><input type="checkbox" id="op-pular-bases">
         Pular as bases públicas — só a captura

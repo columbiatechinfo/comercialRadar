@@ -3791,18 +3791,20 @@ def iniciar_job(body: dict):
             # `minerador_worker._CHAVES_DE_TRABALHADOR` reconhece as tres
             # chaves e registra no log quando corta. Cortar aqui usaria o teto
             # do servidor para decidir pelo notebook.
-            try:
-                _padrao = int(op.get("trabalhadores") or 0) or 10
-            except (TypeError, ValueError):
-                _padrao = 10
             argumentos = {
                 "area": nome_area,
                 "sessao": sessao,
                 "zoom": int(op.get("zoom", 19)),
-                "workers": int(op.get("workers", _padrao)),
-                "capture_workers": int(op.get("capture_workers", _padrao)),
                 "empresa": _empresa_do_pedido(),
             }
+            # O NUMERO DE NAVEGADORES SO VAI SE ALGUEM PEDIR (17/09/2026).
+            #
+            # Antes o servidor sempre mandava um numero — 20 do painel, ou 10 de padrao — e com isso decidia pela
+            # maquina que ainda nem tinha pego o job. O dono tirou o campo do front: "deve ser o maximo sustentavel
+            # de cada maquina". Sem as chaves, `minerador_worker` preenche com o teto de quem pegou.
+            for _k in ("workers", "capture_workers"):
+                if op.get(_k) or op.get("trabalhadores"):
+                    argumentos[_k] = int(op.get(_k) or op.get("trabalhadores"))
             # AS ETAPAS QUE SE PULA, TODAS AS CINCO.
             #
             # Faltavam `pular_cadastur`, `pular_ifood` e `pular_airbnb` —

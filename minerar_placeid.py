@@ -1345,19 +1345,54 @@ async def garantir_cookie(pw, pool, caminho, renovar):
     raise ultimo_erro
 
 
+#: O QUE ABRE O PONTO TAMBEM E CAMOUFOX (17/09/2026).
+#:
+#: O Chromium com proxy Webshare pendura no google.com — o sintoma e `net::ERR_TIMED_OUT`, e o codigo o le como "IP
+#: punido": tres seguidas e o IP vai para 2 h de castigo. Medido no job 69, em 3 minutos: 25 pontos detalhados e 19
+#: trocas de IP. Nesse ritmo os 250 IPs BR entram em castigo em ~40 min e o passo para de andar sozinho — enquanto
+#: os mesmos IPs, no Camoufox, servem iFood, Airbnb e a varredura do mapa sem castigo nenhum.
+#:
+#: `MAPS_DETALHE_CHROMIUM=1` volta ao Chromium.
+DETALHE_CAMOUFOX = os.environ.get("MAPS_DETALHE_CHROMIUM") != "1"
+
+
+async def _abrir_no_proxy(pw, px):
+    """Abre um navegador por este IP. Devolve o navegador e a funcao que o fecha.
+
+    O Camoufox ja monta idioma, fuso e tela coerentes com o IP (`geoip`), entao o contexto nao precisa
+    forcar nada por fora: forcar cria justamente a incoerencia que o site procura.
+    """
+    proxy = {"server": px["server"], "username": px["username"], "password": px["password"]}
+    if DETALHE_CAMOUFOX:
+        from camoufox.async_api import AsyncCamoufox
+        cm = AsyncCamoufox(headless=True, geoip=True, locale="pt-BR", proxy=proxy)
+        nav = await cm.__aenter__()
+
+        async def fechar():
+            await cm.__aexit__(None, None, None)
+
+        return nav, fechar
+    nav = await pw.chromium.launch(headless=False, args=ARGS, proxy=proxy)
+    return nav, nav.close
+
+
+async def _contexto_do_ponto(nav, estado=None):
+    """O contexto de uma sessao do Maps — com o cookie, quando ha um."""
+    if DETALHE_CAMOUFOX:
+        return await nav.new_context(storage_state=estado)
+    return await nav.new_context(viewport={"width": 1360, "height": 1000}, locale="pt-BR",
+                                 timezone_id="America/Sao_Paulo", storage_state=estado)
+
+
 #: Quantos IPs o aquecimento de um cookie queima antes de desistir.
 TENTATIVAS_DE_AQUECIMENTO = 4
 
 
 async def _aquecer(pw, px, caminho):
     """Abre o Maps por ESTE proxy, aceita o consentimento e salva o estado."""
-    nav = await pw.chromium.launch(headless=False, args=ARGS, proxy={
-        "server": px["server"], "username": px["username"],
-        "password": px["password"]})
+    nav, fechar_nav = await _abrir_no_proxy(pw, px)
     try:
-        ctx = await nav.new_context(
-            viewport={"width": 1360, "height": 1000}, locale="pt-BR",
-            timezone_id="America/Sao_Paulo")
+        ctx = await _contexto_do_ponto(nav)
         pg = await ctx.new_page()
         await pg.goto("https://www.google.com/maps", timeout=60000)
         await pg.wait_for_timeout(random.randint(4500, 7000))
@@ -1379,7 +1414,7 @@ async def _aquecer(pw, px, caminho):
                  px["server"]))
         await ctx.close()
     finally:
-        await nav.close()
+        await fechar_nav()
     return caminho
 
 
@@ -1400,12 +1435,8 @@ async def validar_cookie(pw, pool, caminho, alvo):
     px = bons[random.randrange(len(bons))]
     nav = None
     try:
-        nav = await pw.chromium.launch(headless=False, args=ARGS, proxy={
-            "server": px["server"], "username": px["username"],
-            "password": px["password"]})
-        ctx = await nav.new_context(
-            viewport={"width": 1360, "height": 1000}, locale="pt-BR",
-            timezone_id="America/Sao_Paulo", storage_state=caminho)
+        nav, fechar_nav = await _abrir_no_proxy(pw, px)
+        ctx = await _contexto_do_ponto(nav, caminho)
         pg = await ctx.new_page()
         await pg.goto("https://www.google.com/maps/place/?q=place_id:" + alvo,
                       wait_until="domcontentloaded", timeout=60000)
@@ -1425,7 +1456,7 @@ async def validar_cookie(pw, pool, caminho, alvo):
         return False
     finally:
         if nav:
-            await nav.close()
+            await fechar_nav()
 
 
 def engordar_cookie(caminho, estados):
@@ -2188,15 +2219,11 @@ async def principal(a):
               desistiu = False
               nav = None
               try:
-                nav = await pw.chromium.launch(headless=False, args=ARGS, proxy={
-                    "server": px["server"], "username": px["username"],
-                    "password": px["password"]})
+                nav, fechar_nav = await _abrir_no_proxy(pw, px)
                 # A memoria vem do cookie, nao do perfil em disco: 1,1 KB que
                 # viaja entre IPs, em vez de 52 MB presos a um proxy so.
-                ctx = await nav.new_context(
-                    viewport={"width": 1360, "height": 1000}, locale="pt-BR",
-                    timezone_id="America/Sao_Paulo",
-                    storage_state=cookies[i] if i < len(cookies) else cookie)
+                ctx = await _contexto_do_ponto(
+                    nav, cookies[i] if i < len(cookies) else cookie)
                 seguidas = 0
                 while True:
                     async with db:
@@ -2295,7 +2322,7 @@ async def principal(a):
                     # trabalho: se falhar, o processo termina e o sistema
                     # recolhe. Nada disso vale uma rodada.
                     try:
-                        await nav.close()
+                        await fechar_nav()
                     except Exception as _e_fechar:              # noqa: BLE001
                         async with trava:
                             print("    navegador %02d nao fechou limpo: %s"

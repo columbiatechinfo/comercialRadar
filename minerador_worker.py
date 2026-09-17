@@ -280,6 +280,14 @@ def _comando(job: dict) -> list:
         # pediu 30 e rodou com 10 demora três vezes mais; quem for ler o tempo
         # depois precisa saber por quê, sem ter de descobrir em qual máquina
         # ela caiu.
+        # O MAXIMO DA MAQUINA E O PADRAO (17/09/2026), e nao mais um numero vindo do front.
+        #
+        # O dono tirou o campo "navegadores em paralelo" da tela: "deve ser o maximo sustentavel de cada maquina".
+        # Quem sabe esse maximo e esta maquina, entao o job que chega sem o numero recebe o teto daqui — antes o
+        # servidor mandava 10 de padrao e o i9 rodava a um terco do que aguenta.
+        for chave in ("workers", "capture_workers"):
+            if a.get(chave) is None and job["tipo"] == "mineracao":
+                a[chave] = MAX_TRABALHADORES
         for chave in _CHAVES_DE_TRABALHADOR:
             try:
                 pedido = int(a.get(chave))

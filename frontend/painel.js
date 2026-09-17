@@ -3078,11 +3078,8 @@
 
       let enfileiradas = 0;
       for (let i = 0; i < areas.length; i += 1) {
-        // QUANTOS NAVEGADORES. Vai como `trabalhadores` porque e assim
-        // que o servidor o transforma em `workers` e `capture_workers`, e a
-        // maquina que pegar o job corta pelo teto dela.
-        const opcoes = { sessao: "painel", reusar: !!reusar,
-                         trabalhadores: parseInt($("np-trabalhadores")?.value) || 20 };
+        // SEM NUMERO DE NAVEGADORES (17/09/2026): a maquina que pegar o job usa o maximo dela.
+        const opcoes = { sessao: "painel", reusar: !!reusar };
         if (iaQ) opcoes.ia_qualificacoes = iaQ;
         if (areas[i]) opcoes.poligono = areas[i].map(([la, ln]) => [la, ln]);
         const r = await fetch("/api/jobs", {
