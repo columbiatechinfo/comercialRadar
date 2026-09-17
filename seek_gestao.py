@@ -242,6 +242,11 @@ def gestao_resumo(de: str = "", ate: str = "", cidade: str = "", empresa: str = 
         teste = _de_teste(cur, emps)
         ligs = {r[2] for r in decisoes} | {r[1] for r in aberturas}
         cad = _cadastro(cur, emps, ligs)
+        # O VEREDITO DA IA DE CADA LIGACAO DECIDIDA, o mesmo que o filtro "IA" da fila da SEEK usa
+        cur.execute("""select id_empresa::text, ligacao, veredito from radar_comercial.ligacao_veredito
+                        where id_empresa = any(%s::uuid[]) and ligacao = any(%s::text[])""",
+                    (emps, sorted({r[2] for r in decisoes})))
+        veredito_ia = {(e, l): v for e, l, v in cur.fetchall()}
         quem_ids = sorted({r[4] for r in decisoes if r[4]} | {r[2] for r in aberturas})
         cur.execute("""select us.id::text, us.name, us.email, coalesce(n.codigo, 'user'), us.ativo,
                               us.id_empresa::text, coalesce(n.hierarquia, 0)
@@ -267,6 +272,7 @@ def gestao_resumo(de: str = "", ate: str = "", cidade: str = "", empresa: str = 
 
     def vazio():
         return {"vigentes": dict.fromkeys(ACOES, 0), "decisoes": dict.fromkeys(ACOES, 0), "em_lote": 0,
+                "ia_aprovou": dict.fromkeys(ACOES, 0),
                 "tempos": [], "aberturas": 0, "abertas": set(), "ultima_decisao": None,
                 "ultima_abertura": None, "nome": None}
 
@@ -278,6 +284,8 @@ def gestao_resumo(de: str = "", ate: str = "", cidade: str = "", empresa: str = 
             alvo["decisoes"][acao] = alvo["decisoes"].get(acao, 0) + 1
             if i in vig_ids:
                 alvo["vigentes"][acao] = alvo["vigentes"].get(acao, 0) + 1
+                if veredito_ia.get((emp, lig)) == "aprovado":
+                    alvo["ia_aprovou"][acao] = alvo["ia_aprovou"].get(acao, 0) + 1
             if lote:
                 alvo["em_lote"] += 1
             s = _segundos(em, aberta, lote)
@@ -311,6 +319,13 @@ def gestao_resumo(de: str = "", ate: str = "", cidade: str = "", empresa: str = 
                 "vigentes": a["vigentes"], "vigentes_total": vt,
                 "decisoes": a["decisoes"], "decisoes_total": dt, "em_lote": a["em_lote"],
                 "taxa_aprovacao": round(a["vigentes"]["aprovar"] / vt, 4) if vt else None,
+                # A QUALIDADE DA IA (dono do produto, 17/09/2026): a taxa acima e global — divide pelas ligacoes
+                # decididas, inclusive as que a IA mandou para revisao ou reprovou. Esta olha so as que a IA
+                # APROVOU e mede quanto as pessoas confirmaram: aprovadas / (aprovadas + rejeitadas). Campo e
+                # revisao nao entram, porque ainda nao dizem se a IA acertou.
+                "ia_aprovou": a["ia_aprovou"],
+                "qualidade_ia": (round(a["ia_aprovou"]["aprovar"] / (a["ia_aprovou"]["aprovar"] + a["ia_aprovou"]["rejeitar"]), 4)
+                                 if (a["ia_aprovou"]["aprovar"] + a["ia_aprovou"]["rejeitar"]) else None),
                 "tempo_medio_s": round(statistics.fmean(tempos), 1) if tempos else None,
                 "tempo_mediano_s": round(statistics.median(tempos), 1) if tempos else None,
                 "medidas": len(tempos), "aberturas": a["aberturas"], "ligacoes_abertas": len(a["abertas"]),
@@ -323,7 +338,8 @@ def gestao_resumo(de: str = "", ate: str = "", cidade: str = "", empresa: str = 
     return {"periodo": {"de": d0.isoformat(), "ate": d1.isoformat()}, "cidade": cidade or None,
             "empresa": unica, "empresas": visiveis if u.nivel == "root" else [], "cidades": cidades,
             "totais": {k: tot[k] for k in ("vigentes", "vigentes_total", "decisoes", "decisoes_total", "em_lote",
-                                           "taxa_aprovacao", "tempo_medio_s", "tempo_mediano_s", "medidas",
+                                           "taxa_aprovacao", "ia_aprovou", "qualidade_ia",
+                                           "tempo_medio_s", "tempo_mediano_s", "medidas",
                                            "aberturas", "ligacoes_abertas", "ultima_atividade")},
             "usuarios": usuarios, "ativos": sum(1 for x in usuarios if x["decisoes_total"] or x["aberturas"]),
             "gerado_em_s": round(time.time() - t_ini, 2)}

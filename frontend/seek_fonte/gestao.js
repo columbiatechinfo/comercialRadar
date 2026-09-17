@@ -158,7 +158,12 @@ var GESTAO = (function () {
       + kpi('ligações decididas', num(t.vigentes_total),
             ORDEM.map(function (a) { return num(t.vigentes[a]) + ' ' + ACOES[a].rot; }).join(' · '),
             'decisão vigente de cada ligação no período, por status')
-      + kpi('taxa de aprovação', pct(t.taxa_aprovacao), 'aprovadas ÷ ligações decididas')
+      + kpi('taxa de aprovação', pct(t.taxa_aprovacao), 'aprovadas ÷ ligações decididas',
+            'global: divide pelas ligações decididas, inclusive as que a IA não aprovou')
+      + kpi('qualidade da IA', pct(t.qualidade_ia),
+            num(t.ia_aprovou.aprovar) + ' confirmadas · ' + num(t.ia_aprovou.rejeitar) + ' rejeitadas',
+            'só as ligações que a IA aprovou: aprovadas pelas pessoas ÷ (aprovadas + rejeitadas); '
+            + 'campo e revisão ainda não dizem se ela acertou e ficam de fora')
       + kpi('tempo de avaliação', dur(t.tempo_mediano_s), 'mediana · média ' + dur(t.tempo_medio_s)
             + ' · ' + num(t.medidas) + ' medidas', 'da abertura do caso à decisão; decisão em lote não entra')
       + kpi('casos abertos', num(t.aberturas), num(t.ligacoes_abertas) + ' ligações diferentes')
