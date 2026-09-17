@@ -67,8 +67,17 @@ ARGS = ["--disable-http2", "--no-sandbox", "--disable-dev-shm-usage",
 
 MAPA_HTML = """<!doctype html><html><head><meta charset="utf-8">
 <style>*{margin:0;padding:0}html,body,#map{width:%(l)dpx;height:%(a)dpx}</style>
-</head><body><div id="map"></div><script>
+</head><body><div id="map"></div><div id="__saida" style="display:none"></div><script>
 window.__ids=[];
+// O RESULTADO TAMBEM VAI PARA O HTML, e nao so para `window` (17/09/2026).
+//
+// O Camoufox e um Firefox furtivo, e nele o `evaluate` do Playwright roda num MUNDO ISOLADO: enxerga o DOM da
+// pagina, mas nao as variaveis dela. Lendo so `window.__pronto`, a varredura parecia nunca ficar pronta — com o
+// mapa desenhado na tela, os tiles baixados e a API carregada. O elemento acima e a ponte, porque o DOM e a unica
+// coisa que os dois mundos compartilham. No Chromium nada muda: la os dois caminhos levam ao mesmo lugar.
+function _publicar(){
+  document.getElementById('__saida').textContent = JSON.stringify(window.__ids);
+}
 function initMap(){
   const map = new google.maps.Map(document.getElementById('map'), {
     center:{lat:%(lat)s,lng:%(lng)s}, zoom:%(zoom)d, mapId:'%(mapid)s',
@@ -76,6 +85,7 @@ function initMap(){
   map.addListener('click', e => {
     if (e.placeId) {
       window.__ids.push({placeId:e.placeId, lat:e.latLng.lat(), lng:e.latLng.lng()});
+      _publicar();
       e.stop();   // sem isto o cartao abre, e o cartao e o que custa
     }
   });
@@ -83,12 +93,38 @@ function initMap(){
     const b = map.getBounds();
     window.__caixa = {s:b.getSouthWest().lat(), o:b.getSouthWest().lng(),
                       n:b.getNorthEast().lat(), l:b.getNorthEast().lng()};
+    const s = document.getElementById('__saida');
+    s.dataset.caixa = JSON.stringify(window.__caixa);
+    _publicar();
+    s.dataset.pronto = '1';
     window.__pronto = true;
   });
 }
 </script>
 <script src="https://maps.googleapis.com/maps/api/js?key=%(chave)s&callback=initMap&loading=async" async defer></script>
 </body></html>"""
+
+
+#: A VARREDURA SAI POR PROXY, PELA FROTA (17/09/2026).
+#:
+#: Medido no mesmo zoom 20, nas mesmas quatro posicoes do centro de Santa Maria, duas vezes cada:
+#:
+#:     Chromium pelo IP da casa   40 placeIds   4,3 s por posicao
+#:     Camoufox pela frota        40 placeIds   6,1 s por posicao
+#:
+#: Os conjuntos sao IDENTICOS, id por id — nao e "quase o mesmo", e o mesmo. O custo e 1,8 s por posicao, e o que
+#: ele compra e o que faltava: as duas maquinas varrendo ao mesmo tempo. Ate aqui i9 e notebook saiam pelo MESMO IP
+#: publico, disputavam a cota do Maps e uma atrapalhava a outra; pela frota cada vaga reserva o seu proxy e nenhuma
+#: encosta na outra. Quem cuida de castigo, troca de IP e navegador morto e a frota.
+#:
+#: `MAPS_SEM_PROXY=1` volta ao caminho antigo, que continua inteiro aqui embaixo — a queda para o IP da casa nao
+#: depende de codigo novo no dia em que os proxies faltarem.
+POR_PROXY = os.environ.get("MAPS_SEM_PROXY") != "1"
+
+#: As tres leituras da pagina do mapa, todas pelo DOM (ver o comentario dentro de `MAPA_HTML`).
+PRONTO = "!!document.querySelector('#__saida[data-pronto]')"
+CAIXA = "JSON.parse((document.getElementById('__saida').dataset.caixa) || 'null')"
+IDS = "JSON.parse(document.getElementById('__saida').textContent || '[]')"
 
 
 #: PARA QUAL COLUNA VAI O LINK QUE O MAPS CHAMA DE "site".
@@ -185,7 +221,7 @@ async def varrer_tile(nav, lat, lng, passo_px, pasta, rotulo):
         # pronto e `window.__pronto`, logo abaixo, com o seu proprio prazo;
         # o goto so precisa ter comecado a navegar.
         await pg.goto("file://" + arq, wait_until="commit")
-        await pg.wait_for_function("window.__pronto === true", timeout=40000)
+        await pg.wait_for_function(PRONTO, timeout=40000)
         await pg.wait_for_timeout(1600)
 
         if pasta:
@@ -221,7 +257,7 @@ async def varrer_tile(nav, lat, lng, passo_px, pasta, rotulo):
             # `cruzar_ligacao.Telhado` supunha um tile de 200 m onde ele tem
             # 994, e por isso nunca achava o tile de ponto nenhum.
             try:
-                caixa = await pg.evaluate("window.__caixa")
+                caixa = await pg.evaluate(CAIXA)
                 _indexar_tile(pasta, nome, lat, lng, caixa)
             except Exception:                                  # noqa: BLE001
                 pass
@@ -251,11 +287,73 @@ async def varrer_tile(nav, lat, lng, passo_px, pasta, rotulo):
             for y in range(50, ALT - 30, passo_px):
                 await pg.mouse.click(x, y)
         await pg.wait_for_timeout(1800)
-        ids = await pg.evaluate("window.__ids")
+        ids = await pg.evaluate(IDS)
         return {i["placeId"]: i for i in ids}, len(cobradas)
     finally:
         # SO O CONTEXTO. O navegador e da vaga, e serve a proxima posicao.
         await ctx.close()
+
+
+def varrer_tile_pela_frota(p, lat, lng, passo_px, pasta, rotulo):
+    """Uma posicao pela frota: a mesma colheita de `varrer_tile`, com a pagina que a frota entrega.
+
+    OS PORQUES ESTAO NO GEMEO ACIMA e valem os dois: o `commit` no goto em vez de `load`, o prazo proprio do mapa,
+    a coordenada no nome do tile, a grade sem espera entre cliques. O que muda aqui e so QUEM abre o navegador —
+    a frota entrega a pagina com o IP ja reservado, e o castigo, a troca de IP e o navegador morto sao dela.
+
+    Devolve o mesmo par que o gemeo: os pontos achados e quantas chamadas cobradas sairam.
+    """
+    page = p.page
+    arq = "/tmp/mapa_%d_%s.html" % (os.getpid(), rotulo)
+    open(arq, "w", encoding="utf-8").write(
+        MAPA_HTML % {"l": LARG, "a": ALT, "lat": lat, "lng": lng,
+                     "zoom": ZOOM, "mapid": MAP_ID, "chave": CHAVE})
+    cobradas = []
+
+    def contar(r):
+        if "places.googleapis.com" in r.url:
+            cobradas.append(r.url)
+
+    # O NAVEGADOR DA FROTA SERVE MUITAS POSICOES, entao o ouvinte tem de sair no fim: deixa-lo preso a pagina
+    # somaria um ouvinte por posicao e a conta do que foi cobrado cresceria sozinha.
+    page.on("request", contar)
+    try:
+        page.goto("file://" + arq, wait_until="commit")
+        page.wait_for_function(PRONTO, timeout=40000)
+        page.wait_for_timeout(1600)
+
+        if pasta:
+            # O RECORTE EXATO DO MAPA. A janela da frota e maior que o quadro de 1.280x900, e a foto da janela inteira
+            # traria margem branca — o tile alimenta o passo dos telhados, e la a margem vira area sem construcao.
+            bruto = page.screenshot(clip={"x": 0, "y": 0, "width": LARG, "height": ALT})
+            nome = "tile_%s_%.5f_%.5f" % (rotulo, lat, lng)
+            try:
+                import io
+                from PIL import Image
+                Image.open(io.BytesIO(bruto)).convert("RGB").save(
+                    os.path.join(pasta, nome + ".webp"), "WEBP", quality=90, method=6)
+            except Exception:                                  # noqa: BLE001
+                open(os.path.join(pasta, nome + ".png"), "wb").write(bruto)
+            try:
+                _indexar_tile(pasta, nome, lat, lng, page.evaluate(CAIXA))
+            except Exception:                                  # noqa: BLE001
+                pass
+
+        for x in range(50, LARG - 30, passo_px):
+            for y in range(50, ALT - 30, passo_px):
+                page.mouse.click(x, y)
+        page.wait_for_timeout(1800)
+        ids = page.evaluate(IDS) or []
+        # POSICAO VAZIA NAO SE MARCA, e a licao custou tres IPs em 17/09/2026. A frota castiga o IP que volta vazio
+        # tres vezes seguidas — regra certa para iFood e Airbnb, onde vazio significa recusa. Na varredura do mapa
+        # vazio significa QUADRA SEM PONTO, e ha muitas: numa area de 300 m com 40 posicoes, a maioria nao tem um
+        # unico estabelecimento. Marcar aqui queimava IP bom por causa de um quarteirao residencial.
+        return {i["placeId"]: i for i in ids}, len(cobradas)
+    finally:
+        try:
+            page.remove_listener("request", contar)
+        except Exception:                                      # noqa: BLE001
+            pass
 
 
 def celulas_com_ligacao(s, n, o, l, passo_lat, passo_lng):
@@ -367,8 +465,15 @@ async def colher(pw, poligono, pasta, passo_px, paralelo, refinar_acima_de, toda
     # O `Queue` faz o papel do semaforo — pegar da fila vazia espera — e ainda
     # carrega o objeto, que era o que faltava.
     vagas: "asyncio.Queue" = asyncio.Queue()
-    for _ in range(paralelo):
-        vagas.put_nowait(await pw.chromium.launch(headless=False, args=ARGS))
+    frota = None
+    if POR_PROXY:
+        from frota_navegacao import Frota
+        # UMA VAGA DA FROTA PARA CADA NAVEGADOR QUE A ETAPA JA PEDIA: o paralelismo e o mesmo, muda o IP de cada um.
+        frota = Frota("maps_varredura", navegadores=paralelo, paises=("BR",), usar_cookie=False,
+                      processo="colheita_maps", log=lambda *a: print("   ", *a, flush=True))
+    else:
+        for _ in range(paralelo):
+            vagas.put_nowait(await pw.chromium.launch(headless=False, args=ARGS))
 
     # UMA POSICAO QUE FALHA TENTA DE NOVO, uma vez, com navegador novo.
     #
@@ -378,8 +483,34 @@ async def colher(pw, poligono, pasta, passo_px, paralelo, refinar_acima_de, toda
     # perdido custa os POIs que estavam nele.
     TENTATIVAS_POR_TILE = 2
 
+    def registrar(i, marca, lat, lng, ids, cob):
+        """O que a posicao rendeu. A conta e a mesma pelos dois caminhos, e roda sempre com a trava na mao."""
+        nonlocal cobradas_total
+        cobradas_total += cob
+        novos = [k for k in ids if k not in achados]
+        achados.update(ids)
+        print("    %s %03d: %3d na tela, %2d novos → %d"
+              % (marca, i, len(ids), len(novos), len(achados)))
+        # Adaptativo: so refina onde a varredura ainda esta rendendo.
+        if len(novos) >= refinar_acima_de:
+            a_refinar.append((lat, lng))
+
     async def uma(i, lat, lng, marca):
         nonlocal cobradas_total
+        if frota is not None:
+            # A FROTA JA TENTA DE NOVO por conta propria, em outro navegador e outro IP; aqui so se registra o que
+            # voltou. Uma posicao que falhe as tres vezes vira uma linha no log, e nao um pedaco de area perdido em
+            # silencio — o mesmo cuidado que o caminho antigo tomava com `TENTATIVAS_POR_TILE`.
+            try:
+                ids, cob = await asyncio.wrap_future(
+                    frota.enviar(varrer_tile_pela_frota, lat, lng, passo_px, pasta, "%s_%03d" % (marca, i)))
+            except Exception as e:                             # noqa: BLE001
+                async with trava:
+                    print("    %s %03d FALHOU: %s" % (marca, i, str(e)[:70]))
+                return
+            async with trava:
+                registrar(i, marca, lat, lng, ids, cob)
+            return
         nav = await vagas.get()
         try:
             ids = cob = None
@@ -411,14 +542,7 @@ async def colher(pw, poligono, pasta, passo_px, paralelo, refinar_acima_de, toda
             if ids is None:
                 return
             async with trava:
-                cobradas_total += cob
-                novos = [k for k in ids if k not in achados]
-                achados.update(ids)
-                print("    %s %03d: %3d na tela, %2d novos → %d"
-                      % (marca, i, len(ids), len(novos), len(achados)))
-                # Adaptativo: so refina onde a varredura ainda esta rendendo.
-                if len(novos) >= refinar_acima_de:
-                    a_refinar.append((lat, lng))
+                registrar(i, marca, lat, lng, ids, cob)
         finally:
             if nav is not None:
                 vagas.put_nowait(nav)
@@ -442,6 +566,11 @@ async def colher(pw, poligono, pasta, passo_px, paralelo, refinar_acima_de, toda
     # no fim. Agora eles sobrevivem a posicao de proposito — entao alguem
     # precisa fecha-los, ou ficam `paralelo` processos Chromium vivos depois
     # que a colheita termina, cada um segurando a sua memoria.
+    if frota is not None:
+        # A FROTA TAMBEM MORRE COM A COLHEITA: fechar devolve os IPs reservados e fecha as sessoes com motivo, para
+        # o painel nao mostrar navegador vivo que nao existe mais.
+        frota.fechar()
+        print("  frota da colheita: %s" % frota.resumo())
     while not vagas.empty():
         try:
             await vagas.get_nowait().close()
