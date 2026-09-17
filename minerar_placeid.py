@@ -258,7 +258,34 @@ async def varrer_tile(nav, lat, lng, passo_px, pasta, rotulo):
         await ctx.close()
 
 
-async def colher(pw, poligono, pasta, passo_px, paralelo, refinar_acima_de):
+def celulas_com_ligacao(s, n, o, l, passo_lat, passo_lng):
+    """{(i, j)}: as posicoes da grade cujo tile cobre ao menos uma ligacao do cadastro, ou None sem cadastro na caixa.
+
+    A grade anda de meio tile a partir de (s, o), e o tile centrado na posicao cobre meio tile para cada lado: um
+    ponto entre duas linhas e duas colunas da grade cai nos quatro tiles vizinhos. Le so a caixa do desenho, pelo
+    indice espacial (`ix_corsan_geom`), com a identidade de quem pediu — cada empresa ve o proprio cadastro."""
+    con = bc.conectar()
+    try:
+        with con.cursor() as cur:
+            cur.execute("""select cod_latitude::float8, cod_longitude::float8
+                             from resources_root.cadastro_corsan
+                            where geom && st_makeenvelope(%s, %s, %s, %s, 4326)::geography""",
+                        (o, s, l, n))
+            pontos = cur.fetchall()
+    finally:
+        con.close()
+    if not pontos:
+        return None
+    cel = set()
+    for la, lo in pontos:
+        iy, ix = (la - s) / passo_lat, (lo - o) / passo_lng
+        for y in {math.floor(iy), math.ceil(iy)}:
+            for x in {math.floor(ix), math.ceil(ix)}:
+                cel.add((y, x))
+    return cel
+
+
+async def colher(pw, poligono, pasta, passo_px, paralelo, refinar_acima_de, todas_as_posicoes=False):
     """Varre o poligono. Passo de meio tile; refina onde ainda aparece novo.
 
     A sobreposicao nao e custo extra: com passo de meio tile cada ponto ja cai
@@ -296,16 +323,31 @@ async def colher(pw, poligono, pasta, passo_px, paralelo, refinar_acima_de):
                     return True
         return False
 
+    # SO ONDE HA LIGACAO (dono do produto, 17/09/2026): a cidade inteira de Santa Maria deu 374.619 posicoes e ~95 h
+    # de varredura, e 96% delas caiam onde a Corsan nao tem ligacao nenhuma — zona rural. Com o cadastro, a grade fica
+    # so com os tiles que cobrem alguma ligacao (14.653, ~3,7 h), e o teste da divisa roda so neles. Sem cadastro na
+    # caixa (outra empresa, area sem base), varre tudo como antes; `--todas-as-posicoes` tambem volta ao antigo.
+    cel = None if todas_as_posicoes else celulas_com_ligacao(s, n, o, l, passo_lat, passo_lng)
     pos, caixa = [], 0
-    y = s
-    while y <= n + passo_lat:
-        x = o
-        while x <= l + passo_lng:
-            caixa += 1
-            if toca_o_desenho(y, x):
-                pos.append((y, x))
-            x += passo_lng
-        y += passo_lat
+    if cel is not None:
+        ny, nx = int((n + passo_lat - s) / passo_lat), int((l + passo_lng - o) / passo_lng)
+        caixa = (ny + 1) * (nx + 1)
+        for i, j in sorted(cel):
+            if 0 <= i <= ny and 0 <= j <= nx:
+                y, x = s + i * passo_lat, o + j * passo_lng
+                if toca_o_desenho(y, x):
+                    pos.append((y, x))
+        print("  so onde ha ligacao do cadastro: %d tile(s) com ligacao na caixa" % len(cel))
+    else:
+        y = s
+        while y <= n + passo_lat:
+            x = o
+            while x <= l + passo_lng:
+                caixa += 1
+                if toca_o_desenho(y, x):
+                    pos.append((y, x))
+                x += passo_lng
+            y += passo_lat
 
     print("  area %.0f m x %.0f m · tile %.0f m x %.0f m · %d posicoes"
           "  (%d da caixa, %d fora do desenho)"
@@ -1894,7 +1936,7 @@ async def principal(a):
         else:
             print("\n⟦A⟧ colheita de placeId (de graca)")
             alvos = await colher(pw, poligono, pasta, a.passo, a.workers,
-                                 a.refinar_acima_de)
+                                 a.refinar_acima_de, a.todas_as_posicoes)
             t_colheita = time.time() - t0
             if not alvos:
                 return 1
@@ -2373,6 +2415,8 @@ if __name__ == "__main__":
                    help="espera minima entre POIs do MESMO navegador")
     p.add_argument("--intervalo-max", type=float, default=5.0)
     p.add_argument("--empresa", default="")
+    p.add_argument("--todas-as-posicoes", action="store_true",
+                   help="varre a grade inteira do desenho, mesmo onde o cadastro nao tem ligacao")
     p.add_argument("--simular", action="store_true")
     a = p.parse_args()
     sys.exit(asyncio.run(principal(a)))
