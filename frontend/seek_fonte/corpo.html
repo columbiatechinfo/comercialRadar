@@ -36,10 +36,23 @@
 
 <main id="corpo">
 
-  <!-- fila de ligações -->
+  <!-- 1 · as instalações: a busca e a lista -->
   <aside id="fila">
     <div class="fila-topo">
       <div class="busca"><input id="f-busca" placeholder="ligação, titular, endereço ou bairro" autocomplete="off"></div>
+    </div>
+    <div class="fila-lista" id="f-lista" tabindex="0">
+      <div class="vl" id="f-vl"><div class="vl-jan" id="f-jan"></div></div>
+      <div class="vazio" id="f-vazio" hidden></div>
+    </div>
+    <div class="fila-pe" id="f-pe">—</div>
+  </aside>
+
+  <!-- 2 · OS FILTROS NUMA COLUNA SÓ (dono do produto, 16/09/2026): os da fila e os de classe, que estavam
+       no painel do cérebro; a decisão em lote vale para o recorte, então fica no pé desta coluna -->
+  <aside id="filtros">
+    <div class="filtros-cab"><strong>Filtros</strong><span>recortam a lista de instalações</span></div>
+    <div class="filtros-rolo">
       <!-- ONDE (16/09/2026): estado, cidade e bairro, em cascata — cada lista conta com os outros recortes valendo -->
       <div class="fila-filtros" id="f-uf"></div>
       <div class="fila-filtros" id="f-cid"></div>
@@ -49,16 +62,17 @@
       <div class="fila-filtros dec" id="f-decisao"></div>
       <div class="ffontes-rot"><span class="fl-rot">fontes · achou / não achou</span><button id="f-limpa" hidden>limpar</button></div>
       <div class="ffontes" id="f-fontes"></div>
+      <div class="ffontes-rot"><span class="fl-rot">ramo do negócio</span><button id="f-limpa-seg" hidden>limpar</button></div>
+      <div class="ffontes fclasse" id="f-segmentos"></div>
+      <div class="ffontes-rot"><span class="fl-rot">o que a IA viu nas imagens</span><button id="f-limpa-vis" hidden>limpar</button></div>
+      <div class="ffontes fclasse" id="f-visual"></div>
+    </div>
+    <div class="filtros-pe">
       <button class="bt p lote" id="f-lote" title="grava a decisão oficial em todas as ligações do recorte"></button>
     </div>
-    <div class="fila-lista" id="f-lista" tabindex="0">
-      <div class="vl" id="f-vl"><div class="vl-jan" id="f-jan"></div></div>
-      <div class="vazio" id="f-vazio" hidden></div>
-    </div>
-    <div class="fila-pe" id="f-pe">—</div>
   </aside>
 
-  <!-- a árvore de evidência -->
+  <!-- 3 · a árvore de evidência: os dados da instalação escolhida -->
   <section id="arvore-caixa">
     <div class="arv-topo">
       <div class="arv-tit">
@@ -76,16 +90,8 @@
     <div class="arvore" id="arvore"></div>
   </section>
 
-  <!-- o volume e os grupos -->
+  <!-- 4 · o cérebro: o volume das fontes e as informações das bases marcadas -->
   <aside id="lado">
-    <!-- OS RECORTES DE CLASSE FICAM AQUI (dono do produto, 16/09/2026): recortam a fila, mas ocupavam a altura
-         dela; deste lado sobra espaço e eles ficam junto do cérebro. -->
-    <div class="lado-classe">
-      <div class="ffontes-rot"><span class="fl-rot">ramo do negócio</span><button id="f-limpa-seg" hidden>limpar</button></div>
-      <div class="ffontes fclasse" id="f-segmentos"></div>
-      <div class="ffontes-rot"><span class="fl-rot">o que a IA viu nas imagens</span><button id="f-limpa-vis" hidden>limpar</button></div>
-      <div class="ffontes fclasse" id="f-visual"></div>
-    </div>
     <div class="lado-tela">
       <canvas id="cer-cv" role="img"
         aria-label="as fontes desta ligação em volume; a mesma leitura está na árvore ao lado"></canvas>

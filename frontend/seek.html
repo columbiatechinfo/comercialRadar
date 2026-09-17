@@ -1010,6 +1010,23 @@ a.chip{text-decoration:none}
   .arv-tit strong{display:none}
   #decisao{gap:10px}
 }
+
+/* AS QUATRO COLUNAS (dono do produto, 16/09/2026): instalações, filtros, a árvore e o cérebro. Os filtros saem da
+ * altura da fila e do painel do cérebro e ficam juntos numa coluna que rola sozinha; a lista ganha a altura toda. */
+:root{--filtros:248px}
+#filtros{width:var(--filtros);flex:none;background:var(--sup2);border-right:1px solid var(--linha);
+  display:flex;flex-direction:column;min-height:0}
+.filtros-cab{flex:none;display:flex;flex-direction:column;gap:1px;padding:9px 12px 8px;border-bottom:1px solid var(--linha)}
+.filtros-cab strong{font-size:12.5px;font-weight:600;color:var(--tinta)}
+.filtros-cab span{font-size:11px;color:var(--fraco)}
+.filtros-rolo{flex:1;min-height:0;overflow-y:auto;padding:10px;display:flex;flex-direction:column;gap:7px}
+.filtros-rolo .ffontes{grid-template-columns:repeat(2,minmax(0,1fr))}
+.filtros-rolo .ffontes-rot{margin-top:6px}
+.filtros-pe{flex:none;padding:8px 10px;border-top:1px solid var(--linha);background:var(--sup)}
+.filtros-pe .lote{width:100%}
+.filtros-pe .lote:empty{display:none}
+@media (max-width:1500px){ :root{--fila:250px;--filtros:220px;--lado:260px} }
+@media (max-width:1220px){ :root{--fila:230px;--filtros:200px;--lado:240px} }
 </style>
 </head>
 <body>
@@ -1076,10 +1093,23 @@ a.chip{text-decoration:none}
 
 <main id="corpo">
 
-  <!-- fila de ligações -->
+  <!-- 1 · as instalações: a busca e a lista -->
   <aside id="fila">
     <div class="fila-topo">
       <div class="busca"><input id="f-busca" placeholder="ligação, titular, endereço ou bairro" autocomplete="off"></div>
+    </div>
+    <div class="fila-lista" id="f-lista" tabindex="0">
+      <div class="vl" id="f-vl"><div class="vl-jan" id="f-jan"></div></div>
+      <div class="vazio" id="f-vazio" hidden></div>
+    </div>
+    <div class="fila-pe" id="f-pe">—</div>
+  </aside>
+
+  <!-- 2 · OS FILTROS NUMA COLUNA SÓ (dono do produto, 16/09/2026): os da fila e os de classe, que estavam
+       no painel do cérebro; a decisão em lote vale para o recorte, então fica no pé desta coluna -->
+  <aside id="filtros">
+    <div class="filtros-cab"><strong>Filtros</strong><span>recortam a lista de instalações</span></div>
+    <div class="filtros-rolo">
       <!-- ONDE (16/09/2026): estado, cidade e bairro, em cascata — cada lista conta com os outros recortes valendo -->
       <div class="fila-filtros" id="f-uf"></div>
       <div class="fila-filtros" id="f-cid"></div>
@@ -1089,16 +1119,17 @@ a.chip{text-decoration:none}
       <div class="fila-filtros dec" id="f-decisao"></div>
       <div class="ffontes-rot"><span class="fl-rot">fontes · achou / não achou</span><button id="f-limpa" hidden>limpar</button></div>
       <div class="ffontes" id="f-fontes"></div>
+      <div class="ffontes-rot"><span class="fl-rot">ramo do negócio</span><button id="f-limpa-seg" hidden>limpar</button></div>
+      <div class="ffontes fclasse" id="f-segmentos"></div>
+      <div class="ffontes-rot"><span class="fl-rot">o que a IA viu nas imagens</span><button id="f-limpa-vis" hidden>limpar</button></div>
+      <div class="ffontes fclasse" id="f-visual"></div>
+    </div>
+    <div class="filtros-pe">
       <button class="bt p lote" id="f-lote" title="grava a decisão oficial em todas as ligações do recorte"></button>
     </div>
-    <div class="fila-lista" id="f-lista" tabindex="0">
-      <div class="vl" id="f-vl"><div class="vl-jan" id="f-jan"></div></div>
-      <div class="vazio" id="f-vazio" hidden></div>
-    </div>
-    <div class="fila-pe" id="f-pe">—</div>
   </aside>
 
-  <!-- a árvore de evidência -->
+  <!-- 3 · a árvore de evidência: os dados da instalação escolhida -->
   <section id="arvore-caixa">
     <div class="arv-topo">
       <div class="arv-tit">
@@ -1116,16 +1147,8 @@ a.chip{text-decoration:none}
     <div class="arvore" id="arvore"></div>
   </section>
 
-  <!-- o volume e os grupos -->
+  <!-- 4 · o cérebro: o volume das fontes e as informações das bases marcadas -->
   <aside id="lado">
-    <!-- OS RECORTES DE CLASSE FICAM AQUI (dono do produto, 16/09/2026): recortam a fila, mas ocupavam a altura
-         dela; deste lado sobra espaço e eles ficam junto do cérebro. -->
-    <div class="lado-classe">
-      <div class="ffontes-rot"><span class="fl-rot">ramo do negócio</span><button id="f-limpa-seg" hidden>limpar</button></div>
-      <div class="ffontes fclasse" id="f-segmentos"></div>
-      <div class="ffontes-rot"><span class="fl-rot">o que a IA viu nas imagens</span><button id="f-limpa-vis" hidden>limpar</button></div>
-      <div class="ffontes fclasse" id="f-visual"></div>
-    </div>
     <div class="lado-tela">
       <canvas id="cer-cv" role="img"
         aria-label="as fontes desta ligação em volume; a mesma leitura está na árvore ao lado"></canvas>
