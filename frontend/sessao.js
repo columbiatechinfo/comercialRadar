@@ -152,21 +152,27 @@
            (Sem crase neste comentario: ele vive dentro de um template literal,
            e a crase fecharia a string.) -->
       <div id="login-tela" class="cr cr-acesso hidden">
+        <!-- A MARCA DA CASA E O PRODUTO (dono do produto, 16/09/2026): o login ainda era o do Comercial Radar, com o
+             icone de radar; agora e o filete 22/78 e o logo da A2L, com o SEEK ao lado, como no topo das telas. -->
+        <div class="cr-acesso-filete" aria-hidden="true"><i></i><b></b></div>
         <div class="cr-acesso-form">
           <form id="login-form">
             <div class="cr-acesso-marca">
-              <svg viewBox="0 0 24 24" width="26" height="26" fill="none"
-                   stroke="currentColor" stroke-width="2" stroke-linecap="round">
-                <circle cx="12" cy="12" r="2.2" fill="currentColor" stroke="none"/>
-                <path d="M12 12 L18.5 5.5"/><path d="M7.2 7.2a6.8 6.8 0 1 0 9.6 0"/>
-                <path d="M4.4 4.4a10.7 10.7 0 1 0 15.2 0"/>
-              </svg>
-              <span>Comercial<b>Radar</b></span>
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 73.4 28.8" width="84" height="33" role="img" aria-label="A2L Engenharia e Consultoria">
+<g transform="translate(2.40,26.40) scale(0.024000,-0.024000)">
+<path d="M470,1000 L645,1000 L1148,0 L938,0 L557,735 L183,0 L0,0 L0,45 Z" fill="#0B2E59"/>
+<path d="M557,388 L713,80 L402,80 Z" fill="#F28C28"/>
+<path d="M1054,1000 L1725,1000 A284,250 0 0 0 2009,750 A190,341 0 0 0 1819,409 L1436,385 C1400,368 1360,300 1343,237 L1176,233 C1152,380 1240,560 1414,574 L1743,584 A90,112 0 0 1 1723,808 L1150,810 Z" fill="#006DFF"/>
+<path d="M1264,0 L1990,0 L1990,178 L1357,178 Z" fill="#0B2E59"/>
+<path d="M1177,178 L1344,178 L1258,31 Z" fill="#F28C28"/>
+<path d="M2122,1000 L2122,165 A165,165 0 0 1 2287,0 L2858,0 L2858,180 L2315,180 L2315,1000 Z" fill="#0B2E59"/>
+</g></svg>
+              <span class="cr-acesso-produto"><b>SEEK</b><small>recuperação de receita</small></span>
             </div>
 
-            <h1>Entrar na sua conta</h1>
-            <p class="cr-acesso-sub">O acesso e criado pela sua empresa. Se voce
-              ainda nao tem, fale com quem administra.</p>
+            <h1>Entrar</h1>
+            <p class="cr-acesso-sub">O acesso é criado pela sua empresa. Se você
+              ainda não tem, fale com quem administra.</p>
 
             <p id="login-msg" class="cr-erro" role="alert" aria-live="polite"></p>
 
@@ -187,7 +193,11 @@
         </div>
         <!-- A imagem e decorativa: aria-hidden para o leitor de tela nao
              anunciar uma arte que nao carrega informacao. -->
-        <div class="cr-acesso-arte" aria-hidden="true"></div>
+        <div class="cr-acesso-arte" aria-hidden="true">
+          <div class="cr-acesso-lema"><b>Cada ligação, conferida.</b>
+            <span>Cadastro, imagens e bases públicas lado a lado para decidir o que é comércio.</span></div>
+          <div class="cr-acesso-assina">A2L Engenharia e Consultoria</div>
+        </div>
       </div>
       <!-- PERFIL. Estrutura do PNG "forms gerais e de perfil": secao explicada
            a esquerda, cartao de campos a direita, acoes no rodape do cartao.

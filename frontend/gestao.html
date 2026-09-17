@@ -1027,6 +1027,18 @@ a.chip{text-decoration:none}
 .filtros-pe .lote:empty{display:none}
 @media (max-width:1500px){ :root{--fila:250px;--filtros:220px;--lado:260px} }
 @media (max-width:1220px){ :root{--fila:230px;--filtros:200px;--lado:240px} }
+
+/* OS PUXADORES DE LARGURA (dono do produto, 16/09/2026): `redimensionar.js` põe um entre as colunas; a faixa é
+ * larga para pegar com o mouse e desenha só uma linha azul ao passar, arrastar ou focar. */
+.col-puxador{flex:none;position:relative;width:9px;margin:0 -4px;z-index:6;cursor:col-resize;touch-action:none;outline:0}
+.col-puxador::after{content:"";position:absolute;top:0;bottom:0;left:4px;width:1px;background:transparent;
+  transition:background var(--t),box-shadow var(--t)}
+.col-puxador:hover::after,.col-puxador.ativo::after,.col-puxador:focus-visible::after{background:var(--azul);
+  box-shadow:0 0 0 1px var(--azul)}
+body.arrastando-coluna{cursor:col-resize;user-select:none}
+body.arrastando-coluna #corpo{pointer-events:none}
+body.arrastando-coluna .col-puxador.ativo{pointer-events:auto}
+@media (max-width:1000px){ .col-puxador[data-coluna="lado"]{display:none} }
 /* ==== 99-gestao.css ==== */
 /* 99-gestao.css — a página de gestão das aprovações (14/09/2026). Usa os tokens e
  * as peças da SEEK (topo, chip, bt, fl-sel, modal, dchip); aqui só o que é da

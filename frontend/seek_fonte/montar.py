@@ -42,6 +42,7 @@ html = ("<!doctype html>\n<html lang=\"pt-BR\">\n<head>\n<meta charset=\"utf-8\"
         + "<script>\n"
         + linhas(867, 2202)
         + (aqui / "app.js").read_text(encoding="utf-8")
+        + (aqui / "redimensionar.js").read_text(encoding="utf-8")
         + "</script>\n</body>\n</html>\n")
 saida.write_text(html, encoding="utf-8", newline="\n")
 print("ok", saida, len(html.splitlines()), "linhas", len(html.encode("utf-8")) // 1024, "KB")

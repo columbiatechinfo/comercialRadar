@@ -18,26 +18,27 @@
  */
 
 /* ── Acesso ──────────────────────────────────────────────────────────────
-   Estrutura do PNG "pagina de acesso": formulario a esquerda, arte a direita.
-   A arte e CSS puro — um campo de radar em navy. Foto de banco de imagem num
-   produto de campo e o tipo de coisa que envelhece em seis meses; gradiente
-   com a cor da marca, nao. */
+   Formulario a esquerda, arte a direita. A MARCA E A DA A2L COM O PRODUTO SEEK (dono do produto, 16/09/2026): o
+   filete 22/78 no topo, o logo da casa e o nome do produto, como no topo das telas. A arte e CSS puro: uma malha de
+   pontos em navy — as ligacoes de uma cidade — com algumas em laranja, as que viraram receita. */
 .cr-acesso {
   position: fixed; inset: 0; z-index: 9000;
   display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   background: var(--branco);
 }
 .cr-acesso.hidden { display: none; }
+.cr-acesso-filete { position: absolute; left: 0; right: 0; top: 0; height: 3px; display: flex; z-index: 2; }
+.cr-acesso-filete i { width: 22%; background: var(--laranja); }
+.cr-acesso-filete b { width: 78%; background: var(--navy); }
 .cr-acesso-form { display: grid; place-items: center; padding: var(--e5); }
 .cr-acesso-form form { width: min(100%, 368px); }
 
-.cr-acesso-marca {
-  display: flex; align-items: center; gap: var(--e2);
-  color: var(--azul-texto); margin-bottom: var(--e6);
-}
-.cr-acesso-marca span { font: 600 var(--fs-md)/1 var(--f-t); color: var(--navy);
-  letter-spacing: var(--tk2); }
-.cr-acesso-marca b { font-weight: 800; }
+.cr-acesso-marca { display: flex; align-items: center; gap: 14px; margin-bottom: var(--e6); }
+.cr-acesso-marca svg { display: block; flex: none; }
+.cr-acesso-produto { display: flex; flex-direction: column; gap: 2px; padding-left: 14px;
+  border-left: 1px solid var(--linha, #E4E8EE); line-height: 1.15; }
+.cr-acesso-produto b { font: 700 20px/1 var(--f-t); color: var(--navy); letter-spacing: .06em; }
+.cr-acesso-produto small { font: 500 11px/1.2 var(--f-m); color: var(--texto-fraco); letter-spacing: .02em; }
 
 .cr-acesso h1 { font-size: var(--fs-xl); margin-bottom: var(--e1); }
 .cr-acesso-sub { font-size: var(--fs-base); color: var(--texto-fraco);
@@ -51,29 +52,32 @@
 
 .cr-acesso-btn { width: 100%; padding: 11px 16px; font-size: var(--fs-md); }
 
-/* Campo de radar. Tres aneis, uma varredura, e uma malha de quadras ao fundo:
-   e literalmente o que o produto faz. */
 .cr-acesso-arte {
-  position: relative; overflow: hidden;
-  background:
-    radial-gradient(circle at 62% 44%, #006DFF33, transparent 58%),
-    linear-gradient(160deg, var(--navy) 0%, var(--navy-3) 100%);
+  position: relative; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end;
+  padding: 48px 52px; color: #fff;
+  background: linear-gradient(160deg, var(--navy) 0%, var(--navy-3) 100%);
 }
-.cr-acesso-arte::before {            /* a malha */
-  content: ""; position: absolute; inset: -10%;
-  background-image: linear-gradient(#ffffff0F 1px, transparent 1px),
-                    linear-gradient(90deg, #ffffff0F 1px, transparent 1px);
-  background-size: 46px 46px;
-  transform: perspective(760px) rotateX(52deg) scale(1.5);
-  transform-origin: 50% 30%;
+.cr-acesso-arte::before {            /* as ligacoes: um ponto a cada 22 px, apagando nas bordas */
+  content: ""; position: absolute; inset: 0;
+  background-image: radial-gradient(#ffffff4D 1.3px, transparent 1.6px);
+  background-size: 22px 22px;
+  -webkit-mask-image: radial-gradient(ellipse 85% 75% at 58% 40%, #000 25%, transparent 78%);
+          mask-image: radial-gradient(ellipse 85% 75% at 58% 40%, #000 25%, transparent 78%);
 }
-.cr-acesso-arte::after {             /* os aneis */
-  content: ""; position: absolute; left: 62%; top: 44%;
-  width: 34vw; height: 34vw; margin: -17vw 0 0 -17vw; border-radius: 50%;
-  border: 1px solid #7FD4FF3D;
-  box-shadow: 0 0 0 12vw #7FD4FF14 inset, 0 0 0 1px #7FD4FF29,
-              0 0 90px #006DFF4D;
+.cr-acesso-arte::after {             /* as que viraram receita, no mesmo passo da malha */
+  content: ""; position: absolute; left: 8px; top: 8px; width: 6px; height: 6px; border-radius: 50%;
+  background: transparent;           /* o ponto de origem fica no canto: so as sombras aparecem */
+  box-shadow: 242px 198px 0 var(--laranja), 418px 286px 0 var(--laranja), 330px 462px 0 var(--laranja),
+              506px 132px 0 var(--laranja), 154px 374px 0 var(--laranja), 572px 396px 0 var(--laranja),
+              286px 88px 0 var(--laranja), 462px 528px 0 #F28C2899, 198px 550px 0 #F28C2899;
+  opacity: .9;
 }
+.cr-acesso-lema, .cr-acesso-assina { position: relative; z-index: 1; }
+.cr-acesso-lema { max-width: 34ch; display: flex; flex-direction: column; gap: 8px; }
+.cr-acesso-lema b { font: 600 26px/1.2 var(--f-t); letter-spacing: -.01em; text-wrap: balance; }
+.cr-acesso-lema span { font-size: 14px; line-height: 1.55; color: #D6E2F2; }
+.cr-acesso-assina { margin-top: 28px; font: 500 11px/1 var(--f-m); letter-spacing: .08em;
+  text-transform: uppercase; color: #9FB4CF; }
 
 /* ABAIXO DE 900px a arte SAI. Espremida ela vira uma faixa azul sem leitura, e
    ainda rouba metade da largura do formulario — que e a unica coisa que a
