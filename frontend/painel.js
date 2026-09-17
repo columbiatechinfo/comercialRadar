@@ -1837,7 +1837,14 @@
       console.warn("deck.gl não carregou — o mapa de ligações fica de fora");
       return;
     }
-    const q = estado.cidade ? "?cidade=" + encodeURIComponent(estado.cidade) : "";
+    // SEM CIDADE, O MAPA NAO PEDE A BASE INTEIRA (16/09/2026): sao 2,5 milhoes de ligacoes de 317 cidades, e o
+    // pedido derrubava a API. O servidor tambem recusa; aqui nem se pergunta.
+    if (!estado.cidade) {
+      estado.ligacoes = [];
+      if (mapaLig) mapaLig.definirDados([]);
+      return;
+    }
+    const q = "?cidade=" + encodeURIComponent(estado.cidade);
     const d = await pegar("/api/ligacoes" + q);
     if (!d || !d.linhas) return;
     estado.ligacoes = d.linhas;

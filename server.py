@@ -5001,6 +5001,17 @@ def listar_ligacoes(cidade: str | None = None, area: str | None = None):
     `categorias`, `situacoes` e `vereditos`. O front nao precisa saber de cor
     nem de simbolo aqui: isso e decisao de desenho, e muda sem mexer na rota.
     """
+    # SEM CIDADE NEM AREA, NADA (16/09/2026, noite): depois da base cadastral completa (2,5 milhoes de ligacoes de
+    # 317 cidades), abrir a tela de extracao sem cidade montava a lista inteira em memoria e o kernel matava a API
+    # (limite de 1 GB) — duas vezes seguidas, enquanto o dono tentava extrair uma quadra de Santa Maria. A maior
+    # cidade tem ~100 mil ligacoes, o que o mapa sempre aguentou; a base inteira nao cabe no mapa nem na API.
+    if not (cidade or "").strip() and not area:
+        return {"campos": ["ligacao", "lat", "lng", "categoria", "situacao", "tem_vinculo", "veredito"],
+                "categorias": {v: k for k, v in CAT_LIG.items()},
+                "situacoes": {v: k for k, v in SIT_LIG.items()},
+                "vereditos": {v: k for k, v in VER_LIG.items()},
+                "total": 0, "linhas": [], "sem_recorte": True,
+                "aviso": "escolha a cidade para ver as ligações no mapa"}
     wkt = None
     if area:
         poly = area_utils.carregar_area(area)
