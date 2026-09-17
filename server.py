@@ -1566,11 +1566,17 @@ def _reuso_do_poligono(poly: list, rotulo: str) -> dict:
 def _envoltoria_da_base(cod: str, empresa: str):
     """(anel [[lat, lng]], ligacoes) da ENVOLTORIA DA BASE DO CLIENTE no municipio, ou (None, n) sem base.
 
-    A CIDADE INTEIRA E A AREA ONDE O CLIENTE TEM LIGACAO (dono do produto, 17/09/2026): Santa Maria tem 1.780 km² e
-    as 80.925 ligacoes da Corsan cabem em 929 km²; varrer a divisa inteira gastava dias em zona rural sem cliente. E o
-    fecho convexo das ligacoes da empresa dentro da divisa, com ~150 m de margem para o tile da borda, recortado pela
-    propria divisa. A malha e do banco de REFERENCIA e o cadastro do principal (sem JOIN entre os dois): a divisa
-    desce simplificada (~50 m), e o indice espacial do cadastro filtra pela caixa antes do teste de contencao — 1,2 s."""
+    A CIDADE INTEIRA E A AREA ONDE O CLIENTE TEM LIGACAO (dono do produto, 17/09/2026): varrer a divisa inteira de Santa
+    Maria (1.780 km²) gastava dias em zona rural sem cliente. O fecho convexo unico das ligacoes dava 929 km², puxado
+    por poucas ligacoes rurais soltas; o escolhido foi o FECHO POR AGRUPAMENTO: as ligacoes a ate ~500 m umas das outras
+    formam grupos (`st_clusterdbscan`, 5 no minimo), cada grupo vira o proprio fecho com ~150 m de margem, e a solta
+    ganha so a margem — 215 km² em 35 partes.
+
+    A AREA AINDA E UM POLIGONO SO (43 leituras no codigo), entao fica a MAIOR PARTE: em Santa Maria, a mancha urbana
+    com 80.438 das 81.074 ligacoes (99,2%). Aceitar as varias partes e o passo seguinte, pedido na mesma decisao.
+
+    A malha e do banco de REFERENCIA e o cadastro do principal (sem JOIN entre os dois): a divisa desce simplificada
+    (~50 m), e o indice espacial do cadastro filtra pela caixa antes do teste de contencao — ~2,5 s."""
     ref = base_comum.conectar_referencia()
     try:
         with ref.cursor() as cur:
@@ -1586,17 +1592,24 @@ def _envoltoria_da_base(cod: str, empresa: str):
     con = base_comum.conectar()
     try:
         with con.cursor() as cur:
-            cur.execute("set statement_timeout = '60s'")
+            cur.execute("set statement_timeout = '120s'")
             cur.execute("""
-                select count(*),
-                       st_asgeojson(st_intersection(st_buffer(st_convexhull(st_collect(geom::geometry)), 0.0015),
-                                                    st_makevalid(st_geomfromtext(%(wkt)s, 4326))), 6)
-                  from resources_root.cadastro_corsan
-                 where id_empresa = %(emp)s::uuid
-                   and geom && st_makeenvelope(%(o)s, %(s)s, %(l)s, %(n)s, 4326)::geography
-                   and st_within(geom::geometry, st_geomfromtext(%(wkt)s, 4326))""",
+                with pts as (
+                  select geom::geometry p from resources_root.cadastro_corsan
+                   where id_empresa = %(emp)s::uuid
+                     and geom && st_makeenvelope(%(o)s, %(s)s, %(l)s, %(n)s, 4326)::geography
+                     and st_within(geom::geometry, st_geomfromtext(%(wkt)s, 4326))),
+                grp as (select p, st_clusterdbscan(p, eps := 0.005, minpoints := 5) over () c from pts),
+                partes as (select st_buffer(st_convexhull(st_collect(p)), 0.0015) g from grp where c is not null group by c
+                           union all
+                           select st_buffer(p, 0.0015) from grp where c is null),
+                uniao as (select st_intersection(st_union(g), st_makevalid(st_geomfromtext(%(wkt)s, 4326))) g from partes),
+                maior as (select d.geom g from uniao, lateral st_dump(uniao.g) d
+                           where geometrytype(d.geom) = 'POLYGON' order by st_area(d.geom) desc limit 1)
+                select (select count(*) from pts), st_asgeojson(g, 6) from maior""",
                         {"wkt": wkt, "emp": str(empresa), "o": o, "s": s_, "l": l, "n": n})
-            qtd, gj = cur.fetchone()
+            linha = cur.fetchone()
+            qtd, gj = linha if linha else (0, None)
     finally:
         con.close()
     if not gj or (qtd or 0) < 3:
