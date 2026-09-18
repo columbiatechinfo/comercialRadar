@@ -413,17 +413,20 @@ def pegar(con, maquina, aceitas=None, ambiente=AMBIENTE):
                       and (cardinality(%s::text[]) = 0 or t.etapa = any(%s::text[]))
                     order by t.id_validacao, l.n, t.ordem
                     limit 200""", (ambiente, list(aceitas or []), list(aceitas or [])))
+    espera_spark = False
     for tid, etapa, vid, id_lote, tent, empresa, n, parametros in cur.fetchall():
         e = ETAPAS[etapa]
         if e.recurso in ("google", "cnpj", "busca") and uso[e.recurso] >= TETO[e.recurso]:
             continue
         # A FILA NAO SE FURA (18/09/2026): com `continue` aqui, o julgamento do lote 4 de Bento (120 vagas da Spark e 4
         # conexoes) nao cabia, e a leitura e a foto de rua dos lotes 7 e 8, menores, passavam na frente a cada volta e
-        # ocupavam de novo o que ia sobrar — o julgamento esperou mais de uma hora com os lotes 4, 5 e 6 prontos. Spark
-        # e conexao sao de todos: quem nao cabe segura os de tras ate caber. Os tetos por site (google, cnpj, busca)
-        # seguem pulando, porque ali um nao tira a vez do outro.
-        if e.recurso == "spark" and uso["spark_simult"] + e.simultaneas > TETO["spark"]:
-            break
+        # ocupavam de novo o que ia sobrar — o julgamento esperou mais de uma hora com os lotes 4, 5 e 6 prontos.
+        # QUEM ESPERA A SPARK SEGURA SO A SPARK: as outras da Spark esperam atras dele, e a foto de rua (processador e
+        # Google) segue rodando — com `break` aqui o i9 ficou com carga 5 durante o julgamento. Conexao e de todos:
+        # quem nao cabe segura os de tras. Os tetos por site (google, cnpj, busca) seguem pulando.
+        if e.recurso == "spark" and (espera_spark or uso["spark_simult"] + e.simultaneas > TETO["spark"]):
+            espera_spark = True
+            continue
         if uso["conexoes"] + e.conexoes * e.partes > TETO["conexoes"] or e.conexoes * e.partes > livres:
             break
         cur.execute("""update radar_comercial.validacao_tarefa
