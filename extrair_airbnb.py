@@ -498,6 +498,58 @@ def varrer_frota(caixa_inicial, paginas, navegadores=3, log=_log, estado=None):
     return tudo
 
 
+def varrer_pela_fila(caixa_inicial, paginas, log=_log, estado=None):
+    """A varredura de `varrer_frota`, pela FILA COMPARTILHADA: as caixas vao para `navegacao.tarefa` e os navegadores
+    quentes do servico da frota das duas maquinas as executam (18/09/2026).
+
+    A CAIXA QUE SATURA VIRA QUATRO NO MEIO DA RODADA, e isso muda o acompanhamento. `acompanhar` encerra quando o lote
+    nao tem nada na fila nem rodando, e mede isso ANTES de entregar a ultima tarefa: se as quatro filhas entram no
+    mesmo lote logo depois, ele ja decidiu parar. Por isso a conta e do cliente — enviadas x recebidas — e o
+    acompanhamento recomeca enquanto faltar alguma, pulando o que ja foi visto."""
+    from frota_cliente import acompanhar, enviar
+
+    if estado is None:
+        estado = {}
+    tudo = {}
+    log("  FILA DA FROTA: navegadores quentes do servico das duas maquinas · uma tarefa por caixa")
+
+    def argumentos(cx):
+        return {"sw_lat": cx[0], "sw_lng": cx[1], "ne_lat": cx[2], "ne_lng": cx[3], "paginas": paginas}
+
+    lote = enviar("airbnb", "airbnb.caixa", [argumentos(caixa_inicial)], pedido_por="extrair_airbnb")
+    profundidade = {tuple(caixa_inicial): 0}
+    enviadas, vistos = 1, set()
+    while len(vistos) < enviadas:
+        for t in acompanhar(lote, log=log):
+            if t["id"] in vistos:
+                continue
+            vistos.add(t["id"])
+            g = t.get("argumentos") or {}
+            cx = (g.get("sw_lat"), g.get("sw_lng"), g.get("ne_lat"), g.get("ne_lng"))
+            prof = profundidade.get(cx, 0)
+            if t["estado"] != "ok" or not isinstance(t.get("resultado"), dict):
+                log("  %scaixa %.4f,%.4f..%.4f,%.4f — %s" % ("  " * prof, cx[0], cx[1], cx[2], cx[3],
+                                                            str(t.get("erro") or t["estado"])[:140]))
+                continue
+            meta = t["resultado"]
+            achado = meta.get("anuncios") or {}
+            estado["buscou"] = True
+            tudo.update(achado)
+            log("  %scaixa %.4f,%.4f..%.4f,%.4f → %d anúncios · %d página(s), %s · %.1f s · %s"
+                % ("  " * prof, cx[0], cx[1], cx[2], cx[3], len(achado), meta.get("paginas", 0),
+                   meta.get("parou", ""), meta.get("s", 0), t.get("dono") or "?"))
+            lado = max(cx[2] - cx[0], cx[3] - cx[1])
+            if len(achado) >= SATURADO and lado > LADO_MINIMO_GRAU and prof < 3:
+                log("  %s  saturou (>= %d) — dividindo em quatro" % ("  " * prof, SATURADO))
+                filhas = list(quadrantes(*cx))
+                for q in filhas:
+                    profundidade[tuple(q)] = prof + 1
+                enviar("airbnb", "airbnb.caixa", [argumentos(q) for q in filhas], lote=lote,
+                       pedido_por="extrair_airbnb")
+                enviadas += len(filhas)
+    return tudo
+
+
 def gravar(con, achado, poligono, area_ref):
     """Grava tudo; `na_area` diz quem está dentro do desenho."""
     linhas = []
@@ -550,6 +602,8 @@ def main() -> int:
                    help="navegadores vivos da frota (padrão 3); uma caixa por tarefa")
     p.add_argument("--caminho-antigo", dest="caminho_antigo", action="store_true",
                    help="o caminho de antes da frota: uma StealthySession do Scrapling por caixa")
+    p.add_argument("--em-processo", dest="em_processo", action="store_true",
+                   help="a frota aberta DENTRO deste processo, e nao a fila compartilhada do servico")
     p.add_argument("--simular", action="store_true")
     a = p.parse_args()
     if not a.area and not a.cidade:
@@ -583,9 +637,11 @@ def main() -> int:
     if a.caminho_antigo:
         achado = varrer(proxies, (sw_lat, sw_lng, ne_lat, ne_lng), a.paginas,
                         estado=_estado_busca)
-    else:
+    elif a.em_processo:
         achado = varrer_frota((sw_lat, sw_lng, ne_lat, ne_lng), a.paginas,
                               a.navegadores, estado=_estado_busca)
+    else:
+        achado = varrer_pela_fila((sw_lat, sw_lng, ne_lat, ne_lng), a.paginas, estado=_estado_busca)
 
     dentro = sum(1 for r in achado.values()
                  if r.get("lat") is not None

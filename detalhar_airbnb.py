@@ -541,6 +541,43 @@ def rodar_frota(a, ids):
     return fichas, mortos, t0
 
 
+#: O MESMO VOLUME, DOIS ENDERECOS. As capturas sao o volume `radar-capturas`: `/app/capturas` no minerador e na API,
+#: `/capturas` no servico da frota. Pela fila, quem grava o print e o servico; o caminho volta traduzido.
+PRINTS_NO_SERVICO = "/capturas/airbnb"
+
+
+def rodar_pela_fila(a, ids):
+    """As fichas pela FILA COMPARTILHADA: uma tarefa por anuncio, executada pelos navegadores quentes do servico da
+    frota das duas maquinas (18/09/2026). Devolve (fichas, mortos, t0), como `rodar_frota`."""
+    from frota_cliente import acompanhar, enviar
+
+    fichas, mortos = [], []
+    t0 = time.time()
+    print("  FILA DA FROTA: navegadores quentes do servico das duas maquinas · uma tarefa por anuncio", flush=True)
+    lote = enviar("airbnb", "airbnb.ficha",
+                  [{"anuncio_id": i, "com_print": not a.sem_print, "pasta": PRINTS_NO_SERVICO} for i in ids],
+                  pedido_por="detalhar_airbnb")
+    for n, t in enumerate(acompanhar(lote, log=lambda m: print("  " + m, flush=True)), 1):
+        anuncio_id = (t.get("argumentos") or {}).get("anuncio_id")
+        f = t.get("resultado") if t["estado"] == "ok" else None
+        if not isinstance(f, dict):
+            print("  %-16s %s" % (anuncio_id, str(t.get("erro") or t["estado"])[:120]), flush=True)
+        elif f.get("erro") or not f.get("titulo"):
+            mortos.append(anuncio_id)
+            print("  %-16s sem payload — SEM_RETORNO" % anuncio_id, flush=True)
+        else:
+            if f.get("print_ficha", "").startswith("/capturas/"):
+                f["print_ficha"] = "/app" + f["print_ficha"]
+            fichas.append(f)
+            print("  %-16s %-40s %d comodidades · %d fotos · %d avaliações%s · %s"
+                  % (anuncio_id, str(f.get("titulo"))[:40], len(f.get("comodidades") or []),
+                     len(f.get("fotos") or []), len(f.get("avaliacoes") or []),
+                     " · print" if f.get("print_ficha") else "", t.get("dono") or "?"), flush=True)
+        if n % 20 == 0:
+            print("    %d de %d · %.1f min" % (n, len(ids), (time.time() - t0) / 60), flush=True)
+    return fichas, mortos, t0
+
+
 def linha_para_banco(f):
     local = f.get("local_subtitulo") or ""      # "Canoas, Rio Grande do Sul, Brasil"
     partes = [p.strip() for p in local.split(",")]
@@ -577,6 +614,8 @@ def main() -> int:
                    help="só no --caminho-antigo: lotes em paralelo; cada um tem a sua sessao e o seu IP")
     p.add_argument("--navegadores", type=int, default=3,
                    help="navegadores vivos da frota (padrão 3); um anúncio por tarefa")
+    p.add_argument("--em-processo", dest="em_processo", action="store_true",
+                   help="a frota aberta DENTRO deste processo, e nao a fila compartilhada do servico")
     p.add_argument("--caminho-antigo", dest="caminho_antigo", action="store_true",
                    help="o caminho de antes da frota: lotes de 8 a 15 anúncios, uma StealthySession do Scrapling cada")
     p.add_argument("--ids", default=None,
@@ -609,7 +648,7 @@ def main() -> int:
     if a.caminho_antigo:
         fichas, mortos, t0 = _caminho_antigo(a, ids)
     else:
-        fichas, mortos, t0 = rodar_frota(a, ids)
+        fichas, mortos, t0 = rodar_frota(a, ids) if a.em_processo else rodar_pela_fila(a, ids)
     return _fechar(a, con, fichas, mortos, t0)
 
 
