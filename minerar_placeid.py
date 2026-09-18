@@ -1355,6 +1355,18 @@ async def garantir_cookie(pw, pool, caminho, renovar):
 #: `MAPS_DETALHE_CHROMIUM=1` volta ao Chromium.
 DETALHE_CAMOUFOX = os.environ.get("MAPS_DETALHE_CHROMIUM") != "1"
 
+#: O PONTO TEM PRAZO, E O FECHAMENTO TAMBEM (17/09/2026).
+#:
+#: Santa Maria (job 77) detalhou os 4.323 pontos em uma hora e ficou PARADA no fim: 3 dos 30 Camoufox presos cada um
+#: no seu ultimo ponto, girando a ~40% de CPU, sem uma linha de log. A etapa espera todos os navegadores voltarem,
+#: entao tres paginas que nunca terminam seguravam a cidade inteira. O `timeout` de cada chamada do Playwright nao
+#: basta quando o proprio navegador para de responder — quem corta e o `asyncio.wait_for` por fora.
+#:
+#: Estourar o prazo conta como uma falha do ponto: ele volta para a fila e outro navegador o tenta. Tres seguidas no
+#: mesmo navegador trocam o IP e o navegador, pelo caminho que ja existia.
+PRAZO_DO_PONTO_S = int(os.environ.get("MAPS_PRAZO_DO_PONTO_S", "180"))
+PRAZO_DO_FECHAMENTO_S = 45
+
 
 async def _abrir_no_proxy(pw, px):
     """Abre um navegador por este IP. Devolve o navegador e a funcao que o fecha.
@@ -2232,7 +2244,7 @@ async def principal(a):
                     if not alvo:
                         return                      # a fila secou
                     try:
-                        d = await detalhar(ctx, alvo)
+                        d = await asyncio.wait_for(detalhar(ctx, alvo), PRAZO_DO_PONTO_S)
                         if _pagina_vazia(d):
                             # NAO E FALHA DO POI, E DO IP. Levantar aqui faz o
                             # POI voltar para a fila e o contador de falhas
@@ -2322,7 +2334,7 @@ async def principal(a):
                     # trabalho: se falhar, o processo termina e o sistema
                     # recolhe. Nada disso vale uma rodada.
                     try:
-                        await fechar_nav()
+                        await asyncio.wait_for(fechar_nav(), PRAZO_DO_FECHAMENTO_S)
                     except Exception as _e_fechar:              # noqa: BLE001
                         async with trava:
                             print("    navegador %02d nao fechou limpo: %s"

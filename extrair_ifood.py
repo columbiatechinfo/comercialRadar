@@ -550,7 +550,49 @@ def _print_do_grupo(page, ids, caminho):
 
 
 def um_ponto_frota(p, nome: str, lat: float, lon: float, sessao: str = "painel"):
-    """(lojas, meta) de UM ponto. Falha levanta — a frota repete em outro navegador.
+    """(lojas, meta) de UM ponto — em ate DUAS passadas no mesmo IP.
+
+    A SEGUNDA PASSADA E A QUE TRAZ A LISTA INTEIRA (medido em 17/09/2026, noite). Em producao, com IPs que o iFood
+    ainda nao conhecia, os 43 pontos de Santa Maria deram o feed principal: 200 com 20 lojas, quatro vezes (a carga e
+    as tres recargas), e o clique em "Ver mais" chamou a verificacao — dali em diante o mesmo IP ja recebia 403. O
+    ponto parava ali com ~20 lojas, e a cidade fechou com 218.
+
+    E o 403 no principal e justamente a porta da lista inteira: o site recusa a sessao e cai no feed de reserva. No
+    teste, mesmo ponto (Centro) e mesmo IP:
+
+        1a passada   principal 200 x4 -> clique -> 403            37 lojas
+        2a passada   principal 403, 403 -> reserva 200           487 lojas
+
+    Entao a verificacao deixa de ser o fim do ponto e vira o comeco da segunda passada — sem passar por ela, so
+    recarregando num contexto limpo. O IP nao e castigado: e exatamente por estar marcado que ele rende. Falha na
+    segunda passada devolve o que a primeira trouxe, sem perder nada."""
+    #
+    # ATE TRES PASSADAS, e nao duas. Com a correcao no ar, 3 pontos de Santa Maria: Camobi 20 -> 433 e Nossa Senhora
+    # de Lourdes 20 -> 490 na segunda passada; no Centro a segunda ja abriu com 403 (IP marcado) e mesmo assim o site
+    # serviu o principal. Cada passada custa ~1 min e so acontece quando a anterior parou na verificacao.
+    lojas, meta = _uma_passada_frota(p, nome, lat, lon, sessao)
+    por_id = {lj["merchant_id"]: lj for lj in lojas}
+    passadas = [len(lojas)]
+    while (meta["via"] != "reserva" and str(meta.get("parou") or "").startswith("verificação")
+           and len(passadas) < PASSADAS_POR_PONTO):
+        try:
+            lojas_n, meta_n = _uma_passada_frota(p, nome, lat, lon, sessao)
+        except Exception as e:                                 # noqa: BLE001
+            meta["passada_%d" % (len(passadas) + 1)] = "falhou (%s)" % type(e).__name__
+            break
+        por_id.update({lj["merchant_id"]: lj for lj in lojas_n})
+        passadas.append(len(lojas_n))
+        meta = meta_n
+    meta["lojas_por_passada"] = passadas
+    return list(por_id.values()), meta
+
+
+#: Quantas passadas um ponto pode fazer no mesmo IP atras da lista inteira (ver `um_ponto_frota`).
+PASSADAS_POR_PONTO = 3
+
+
+def _uma_passada_frota(p, nome: str, lat: float, lon: float, sessao: str = "painel"):
+    """(lojas, meta) de UMA passada pelo ponto. Falha levanta — a frota repete em outro navegador.
 
     CADA PONTO NUMA ABA DE CONTEXTO LIMPO, dentro do MESMO navegador quente: leva os cookies da verificação do
     Cloudflare e do anti-robô, e deixa para trás os dois cookies do endereço. Foi o que funcionou: com a praça salva,
