@@ -137,8 +137,11 @@ recarregar() {
   local rotulo=$([ "$host" = "local" ] && echo "i9" || echo "$host")
 
   # o minerador: reconstrói a imagem quando não há extração rodando
-  if rodar_em "$host" "docker exec radar-comercial-minerador-worker-1 sh -c 'ps ax -o args= | grep -q [m]inerar_tudo'" 2>/dev/null; then
-    echo "  $rotulo · minerador OCUPADO com uma extração — reconstruir depois: bash scripts/publicar.sh --recarregar"
+  # OCUPADO = QUALQUER PYTHON ALEM DO PROPRIO WORKER, e nao so a extracao (18/09/2026): a etapa 9 avulsa, rodando
+  # por `docker exec` dentro deste conteiner, nao e `minerar_tudo` — a publicacao a achou ociosa, reconstruiu o
+  # minerador e matou as duas cidades no meio.
+  if rodar_em "$host" "docker exec radar-comercial-minerador-worker-1 sh -c 'ps ax -o args= | grep [p]ython | grep -v minerador_worker | grep -q .'" 2>/dev/null; then
+    echo "  $rotulo · minerador OCUPADO (extração ou processo avulso) — reconstruir depois: bash scripts/publicar.sh --recarregar"
   elif rodar_em "$host" "cd $PROD/deploy && docker compose -f compose.radar-comercial-minerador.yml --env-file ../.env up -d --build >/tmp/recarregar_minerador.log 2>&1"; then
     echo "  $rotulo · minerador reconstruído com o código novo"
   else
