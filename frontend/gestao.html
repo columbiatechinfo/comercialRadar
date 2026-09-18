@@ -1464,6 +1464,7 @@ var GESTAO = (function () {
 
   function pintaResumo() {
     var d = G.resumo, t = d.totais;
+    var acertosIA = ['aprovar', 'campo', 'revisar'].reduce(function (s, a) { return s + ((t.vigentes || {})[a] || 0); }, 0);
     var nomeEmp = d.empresa ? ((d.empresas || []).filter(function (e) { return e.id === d.empresa; })[0] || {}).nome : null;
     $('#g-resumo-sub').textContent = diaTxt(d.periodo.de) + ' a ' + diaTxt(d.periodo.ate)
       + (d.cidade ? ' · ' + d.cidade : '') + (window.EU && window.EU.nivel === 'root'
@@ -1481,6 +1482,10 @@ var GESTAO = (function () {
             num(t.ia_aprovou.aprovar) + ' confirmadas · ' + num(t.ia_aprovou.rejeitar) + ' rejeitadas',
             'nome dado pelo dono do produto (17/09/2026). Só as ligações que a IA aprovou: aprovadas pelas pessoas ÷ (aprovadas + rejeitadas); '
             + 'campo e revisão ainda não dizem se ela acertou e ficam de fora')
+      + kpi('Acurácia da IA', t.vigentes_total ? pct(acertosIA / t.vigentes_total) : '—',
+            num(acertosIA) + ' de ' + num(t.vigentes_total) + ' · ' + num((t.vigentes || {}).rejeitar) + ' rejeitadas',
+            'nome e conta dados pelo dono do produto (18/09/2026): (aprovadas + campo + revisão) ÷ ligações decididas '
+            + 'pelas pessoas — só a rejeição conta como erro da IA')
       + kpi('tempo de avaliação', dur(t.tempo_mediano_s), 'mediana · média ' + dur(t.tempo_medio_s)
             + ' · ' + num(t.medidas) + ' medidas', 'da abertura do caso à decisão; decisão em lote não entra')
       + kpi('casos abertos', num(t.aberturas), num(t.ligacoes_abertas) + ' ligações diferentes')
