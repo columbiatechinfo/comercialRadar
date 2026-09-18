@@ -389,6 +389,20 @@ def avancar(con, ambiente=AMBIENTE):
     return len(liberar)
 
 
+
+def _spark_cabe(uso_total, leves, pedido, espera, teto):
+    """Se uma tarefa da Spark que pede `pedido` vagas pode comecar agora.
+
+    `espera` e o que pede a primeira da fila que nao coube (0 se nenhuma espera); `leves` sao as vagas das que estao
+    rodando. A tarefa de tras so comeca se, quando as grandes que rodam acabarem, ainda couber a que espera — as
+    menores que ela ficam ocupando lugar, e sao elas que contam (18/09/2026: com a fila segurando tudo atras do
+    julgamento que esperava, a Spark rodava a 120 de 180 enquanto havia leitura de 60 pronta)."""
+    if uso_total + pedido > teto:
+        return False
+    if espera and sum(s for s in leves if s < espera) + pedido + espera > teto:
+        return False
+    return True
+
 # ───────────────────────────────────────────────────────────────────────────────────────────── pegar ──
 def pegar(con, maquina, aceitas=None, ambiente=AMBIENTE):
     """A próxima tarefa que cabe nos tetos globais, marcada como desta máquina. None se nada cabe."""
@@ -396,11 +410,14 @@ def pegar(con, maquina, aceitas=None, ambiente=AMBIENTE):
     cur.execute("select pg_advisory_xact_lock(hashtext('radar_validacao'))")
     cur.execute("select etapa, simultaneas from radar_comercial.validacao_tarefa where estado = 'rodando'")
     uso = collections.Counter()
+    leves = []
     for etapa, simult in cur.fetchall():
         e = ETAPAS.get(etapa)
         if not e:
             continue
         uso[e.recurso] += 1
+        if e.recurso == "spark":
+            leves.append(simult or 0)
         uso["spark_simult"] += simult or 0
         uso["conexoes"] += e.conexoes * e.partes
     cur.execute("select count(*) from pg_stat_activity where usename = current_user")
@@ -413,7 +430,7 @@ def pegar(con, maquina, aceitas=None, ambiente=AMBIENTE):
                       and (cardinality(%s::text[]) = 0 or t.etapa = any(%s::text[]))
                     order by t.id_validacao, l.n, t.ordem
                     limit 200""", (ambiente, list(aceitas or []), list(aceitas or [])))
-    espera_spark = False
+    espera_spark = 0
     for tid, etapa, vid, id_lote, tent, empresa, n, parametros in cur.fetchall():
         e = ETAPAS[etapa]
         if e.recurso in ("google", "cnpj", "busca") and uso[e.recurso] >= TETO[e.recurso]:
@@ -421,11 +438,14 @@ def pegar(con, maquina, aceitas=None, ambiente=AMBIENTE):
         # A FILA NAO SE FURA (18/09/2026): com `continue` aqui, o julgamento do lote 4 de Bento (120 vagas da Spark e 4
         # conexoes) nao cabia, e a leitura e a foto de rua dos lotes 7 e 8, menores, passavam na frente a cada volta e
         # ocupavam de novo o que ia sobrar — o julgamento esperou mais de uma hora com os lotes 4, 5 e 6 prontos.
-        # QUEM ESPERA A SPARK SEGURA SO A SPARK: as outras da Spark esperam atras dele, e a foto de rua (processador e
-        # Google) segue rodando — com `break` aqui o i9 ficou com carga 5 durante o julgamento. Conexao e de todos:
-        # quem nao cabe segura os de tras. Os tetos por site (google, cnpj, busca) seguem pulando.
-        if e.recurso == "spark" and (espera_spark or uso["spark_simult"] + e.simultaneas > TETO["spark"]):
-            espera_spark = True
+        # QUEM ESPERA A SPARK GUARDA O LUGAR DELA, E SO ELE: a de tras da Spark comeca se ainda couber a que espera
+        # quando as grandes acabarem (`_spark_cabe`), e a foto de rua (processador e Google) segue rodando — com
+        # `break` aqui o i9 ficou com carga 5 durante o julgamento. Conexao e de todos: quem nao cabe segura os de
+        # tras. Os tetos por site (google, cnpj, busca) seguem pulando.
+        if e.recurso == "spark" and not _spark_cabe(uso["spark_simult"], leves, e.simultaneas, espera_spark,
+                                                    TETO["spark"]):
+            if uso["spark_simult"] + e.simultaneas > TETO["spark"]:
+                espera_spark = espera_spark or e.simultaneas
             continue
         if uso["conexoes"] + e.conexoes * e.partes > TETO["conexoes"] or e.conexoes * e.partes > livres:
             break
