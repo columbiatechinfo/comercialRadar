@@ -414,8 +414,13 @@ def _pagina_da_busca(p, espera_s):
         page.wait_for_timeout(1000)
     if desafio:
         raise Captcha("verificação na busca não passou em %d s" % espera_s)
-    raise RuntimeError("busca sem payload: %d cartões na tela · scripts: %s"
-                       % (len(page.evaluate(IDS) or []), page.evaluate(SCRIPTS) or "nenhum"))
+    # CARTÕES SEM PAYLOAD TROCAM DE IP (18/09/2026). Em Bento Gonçalves (job 79) a busca mostrou 18 anúncios na tela
+    # e veio sem o `data-deferred-state` — três vezes, no MESMO navegador e no MESMO IP, e a cidade fechou com zero
+    # hospedagens. Na mesma caixa, por outro IP, o payload veio (397 KB, com as coordenadas). É a página que aquele
+    # IP recebe, não a caixa: `Degradou` faz a frota fechar este navegador SEM castigo e repetir a caixa noutro IP.
+    from frota_navegacao import Degradou
+    raise Degradou("busca sem payload: %d cartões na tela · scripts: %s"
+                   % (len(page.evaluate(IDS) or []), page.evaluate(SCRIPTS) or "nenhum"))
 
 
 def caixa_frota(p, sw_lat, sw_lng, ne_lat, ne_lng, paginas=15) -> dict:
