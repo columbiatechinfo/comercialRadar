@@ -121,36 +121,45 @@ sincronizar_fora_do_git() {
 # diz o que ficou para trás e como completar depois: `bash scripts/publicar.sh --recarregar`.
 # O `.env` do notebook NÃO viaja: o dele tem os tetos daquela máquina (12 navegadores, 30 GB).
 # =============================================================================
+# O COMANDO VAI INTEIRO, COMO UM TEXTO SÓ. `ssh host sh -c "..."` junta os argumentos e perde as aspas: na primeira
+# rodada (18/09/2026) o `cd` para a produção não aconteceu no notebook, o compose rodou na pasta pessoal e procurou
+# `/home/.env` — e as checagens de "ocioso" de lá ficaram cegas. `rodar_em` manda o texto para o shell de cada lado.
+rodar_em() {
+  if [ "$1" = "local" ]; then
+    sh -c "$2"
+  else
+    ssh -o ConnectTimeout=15 -o BatchMode=yes "$1" "$2"
+  fi
+}
+
 recarregar() {
-  local host="$1" pre=""
-  [ "$host" = "local" ] || pre="ssh -o ConnectTimeout=15 -o BatchMode=yes $host"
+  local host="$1"
   local rotulo=$([ "$host" = "local" ] && echo "i9" || echo "$host")
 
   # o minerador: reconstrói a imagem quando não há extração rodando
-  if $pre docker exec radar-comercial-minerador-worker-1 sh -c "ps ax -o args= | grep -q '[m]inerar_tudo'" 2>/dev/null; then
+  if rodar_em "$host" "docker exec radar-comercial-minerador-worker-1 sh -c 'ps ax -o args= | grep -q [m]inerar_tudo'" 2>/dev/null; then
     echo "  $rotulo · minerador OCUPADO com uma extração — reconstruir depois: bash scripts/publicar.sh --recarregar"
+  elif rodar_em "$host" "cd $PROD/deploy && docker compose -f compose.radar-comercial-minerador.yml --env-file ../.env up -d --build >/tmp/recarregar_minerador.log 2>&1"; then
+    echo "  $rotulo · minerador reconstruído com o código novo"
   else
-    if $pre sh -c "cd $PROD/deploy && docker compose -f compose.radar-comercial-minerador.yml --env-file ../.env up -d --build >/tmp/recarregar_minerador.log 2>&1"; then
-      echo "  $rotulo · minerador reconstruído com o código novo"
-    else
-      echo "  $rotulo · minerador: a reconstrução FALHOU (log em /tmp/recarregar_minerador.log)"
-    fi
+    echo "  $rotulo · minerador: a reconstrução FALHOU (log em /tmp/recarregar_minerador.log de $rotulo)"
   fi
 
-  # a frota: o serviço devolve à fila o que estiver em voo, mas só se reinicia com os postos parados
+  # a frota: o serviço devolve à fila o que estiver em voo, mas só se reinicia com os postos parados.
+  # `|| true` NOS DOIS LADOS: o script roda com `set -e`, e o grep -c que conta ZERO sai com código 1.
   local voo
-  voo=$($pre sh -c "docker logs --since 3m radar-frota-prod-frota-1 2>&1 | grep -oE 'em voo [0-9]+' | tail -2 | grep -cv 'em voo 0'" 2>/dev/null)
+  voo=$(rodar_em "$host" "docker logs --since 3m radar-frota-prod-frota-1 2>&1 | grep -oE 'em voo [0-9]+' | tail -2 | grep -cv 'em voo 0' || true" 2>/dev/null || true)
   if [ "${voo:-1}" = "0" ]; then
-    $pre docker restart radar-frota-prod-frota-1 >/dev/null 2>&1 && echo "  $rotulo · serviço da frota reiniciado"
+    rodar_em "$host" "docker restart radar-frota-prod-frota-1 >/dev/null 2>&1" && echo "  $rotulo · serviço da frota reiniciado"
   else
     echo "  $rotulo · frota com tarefa em voo — reiniciar depois: bash scripts/publicar.sh --recarregar"
   fi
 
   # o executor da validação: só sem etapa rodando (cada etapa roda num contêiner radar-val-p-*)
-  if $pre sh -c "docker ps --format '{{.Names}}' | grep -q '^radar-val-p-'" 2>/dev/null; then
+  if rodar_em "$host" "docker ps --format '{{.Names}}' | grep -q '^radar-val-p-'" 2>/dev/null; then
     echo "  $rotulo · executor da validação OCUPADO — reiniciar depois: bash scripts/publicar.sh --recarregar"
   else
-    $pre docker restart radar-validacao-executor-1 >/dev/null 2>&1 && echo "  $rotulo · executor da validação reiniciado"
+    rodar_em "$host" "docker restart radar-validacao-executor-1 >/dev/null 2>&1" && echo "  $rotulo · executor da validação reiniciado"
   fi
 }
 
