@@ -466,13 +466,17 @@ def _receita(cur, cidade, limite, extra):
           from resources_root.rf_estabelecimentos e
           left join resources_root.rf_empresas em
                  on em.cnpj_basico = e.cnpj_basico
-         where e.municipio = (select codigo from resources_root.rf_municipios
-                               where %s limit 1)
+         where e.uf = %%s
+           and e.municipio in (select codigo from resources_root.rf_municipios
+                                where %s)
            and e.situacao_cadastral = any(%%s)
     """ % _sql_cidade("descricao")
+    # HOMONIMO ENTRE ESTADOS (18/09/2026): `rf_municipios` nao tem UF, e o `limit 1` de antes pegou SANTA MARIA/RN
+    # (0424, 439 ativas) no lugar de SANTA MARIA/RS (8841, 41.914 ativas) — a cidade ficou sem a Receita, sem erro
+    # nenhum. Todos os codigos com o nome entram; quem desempata e a UF do estabelecimento (como em tratamento_cnpj).
     if limite:
         sql += " limit %d" % int(limite)
-    cur.execute(sql, (cidade, situacoes))
+    cur.execute(sql, ((extra.get("uf") or "RS").upper(), cidade, situacoes))
     for (cnpj, nome, tipo_l, logr, num, bairro, cep, cnae,
          ddd, tel, email) in cur.fetchall():
         rua = " ".join(x for x in ((tipo_l or "").strip(), (logr or "").strip())
@@ -660,6 +664,7 @@ def main(argv=None) -> int:
 
     _log("▶ %s → POI · %s (%s)" % (a.fonte, a.cidade, a.municipio))
     extra["cod_municipio"] = a.municipio
+    extra["uf"] = a.uf
     r = do_municipio(a.fonte, a.cidade, a.municipio, a.uf, a.limite,
                      a.aplicar, extra)
     return 1 if r.get("erro") else 0
