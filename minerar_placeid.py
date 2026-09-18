@@ -2161,7 +2161,7 @@ async def principal(a):
             print("\n⟦A⟧ pulada — %d POI(s) esperando na fila" % na_fila)
         else:
             print("\n⟦A⟧ colheita de placeId (de graca)")
-            alvos = await colher(pw, poligono, pasta, a.passo, a.workers,
+            alvos = await colher(pw, poligono, pasta, a.passo, a.workers_varredura or a.workers,
                                  a.refinar_acima_de, a.todas_as_posicoes)
             t_colheita = time.time() - t0
             if not alvos:
@@ -2609,6 +2609,10 @@ if __name__ == "__main__":
                         "so com --sem-colheita: e uma fila de detalhe, nao "
                         "uma colheita nova")
     p.add_argument("--workers", type=int, default=6)
+    # A VARREDURA TEM TETO PROPRIO (18/09/2026). Ela desenha o mapa em WebGL por software, na CPU: no i9, 30
+    # navegadores deram carga 93 em 32 nucleos e 97 s por posicao; o notebook, com 12, fazia 17 s. O detalhe nao
+    # desenha mapa e rendeu 50 pontos/min com 30. Zero = o mesmo `--workers` de sempre.
+    p.add_argument("--workers-varredura", dest="workers_varredura", type=int, default=0)
     p.add_argument("--passo", type=int, default=26,
                    help="passo do clique em pixels; o icone de POI tem ~24 px")
     p.add_argument("--refinar-acima-de", type=int, default=3,

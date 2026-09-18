@@ -66,6 +66,8 @@ services:
       #   servidor principal   RADAR_MAX_TRABALHADORES=30   (padrao)
       #   notebook             RADAR_MAX_TRABALHADORES=10
       RADAR_MAX_TRABALHADORES: ${MAX_TRABALHADORES:-30}
+      # O TETO DA VARREDURA DO MAPA (18/09/2026), separado: ela e limitada pela CPU, nao pela memoria.
+      RADAR_MAX_VARREDURA: ${MAX_VARREDURA:-12}
 
       # QUE TIPO DE JOB ESTA MAQUINA ACEITA. Vazio = todos, o padrao.
       #

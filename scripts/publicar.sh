@@ -106,6 +106,71 @@ sincronizar_fora_do_git() {
   echo "  fora do git sincronizado (.env, proxies, estado, cache_ibge, dados_externos, pastas vazias)"
 }
 
+
+# =============================================================================
+# CÓDIGO PUBLICADO É CÓDIGO RODANDO (18/09/2026).
+#
+# Até aqui a publicação trocava o código em disco e recriava só a API. Os processos longos seguiam com o que tinham
+# carregado ao subir, e isso custou caro no mesmo dia:
+#   · o executor da validação estava no ar havia 41 h com a etapa `fichas` na memória; um lote da validação #6 caiu
+#     na segunda passada e ficou parado esperando uma etapa que não existe mais;
+#   · o minerador leva o código DENTRO da imagem: sem reconstruir, a correção "publicada" não rodava;
+#   · o notebook tem a sua própria cópia, que ninguém atualizava.
+#
+# Cada um só é reiniciado OCIOSO — reiniciar no meio de um job ou de um lote perde trabalho. Ocupado, a publicação
+# diz o que ficou para trás e como completar depois: `bash scripts/publicar.sh --recarregar`.
+# O `.env` do notebook NÃO viaja: o dele tem os tetos daquela máquina (12 navegadores, 30 GB).
+# =============================================================================
+recarregar() {
+  local host="$1" pre=""
+  [ "$host" = "local" ] || pre="ssh -o ConnectTimeout=15 -o BatchMode=yes $host"
+  local rotulo=$([ "$host" = "local" ] && echo "i9" || echo "$host")
+
+  # o minerador: reconstrói a imagem quando não há extração rodando
+  if $pre docker exec radar-comercial-minerador-worker-1 sh -c "ps ax -o args= | grep -q '[m]inerar_tudo'" 2>/dev/null; then
+    echo "  $rotulo · minerador OCUPADO com uma extração — reconstruir depois: bash scripts/publicar.sh --recarregar"
+  else
+    if $pre sh -c "cd $PROD/deploy && docker compose -f compose.radar-comercial-minerador.yml --env-file ../.env up -d --build >/tmp/recarregar_minerador.log 2>&1"; then
+      echo "  $rotulo · minerador reconstruído com o código novo"
+    else
+      echo "  $rotulo · minerador: a reconstrução FALHOU (log em /tmp/recarregar_minerador.log)"
+    fi
+  fi
+
+  # a frota: o serviço devolve à fila o que estiver em voo, mas só se reinicia com os postos parados
+  local voo
+  voo=$($pre sh -c "docker logs --since 3m radar-frota-prod-frota-1 2>&1 | grep -oE 'em voo [0-9]+' | tail -2 | grep -cv 'em voo 0'" 2>/dev/null)
+  if [ "${voo:-1}" = "0" ]; then
+    $pre docker restart radar-frota-prod-frota-1 >/dev/null 2>&1 && echo "  $rotulo · serviço da frota reiniciado"
+  else
+    echo "  $rotulo · frota com tarefa em voo — reiniciar depois: bash scripts/publicar.sh --recarregar"
+  fi
+
+  # o executor da validação: só sem etapa rodando (cada etapa roda num contêiner radar-val-p-*)
+  if $pre sh -c "docker ps --format '{{.Names}}' | grep -q '^radar-val-p-'" 2>/dev/null; then
+    echo "  $rotulo · executor da validação OCUPADO — reiniciar depois: bash scripts/publicar.sh --recarregar"
+  else
+    $pre docker restart radar-validacao-executor-1 >/dev/null 2>&1 && echo "  $rotulo · executor da validação reiniciado"
+  fi
+}
+
+recarregar_tudo() {
+  echo "▶ recarregando os processos longos com o código publicado"
+  recarregar local
+  if rsync -a --delete --exclude ".git" --exclude ".env" --exclude "uploads" --exclude "capturas" --exclude "crops" \
+       --exclude "__pycache__" -e "ssh -o ConnectTimeout=15 -o BatchMode=yes" $PROD/ notebook:$PROD/ 2>/dev/null; then
+    echo "  notebook · cópia de produção sincronizada (sem o .env dele)"
+    recarregar notebook
+  else
+    echo "  notebook · FORA DO AR (suspenso ou desligado) — ao voltar: bash scripts/publicar.sh --recarregar"
+  fi
+}
+
+if [ "${1:-}" = "--recarregar" ]; then
+  recarregar_tudo
+  exit 0
+fi
+
 if [ "${1:-}" = "--voltar" ]; then
   docker image inspect $IMG:anterior >/dev/null 2>&1 || { echo "não há imagem :anterior"; exit 1; }
   docker tag $IMG:anterior $IMG:latest
@@ -165,6 +230,7 @@ echo "$(date '+%Y-%m-%d %H:%M:%S') $TAG (antes: $ANTES)" >> $HOME/producao/PUBLI
 
 if conferir && conferir_scripts; then
   echo "■ $TAG no ar"
+  recarregar_tudo
 else
   echo "■ CONFERÊNCIA FALHOU. Para voltar: bash scripts/publicar.sh --voltar"
   exit 1

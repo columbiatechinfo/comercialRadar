@@ -753,6 +753,8 @@ def main(argv=None) -> int:
     p.add_argument("--zoom", type=int, default=19)
     p.add_argument("--workers", type=int, default=10)
     p.add_argument("--capture-workers", dest="capture_workers", type=int, default=10)
+    p.add_argument("--workers-varredura", dest="workers_varredura", type=int, default=0,
+                   help="navegadores da VARREDURA do mapa (etapa 4); zero = --workers")
     p.add_argument("--no-proxy", dest="no_proxy", action="store_true")
     p.add_argument("--empresa", default="", help="nome da empresa dona do dado")
     p.add_argument("--de-etapa", dest="de_etapa", type=int, default=1,
@@ -993,7 +995,8 @@ def main(argv=None) -> int:
     # arguments". Quando `--no-proxy` vier da tela, isto e dito em voz alta em
     # vez de ignorado em silencio.
     cmd = ["minerar_placeid.py", "--area", a.area, "--sessao", a.sessao,
-           "--workers", str(a.workers)]
+           "--workers", str(a.workers)] + (
+              ["--workers-varredura", str(a.workers_varredura)] if a.workers_varredura else [])
     # RETOMAR SÓ O DETALHE (dono do produto, 17/09/2026): a varredura de Santa Maria gravou 4.323 placeIds e a rodada
     # foi parada antes das fichas. Repetir a varredura seriam outras 3 h 37 min para achar o que já está no banco;
     # `--sem-colheita` faz a etapa 4 pegar a fila de detalhe da MESMA sessão e seguir dali.

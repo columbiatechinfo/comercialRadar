@@ -221,6 +221,9 @@ TIPOS_ACEITOS = [s.strip() for s in
                  if s.strip()]
 
 MAX_TRABALHADORES = int(os.environ.get("RADAR_MAX_TRABALHADORES") or 30)
+#: O teto da VARREDURA do mapa, que e outro (18/09/2026): ela e limitada pela CPU, que desenha o mapa por software, e
+#: nao pela memoria. Medido no i9: 30 navegadores = 97 s por posicao; 12 no notebook = 17 s. Nunca passa do teto geral.
+MAX_VARREDURA = min(int(os.environ.get("RADAR_MAX_VARREDURA") or 12), MAX_TRABALHADORES)
 
 #: As chaves que contam trabalhadores de navegador e por isso obedecem ao teto.
 _CHAVES_DE_TRABALHADOR = ("workers", "capture_workers", "trabalhadores")
@@ -288,6 +291,12 @@ def _comando(job: dict) -> list:
         for chave in ("workers", "capture_workers"):
             if a.get(chave) is None and job["tipo"] == "mineracao":
                 a[chave] = MAX_TRABALHADORES
+        if job["tipo"] == "mineracao":
+            try:
+                pedido_varredura = int(a.get("workers_varredura") or 0)
+            except (TypeError, ValueError):
+                pedido_varredura = 0
+            a["workers_varredura"] = min(pedido_varredura or MAX_VARREDURA, MAX_VARREDURA)
         for chave in _CHAVES_DE_TRABALHADOR:
             try:
                 pedido = int(a.get(chave))
