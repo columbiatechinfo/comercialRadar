@@ -99,6 +99,35 @@ function initMap(){
     s.dataset.pronto = '1';
     window.__pronto = true;
   });
+  // O MAPA SE MOVE SEM RECARREGAR (18/09/2026). O Google cobra quando o mapa e CRIADO, nao quando e arrastado: com
+  // uma pagina nova por posicao, Santa Maria custou 15.061 cargas. O Python escreve o pedido em `data-pedido` (o DOM
+  // e o unico canal que o Camoufox divide com a pagina); a pagina arrasta, espera o mapa assentar e responde em
+  // `data-pronto` com o numero do pedido, junto com a caixa nova.
+  const saida = document.getElementById('__saida');
+  new MutationObserver(() => {
+    const q = JSON.parse(saida.dataset.pedido || 'null');
+    if (!q || q.n === window.__ultimo) return;
+    window.__ultimo = q.n;
+    window.__ids = [];
+    _publicar();
+    // O REPOUSO SO NAO BASTA (medido 18/09): `idle` dispara quando a camera para, antes de os rotulos da area nova
+    // terminarem de desenhar, e o clique perdia pontos em metade das posicoes (10 x 17, 21 x 29). Espera-se tambem
+    // `tilesloaded`, com teto de 8 s para o caso de o mapa nao avisar.
+    let parou = false, carregou = false, feito = false;
+    const pronto = () => {
+      if (feito || !(parou && carregou)) return;
+      feito = true;
+      const b = map.getBounds();
+      window.__caixa = {s:b.getSouthWest().lat(), o:b.getSouthWest().lng(),
+                        n:b.getNorthEast().lat(), l:b.getNorthEast().lng()};
+      saida.dataset.caixa = JSON.stringify(window.__caixa);
+      saida.dataset.pronto = String(q.n);
+    };
+    google.maps.event.addListenerOnce(map, 'idle', () => { parou = true; pronto(); });
+    google.maps.event.addListenerOnce(map, 'tilesloaded', () => { carregou = true; pronto(); });
+    setTimeout(() => { parou = carregou = true; pronto(); }, 8000);
+    map.setCenter({lat: q.lat, lng: q.lng});
+  }).observe(saida, {attributes: true, attributeFilter: ['data-pedido']});
 }
 </script>
 <script src="https://maps.googleapis.com/maps/api/js?key=%(chave)s&callback=initMap&loading=async" async defer></script>
@@ -120,6 +149,12 @@ function initMap(){
 #: `MAPS_SEM_PROXY=1` volta ao caminho antigo, que continua inteiro aqui embaixo — a queda para o IP da casa nao
 #: depende de codigo novo no dia em que os proxies faltarem.
 POR_PROXY = os.environ.get("MAPS_SEM_PROXY") != "1"
+
+#: UM MAPA POR NAVEGADOR, ARRASTADO ENTRE AS POSICOES (18/09/2026). A primeira posicao de cada navegador carrega a
+#: pagina (uma carga cobrada); as seguintes so movem o mesmo mapa, o que o Google nao cobra. Auditoria do dono do
+#: produto: Santa Maria 15.061 cargas e Bento 17.419, uma por posicao. `MAPS_RECARREGAR_POR_POSICAO=1` volta ao jeito
+#: antigo.
+MOVER_O_MAPA = os.environ.get("MAPS_RECARREGAR_POR_POSICAO") != "1"
 
 #: As tres leituras da pagina do mapa, todas pelo DOM (ver o comentario dentro de `MAPA_HTML`).
 PRONTO = "!!document.querySelector('#__saida[data-pronto]')"
@@ -294,6 +329,10 @@ async def varrer_tile(nav, lat, lng, passo_px, pasta, rotulo):
         await ctx.close()
 
 
+#: Quantas vezes este processo CARREGOU a pagina do mapa (cada uma e uma carga cobrada). Vai para o log da colheita.
+CARGAS_DO_MAPA = [0]
+
+
 def varrer_tile_pela_frota(p, lat, lng, passo_px, pasta, rotulo):
     """Uma posicao pela frota: a mesma colheita de `varrer_tile`, com a pagina que a frota entrega.
 
@@ -318,8 +357,23 @@ def varrer_tile_pela_frota(p, lat, lng, passo_px, pasta, rotulo):
     # somaria um ouvinte por posicao e a conta do que foi cobrado cresceria sozinha.
     page.on("request", contar)
     try:
-        page.goto("file://" + arq, wait_until="commit")
-        page.wait_for_function(PRONTO, timeout=40000)
+        ja_tem_mapa = False
+        if MOVER_O_MAPA:
+            try:
+                ja_tem_mapa = bool(page.evaluate(
+                    "location.protocol === 'file:' && !!document.querySelector('#__saida[data-pronto]')"))
+            except Exception:                                  # noqa: BLE001
+                ja_tem_mapa = False
+        if ja_tem_mapa:
+            n = int(time.time() * 1000)
+            page.evaluate("(q) => { document.getElementById('__saida').dataset.pedido = JSON.stringify(q); }",
+                          {"lat": lat, "lng": lng, "n": n})
+            page.wait_for_function("(n) => document.getElementById('__saida').dataset.pronto === String(n)",
+                                   arg=n, timeout=40000)
+        else:
+            page.goto("file://" + arq, wait_until="commit")
+            page.wait_for_function(PRONTO, timeout=40000)
+            CARGAS_DO_MAPA[0] += 1
         page.wait_for_timeout(1600)
 
         if pasta:
@@ -570,7 +624,7 @@ async def colher(pw, poligono, pasta, passo_px, paralelo, refinar_acima_de, toda
         # A FROTA TAMBEM MORRE COM A COLHEITA: fechar devolve os IPs reservados e fecha as sessoes com motivo, para
         # o painel nao mostrar navegador vivo que nao existe mais.
         frota.fechar()
-        print("  frota da colheita: %s" % frota.resumo())
+        print("  frota da colheita: %s · cargas pagas do mapa: %d" % (frota.resumo(), CARGAS_DO_MAPA[0]))
     while not vagas.empty():
         try:
             await vagas.get_nowait().close()
