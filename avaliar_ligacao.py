@@ -815,7 +815,8 @@ def gravar_visual(con, ligacao, resposta, resumo):
     # a apontar para a via errada — o oposto do que esta tabela serve.
     cur.execute("""select nom_logradouro, cidade
                      from resources_root.cadastro_corsan
-                    where num_ligacao::text = %s limit 1""", (ligacao,))
+                    where num_ligacao = %s limit 1""",
+                (int(ligacao) if str(ligacao).strip().isdigit() else -1,))  # pelo NUMERO: `::text` impede o indice sob a RLS (988 ms -> 0,09 ms, 18/09/2026)
     r = cur.fetchone()
     logradouro, cidade = (r[0], r[1]) if r else (None, None)
 

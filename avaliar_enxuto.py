@@ -264,7 +264,8 @@ def montar_com_refs(con, ligacao, fotos_do_dossie=True):
     cur = con.cursor()
     cur.execute("""select coalesce(end_ligacao,''), coalesce(categoria,''), coalesce(nom_bairro,''),
                           coalesce(nro::text,'')
-                     from resources_root.cadastro_corsan where num_ligacao::text = %s""", (str(ligacao),))
+                     from resources_root.cadastro_corsan where num_ligacao = %s""",
+                (int(ligacao) if str(ligacao).strip().isdigit() else -1,))  # pelo NUMERO: `::text` impede o indice sob a RLS (988 ms -> 0,09 ms, 18/09/2026)
     cad = cur.fetchone()
     if not cad:
         return None, [], [], [], 0, []

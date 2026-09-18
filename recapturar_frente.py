@@ -101,8 +101,9 @@ def alvos_das_ligacoes(arquivo, forcar=False):
                           "antes": None if forcar or not pano0 else {"pano_id": pano0, "heading": head0}})
     # SEM REGISTRO A ATE 60 M: a foto e tirada no hidrometro (15/09/2026) — a ligacao nao vai mais sem imagem
     cur.execute("""select num_ligacao::text from resources_root.cadastro_corsan c
-                    where num_ligacao::text = any(%s) and not exists (select 1 from radar_comercial.ligacao_poi lp
-                          where lp.ligacao = c.num_ligacao::text and lp.descartado_em is null)""", (ligs,))
+                    where c.num_ligacao = any(%s::bigint[]) and not exists (select 1 from radar_comercial.ligacao_poi lp
+                          where lp.ligacao = c.num_ligacao::text and lp.descartado_em is null)""",
+                ([int(x) for x in ligs if str(x).strip().isdigit()],))  # pelo NUMERO: `::text` impede o indice sob a RLS (988 ms -> 0,09 ms, 18/09/2026)
     sem_poi += [r[0] for r in cur.fetchall()]
     hidro = 0
     if sem_poi:

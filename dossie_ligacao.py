@@ -260,7 +260,8 @@ def montar(con, ligacao, ia, imagens_mod, busca_web=None):
     outras, compl, aberto = {}, {}, {}
     try:
         cur.execute("""select coalesce(end_ligacao,'') from resources_root.cadastro_corsan
-                        where num_ligacao::text = %s limit 1""", (ligacao,))
+                        where num_ligacao = %s limit 1""",
+                    (int(ligacao) if str(ligacao).strip().isdigit() else -1,))  # pelo NUMERO: `::text` impede o indice sob a RLS (988 ms -> 0,09 ms, 18/09/2026)
         k = cur.fetchone()
         if k and k[0]:
             linhas.append("- endereço completo no cadastro: %s" % k[0])

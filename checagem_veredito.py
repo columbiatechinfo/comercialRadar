@@ -426,7 +426,8 @@ class Contexto:
         cur.execute("""select num_ligacao::text, coalesce(end_ligacao,''), coalesce(nom_bairro,''),
                               coalesce(qualificacao,''), coalesce(nro::text,''), coalesce(nom_logradouro,''),
                               coalesce(cidade,'')
-                         from resources_root.cadastro_corsan where num_ligacao::text = any(%s)""", (ligs,))
+                         from resources_root.cadastro_corsan where num_ligacao = any(%s::bigint[])""",
+                    ([int(x) for x in ligs if str(x).strip().isdigit()],))  # pelo NUMERO: `::text` impede o indice sob a RLS (988 ms -> 0,09 ms, 18/09/2026)
         self.compl_inst, self.qualificacao, self.nro_inst, self.endereco = {}, {}, {}, {}
         for l, e, b, q, nro, lgr, cid in cur.fetchall():
             self.compl_inst[l] = complemento_da_instalacao(e, b)
