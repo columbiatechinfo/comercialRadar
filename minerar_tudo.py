@@ -1519,9 +1519,11 @@ def main(argv=None) -> int:
         #
         # Depois da 8 também porque o 8 funde duplicatas: enriquecer antes seria
         # gastar duas buscas no que vira um ponto só.
+        # O TETO DA VARREDURA, E NAO 4 FIXOS (18/09/2026): a etapa abre o site do Maps, que desenha mapa, entao ela e
+        # limitada pela CPU como a varredura. Com 4, Santa Maria (14.438 POIs) levaria ~25 h.
         _tolerante_i9(["google_enriquece.py", "--cidade", cidade,
                        "--area", a.area,
-                       "--uf", uf, "--trabalhadores", "4", "--aplicar"],
+                       "--uf", uf, "--trabalhadores", str(a.workers_varredura or 4), "--aplicar"],
                       "enriquecimento pelo Maps")
     else:
         _log("  pulado — sem cidade não há o que buscar no painel")

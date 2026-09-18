@@ -59,6 +59,12 @@ troca, traz telefone, site, endereço e perfil social sem CAPTCHA.
 """
 from __future__ import annotations
 
+import os as _os
+# A ETAPA 9 ABRE NO CAMOUFOX (18/09/2026). Medido nos mesmos 40 POIs de Santa Maria, sem gravar: Chromium e Camoufox
+# acharam exatamente o mesmo (9 com algo, 5 telefones, 2 sites, 31 nada), o Camoufox em 6,3 s por POI contra 7,0 s,
+# sem o historico de queimar IP no google.com que o Chromium tem com os proxies. `HUMANO_CAMOUFOX=0` volta.
+_os.environ.setdefault("HUMANO_CAMOUFOX", "1")
+
 import argparse
 import asyncio
 import json

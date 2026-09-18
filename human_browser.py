@@ -18,6 +18,14 @@ from pathlib import Path
 from typing import Optional
 
 import config
+import os
+
+#: A SESSAO HUMANA NO CAMOUFOX (18/09/2026). A etapa 9 da extracao (telefone e site pelo painel do Maps) abria
+#: Chromium com identidade forjada a mao — o mesmo navegador que, com proxy Webshare, pendurava no google.com e
+#: queimava IP no detalhe do Maps (19 trocas em 3 min, contra 0 no Camoufox). O Camoufox monta idioma, fuso, tela e
+#: agente coerentes com o IP (`geoip`); forcar isso por fora e justamente o que o site procura. Liga com
+#: `HUMANO_CAMOUFOX=1` ate a medicao dizer que pode ser o padrao.
+HUMANO_CAMOUFOX = os.environ.get("HUMANO_CAMOUFOX") == "1"
 
 # Stealth (API nova: Stealth().apply_stealth_async). Degrada se indisponível.
 try:
@@ -87,6 +95,25 @@ class HumanSession:
         if proxy:
             from proxy_pool import ProxyPool
             proxy_cfg = ProxyPool.to_playwright(proxy)
+
+        if HUMANO_CAMOUFOX:
+            from camoufox.async_api import AsyncCamoufox
+            self._camoufox = AsyncCamoufox(headless=headless, geoip=True, locale="pt-BR", proxy=proxy_cfg,
+                                           persistent_context=True, user_data_dir=str(user_data_dir))
+            self.context = await self._camoufox.__aenter__()
+            self.fingerprint = {"navegador": "camoufox", "locale": "pt-BR"}
+            try:
+                await self.context.add_cookies([
+                    {"name": "CONSENT", "value": "YES+cb", "domain": ".google.com", "path": "/"},
+                    {"name": "SOCS", "value": "CAESEwgDEgk0ODE3Nzk3MjQaAnB0IAEaBgiA_LyaBg",
+                     "domain": ".google.com", "path": "/"},
+                ])
+            except Exception:
+                pass
+            await self.context.route("**/*", self._route_handler)
+            self.page = self.context.pages[0] if self.context.pages else await self.context.new_page()
+            self.page.on("requestfinished", self._on_request_finished)
+            return self
 
         self.context = await pw.chromium.launch_persistent_context(
             user_data_dir=str(user_data_dir),
@@ -266,6 +293,9 @@ class HumanSession:
             except Exception:
                 pass
         try:
-            await self.context.close()
+            if getattr(self, "_camoufox", None) is not None:
+                await self._camoufox.__aexit__(None, None, None)
+            else:
+                await self.context.close()
         except Exception:
             pass
