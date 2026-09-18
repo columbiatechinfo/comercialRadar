@@ -124,10 +124,13 @@ class PiscinaRelay:
         host, porta_remota, user, pwd = pm.PROXIES[vaga % len(pm.PROXIES)]
         porta = pm._porta_livre(pm.BASE_PORT + vaga)
 
+        # UM ACEITADOR E UM TRABALHADOR (18/09/2026): sem os dois, o proxy.py abre um de cada POR NUCLEO — no i9 eram
+        # 33 processos por navegador, 792 com a etapa 9 das duas cidades, para servir um navegador so.
         novo = subprocess.Popen(
             [sys.executable, "-m", "proxy", "--hostname", "127.0.0.1",
              "--port", str(porta), "--proxy-pool",
              f"http://{user}:{pwd}@{host}:{porta_remota}",
+             "--num-acceptors", "1", "--num-workers", "1",
              "--log-level", "ERROR"],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             encoding="utf-8", errors="replace")
