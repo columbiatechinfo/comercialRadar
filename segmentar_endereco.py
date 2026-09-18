@@ -100,8 +100,9 @@ def _vocabulario_complemento() -> list:
     o sintoma seria um complemento tipado a menos, que ninguém liga à causa.
     """
     try:
+        # no FIM do sys.path: ver a nota em resolver_logradouro.py (18/09/2026)
         if SKILL not in sys.path:
-            sys.path.insert(0, SKILL)
+            sys.path.append(SKILL)
         import complemento_organizador as CO
         termos = [t for t in CO.ORDEM if t not in ("MODIFICADOR", "IMOVEL", "POSICAO")]
         if termos:

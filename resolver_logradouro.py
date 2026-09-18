@@ -92,8 +92,11 @@ from bairro import FONTES_BAIRRO_FRACO, bairro_reverso, limpar_bairro
 
 BASE = Path(__file__).resolve().parent
 SKILL = BASE / "skills" / "ajuste-logradouro"
+# NO FIM, E NAO NA FRENTE (18/09/2026): a skill tem um `validacao.py` proprio; na frente ele tomava o lugar do
+# nosso, e a busca web da validacao de Bento morreu nos 14 lotes com "module 'validacao' has no attribute
+# 'coleta_de'" — calada, porque a etapa e tolerante. Daqui so se usam modulos sem nome repetido no projeto.
 if str(SKILL) not in sys.path:
-    sys.path.insert(0, str(SKILL))
+    sys.path.append(str(SKILL))
 
 import normalizacao_base as nb          # noqa: E402  (depois do sys.path)
 import similaridade as sim              # noqa: E402
